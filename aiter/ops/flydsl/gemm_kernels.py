@@ -29,6 +29,8 @@ from .utils import get_shared_memory_per_block, is_flydsl_available
 
 __all__ = [
     "flydsl_hgemm",
+    "flydsl_gemm_a8w8_blockscale_bpreshuffle",
+    "get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config",
 ]
 
 
@@ -95,6 +97,32 @@ KERNEL_CONFIG_VARIANTS = [
 ]
 
 _SPLITK_HGEMM_KERNELS: Dict[str, Dict] = {}
+_A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED: dict[tuple, object] = {}
+_A8W8_BLOCKSCALE_8WAVE_COMPILED: dict[tuple, object] = {}
+
+_A8W8_BLOCKSCALE_BPRESHUFFLE_SHAPE_CONFIGS: dict[tuple[int, int], Dict[str, object]] = {
+    (2048, 7168): {
+        "kind": "8wave_blockscale",
+        "tile_m": 128,
+        "tile_n": 256,
+        "tile_k": 128,
+        "b_preshuffled": True,
+    },
+    (65536, 1536): {
+        "kind": "blockscale_preshuffle",
+        "tile_m": 64,
+        "tile_n": 256,
+        "tile_k": 128,
+        "fused_promote": False,
+    },
+    (7168, 768): {
+        "kind": "blockscale_preshuffle",
+        "tile_m": 64,
+        "tile_n": 256,
+        "tile_k": 128,
+        "fused_promote": True,
+    },
+}
 
 
 def _normalize_supported_kernel_metadata(
@@ -1066,3 +1094,231 @@ def flydsl_preshuffle_gemm_a8(
         Out.copy_(out_contig)
 
     return Out
+
+
+def get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config(
+    m: int, n: int, k: int
+) -> Optional[Dict[str, object]]:
+    """Return the FlyDSL A8W8 blockscale bpreshuffle GEMM config for a shape."""
+    del m
+    config = _A8W8_BLOCKSCALE_BPRESHUFFLE_SHAPE_CONFIGS.get((n, k))
+    return None if config is None else dict(config)
+
+
+def _flydsl_gemm_a8w8_out_dtype(dtype: torch.dtype) -> str:
+    if dtype == torch.bfloat16:
+        return "bf16"
+    if dtype == torch.float16:
+        return "fp16"
+    raise ValueError(
+        f"[FlyDSL][GEMM] unsupported output dtype {dtype}; expected torch.bfloat16 or torch.float16"
+    )
+
+
+def _as_i8_flat(t: Tensor) -> Tensor:
+    t = t.contiguous()
+    return t.view(torch.int8).reshape(-1) if "float8" in str(t.dtype) else t.reshape(-1)
+
+
+def _compile_gemm_a8w8_blockscale_bpreshuffle(
+    *,
+    m: int,
+    n: int,
+    k: int,
+    out: Tensor,
+    x: Tensor,
+    weightshuffle: Tensor,
+    x_scale_flat: Tensor,
+    w_scale_flat: Tensor,
+    out_dtype: str,
+    fused_promote: bool,
+):
+    key = ("block", m, n, k, out_dtype, bool(fused_promote))
+    compiled = _A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED.get(key)
+    if compiled is None:
+        import flydsl.compiler as flyc
+
+        from .kernels.gemm_a8w8_blockscale_bpreshuffle import (
+            compile_blockscale_preshuffle_gemm,
+        )
+
+        exe = compile_blockscale_preshuffle_gemm(
+            M=m,
+            N=n,
+            K=k,
+            tile_m=64,
+            tile_n=256,
+            tile_k=128,
+            scale_block_k=128,
+            out_dtype=out_dtype,
+            use_async_copy=True,
+            use_cshuffle_epilog=True,
+            waves_per_eu=2,
+            xcd_swizzle=8,
+            fused_promote=bool(fused_promote),
+        )
+        compiled = flyc.compile(
+            exe,
+            out,
+            x,
+            weightshuffle,
+            x_scale_flat,
+            w_scale_flat,
+            m,
+            n,
+            torch.cuda.current_stream(),
+        )
+        _A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED[key] = compiled
+        logger.info(
+            "[FlyDSL][GEMM] compiled A8W8 blockscale bpreshuffle "
+            f"M={m} N={n} K={k} out={out_dtype} fused_promote={fused_promote}"
+        )
+    return compiled
+
+
+def _compile_gemm_a8w8_8wave_blockscale(
+    *,
+    m: int,
+    n: int,
+    k: int,
+    device: torch.device,
+    a_numel: int,
+    b_numel: int,
+    x_scale_numel: int,
+    w_scale_numel: int,
+):
+    key = ("8wave_blockscale", m, n, k, device)
+    compiled = _A8W8_BLOCKSCALE_8WAVE_COMPILED.get(key)
+    if compiled is None:
+        import flydsl.compiler as flyc
+
+        from .kernels.gemm_a8w8_blockscale_bpreshuffle import (
+            compile_fp8_gemm_8w_blockscale,
+        )
+
+        a = torch.empty(a_numel, dtype=torch.int8, device=device)
+        b = torch.empty(b_numel, dtype=torch.int8, device=device)
+        c = torch.empty(m * n, dtype=torch.bfloat16, device=device)
+        sa = torch.empty(x_scale_numel, dtype=torch.float32, device=device)
+        sb = torch.empty(w_scale_numel, dtype=torch.float32, device=device)
+        launch = compile_fp8_gemm_8w_blockscale(
+            K=k,
+            BLOCK_M=128,
+            BLOCK_N=256,
+            b_preshuffled=True,
+        )
+        compiled = flyc.compile(
+            launch,
+            a,
+            b,
+            c,
+            sa,
+            sb,
+            m,
+            n,
+            torch.cuda.current_stream(),
+        )
+        _A8W8_BLOCKSCALE_8WAVE_COMPILED[key] = compiled
+        logger.info(
+            f"[FlyDSL][GEMM] compiled A8W8 8-wave blockscale M={m} N={n} K={k}"
+        )
+    return compiled
+
+
+def flydsl_gemm_a8w8_blockscale_bpreshuffle(
+    XQ: Tensor,
+    WQ: Tensor,
+    x_scale: Tensor,
+    w_scale: Tensor,
+    dtype: torch.dtype = torch.bfloat16,
+    out: Optional[Tensor] = None,
+) -> Tensor:
+    """Run a FlyDSL A8W8 blockscale bpreshuffle GEMM for supported schedules.
+
+    Call ``get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config`` before this
+    function if the caller wants to fall back for unsupported shapes.
+    """
+    out_dtype = _flydsl_gemm_a8w8_out_dtype(dtype)
+    m, k = XQ.shape
+    n = WQ.numel() // k
+    config = get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config(m, n, k)
+    if config is None:
+        raise RuntimeError(f"[FlyDSL][GEMM] unsupported A8W8 shape M={m} N={n} K={k}")
+
+    if not XQ.is_cuda:
+        raise RuntimeError("[FlyDSL][GEMM] A8W8 GEMM requires CUDA/HIP tensors")
+    if XQ.device != WQ.device or XQ.device != x_scale.device or XQ.device != w_scale.device:
+        raise ValueError("[FlyDSL][GEMM] all inputs must be on the same device")
+
+    result = (
+        torch.empty((m, n), dtype=dtype, device=XQ.device)
+        if out is None
+        else out
+    )
+    if result.shape != (m, n):
+        raise ValueError(f"[FlyDSL][GEMM] output shape must be {(m, n)}, got {tuple(result.shape)}")
+    if result.dtype != dtype:
+        raise ValueError(f"[FlyDSL][GEMM] output dtype must be {dtype}, got {result.dtype}")
+
+    result_contig = (
+        result
+        if result.is_contiguous()
+        else torch.empty((m, n), dtype=dtype, device=XQ.device)
+    )
+    x_contig = XQ.contiguous()
+    w_contig = WQ.contiguous()
+    x_scale_flat = x_scale.reshape(-1).contiguous()
+    w_scale_flat = w_scale.reshape(-1).contiguous()
+
+    if config["kind"] == "8wave_blockscale":
+        if dtype != torch.bfloat16:
+            raise ValueError("[FlyDSL][GEMM] 8-wave blockscale kernel currently supports bf16 output only")
+        a_flat = _as_i8_flat(x_contig)
+        b_flat = _as_i8_flat(w_contig)
+        compiled = _compile_gemm_a8w8_8wave_blockscale(
+            m=m,
+            n=n,
+            k=k,
+            device=XQ.device,
+            a_numel=a_flat.numel(),
+            b_numel=b_flat.numel(),
+            x_scale_numel=x_scale_flat.numel(),
+            w_scale_numel=w_scale_flat.numel(),
+        )
+        compiled(
+            a_flat,
+            b_flat,
+            result_contig.reshape(-1),
+            x_scale_flat,
+            w_scale_flat,
+            m,
+            n,
+            torch.cuda.current_stream(),
+        )
+    else:
+        compiled = _compile_gemm_a8w8_blockscale_bpreshuffle(
+            m=m,
+            n=n,
+            k=k,
+            out=result_contig,
+            x=x_contig,
+            weightshuffle=w_contig,
+            x_scale_flat=x_scale_flat,
+            w_scale_flat=w_scale_flat,
+            out_dtype=out_dtype,
+            fused_promote=bool(config["fused_promote"]),
+        )
+        compiled(
+            result_contig,
+            x_contig,
+            w_contig,
+            x_scale_flat,
+            w_scale_flat,
+            m,
+            n,
+            torch.cuda.current_stream(),
+        )
+
+    if result_contig is not result:
+        result.copy_(result_contig)
+    return result
