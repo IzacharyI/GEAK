@@ -25,6 +25,22 @@ def test_gemm_a8w8_blockscale_bpreshuffle_configs_cover_prefill_shapes():
     assert get_config(1024, 7168, 768)["kind"] == "blockscale_preshuffle"
 
 
+def test_gemm_a8w8_blockscale_bpreshuffle_dispatch_is_m_aware():
+    # qkv / q_up / mlp are the same GEMM; the implementation is picked per
+    # (M, N, K), not fixed per shape. The qkv shape (N=2048, K=7168) is the
+    # clearest case: small mid-M dispatches to the small-tile preshuffle kernel
+    # while larger M uses the 8-wave (split-K) kernel.
+    gemm_kernels = _gemm_kernels()
+
+    get_config = gemm_kernels.get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config
+    assert get_config(64, 2048, 7168)["kind"] == "blockscale_preshuffle"
+    assert get_config(256, 2048, 7168)["kind"] == "8wave_blockscale"
+
+    # The same selection is exposed through the internal planner.
+    assert gemm_kernels._select_gemm_plan(64, 2048, 7168)[0] == "preshuffle"
+    assert gemm_kernels._select_gemm_plan(256, 2048, 7168)[0] == "8wave"
+
+
 def test_gemm_a8w8_blockscale_bpreshuffle_rejects_uncovered_shapes():
     gemm_kernels = _gemm_kernels()
 

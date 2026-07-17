@@ -1668,7 +1668,417 @@ def compile_fp8_gemm_8w_blockscale(*, K: int, BLOCK_M: int = 256, BLOCK_N: int =
 
     return launch_gemm
 
+class StoreCWorkspaceF32:
+    """Epilog store for the split-K 8-wave path.
+
+    Writes the *already scaled* fp32 partial fragment to a per-split slice of a
+    workspace tensor ``[SPLIT_K, M, N]`` (flat), without bf16 conversion. A
+    separate reduction kernel later sums the SPLIT_K partials into bf16 ``C``.
+    Mirrors ``StoreCPlain`` fragment->(row,col) mapping exactly so the split-K
+    result matches the full-K kernel.
+    """
+
+    def __init__(self, W, c_rows, c_cols, split_k, c_idx_fn, n_tiles_a, n_tiles_b):
+        self.c_rows = c_rows
+        self.c_cols = c_cols
+        self.split_k = split_k
+        self.lane_id = fx.thread_idx.x % 64
+        self.c_idx_fn = c_idx_fn
+        self.n_tiles_a = n_tiles_a
+        self.n_tiles_b = n_tiles_b
+        w_nbytes = c_rows * c_cols * split_k * 4  # Float32 = 4 bytes
+        gW = fx.rocdl.make_buffer_tensor(W, max_size=False, num_records_bytes=w_nbytes)
+        self.w_div = fx.logical_divide(gW, fx.make_layout(1, 1))
+        self.out_atom_1 = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), fx.Float32)
+        self.reg_f32_1 = fx.make_rmem_tensor(fx.make_layout(1, 1), fx.Float32)
+
+    def _store_f32(self, value_f32, w_index):
+        fx.memref_store_vec(Vec.filled(1, value_f32, fx.Float32), self.reg_f32_1)
+        fx.copy(self.out_atom_1, self.reg_f32_1, fx.slice(self.w_div, (None, fx.Int32(w_index))))
+
+    def store(self, c_frag, base_row, base_col, split_offset):
+        # Absolute one-past-end of the whole workspace: guards padding rows/cols
+        # (M<BLOCK_M or N%BLOCK_N) so they never land in a neighboring split slice.
+        oob = fx.Int32(self.c_rows * self.c_cols * self.split_k)
+        for ti in range_constexpr(self.n_tiles_a):
+            row = base_row + ti * 16 + (self.lane_id // 16) * 4
+            for tj in range_constexpr(self.n_tiles_b):
+                col = base_col + tj * 16 + self.lane_id % 16
+                col_valid = col < self.c_cols
+                vec_f32 = Vec(c_frag[self.c_idx_fn(ti, tj)])
+                for i in range_constexpr(4):
+                    val = vec_f32[i]
+                    rel = split_offset + (row + i) * self.c_cols + col
+                    valid = col_valid & ((row + i) < self.c_rows)
+                    self._store_f32(val, arith.select(valid, rel, oob))
+
+
+def compile_fp8_gemm_8w_blockscale_splitk(
+    *,
+    K: int,
+    SPLIT_K: int,
+    BLOCK_M: int = 128,
+    BLOCK_N: int = 256,
+    b_preshuffled: bool = False,
+    waves_per_eu: int = 2,
+):
+    """Split-K variant of ``compile_fp8_gemm_8w_blockscale``.
+
+    Additive: the original full-K kernel is untouched. Each workgroup processes
+    a contiguous K-sub-range ``[split_id*K_local, (split_id+1)*K_local)`` and
+    writes its scaled fp32 partial to ``W[split_id]``; a reduction kernel sums
+    over ``SPLIT_K``. Grid = ``m_tiles * n_tiles * SPLIT_K`` restores GPU
+    occupancy for the small/mid-M regime where the full-K kernel launches too
+    few workgroups.
+    """
+    BLOCK_K = 128
+
+    assert BLOCK_M >= 128 and BLOCK_N >= 256 and BLOCK_M % 128 == 0 and BLOCK_N % 256 == 0
+    assert K % BLOCK_K == 0
+    assert BLOCK_K == SCALE_BLOCK_K, "this port assumes BLOCK_K == scale_block_k == 128 (kb == k)"
+
+    K_ITERS = K // BLOCK_K
+    assert K_ITERS % SPLIT_K == 0, f"K_ITERS={K_ITERS} must be divisible by SPLIT_K={SPLIT_K}"
+    K_ITERS_LOCAL = K_ITERS // SPLIT_K
+    assert K_ITERS_LOCAL >= 2, f"K_ITERS_LOCAL={K_ITERS_LOCAL} must be >= 2 (reduce SPLIT_K)"
+
+    scale_k = K // SCALE_BLOCK_K
+
+    N_TILES_A = BLOCK_M // 64
+    N_TILES_B = BLOCK_N // 128
+    N_ACCUMS = N_TILES_A * N_TILES_B
+    assert N_ACCUMS > 0
+
+    LDS_BLOCK_M = BLOCK_M // 2
+    LDS_BLOCK_N = BLOCK_N // 2
+    assert LDS_BLOCK_N == SCALE_BLOCK_N, "per-group N span must equal scale_block_n (BLOCK_N must be 256)"
+
+    N_LDS_STEPS_A = LDS_BLOCK_M // 64
+    N_LDS_STEPS_B = LDS_BLOCK_N // 64
+    N_LDS_ROUNDS = max(N_LDS_STEPS_A, N_LDS_STEPS_B)
+
+    NB_PER_BLOCK = BLOCK_N // SCALE_BLOCK_N  # = 2
+    WAVE_M_OFF = N_TILES_A * 16
+
+    a_lds_size = LDS_BLOCK_M * BLOCK_K
+    b_lds_size = LDS_BLOCK_N * BLOCK_K
+
+    @fx.struct
+    class SharedStorage:
+        A_lds_cur_0: fx.Array[fx.Float8E4M3FN, a_lds_size, 16]
+        A_lds_cur_1: fx.Array[fx.Float8E4M3FN, a_lds_size, 16]
+        A_lds_next_0: fx.Array[fx.Float8E4M3FN, a_lds_size, 16]
+        A_lds_next_1: fx.Array[fx.Float8E4M3FN, a_lds_size, 16]
+        B_lds_cur_0: fx.Array[fx.Float8E4M3FN, b_lds_size, 16]
+        B_lds_cur_1: fx.Array[fx.Float8E4M3FN, b_lds_size, 16]
+        B_lds_next_0: fx.Array[fx.Float8E4M3FN, b_lds_size, 16]
+        B_lds_next_1: fx.Array[fx.Float8E4M3FN, b_lds_size, 16]
+
+    @flyc.kernel(known_block_size=[512, 1, 1])
+    def kernel_gemm(
+        A: fx.Tensor,
+        B_T: fx.Tensor,
+        W: fx.Tensor,
+        scale_a: fx.Tensor,
+        scale_b: fx.Tensor,
+        c_m: fx.Int32,
+        c_n: fx.Int32,
+    ):
+        F8_IR_t = fx.Float8E4M3FN.ir_type
+
+        c_M = fx.Index(c_m)
+        # Tile decode + store indices are kept in Int32 (matching the full-K
+        # StoreCPlain path); scale-buffer offsets still use the Index ``c_M``.
+        n_blocks = ceildiv(c_n, BLOCK_N)
+        m_blocks = ceildiv(c_m, BLOCK_M)
+        tiles_per_split = m_blocks * n_blocks
+
+        lds = fx.SharedAllocator().allocate(SharedStorage).peek()
+        a_cur0 = lds.A_lds_cur_0
+        a_cur1 = lds.A_lds_cur_1
+        a_next0 = lds.A_lds_next_0
+        a_next1 = lds.A_lds_next_1
+        b_cur0 = lds.B_lds_cur_0
+        b_cur1 = lds.B_lds_cur_1
+        b_next0 = lds.B_lds_next_0
+        b_next1 = lds.B_lds_next_1
+
+        lane_id = fx.thread_idx.x % 64
+        wave_id = fx.thread_idx.x // 64
+        wave_m = wave_id // 4
+        wave_n = wave_id % 4
+
+        # Split-K grid decode: block_idx = split_id * tiles_per_split + tile_idx.
+        # (No XCD remap on this path; occupancy, not rasterization, is the win.)
+        split_id, tile_idx = divmod(fx.block_idx.x, tiles_per_split)
+        block_m, block_n = divmod(tile_idx, n_blocks)
+
+        # Runtime K-block start for this split (in units of BLOCK_K iterations).
+        k_start = split_id * K_ITERS_LOCAL
+
+        A0_gl_offset = (block_m * BLOCK_M) * K + k_start * BLOCK_K
+        A1_gl_offset = (block_m * BLOCK_M + LDS_BLOCK_M) * K + k_start * BLOCK_K
+        B_K_STEP = (2 * 1024) if b_preshuffled else BLOCK_K
+        B0_gl_offset = (block_n * BLOCK_N) * K + k_start * B_K_STEP
+        B1_gl_offset = (block_n * BLOCK_N + LDS_BLOCK_N) * K + k_start * B_K_STEP
+
+        gA = make_fp8_buffer_tensor(A, F8_IR_t)
+        gB = make_fp8_buffer_tensor(B_T, F8_IR_t)
+        a_div = fx.logical_divide(gA, fx.make_layout(1, 1))
+        b_div = fx.logical_divide(gB, fx.make_layout(1, 1))
+
+        gl_off_a = compute_global_swizzle(lane_id, wave_id, K, N_LDS_ROUNDS, preshuffled=False)
+        gl_off_b = compute_global_swizzle(lane_id, wave_id, K, N_LDS_ROUNDS, preshuffled=b_preshuffled)
+
+        mfma = Mfma16x16x128(N_TILES_A, N_TILES_B)
+        zero_c = [mfma.zero_value] * N_ACCUMS
+
+        a_g2s = G2SLoader(a_div, gl_off_a, N_LDS_STEPS_A, F8_IR_t, wave_id)
+        b_g2s = G2SLoader(b_div, gl_off_b, N_LDS_STEPS_B, F8_IR_t, wave_id)
+        a_s2r = S2RLoader(wave_m, N_TILES_A)
+        b_s2r = S2RLoader(wave_n, N_TILES_B)
+        store_w = StoreCWorkspaceF32(W, c_m, c_n, SPLIT_K, mfma.idx, N_TILES_A, N_TILES_B)
+
+        sa_nbytes = scale_k * c_M * 4  # [scale_k, M] f32
+        scale_a_rsrc = buffer_ops.create_buffer_resource(scale_a, max_size=False, num_records_bytes=sa_nbytes)
+        scale_b_rsrc = buffer_ops.create_buffer_resource(scale_b, max_size=True)
+
+        lane_row_off = (lane_id // 16) * 4
+        nb0 = block_n * NB_PER_BLOCK
+        nb1 = nb0 + 1
+        xrow0 = block_m * BLOCK_M + wave_m * WAVE_M_OFF + lane_row_off
+        xrow1 = xrow0 + LDS_BLOCK_M
+
+        def preload_scales(kb):
+            w0 = Vec.filled(4, fx.Float32(buffer_ops.buffer_load(scale_b_rsrc, nb0 * scale_k + kb, vec_width=1, dtype=T.f32)), fx.Float32)
+            w1 = Vec.filled(4, fx.Float32(buffer_ops.buffer_load(scale_b_rsrc, nb1 * scale_k + kb, vec_width=1, dtype=T.f32)), fx.Float32)
+            base = kb * c_M
+            xs0 = [
+                Vec(buffer_ops.buffer_load(scale_a_rsrc, base + xrow0 + ti * 16, vec_width=4, dtype=T.f32)).bitcast(fx.Float32)
+                for ti in range_constexpr(N_TILES_A)
+            ]
+            xs1 = [
+                Vec(buffer_ops.buffer_load(scale_a_rsrc, base + xrow1 + ti * 16, vec_width=4, dtype=T.f32)).bitcast(fx.Float32)
+                for ti in range_constexpr(N_TILES_A)
+            ]
+            return xs0, xs1, w0, w1
+
+        def promote(blk, c_frag, xs, w):
+            out = list(c_frag)
+            for ti in range_constexpr(N_TILES_A):
+                comb = xs[ti] * w
+                for tj in range_constexpr(N_TILES_B):
+                    idx = ti * N_TILES_B + tj
+                    out[idx] = math_dialect.fma(blk[idx], comb, c_frag[idx])
+            return out
+
+        acc_init = fx.full(4, 0.0, fx.Float32)
+        c00_frag = [acc_init] * N_ACCUMS
+        c01_frag = [acc_init] * N_ACCUMS
+        c10_frag = [acc_init] * N_ACCUMS
+        c11_frag = [acc_init] * N_ACCUMS
+
+        b_g2s.load(b_cur0, B0_gl_offset + 0 * B_K_STEP)
+        a_g2s.load(a_cur0, A0_gl_offset + 0 * BLOCK_K)
+        b_g2s.load(b_cur1, B1_gl_offset + 0 * B_K_STEP)
+        a_g2s.load(a_cur1, A1_gl_offset + 0 * BLOCK_K)
+
+        if wave_m == 1:
+            rocdl.s_barrier()
+
+        wait_barrier(N_LDS_STEPS_A + N_LDS_STEPS_B)
+
+        b_g2s.load(b_next0, B0_gl_offset + 1 * B_K_STEP)
+        a_g2s.load(a_next0, A0_gl_offset + 1 * BLOCK_K)
+        b_g2s.load(b_next1, B1_gl_offset + 1 * B_K_STEP)
+
+        wait_barrier(N_LDS_STEPS_A + 2 * N_LDS_STEPS_B)
+
+        for k in range_constexpr(K_ITERS_LOCAL - 2):
+            xs0, xs1, w0, w1 = preload_scales(k_start + k)
+            b0_frag = b_s2r.load(b_cur0, preshuffled=b_preshuffled)
+            a0_frag = a_s2r.load(a_cur0)
+            a_g2s.load(a_next1, A1_gl_offset + (k + 1) * BLOCK_K)
+            rocdl.s_barrier()
+
+            c00_blk = mfma.call(a0_frag, b0_frag, zero_c)
+
+            b1_frag = b_s2r.load(b_cur1, preshuffled=b_preshuffled)
+            b_g2s.load(b_cur0, B0_gl_offset + (k + 2) * B_K_STEP)
+            rocdl.s_barrier()
+
+            c01_blk = mfma.call(a0_frag, b1_frag, zero_c)
+
+            a1_frag = a_s2r.load(a_cur1)
+            a_g2s.load(a_cur0, A0_gl_offset + (k + 2) * BLOCK_K)
+            rocdl.s_barrier()
+
+            c10_blk = mfma.call(a1_frag, b0_frag, zero_c)
+
+            b_g2s.load(b_cur1, B1_gl_offset + (k + 2) * B_K_STEP)
+            wait_barrier(2 * N_LDS_STEPS_A + N_LDS_STEPS_B)
+
+            c11_blk = mfma.call(a1_frag, b1_frag, zero_c)
+            c00_frag = promote(c00_blk, c00_frag, xs0, w0)
+            c01_frag = promote(c01_blk, c01_frag, xs0, w1)
+            c10_frag = promote(c10_blk, c10_frag, xs1, w0)
+            c11_frag = promote(c11_blk, c11_frag, xs1, w1)
+
+            a_cur0, a_next0 = a_next0, a_cur0
+            a_cur1, a_next1 = a_next1, a_cur1
+            b_cur0, b_next0 = b_next0, b_cur0
+            b_cur1, b_next1 = b_next1, b_cur1
+
+        # Step local k = K_ITERS_LOCAL - 2
+        k = K_ITERS_LOCAL - 2
+        xs0, xs1, w0, w1 = preload_scales(k_start + k)
+        b0_frag = b_s2r.load(b_cur0, preshuffled=b_preshuffled)
+        a0_frag = a_s2r.load(a_cur0)
+        rocdl.s_barrier()
+
+        c00_blk = mfma.call(a0_frag, b0_frag, zero_c)
+
+        b1_frag = b_s2r.load(b_cur1, preshuffled=b_preshuffled)
+        rocdl.s_barrier()
+
+        c01_blk = mfma.call(a0_frag, b1_frag, zero_c)
+        c00_frag = promote(c00_blk, c00_frag, xs0, w0)
+
+        a1_frag = a_s2r.load(a_cur1)
+        a_g2s.load(a_next1, A1_gl_offset + (K_ITERS_LOCAL - 1) * BLOCK_K)
+        rocdl.s_barrier()
+
+        c10_blk = mfma.call(a1_frag, b0_frag, zero_c)
+        c01_frag = promote(c01_blk, c01_frag, xs0, w1)
+
+        b0_frag = b_s2r.load(b_next0, preshuffled=b_preshuffled)
+        rocdl.s_barrier()
+
+        c11_blk = mfma.call(a1_frag, b1_frag, zero_c)
+        c10_frag = promote(c10_blk, c10_frag, xs1, w0)
+        c11_frag = promote(c11_blk, c11_frag, xs1, w1)
+
+        a_cur0, a_next0 = a_next0, a_cur0
+        a_cur1, a_next1 = a_next1, a_cur1
+        b_cur0, b_next0 = b_next0, b_cur0
+        b_cur1, b_next1 = b_next1, b_cur1
+
+        # Step local k = K_ITERS_LOCAL - 1
+        k = K_ITERS_LOCAL - 1
+        xs0, xs1, w0, w1 = preload_scales(k_start + k)
+        a0_frag = a_s2r.load(a_cur0)
+        wait_barrier(0)
+
+        c00_blk = mfma.call(a0_frag, b0_frag, zero_c)
+
+        b1_frag = b_s2r.load(b_cur1, preshuffled=b_preshuffled)
+        rocdl.s_barrier()
+
+        c01_blk = mfma.call(a0_frag, b1_frag, zero_c)
+        c00_frag = promote(c00_blk, c00_frag, xs0, w0)
+
+        a1_frag = a_s2r.load(a_cur1)
+        rocdl.s_barrier()
+
+        rocdl.s_setprio(1)
+        c10_blk = mfma.call(a1_frag, b0_frag, zero_c)
+        c11_blk = mfma.call(a1_frag, b1_frag, zero_c)
+        c01_frag = promote(c01_blk, c01_frag, xs0, w1)
+        c10_frag = promote(c10_blk, c10_frag, xs1, w0)
+        c11_frag = promote(c11_blk, c11_frag, xs1, w1)
+        rocdl.s_setprio(0)
+        rocdl.s_barrier()
+
+        wave_n_offset = wave_n * (N_TILES_B * 16)
+        wave_m_offset = wave_m * (N_TILES_A * 16)
+        base_row = block_m * BLOCK_M + wave_m_offset
+        base_col = block_n * BLOCK_N + wave_n_offset
+        split_offset = split_id * (c_m * c_n)
+
+        store_w.store(c00_frag, base_row + 0, base_col + 0, split_offset)
+        store_w.store(c01_frag, base_row + 0, base_col + LDS_BLOCK_N, split_offset)
+        store_w.store(c10_frag, base_row + LDS_BLOCK_M, base_col + 0, split_offset)
+        store_w.store(c11_frag, base_row + LDS_BLOCK_M, base_col + LDS_BLOCK_N, split_offset)
+
+    @flyc.jit
+    def launch_gemm(
+        A: fx.Tensor,
+        B_T: fx.Tensor,
+        W: fx.Tensor,
+        scale_a: fx.Tensor,
+        scale_b: fx.Tensor,
+        c_m: fx.Int32,
+        c_n: fx.Int32,
+        stream: fx.Stream,
+    ):
+        grid_x = ceildiv(c_m, BLOCK_M) * ceildiv(c_n, BLOCK_N) * SPLIT_K
+        kernel_gemm(
+            A,
+            B_T,
+            W,
+            scale_a,
+            scale_b,
+            c_m,
+            c_n,
+            value_attrs={"rocdl.waves_per_eu": waves_per_eu, "rocdl.flat_work_group_size": "512,512"},
+        ).launch(grid=(grid_x, 1, 1), block=(512, 1, 1), stream=stream)
+
+    return launch_gemm
+
+
+def compile_fp32_splitk_reduce(*, SPLIT_K: int, BLOCK: int = 256, VEC: int = 4):
+    """Sum an fp32 workspace ``[SPLIT_K, M*N]`` over the split axis into bf16 ``C``.
+
+    One flat index space over ``M*N``; each lane reduces ``VEC`` contiguous
+    output elements across ``SPLIT_K`` partials. Grid is sized by the host.
+    """
+
+    @flyc.kernel(known_block_size=[BLOCK, 1, 1])
+    def kernel_reduce(
+        W: fx.Tensor,
+        C: fx.Tensor,
+        n_elems: fx.Int32,
+    ):
+        n_e = fx.Index(n_elems)
+        gW = fx.rocdl.make_buffer_tensor(W, max_size=True)
+        gC = fx.rocdl.make_buffer_tensor(C, max_size=False, num_records_bytes=n_elems * 2)
+        w_div = fx.logical_divide(gW, fx.make_layout(1, 1))
+        c_div = fx.logical_divide(gC, fx.make_layout(1, 1))
+        in_atom = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), fx.Float32)
+        out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy16b(), fx.BFloat16)
+        reg_in = fx.make_rmem_tensor(fx.make_layout(1, 1), fx.Float32)
+        reg_out = fx.make_rmem_tensor(fx.make_layout(1, 1), fx.BFloat16)
+
+        tid = fx.Index(fx.block_idx.x) * BLOCK + fx.Index(fx.thread_idx.x)
+        base = tid * VEC
+        for v in range_constexpr(VEC):
+            idx = base + v
+            valid = idx < n_e
+            oob = n_e * SPLIT_K
+            acc = fx.Float32(0.0)
+            for s in range_constexpr(SPLIT_K):
+                src = arith.select(valid, s * n_e + idx, oob)
+                fx.copy(in_atom, fx.slice(w_div, (None, fx.Int32(src))), reg_in)
+                acc = acc + Vec(fx.memref_load_vec(reg_in))[0]
+            fx.memref_store_vec(Vec.filled(1, acc.to(fx.BFloat16), fx.BFloat16), reg_out)
+            fx.copy(out_atom, reg_out, fx.slice(c_div, (None, fx.Int32(arith.select(valid, idx, n_e)))))
+
+    @flyc.jit
+    def launch_reduce(
+        W: fx.Tensor,
+        C: fx.Tensor,
+        n_elems: fx.Int32,
+        stream: fx.Stream,
+    ):
+        grid_x = ceildiv(n_elems, BLOCK * VEC)
+        kernel_reduce(W, C, n_elems).launch(grid=(grid_x, 1, 1), block=(BLOCK, 1, 1), stream=stream)
+
+    return launch_reduce
+
+
 __all__ = [
     "compile_blockscale_preshuffle_gemm",
     "compile_fp8_gemm_8w_blockscale",
+    "compile_fp8_gemm_8w_blockscale_splitk",
+    "compile_fp32_splitk_reduce",
 ]

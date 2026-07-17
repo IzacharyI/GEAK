@@ -99,31 +99,112 @@ KERNEL_CONFIG_VARIANTS = [
 _SPLITK_HGEMM_KERNELS: Dict[str, Dict] = {}
 _A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED: dict[tuple, object] = {}
 _A8W8_BLOCKSCALE_8WAVE_COMPILED: dict[tuple, object] = {}
+# Additive small/mid-M split-K path for the 8-wave blockscale kernel. The full-K
+# kernel (``_A8W8_BLOCKSCALE_8WAVE_COMPILED``) and its dispatch are left untouched;
+# split-K only engages where the full-K grid underutilizes the GPU.
+_A8W8_BLOCKSCALE_8WAVE_SPLITK_COMPILED: dict[tuple, object] = {}
+_FP32_SPLITK_REDUCE_COMPILED: dict[tuple, object] = {}
+_SPLITK_WORKSPACE: dict[torch.device, Tensor] = {}
 
-_A8W8_BLOCKSCALE_BPRESHUFFLE_SHAPE_CONFIGS: dict[tuple[int, int], Dict[str, object]] = {
-    (2048, 7168): {
-        "kind": "8wave_blockscale",
-        "tile_m": 128,
-        "tile_n": 256,
-        "tile_k": 128,
-        "b_preshuffled": True,
-    },
-    (65536, 1536): {
-        "kind": "blockscale_preshuffle",
-        "tile_m": 64,
-        "tile_n": 256,
-        "tile_k": 128,
-        "fused_promote": False,
-    },
-    (7168, 768): {
-        "kind": "blockscale_preshuffle",
-        "tile_m": 64,
-        "tile_n": 256,
-        "tile_k": 128,
-        "fused_promote": True,
-    },
+
+@functools.lru_cache(maxsize=1)
+def _cu_num() -> int:
+    try:
+        from aiter.jit.utils.chip_info import get_cu_num
+
+        return int(get_cu_num())
+    except Exception:  # noqa: BLE001
+        return 256  # gfx950 default
+
+
+def _largest_valid_split_k(k: int, cap: int) -> int:
+    """Largest divisor ``d`` of ``K/128`` with ``d <= cap`` and ``(K/128)/d >= 2``."""
+    k_iters = k // 128
+    best = 1
+    for d in range(1, min(cap, k_iters // 2) + 1):
+        if k_iters % d == 0:
+            best = d
+    return best
+
+
+_INF = float("inf")
+
+# ─── Unified GEMM dispatch (single source of truth) ──────────────────────────
+# qkv / q_up / mlp_down are the SAME op (A8W8 blockscale bpreshuffle GEMM); only
+# the best *implementation* differs by (M, N, K). This one table plays the role
+# of CK's tuned-config lookup: (n, k) -> ordered ((m_max, plan), ...), and the
+# first row with ``m <= m_max`` wins. A plan is exactly one of:
+#     ("preshuffle", tile_m, tile_n, fused_promote)  # preshuffle kernel, any tile
+#     ("8wave", split_k)                             # 8-wave kernel, 1 == full-K
+# (N, K) outside the table falls back to ``_GEMM_DEFAULT_PLAN`` (like CK's default
+# non-tuned kernel). 8-wave split-K values are snapped to a valid K/128 divisor.
+#
+# Tuning rationale (all measured on gfx950 / GPU4):
+#  - (2048,7168) qkv: N=2048 => only 8 N-tiles at the 8-wave BLOCK_N=256 (which is
+#    hard-locked), so the 8-wave grid is occupancy-starved below M~4096. M<=47
+#    uses split-K=8 (tiny M already beats CK once host overhead is gone); M in
+#    [48,128] switches to a tile_n=64 preshuffle tile (32 N-tiles fill the GPU
+#    with no reduction pass); M in [129,2048] uses split-K (8/4/2 as the SPLIT_K*
+#    M*N reduction traffic grows); M>2048 the full-K grid already saturates.
+#  - (65536,1536) q_up: 256 N-tiles already fill the GPU, so the only small-M
+#    loss is padding waste from a 64-row tile -> tile_m=32 for M<=64.
+#  - (7168,768) mlp_down: preshuffle with fused per-row promote across all M.
+_GEMM_DISPATCH: dict[tuple[int, int], tuple[tuple[float, tuple], ...]] = {
+    (2048, 7168): (
+        (47, ("8wave", 8)),
+        (128, ("preshuffle", 32, 64, False)),
+        (384, ("8wave", 8)),
+        (1024, ("8wave", 4)),
+        (2048, ("8wave", 2)),
+        (_INF, ("8wave", 1)),
+    ),
+    (65536, 1536): (
+        (64, ("preshuffle", 32, 256, False)),
+        (_INF, ("preshuffle", 64, 256, False)),
+    ),
+    (7168, 768): (
+        (_INF, ("preshuffle", 64, 256, True)),
+    ),
 }
 
+# Default for (N, K) not in the tuned table (mirrors CK's default kernel): the
+# full-tile preshuffle kernel handles any shape meeting the kernel constraints.
+_GEMM_DEFAULT_PLAN = ("preshuffle", 64, 256, False)
+
+
+def _select_gemm_plan(m: int, n: int, k: int) -> tuple:
+    """Single source of truth for GEMM dispatch: return the best FlyDSL
+    implementation plan for (M, N, K). Same GEMM everywhere -- only the chosen
+    kernel/params vary by shape. See ``_GEMM_DISPATCH`` for the plan format."""
+    rows = _GEMM_DISPATCH.get((n, k))
+    if rows is None:
+        return _GEMM_DEFAULT_PLAN
+    for m_max, plan in rows:
+        if m <= m_max:
+            if plan[0] == "8wave" and plan[1] > 1:
+                return ("8wave", _largest_valid_split_k(k, plan[1]))
+            return plan
+    return _GEMM_DEFAULT_PLAN
+
+
+# torch.cuda.current_stream() costs ~2.5us/call (Python Stream construction +
+# device detection) which dominates the host overhead on short kernels. The raw
+# handle from torch._C._cuda_getCurrentStream is ~0.085us and faithfully
+# reflects the active stream (including custom stream contexts), so we use it as
+# a cache key to memoize the Stream object the compiled kernels require.
+_CURRENT_STREAM_CACHE: dict = {}
+
+
+def _fast_current_stream(device: torch.device):
+    idx = device.index
+    if idx is None:
+        idx = torch.cuda.current_device()
+    raw = torch._C._cuda_getCurrentStream(idx)
+    stream = _CURRENT_STREAM_CACHE.get(raw)
+    if stream is None:
+        stream = torch.cuda.current_stream(device)
+        _CURRENT_STREAM_CACHE[raw] = stream
+    return stream
 
 def _normalize_supported_kernel_metadata(
     *,
@@ -1099,10 +1180,25 @@ def flydsl_preshuffle_gemm_a8(
 def get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config(
     m: int, n: int, k: int
 ) -> Optional[Dict[str, object]]:
-    """Return the FlyDSL A8W8 blockscale bpreshuffle GEMM config for a shape."""
-    del m
-    config = _A8W8_BLOCKSCALE_BPRESHUFFLE_SHAPE_CONFIGS.get((n, k))
-    return None if config is None else dict(config)
+    """Describe the FlyDSL implementation chosen for the (M, N, K) GEMM, or
+    ``None`` when (N, K) is outside the tuned set (caller falls back, e.g. to CK).
+
+    ``kind`` is derived from the unified dispatch, so it reflects the actual
+    per-(M, N, K) kernel choice (e.g. qkv small-M dispatches to preshuffle)
+    rather than a fixed per-shape label -- all shapes are the same GEMM."""
+    if (n, k) not in _GEMM_DISPATCH:
+        return None
+    plan = _select_gemm_plan(m, n, k)
+    if plan[0] == "8wave":
+        return {"kind": "8wave_blockscale", "split_k": plan[1]}
+    _, tile_m, tile_n, fused_promote = plan
+    return {
+        "kind": "blockscale_preshuffle",
+        "tile_m": tile_m,
+        "tile_n": tile_n,
+        "tile_k": 128,
+        "fused_promote": fused_promote,
+    }
 
 
 def _flydsl_gemm_a8w8_out_dtype(dtype: torch.dtype) -> str:
@@ -1132,8 +1228,10 @@ def _compile_gemm_a8w8_blockscale_bpreshuffle(
     w_scale_flat: Tensor,
     out_dtype: str,
     fused_promote: bool,
+    tile_m: int = 64,
+    tile_n: int = 256,
 ):
-    key = ("block", m, n, k, out_dtype, bool(fused_promote))
+    key = ("block", m, n, k, out_dtype, bool(fused_promote), int(tile_m), int(tile_n))
     compiled = _A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED.get(key)
     if compiled is None:
         import flydsl.compiler as flyc
@@ -1146,8 +1244,8 @@ def _compile_gemm_a8w8_blockscale_bpreshuffle(
             M=m,
             N=n,
             K=k,
-            tile_m=64,
-            tile_n=256,
+            tile_m=int(tile_m),
+            tile_n=int(tile_n),
             tile_k=128,
             scale_block_k=128,
             out_dtype=out_dtype,
@@ -1171,7 +1269,8 @@ def _compile_gemm_a8w8_blockscale_bpreshuffle(
         _A8W8_BLOCKSCALE_BPRESHUFFLE_COMPILED[key] = compiled
         logger.info(
             "[FlyDSL][GEMM] compiled A8W8 blockscale bpreshuffle "
-            f"M={m} N={n} K={k} out={out_dtype} fused_promote={fused_promote}"
+            f"M={m} N={n} K={k} out={out_dtype} fused_promote={fused_promote} "
+            f"tile_m={tile_m} tile_n={tile_n}"
         )
     return compiled
 
@@ -1225,6 +1324,75 @@ def _compile_gemm_a8w8_8wave_blockscale(
     return compiled
 
 
+def _compile_gemm_a8w8_8wave_blockscale_splitk(
+    *,
+    m: int,
+    n: int,
+    k: int,
+    split_k: int,
+    device: torch.device,
+    a_numel: int,
+    b_numel: int,
+    x_scale_numel: int,
+    w_scale_numel: int,
+):
+    key = ("8wave_blockscale_splitk", m, n, k, split_k, device)
+    compiled = _A8W8_BLOCKSCALE_8WAVE_SPLITK_COMPILED.get(key)
+    if compiled is None:
+        import flydsl.compiler as flyc
+
+        from .kernels.gemm_a8w8_blockscale_bpreshuffle import (
+            compile_fp8_gemm_8w_blockscale_splitk,
+        )
+
+        a = torch.empty(a_numel, dtype=torch.int8, device=device)
+        b = torch.empty(b_numel, dtype=torch.int8, device=device)
+        w = torch.empty(split_k * m * n, dtype=torch.float32, device=device)
+        sa = torch.empty(x_scale_numel, dtype=torch.float32, device=device)
+        sb = torch.empty(w_scale_numel, dtype=torch.float32, device=device)
+        launch = compile_fp8_gemm_8w_blockscale_splitk(
+            K=k,
+            SPLIT_K=split_k,
+            BLOCK_M=128,
+            BLOCK_N=256,
+            b_preshuffled=True,
+        )
+        compiled = flyc.compile(
+            launch, a, b, w, sa, sb, m, n, torch.cuda.current_stream()
+        )
+        _A8W8_BLOCKSCALE_8WAVE_SPLITK_COMPILED[key] = compiled
+        logger.info(
+            f"[FlyDSL][GEMM] compiled A8W8 8-wave split-K M={m} N={n} K={k} SPLIT_K={split_k}"
+        )
+    return compiled
+
+
+def _compile_fp32_splitk_reduce(*, split_k: int, device: torch.device, n_elems: int):
+    key = ("fp32_splitk_reduce", split_k, device)
+    compiled = _FP32_SPLITK_REDUCE_COMPILED.get(key)
+    if compiled is None:
+        import flydsl.compiler as flyc
+
+        from .kernels.gemm_a8w8_blockscale_bpreshuffle import (
+            compile_fp32_splitk_reduce,
+        )
+
+        w = torch.empty(split_k * n_elems, dtype=torch.float32, device=device)
+        c = torch.empty(n_elems, dtype=torch.bfloat16, device=device)
+        launch = compile_fp32_splitk_reduce(SPLIT_K=split_k)
+        compiled = flyc.compile(launch, w, c, n_elems, torch.cuda.current_stream())
+        _FP32_SPLITK_REDUCE_COMPILED[key] = compiled
+    return compiled
+
+
+def _get_splitk_workspace(device: torch.device, numel: int) -> Tensor:
+    buf = _SPLITK_WORKSPACE.get(device)
+    if buf is None or buf.numel() < numel:
+        buf = torch.empty(numel, dtype=torch.float32, device=device)
+        _SPLITK_WORKSPACE[device] = buf
+    return buf[:numel]
+
+
 def flydsl_gemm_a8w8_blockscale_bpreshuffle(
     XQ: Tensor,
     WQ: Tensor,
@@ -1232,6 +1400,7 @@ def flydsl_gemm_a8w8_blockscale_bpreshuffle(
     w_scale: Tensor,
     dtype: torch.dtype = torch.bfloat16,
     out: Optional[Tensor] = None,
+    _split_k: Optional[int] = None,
 ) -> Tensor:
     """Run a FlyDSL A8W8 blockscale bpreshuffle GEMM for supported schedules.
 
@@ -1241,9 +1410,14 @@ def flydsl_gemm_a8w8_blockscale_bpreshuffle(
     out_dtype = _flydsl_gemm_a8w8_out_dtype(dtype)
     m, k = XQ.shape
     n = WQ.numel() // k
-    config = get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config(m, n, k)
-    if config is None:
+    # One unified dispatch for the whole op: qkv / q_up / mlp_down are the same
+    # GEMM and differ only in which implementation is fastest for their (M, N, K).
+    # Shapes outside the tuned set are rejected (callers gate on the public
+    # accessor). ``_split_k`` forces the 8-wave split-K path (measurement hook);
+    # otherwise the tuned selector picks the best plan for this (M, N, K).
+    if (n, k) not in _GEMM_DISPATCH:
         raise RuntimeError(f"[FlyDSL][GEMM] unsupported A8W8 shape M={m} N={n} K={k}")
+    plan = ("8wave", _split_k) if _split_k is not None else _select_gemm_plan(m, n, k)
 
     if not XQ.is_cuda:
         raise RuntimeError("[FlyDSL][GEMM] A8W8 GEMM requires CUDA/HIP tensors")
@@ -1267,35 +1441,63 @@ def flydsl_gemm_a8w8_blockscale_bpreshuffle(
     )
     x_contig = XQ.contiguous()
     w_contig = WQ.contiguous()
-    x_scale_flat = x_scale.reshape(-1).contiguous()
-    w_scale_flat = w_scale.reshape(-1).contiguous()
+    # The compiled kernels consume the scales via their data pointer, so a
+    # contiguous tensor of any shape carries the correct flat layout. Skipping
+    # reshape(-1) on the common contiguous path saves ~0.6us/call each, which is
+    # significant on short kernels (e.g. mlp_down ~8us). Non-contiguous inputs
+    # still get a properly ordered 1-D copy.
+    x_scale_flat = x_scale if x_scale.is_contiguous() else x_scale.reshape(-1).contiguous()
+    w_scale_flat = w_scale if w_scale.is_contiguous() else w_scale.reshape(-1).contiguous()
 
-    if config["kind"] == "8wave_blockscale":
+    if plan[0] == "8wave":
         if dtype != torch.bfloat16:
             raise ValueError("[FlyDSL][GEMM] 8-wave blockscale kernel currently supports bf16 output only")
         a_flat = _as_i8_flat(x_contig)
         b_flat = _as_i8_flat(w_contig)
-        compiled = _compile_gemm_a8w8_8wave_blockscale(
-            m=m,
-            n=n,
-            k=k,
-            device=XQ.device,
-            a_numel=a_flat.numel(),
-            b_numel=b_flat.numel(),
-            x_scale_numel=x_scale_flat.numel(),
-            w_scale_numel=w_scale_flat.numel(),
-        )
-        compiled(
-            a_flat,
-            b_flat,
-            result_contig.reshape(-1),
-            x_scale_flat,
-            w_scale_flat,
-            m,
-            n,
-            torch.cuda.current_stream(),
-        )
-    else:
+        split_k = plan[1]
+        if split_k and split_k > 1:
+            # Additive split-K path: partials -> fp32 workspace -> bf16 reduce.
+            stream = _fast_current_stream(XQ.device)
+            workspace = _get_splitk_workspace(XQ.device, split_k * m * n)
+            gemm = _compile_gemm_a8w8_8wave_blockscale_splitk(
+                m=m,
+                n=n,
+                k=k,
+                split_k=split_k,
+                device=XQ.device,
+                a_numel=a_flat.numel(),
+                b_numel=b_flat.numel(),
+                x_scale_numel=x_scale_flat.numel(),
+                w_scale_numel=w_scale_flat.numel(),
+            )
+            gemm(a_flat, b_flat, workspace, x_scale_flat, w_scale_flat, m, n, stream)
+            reduce = _compile_fp32_splitk_reduce(
+                split_k=split_k, device=XQ.device, n_elems=m * n
+            )
+            reduce(workspace, result_contig.reshape(-1), m * n, stream)
+        else:
+            compiled = _compile_gemm_a8w8_8wave_blockscale(
+                m=m,
+                n=n,
+                k=k,
+                device=XQ.device,
+                a_numel=a_flat.numel(),
+                b_numel=b_flat.numel(),
+                x_scale_numel=x_scale_flat.numel(),
+                w_scale_numel=w_scale_flat.numel(),
+            )
+            compiled(
+                a_flat,
+                b_flat,
+                result_contig.reshape(-1),
+                x_scale_flat,
+                w_scale_flat,
+                m,
+                n,
+                _fast_current_stream(XQ.device),
+            )
+    else:  # preshuffle kernel (small- or full-tile), supports bf16 and fp16
+        _, tile_m, tile_n, fused_promote = plan
         compiled = _compile_gemm_a8w8_blockscale_bpreshuffle(
             m=m,
             n=n,
@@ -1306,7 +1508,9 @@ def flydsl_gemm_a8w8_blockscale_bpreshuffle(
             x_scale_flat=x_scale_flat,
             w_scale_flat=w_scale_flat,
             out_dtype=out_dtype,
-            fused_promote=bool(config["fused_promote"]),
+            fused_promote=fused_promote,
+            tile_m=tile_m,
+            tile_n=tile_n,
         )
         compiled(
             result_contig,
@@ -1316,7 +1520,7 @@ def flydsl_gemm_a8w8_blockscale_bpreshuffle(
             w_scale_flat,
             m,
             n,
-            torch.cuda.current_stream(),
+            _fast_current_stream(XQ.device),
         )
 
     if result_contig is not result:
