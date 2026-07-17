@@ -1179,26 +1179,18 @@ def flydsl_preshuffle_gemm_a8(
 
 def get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config(
     m: int, n: int, k: int
-) -> Optional[Dict[str, object]]:
-    """Describe the FlyDSL implementation chosen for the (M, N, K) GEMM, or
-    ``None`` when (N, K) is outside the tuned set (caller falls back, e.g. to CK).
+) -> Optional[tuple]:
+    """Return whether FlyDSL handles this (M, N, K) GEMM, and if so the internal
+    plan it will run. ``None`` means (N, K) is outside the tuned set so the
+    caller should fall back (e.g. to CK).
 
-    ``kind`` is derived from the unified dispatch, so it reflects the actual
-    per-(M, N, K) kernel choice (e.g. qkv small-M dispatches to preshuffle)
-    rather than a fixed per-shape label -- all shapes are the same GEMM."""
+    There is only one op here: A8W8 block-scale bpreshuffle GEMM. Callers select
+    it purely by shape and should treat a non-None result as "supported" -- the
+    returned plan is an opaque handle for the internally-selected kernel/params
+    and is not a functional classification to branch on."""
     if (n, k) not in _GEMM_DISPATCH:
         return None
-    plan = _select_gemm_plan(m, n, k)
-    if plan[0] == "8wave":
-        return {"kind": "8wave_blockscale", "split_k": plan[1]}
-    _, tile_m, tile_n, fused_promote = plan
-    return {
-        "kind": "blockscale_preshuffle",
-        "tile_m": tile_m,
-        "tile_n": tile_n,
-        "tile_k": 128,
-        "fused_promote": fused_promote,
-    }
+    return _select_gemm_plan(m, n, k)
 
 
 def _flydsl_gemm_a8w8_out_dtype(dtype: torch.dtype) -> str:

@@ -16,29 +16,27 @@ def _gemm_kernels():
     return gemm_kernels
 
 
-def test_gemm_a8w8_blockscale_bpreshuffle_configs_cover_prefill_shapes():
+def test_gemm_a8w8_blockscale_bpreshuffle_supports_prefill_shapes():
+    # One op (A8W8 block-scale bpreshuffle GEMM); shapes are supported or not.
+    # We check support by shape, not which kernel is selected underneath.
     gemm_kernels = _gemm_kernels()
 
     get_config = gemm_kernels.get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config
-    assert get_config(256, 2048, 7168)["kind"] == "8wave_blockscale"
-    assert get_config(256, 65536, 1536)["kind"] == "blockscale_preshuffle"
-    assert get_config(1024, 7168, 768)["kind"] == "blockscale_preshuffle"
+    assert get_config(256, 2048, 7168) is not None
+    assert get_config(256, 65536, 1536) is not None
+    assert get_config(1024, 7168, 768) is not None
 
 
-def test_gemm_a8w8_blockscale_bpreshuffle_dispatch_is_m_aware():
-    # qkv / q_up / mlp are the same GEMM; the implementation is picked per
-    # (M, N, K), not fixed per shape. The qkv shape (N=2048, K=7168) is the
-    # clearest case: small mid-M dispatches to the small-tile preshuffle kernel
-    # while larger M uses the 8-wave (split-K) kernel.
+def test_gemm_a8w8_blockscale_bpreshuffle_dispatch_is_shape_and_m_aware():
+    # The implementation is chosen purely from (M, N, K). The same shape can
+    # resolve to different implementations across M -- assert the plan changes,
+    # without caring which kernel it names.
     gemm_kernels = _gemm_kernels()
 
-    get_config = gemm_kernels.get_flydsl_gemm_a8w8_blockscale_bpreshuffle_config
-    assert get_config(64, 2048, 7168)["kind"] == "blockscale_preshuffle"
-    assert get_config(256, 2048, 7168)["kind"] == "8wave_blockscale"
-
-    # The same selection is exposed through the internal planner.
-    assert gemm_kernels._select_gemm_plan(64, 2048, 7168)[0] == "preshuffle"
-    assert gemm_kernels._select_gemm_plan(256, 2048, 7168)[0] == "8wave"
+    plan_small = gemm_kernels._select_gemm_plan(64, 2048, 7168)
+    plan_mid = gemm_kernels._select_gemm_plan(256, 2048, 7168)
+    assert plan_small is not None and plan_mid is not None
+    assert plan_small != plan_mid
 
 
 def test_gemm_a8w8_blockscale_bpreshuffle_rejects_uncovered_shapes():
