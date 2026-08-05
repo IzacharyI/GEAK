@@ -94,6 +94,49 @@ Workflow({
 })
 ```
 
+### Fixed multi-GPU command lease
+
+`gpu_lock.sh` preserves its historical single-GPU interface:
+
+```bash
+bash scripts/gpu_lock.sh 0 <command...>
+```
+
+For a command whose own harness launches a fixed multi-GPU job (for example an 8-rank MegaMoE
+`torchrun`), use the opt-in group interface:
+
+```bash
+bash scripts/gpu_lock.sh \
+  --group 0,1,2,3,4,5,6,7 \
+  --wait-timeout 1200 \
+  --run-timeout 900 \
+  -- \
+  torchrun --standalone --nproc_per_node=8 unittest.py
+```
+
+The wrapper atomically locks every per-GPU lock, checks the selected devices are idle when sysfs
+telemetry is available, exposes the full group through `HIP_VISIBLE_DEVICES` /
+`CUDA_VISIBLE_DEVICES`, and terminates the command's process group on timeout or signal. It never
+holds a partial GPU group while waiting. Logical GPU IDs are mapped through `amd-smi list --json`
+to PCI sysfs before the idle check; group mode fails closed when that mapping or the busy metric is
+unavailable.
+
+Configuration:
+
+- `GEAK_GPU_LOCK_DIR` — shared lock directory (default `/tmp/team_gpu_locks`; containers must share it).
+- `GEAK_GPU_REQUIRE_IDLE=0` — disable the best-effort sysfs idle gate (group mode defaults on).
+- `GEAK_GPU_MAX_BUSY_PCT` — maximum accepted busy percentage (default `5`).
+- `GEAK_GPU_MAX_VRAM_MB` — optional VRAM-used ceiling; negative disables it (default `-1` because
+  physical MI350 VRAM accounting can include partition reservations).
+- `GEAK_GPU_SYSFS_ROOT` — override DRM sysfs root for testing or non-standard systems.
+
+When multiple containers share the lock directory, they must use the same logical GPU enumeration.
+The fixed EP8 group locks every logical GPU and is therefore safe for the current MegaMoE scope;
+future partial/dynamic groups should key allocation by stable BDF/UUID.
+
+This is the execution primitive only. Passing one stable GPU group through Author, Benchmark,
+Profile, Engineer, Verify, Integrator, and Validate is a separate orchestration concern.
+
 ### Workload alignment (NEW)
 By default the harness benchmarks small/medium/large cases unweighted. Pass a **workload spec** to
 instead benchmark the shapes/dtypes the kernel actually sees in production, weighted by how much
@@ -148,5 +191,5 @@ roles/               director, tech_lead, engineer, deep_engineer (deep_explore)
                      verify_engineer, integrator
 knowledge/           optimization_strategies, hip/triton/wrapper, profiling_guide,
                      amd_instinct (multi-card: gfx942/gfx950), self_monitoring, geomean_levers
-scripts/             gpu_lock.sh, profile_kernel.sh
+scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh
 ```

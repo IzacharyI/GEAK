@@ -61,7 +61,8 @@ jobs:
             e2e_workflow/scripts/tests/test_workload_alignment.py \
             e2e_workflow/scripts/tests/test_run_correctness_gate.py \
             e2e_workflow/scripts/tests/test_parse_regime_sources.py \
-            e2e_workflow/scripts/tests/test_gsm8k_eval.py
+            e2e_workflow/scripts/tests/test_gsm8k_eval.py \
+            kernel_workflow/tests/test_gpu_lease.py
 
   secrets:
     name: Secret scan (gitleaks)

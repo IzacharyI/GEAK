@@ -18,10 +18,20 @@
 
 set -euo pipefail
 
+if [ "${1:-}" = "--group" ]; then
+    _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    exec bash "$_SCRIPT_DIR/gpu_group_lock.sh" "$@"
+fi
+
+if [ "${GEAK_GPU_LEASE_ACTIVE:-0}" = "1" ]; then
+    echo "ERROR: nested GPU lease request via gpu_lock.sh is not supported" >&2
+    exit 2
+fi
+
 GPU_ID="${1:?Usage: gpu_lock.sh <gpu_id> <command...>}"
 shift
 
-LOCK_DIR="/tmp/team_gpu_locks"
+LOCK_DIR="${GEAK_GPU_LOCK_DIR:-/tmp/team_gpu_locks}"
 mkdir -p "$LOCK_DIR"
 LOCK_FILE="${LOCK_DIR}/gpu_${GPU_ID}.lock"
 
