@@ -8,7 +8,7 @@
 # portable: it never greps for profiler-/version-specific section names ("System Speed-of-Light",
 # "Wavefront", …) or assumes a particular CSV layout, so it keeps working when the toolchain changes.
 #
-# Usage: bash profile_kernel.sh <gpu_id> <benchmark_cmd> <output_dir>
+# Usage: bash profile_kernel.sh <gpu_spec> <benchmark_cmd> <output_dir>
 #
 # Optional env overrides (all have sensible defaults; nothing kernel-specific is hard-coded):
 #   PROFILER_PRIORITY  space-separated profiler order to try
@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-GPU_ID="${1:?Usage: profile_kernel.sh <gpu_id> <benchmark_cmd> <output_dir>}"
+GPU_ID="${1:?Usage: profile_kernel.sh <gpu_spec> <benchmark_cmd> <output_dir>}"
 BENCHMARK_CMD="${2:?Missing benchmark command}"
 OUTPUT_DIR="${3:?Missing output directory}"
 

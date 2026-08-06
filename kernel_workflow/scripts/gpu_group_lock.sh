@@ -1,18 +1,28 @@
 #!/bin/bash
-# Fixed GPU-group lease wrapper. Existing single-GPU callers keep using gpu_lock.sh.
+# Fixed or dynamic GPU-group lease wrapper. Single-GPU callers use gpu_lock.sh.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GROUP_IDS=""
-WAIT_TIMEOUT=1200
-RUN_TIMEOUT=900
-TERM_GRACE=5
+POOL_IDS=""
+GPU_COUNT=""
+WAIT_TIMEOUT="${GEAK_GPU_WAIT_TIMEOUT:-1200}"
+RUN_TIMEOUT="${GEAK_GPU_RUN_TIMEOUT:-900}"
+TERM_GRACE="${GEAK_GPU_TERM_GRACE:-5}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --group)
             GROUP_IDS="${2:?--group requires a comma-separated GPU list}"
+            shift 2
+            ;;
+        --pool)
+            POOL_IDS="${2:?--pool requires a comma-separated GPU list}"
+            shift 2
+            ;;
+        --count)
+            GPU_COUNT="${2:?--count requires a positive integer}"
             shift 2
             ;;
         --wait-timeout)
@@ -38,7 +48,18 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-[ -n "$GROUP_IDS" ] || { echo "ERROR: --group is required" >&2; exit 2; }
+if [ -n "$GROUP_IDS" ] && [ -n "$POOL_IDS" ]; then
+    echo "ERROR: use exactly one of --group or --pool" >&2
+    exit 2
+fi
+if [ -z "$GROUP_IDS" ] && [ -z "$POOL_IDS" ]; then
+    echo "ERROR: one of --group or --pool is required" >&2
+    exit 2
+fi
+if [ -n "$POOL_IDS" ] && [ -z "$GPU_COUNT" ]; then
+    echo "ERROR: --count is required with --pool" >&2
+    exit 2
+fi
 [ "$#" -gt 0 ] || { echo "ERROR: command is required after --" >&2; exit 2; }
 
 # Preserve gpu_lock.sh's orphan-enumerator backstop for the new group path.
@@ -74,8 +95,16 @@ if [ "${GEAK_GPU_REQUIRE_IDLE:-1}" = "1" ]; then
     )
 fi
 
+REQUEST_ARGS=()
+if [ -n "$GROUP_IDS" ]; then
+    REQUEST_ARGS+=(--fixed-ids "$GROUP_IDS")
+    [ -n "$GPU_COUNT" ] && REQUEST_ARGS+=(--count "$GPU_COUNT")
+else
+    REQUEST_ARGS+=(--pool "$POOL_IDS" --count "$GPU_COUNT")
+fi
+
 exec python3 "$SCRIPT_DIR/gpu_lease.py" run \
-    --fixed-ids "$GROUP_IDS" \
+    "${REQUEST_ARGS[@]}" \
     --lock-dir "${GEAK_GPU_LOCK_DIR:-/tmp/team_gpu_locks}" \
     --wait-timeout "$WAIT_TIMEOUT" \
     --run-timeout "$RUN_TIMEOUT" \

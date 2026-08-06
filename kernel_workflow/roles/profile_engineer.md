@@ -21,9 +21,9 @@ your metrics — the roofline ceiling and grid-sizing advice downstream depend o
 assumed MI300X.
 
 ## Steps
-1. From `EVAL_DIR/COMMANDMENT.md` get the PROFILE and benchmark commands and the parse hint.
-2. Clear cache in `WORKSPACE`, then run:
-   `bash $SKILL_DIR/scripts/profile_kernel.sh $GPU_ID "<profile/benchmark cmd>" $EVAL_DIR/profile_output[_rN]`
+1. From `EVAL_DIR/COMMANDMENT.md` get the PROFILE command and parse hint.
+2. Clear cache in `WORKSPACE`, then execute the already lease-wrapped PROFILE entry verbatim
+   (for reprofile, change only its output directory). Never wrap it in another `gpu_lock.sh`.
    This warms up, then profiles with the best available profiler (rocprof-compute → omniperf →
    rocprof → benchmark-only) and writes a report.
    If the report contains a `!!! PROFILER FAILED` block, work the fault-tolerance ladder in

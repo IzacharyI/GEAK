@@ -966,6 +966,7 @@ if (!MODEL_PATH && KERNEL_PATH) {
       kernel_path: KERNEL_PATH, workflow_dir: KERNEL_WF_DIR,
       use_expert_skills: USE_EXPERT_SKILLS ? 'true' : 'false', expert_skills_dir: EXPERT_SKILLS_DIR,
       budget: KERNEL_BUDGET, gpu_ids: GPU_IDS, task: TASK, exp_root: EXP_ROOT,
+      gpus_per_job: A.gpus_per_job, job_gpu_ids: A.job_gpu_ids,
       apply_to_original: APPLY_TO_ORIGINAL,
     });
     passthru = { ran: true, kernel_eval_dir: r.eval_dir, final_patch: r.final_patch,

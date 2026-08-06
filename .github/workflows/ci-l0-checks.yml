@@ -96,7 +96,9 @@ jobs:
       # Proves the use_expert_skills=OFF path injects nothing (byte-identical).
       # Pure node (fs/path only) — no npm install needed.
       - name: expert_skills OFF-identical regression
-        run: node e2e_workflow/scripts/test_expert_skills_off_identical.js
+        run: |
+          node e2e_workflow/scripts/test_expert_skills_off_identical.js
+          node kernel_workflow/tests/test_gpu_request.js
 
   dry-run:
     name: run_e2e dry-run mapping

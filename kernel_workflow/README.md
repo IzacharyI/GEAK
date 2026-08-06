@@ -72,7 +72,9 @@ Workflow({
                                //           cumulative best for a round winner to be committed
     deep_cost: 2,              // optional, default 2: budget cost of one deep_explore direction
                                //           (heavyweight; always runs in its own dedicated round)
-    gpu_ids: "0",              // optional, comma-separated, default "0"
+    gpu_ids: "0",              // optional GPU pool, comma-separated, default "0"
+    gpus_per_job: 1,           // optional, default 1; >1 atomically leases a group from gpu_ids
+    job_gpu_ids: "",           // optional fixed group; when set, its size must match gpus_per_job
     task: "focus on ...",      // optional natural-language steer
     exp_root: "",              // optional, output root; default = sibling "exp/" next to workflow_dir
     eval_dir: "",              // optional, override the output dir for this single run
@@ -80,7 +82,7 @@ Workflow({
     // --- author mode (write a fresh implementation from scratch, then optimize it) ---
     mode: "optimize",          // optional: "optimize" (default, edit an existing kernel) | "author"
     target_language: "triton", // author mode: triton (always) | flydsl | hip | ck — the language to write
-    op_spec: {},               // author mode: {op_kind, shapes, dtype, math_contract, regime} for the op
+    op_spec: {},               // author mode: op contract; may include resource.gpus_per_job/job_gpu_ids
     perf_knowledge_dir: "",  // optional: AMD authoring knowledge base the author_engineer reads
     // --- workload alignment (optional; aligns the PERF harness with the real workload) ---
     workload_spec_path: "",    // optional: path to a workload-v1 json (parse_profile.py --workload-out).
@@ -114,6 +116,23 @@ bash scripts/gpu_lock.sh \
   torchrun --standalone --nproc_per_node=8 unittest.py
 ```
 
+Dynamic N-GPU selection from a pool uses:
+
+```bash
+bash scripts/gpu_lock.sh \
+  --pool 0,1,2,3,4,5,6,7 \
+  --count 2 \
+  -- \
+  python3 unittest.py
+```
+
+Workflow phases pass the same requests in compact form:
+
+```text
+group:0,1,2,3,4,5,6,7
+pool:2:0,1,2,3,4,5,6,7
+```
+
 The wrapper atomically locks every per-GPU lock, checks the selected devices are idle when sysfs
 telemetry is available, exposes the full group through `HIP_VISIBLE_DEVICES` /
 `CUDA_VISIBLE_DEVICES`, and terminates the command's process group on timeout or signal. It never
@@ -121,9 +140,16 @@ holds a partial GPU group while waiting. Logical GPU IDs are mapped through `amd
 to PCI sysfs before the idle check; group mode fails closed when that mapping or the busy metric is
 unavailable.
 
+Fixed, dynamic, and historical numeric single-GPU requests all use the same lease manager. Pending
+requests are FIFO-ordered when their pools overlap, so repeated one-card backfill cannot starve an
+older N-card request. The launched command inherits the lock descriptors, keeping the reservation
+held even if the lease-manager process is killed.
+
 Configuration:
 
 - `GEAK_GPU_LOCK_DIR` — shared lock directory (default `/tmp/team_gpu_locks`; containers must share it).
+- `GEAK_GPU_WAIT_TIMEOUT` — default allocation wait timeout (default `1200` seconds).
+- `GEAK_GPU_RUN_TIMEOUT` — command timeout; numeric legacy mode defaults to no timeout.
 - `GEAK_GPU_REQUIRE_IDLE=0` — disable the best-effort sysfs idle gate (group mode defaults on).
 - `GEAK_GPU_MAX_BUSY_PCT` — maximum accepted busy percentage (default `5`).
 - `GEAK_GPU_MAX_VRAM_MB` — optional VRAM-used ceiling; negative disables it (default `-1` because
@@ -135,7 +161,37 @@ The fixed EP8 group locks every logical GPU and is therefore safe for the curren
 future partial/dynamic groups should key allocation by stable BDF/UUID.
 
 This is the execution primitive only. Passing one stable GPU group through Author, Benchmark,
-Profile, Engineer, Verify, Integrator, and Validate is a separate orchestration concern.
+Profile, Engineer, Verify, Integrator, and Validate is enabled by the workflow resource arguments:
+
+```text
+# Fixed EP8 group (recommended for MegaMoE)
+gpu_ids="0,1,2,3,4,5,6,7"
+job_gpu_ids="0,1,2,3,4,5,6,7"
+
+# Dynamic two-GPU group selected from a pool
+gpu_ids="0,1,2,3,4,5,6,7"
+gpus_per_job=2
+```
+
+With neither new argument set, `gpus_per_job=1` and the historical round-robin single-GPU behavior
+is unchanged. A fixed/dynamic group request is propagated through Author, Benchmark, Profile,
+Engineer, Verify, Integrator, re-profile, and final Validate.
+
+An immutable task can declare the same requirement in `op_spec.resource`:
+
+```json
+{
+  "resource": {
+    "gpus_per_job": 8,
+    "job_gpu_ids": "0,1,2,3,4,5,6,7"
+  }
+}
+```
+
+Direct workflow args override task metadata.
+
+Dynamic pool selection assumes candidate GPUs are performance/topology-equivalent. Use
+`job_gpu_ids` for topology-sensitive benchmarks such as the current fixed EP8 MegaMoE target.
 
 ### Workload alignment (NEW)
 By default the harness benchmarks small/medium/large cases unweighted. Pass a **workload spec** to

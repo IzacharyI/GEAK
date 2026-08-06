@@ -79,8 +79,9 @@ Read, as reference, before writing:
    Triton kernel), the baseline STILL stays the online Triton kernel — your HIP competes against it.
 2. Preserve the **callable signature the unittest imports/calls** (read the unittest to learn the exact
    entry point name + argument order it expects). Your implementation must be a drop-in for it.
-3. NEVER set `HIP_VISIBLE_DEVICES` directly — run correctness/benchmark via
-   `cd $WORKSPACE && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`.
+3. NEVER set `HIP_VISIBLE_DEVICES` directly. Execute a lease-wrapped COMMANDMENT entry verbatim;
+   wrap only ad-hoc commands via
+   `cd $WORKSPACE && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Never double-wrap.
 4. Correctness-first: a fast-but-wrong implementation is a FAILURE here. Do not chase performance;
    the optimize loop does that next. Aim for a clean, readable, correct first cut.
 5. Match dtype/tolerance to the oracle (the unittest already encodes bf16/fp16 rtol=atol=2e-2 etc.) —

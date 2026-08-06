@@ -55,8 +55,9 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 1. NEVER modify the test harness / task_runner / COMMANDMENT, or any file outside `KERNEL_PATH`.
 2. Only edit files within your `DIRECTION.focus_files` (plus the wrapper/binding if `host_runtime`).
    Staying in your lane keeps your patch orthogonal and mergeable.
-3. NEVER set `HIP_VISIBLE_DEVICES` directly — run correctness AND benchmark via
-   `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. The wrapper isolates your
+3. NEVER set `HIP_VISIBLE_DEVICES` directly. Execute the already lease-wrapped COMMANDMENT
+   correctness/benchmark entries verbatim; for an additional ad-hoc GPU command, use
+   `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Never double-wrap. The wrapper isolates your
    build cache (`$KERNEL_PATH/.torch_ext`) and compiles for the local arch only — this is why your
    compiles are fast and don't collide with other engineers. Always invoke it from `$KERNEL_PATH`.
 4. After editing sources, ninja auto-rebuilds on the next run — you usually do NOT need to wipe the

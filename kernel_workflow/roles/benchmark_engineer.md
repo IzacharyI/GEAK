@@ -128,6 +128,8 @@ The COMMANDMENT MUST contain, with concrete commands (not placeholders):
 - `BENCHMARK` — wrapped in gpu_lock (quick measurement).
 - `FULL_BENCHMARK` — wrapped in gpu_lock (authoritative).
 - `PROFILE` — `bash $SKILL_DIR/scripts/profile_kernel.sh $GPU_ID "<cmd that cd's into the workspace>" <out_dir>`.
+  Every GPU entry above contains exactly one lease wrapper. Downstream roles execute the entry
+  verbatim; they MUST NOT put a second `gpu_lock.sh` around it.
   If the report shows a `!!! PROFILER FAILED` block, follow the fault-tolerance ladder in
   `knowledge/profiling_guide.md` (override the named env var with the corrected flag, or degrade and say so).
 - `PARSE` — a one-paragraph description of how to extract per-case latency from the output (the

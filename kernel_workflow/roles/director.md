@@ -207,10 +207,9 @@ baseline latencies recorded at benchmark setup).
    git apply "$EVAL_DIR/final_patch.diff"
    # (No artifact cleanup needed — the tar copy excluded build/__pycache__/*.so; git apply adds only source.)
    ```
-3. Run CORRECTNESS (from COMMANDMENT, with cwd = validation_workspace). If it fails → status
-   `flagged`, record the failure, do NOT report a speedup as accepted.
-4. Run FULL_BENCHMARK with `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <full bench cmd>`. Parse the
-   per-case latencies.
+3. Run the already lease-wrapped CORRECTNESS entry from COMMANDMENT verbatim, changing only its
+   workspace to `validation_workspace`; never add a second GPU wrapper. If it fails → status `flagged`.
+4. Run the already lease-wrapped FULL_BENCHMARK entry verbatim. Parse the per-case latencies.
 5. Compute per-case speedup = `baseline_ms / optimized_ms` using `BASELINE_TIMING`. Compute geomean
    = `exp(mean(log(speedups)))` and arithmetic mean.
    **PRIMARY metric — recompute the self-weight with the SAME audited function the unittest uses, on YOUR

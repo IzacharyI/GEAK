@@ -53,8 +53,57 @@ const DEEP_COST = (() => {
   const v = parseInt(A.deep_cost != null ? A.deep_cost : 2, 10);
   return Number.isFinite(v) && v >= 1 ? v : 2;
 })();
-const GPU_IDS = String(A.gpu_ids != null ? A.gpu_ids : '0');
-const GPU_LIST = GPU_IDS.split(',').map(s => s.trim()).filter(Boolean);
+function resolveGpuRequest(A) {
+  const taskResource = (A.op_spec && A.op_spec.resource) || {};
+  const parseIds = (name, value) => {
+    const raw = String(value);
+    const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+    if (!parts.length) throw new Error(`${name} must contain at least one GPU id`);
+    if (parts.some(id => !/^\d+$/.test(id))) throw new Error(`${name} contains a non-numeric GPU id`);
+    const ids = parts.map(id => String(Number(id)));
+    if (new Set(ids).size !== ids.length) throw new Error(`${name} contains duplicate GPU ids`);
+    return ids;
+  };
+  const gpuList = parseIds('gpu_ids', A.gpu_ids != null ? A.gpu_ids : '0');
+  const directFixed = String(A.job_gpu_ids || '').trim();
+  const fixedValue = directFixed || taskResource.job_gpu_ids;
+  const fixedIds = String(fixedValue || '').trim()
+    ? parseIds('job_gpu_ids', fixedValue)
+    : [];
+  const inferredCount = fixedIds.length || 1;
+  const countValue = A.gpus_per_job != null
+    ? A.gpus_per_job
+    : (taskResource.gpus_per_job != null ? taskResource.gpus_per_job : inferredCount);
+  const countText = String(countValue).trim();
+  if (!/^[1-9]\d*$/.test(countText)) {
+    throw new Error('gpus_per_job must be a positive integer');
+  }
+  const gpusPerJob = Number(countText);
+  if (!Number.isSafeInteger(gpusPerJob)) throw new Error('gpus_per_job is too large');
+  if (fixedIds.length && fixedIds.length !== gpusPerJob) {
+    throw new Error(`gpus_per_job=${gpusPerJob} does not match job_gpu_ids size ${fixedIds.length}`);
+  }
+  if (!fixedIds.length && gpusPerJob > gpuList.length) {
+    throw new Error(`gpus_per_job=${gpusPerJob} exceeds gpu_ids pool size ${gpuList.length}`);
+  }
+  const pool = new Set(gpuList);
+  if (fixedIds.some(id => !pool.has(id))) {
+    throw new Error('job_gpu_ids must be a subset of gpu_ids');
+  }
+  const sharedSpec = fixedIds.length
+    ? `group:${fixedIds.join(',')}`
+    : (gpusPerJob > 1 ? `pool:${gpusPerJob}:${gpuList.join(',')}` : '');
+  return {
+    gpuList,
+    gpusPerJob,
+    fixedIds,
+    sharedSpec,
+    specForIndex: (index) => sharedSpec || gpuList[index % gpuList.length],
+  };
+}
+const GPU_RESOURCE = resolveGpuRequest(A);
+const GPU_LIST = GPU_RESOURCE.gpuList;
+const GPU_IDS = GPU_LIST.join(',');
 const TASK = A.task || '';
 const EVAL_DIR_OVERRIDE = A.eval_dir || '';
 const APPLY_TO_ORIGINAL = String(A.apply_to_original != null ? A.apply_to_original : 'false');
@@ -456,7 +505,7 @@ if (MODE === 'author') {
   const authored = await agentT(
     roleAgent('author_engineer', 'author', 'Write the simplest correct baseline in the target language.', {
       TARGET_LANGUAGE, OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
-      GPU_ID: GPU_LIST[0], SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
+      GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
     }),
     { phase: 'Author', label: `author:${TARGET_LANGUAGE}`, schema: AUTHOR_SCHEMA });
   if (!authored || !authored.authored || authored.correctness !== 'pass') {
@@ -497,7 +546,7 @@ const KK_REFS = (analysis && Array.isArray(analysis.kk_refs)) ? analysis.kk_refs
 phase('Benchmark');
 const bench = await agentT(
   roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
-    WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_LIST[0],
+    WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
@@ -515,7 +564,7 @@ log(`Benchmark done. ${bench.num_test_cases || BASELINE_PER_CASE.length} cases, 
 phase('Profile');
 let profileSummary = await agentT(
   roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
-    WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_LIST[0], ROUND: 0,
+    WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
     COMMANDMENT,
     ...RESUME_INPUT,
   }),
@@ -571,7 +620,7 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
     ...d,
     idx: i,
     id: d.id || `r${round}_d${i}`,
-    gpu_id: GPU_LIST[i % GPU_LIST.length],
+    gpu_id: GPU_RESOURCE.specForIndex(i),
     out_dir: `${EVAL_DIR}/round_${round}/engineer_${i}`,
   }));
   // deep_explore is a DEDICATED-ROUND, heavyweight mandate: if the plan includes one, run ONLY it this
@@ -677,7 +726,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     integrate = await agentT(
       roleAgent('integrator', 'integrate', 'Combine this round\'s verified patches into one best implementation.', {
         CANONICAL, INTEGRATE_DIR: `${EVAL_DIR}/round_${round}/integrate`,
-        GPU_ID: GPU_LIST[0], SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+        GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
         BEST_INDIVIDUAL: Math.max(...candidates.map(c => c.geomean)),
         PATCHES: verified.map(r => ({ id: r.d.id, specialty: r.d.specialty, title: r.d.title,
           strategy: r.eng ? r.eng.strategy : '', verified_geomean: r.ver.verified_geomean,
@@ -735,7 +784,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     // --- (f) Re-profile the new best ------------------------------------
     profileSummary = await agentT(
       roleAgent('profile_engineer', 'reprofile', 'Re-profile the new best and explain the bottleneck shift.', {
-        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_LIST[0], ROUND: round,
+        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: round,
         COMMANDMENT, PREVIOUS_METRICS: profileSummary,
       }),
       { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
@@ -794,7 +843,7 @@ const report = await agentT(
 phase('Validate');
 const validation = await agentT(
   roleAgent('director', 'validate', 'Independently validate the final patch vs the TRUE baseline.', {
-    KERNEL_PATH_ORIG, EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_LIST[0],
+    KERNEL_PATH_ORIG, EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     APPLY_TO_ORIGINAL, COMMANDMENT,
     FINAL_PATCH: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
     TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,

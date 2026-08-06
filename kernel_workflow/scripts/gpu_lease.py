@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+from itertools import combinations
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence, Tuple
 
@@ -21,29 +22,65 @@ TIMEOUT_EXIT_CODE = 124
 
 
 class GpuRequest:
-    def __init__(self, visible_ids: Tuple[int, ...]):
-        self.visible_ids = visible_ids
-        self.lock_ids = tuple(sorted(visible_ids))
+    def __init__(
+        self,
+        pool_ids: Tuple[int, ...],
+        *,
+        count: int,
+        fixed_ids: Optional[Tuple[int, ...]] = None,
+    ):
+        self.pool_ids = pool_ids
+        self.count = count
+        self.fixed_ids = fixed_ids
+
+    @property
+    def visible_ids(self) -> Tuple[int, ...]:
+        return self.fixed_ids if self.fixed_ids is not None else self.pool_ids
+
+    @property
+    def lock_ids(self) -> Tuple[int, ...]:
+        return tuple(sorted(self.visible_ids))
 
     @classmethod
     def from_fixed_ids(cls, value: str, *, count: int) -> GpuRequest:
-        parts = [part.strip() for part in value.split(",") if part.strip()]
-        if not parts:
-            raise ValueError("at least one GPU is required")
-
-        ids = []
-        for part in parts:
-            if not part.isdigit():
-                raise ValueError(f"invalid GPU id: {part!r}")
-            ids.append(int(part))
-
-        if len(ids) != len(set(ids)):
-            raise ValueError("duplicate GPU ids are not allowed")
+        ids = _parse_gpu_ids(value)
         if count != len(ids):
             raise ValueError(
                 f"count={count} does not match fixed GPU group size {len(ids)}"
             )
-        return cls(tuple(ids))
+        fixed_ids = tuple(ids)
+        return cls(fixed_ids, count=count, fixed_ids=fixed_ids)
+
+    @classmethod
+    def from_pool(cls, value: str, *, count: int) -> GpuRequest:
+        ids = tuple(_parse_gpu_ids(value))
+        if count < 1 or count > len(ids):
+            raise ValueError(
+                f"count={count} must be between 1 and pool size {len(ids)}"
+            )
+        return cls(ids, count=count)
+
+    def candidate_groups(self) -> Sequence[Tuple[int, ...]]:
+        if self.fixed_ids is not None:
+            return (self.fixed_ids,)
+        return tuple(
+            tuple(self.pool_ids[index] for index in indexes)
+            for indexes in combinations(range(len(self.pool_ids)), self.count)
+        )
+
+
+def _parse_gpu_ids(value: str) -> Sequence[int]:
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if not parts:
+        raise ValueError("at least one GPU is required")
+    ids = []
+    for part in parts:
+        if not part.isdigit():
+            raise ValueError(f"invalid GPU id: {part!r}")
+        ids.append(int(part))
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate GPU ids are not allowed")
+    return ids
 
 
 class LeaseTimeout(TimeoutError):
@@ -119,16 +156,28 @@ class GpuLease:
         self.poll_interval_s = max(0.001, float(poll_interval_s))
         self.idle_checker = idle_checker
         self._gpu_fds = []
+        self._selected_ids = None
         self.lease_id = f"{os.getpid()}-{time.time_ns()}"
         self.metadata_path = self.lock_dir / f"lease_{self.lease_id}.json"
+        self.request_path = self.lock_dir / f"request_{self.lease_id}.json"
         self._metadata = {
             "lease_id": self.lease_id,
             "manager_pid": os.getpid(),
             "pid_namespace": _pid_namespace(),
-            "gpu_ids": list(request.visible_ids),
-            "lock_ids": list(request.lock_ids),
             "started_at_ns": time.time_ns(),
         }
+
+    @property
+    def selected_ids(self) -> Tuple[int, ...]:
+        if self._selected_ids is None:
+            raise RuntimeError("GPU lease has not been acquired")
+        return self._selected_ids
+
+    @property
+    def lock_fds(self) -> Tuple[int, ...]:
+        if not self._gpu_fds:
+            raise RuntimeError("GPU lease has not been acquired")
+        return tuple(self._gpu_fds)
 
     def __enter__(self) -> GpuLease:
         self.acquire()
@@ -144,21 +193,28 @@ class GpuLease:
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.wait_timeout_s
         attempted = False
+        rejected_groups = set()
+        self._write_request()
         try:
             while True:
                 if attempted and time.monotonic() >= deadline:
                     self._raise_timeout()
                 attempted = True
-                acquired = self._try_acquire_group()
+                acquired = self._try_acquire_group(excluded=rejected_groups)
                 if acquired:
                     if self._has_live_stale_overlap() or self.idle_checker is not None and not all(
-                        self.idle_checker(gpu_id)
-                        for gpu_id in self.request.visible_ids
+                        self.idle_checker(gpu_id) for gpu_id in self.selected_ids
                     ):
+                        rejected_groups.add(self.selected_ids)
                         self.release()
+                        if len(rejected_groups) < len(
+                            self.request.candidate_groups()
+                        ):
+                            continue
                     else:
                         self._write_metadata()
                         return
+                rejected_groups.clear()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._raise_timeout()
@@ -166,11 +222,14 @@ class GpuLease:
         except BaseException:
             self.release()
             raise
+        finally:
+            self.request_path.unlink(missing_ok=True)
 
     def _raise_timeout(self) -> None:
-        ids = ",".join(str(gpu_id) for gpu_id in self.request.visible_ids)
+        ids = ",".join(str(gpu_id) for gpu_id in self.request.pool_ids)
         raise LeaseTimeout(
-            f"failed to acquire GPU group [{ids}] after {self.wait_timeout_s:g}s"
+            f"failed to acquire {self.request.count} GPU(s) from [{ids}] after "
+            f"{self.wait_timeout_s:g}s"
         )
 
     def release(self) -> None:
@@ -184,19 +243,39 @@ class GpuLease:
             finally:
                 os.close(fd)
         self._gpu_fds.clear()
+        self._selected_ids = None
 
     def update_metadata(self, **values) -> None:
         self._metadata.update(values)
         self._write_metadata()
 
     def _write_metadata(self) -> None:
+        self._metadata.update(
+            {
+                "gpu_ids": list(self.selected_ids),
+                "lock_ids": sorted(self.selected_ids),
+            }
+        )
         self.lock_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.metadata_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(self._metadata, sort_keys=True))
         os.replace(temporary, self.metadata_path)
 
+    def _write_request(self) -> None:
+        request = {
+            "request_id": self.lease_id,
+            "manager_pid": os.getpid(),
+            "pid_namespace": _pid_namespace(),
+            "pool_ids": list(self.request.pool_ids),
+            "count": self.request.count,
+            "started_at_ns": time.time_ns(),
+        }
+        temporary = self.request_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(request, sort_keys=True))
+        os.replace(temporary, self.request_path)
+
     def _has_live_stale_overlap(self) -> bool:
-        requested = set(self.request.visible_ids)
+        requested = set(self.selected_ids)
         for path in self.lock_dir.glob("lease_*.json"):
             if path == self.metadata_path:
                 continue
@@ -219,7 +298,10 @@ class GpuLease:
                 pass
         return False
 
-    def _try_acquire_group(self) -> bool:
+    def _try_acquire_group(
+        self, *, excluded: Optional[set] = None
+    ) -> bool:
+        excluded = excluded or set()
         allocator_fd = os.open(
             self.lock_dir / "allocator.lock",
             os.O_CREAT | os.O_RDWR,
@@ -232,24 +314,59 @@ class GpuLease:
                 allocator_locked = True
             except BlockingIOError:
                 return False
-            for gpu_id in self.request.lock_ids:
-                fd = os.open(
-                    self.lock_dir / f"gpu_{gpu_id}.lock",
-                    os.O_CREAT | os.O_RDWR,
-                    0o666,
-                )
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    os.close(fd)
-                    self.release()
-                    return False
-                self._gpu_fds.append(fd)
-            return True
+            if not self._is_request_turn():
+                return False
+            for candidate in self.request.candidate_groups():
+                if candidate in excluded:
+                    continue
+                self._selected_ids = candidate
+                for gpu_id in sorted(candidate):
+                    fd = os.open(
+                        self.lock_dir / f"gpu_{gpu_id}.lock",
+                        os.O_CREAT | os.O_RDWR,
+                        0o666,
+                    )
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        os.close(fd)
+                        self.release()
+                        break
+                    self._gpu_fds.append(fd)
+                else:
+                    return True
+            return False
         finally:
             if allocator_locked:
                 fcntl.flock(allocator_fd, fcntl.LOCK_UN)
             os.close(allocator_fd)
+
+    def _is_request_turn(self) -> bool:
+        requested_pool = set(self.request.pool_ids)
+        contenders = []
+        for path in self.lock_dir.glob("request_*.json"):
+            try:
+                data = json.loads(path.read_text())
+                manager_pid = int(data["manager_pid"])
+                namespace = str(data["pid_namespace"])
+                pool_ids = {int(gpu_id) for gpu_id in data["pool_ids"]}
+                request_id = str(data["request_id"])
+                priority = (int(data["started_at_ns"]), request_id)
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                path.unlink(missing_ok=True)
+                continue
+            if (
+                _pid_namespace_for_pid(manager_pid) != namespace
+                or not _pid_is_live(manager_pid)
+            ):
+                path.unlink(missing_ok=True)
+                continue
+            if requested_pool & pool_ids:
+                contenders.append((priority, request_id))
+        if not contenders:
+            return False
+        _, winner = min(contenders)
+        return winner == self.lease_id
 
 
 def _read_int(path: Path) -> Optional[int]:
@@ -264,6 +381,21 @@ def _pid_namespace() -> str:
         return os.readlink("/proc/self/ns/pid")
     except OSError:
         return "unknown"
+
+
+def _pid_namespace_for_pid(pid: int) -> Optional[str]:
+    try:
+        return os.readlink(f"/proc/{pid}/ns/pid")
+    except OSError:
+        return None
+
+
+def _pid_is_live(pid: int) -> bool:
+    try:
+        suffix = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1]
+        return suffix.strip().split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
 
 
 def parse_amd_smi_device_map(
@@ -307,17 +439,6 @@ def run_command(
     child_env = os.environ.copy()
     if env is not None:
         child_env.update(env)
-    visible = ",".join(str(gpu_id) for gpu_id in request.visible_ids)
-    child_env.update(
-        {
-            "HIP_VISIBLE_DEVICES": visible,
-            "CUDA_VISIBLE_DEVICES": visible,
-            "GEAK_GPU_GROUP": visible,
-            "GEAK_GPU_LEASE_ACTIVE": "1",
-            "GEAK_GPU_LEASE_IDS": visible,
-        }
-    )
-
     process = None
     previous_handlers = {}
 
@@ -337,6 +458,16 @@ def run_command(
             wait_timeout_s=wait_timeout_s,
             idle_checker=idle_checker,
         ) as lease:
+            visible = ",".join(str(gpu_id) for gpu_id in lease.selected_ids)
+            child_env.update(
+                {
+                    "HIP_VISIBLE_DEVICES": visible,
+                    "CUDA_VISIBLE_DEVICES": visible,
+                    "GEAK_GPU_GROUP": visible,
+                    "GEAK_GPU_LEASE_ACTIVE": "1",
+                    "GEAK_GPU_LEASE_IDS": visible,
+                }
+            )
             try:
                 managed_signals = {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
                 previous_mask = signal.pthread_sigmask(
@@ -353,6 +484,7 @@ def run_command(
                             start_new_session=True,
                             env=child_env,
                             close_fds=True,
+                            pass_fds=lease.lock_fds,
                             # gpu_lease.py is a dedicated, single-threaded CLI process.
                             # The child must not inherit the short signal mask used to
                             # close the Popen-before-assignment race in the parent.
@@ -369,7 +501,12 @@ def run_command(
                         f"command is not executable: {command[0]}", exit_code=126
                     ) from error
                 lease.update_metadata(child_pgid=process.pid)
-                return_code = process.wait(timeout=max(0.0, float(run_timeout_s)))
+                if run_timeout_s is not None and float(run_timeout_s) < 0:
+                    return_code = process.wait()
+                else:
+                    return_code = process.wait(
+                        timeout=max(0.0, float(run_timeout_s))
+                    )
                 _terminate_process_group(process, term_grace_s=term_grace_s)
                 return _shell_exit_code(return_code)
             except subprocess.TimeoutExpired:
@@ -412,11 +549,23 @@ def _terminate_process_group(
 def _process_group_exists(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    for process_dir in Path("/proc").iterdir():
+        if not process_dir.name.isdigit():
+            continue
+        try:
+            fields = (process_dir / "stat").read_text().rsplit(")", 1)[1]
+            parts = fields.strip().split()
+            state = parts[0]
+            process_group = int(parts[2])
+        except (OSError, IndexError, ValueError):
+            continue
+        if process_group == pgid and state != "Z":
+            return True
+    return False
 
 
 def _shell_exit_code(return_code: int) -> int:
@@ -426,8 +575,10 @@ def _shell_exit_code(return_code: int) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
-    run = subparsers.add_parser("run", help="run one command under a fixed GPU group lease")
-    run.add_argument("--fixed-ids", required=True)
+    run = subparsers.add_parser("run", help="run one command under a GPU group lease")
+    source = run.add_mutually_exclusive_group(required=True)
+    source.add_argument("--fixed-ids")
+    source.add_argument("--pool")
     run.add_argument("--count", type=int)
     run.add_argument(
         "--lock-dir",
@@ -465,16 +616,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if command and command[0] == "--":
         command.pop(0)
     try:
-        raw_ids = [part.strip() for part in args.fixed_ids.split(",") if part.strip()]
-        count = args.count if args.count is not None else len(raw_ids)
-        request = GpuRequest.from_fixed_ids(args.fixed_ids, count=count)
+        if args.fixed_ids is not None:
+            raw_ids = [
+                part.strip() for part in args.fixed_ids.split(",") if part.strip()
+            ]
+            count = args.count if args.count is not None else len(raw_ids)
+            request = GpuRequest.from_fixed_ids(args.fixed_ids, count=count)
+        else:
+            if args.count is None:
+                raise ValueError("--count is required with --pool")
+            request = GpuRequest.from_pool(args.pool, count=args.count)
         idle_checker = None
         if args.require_idle:
             device_map = {}
             if Path(args.sysfs_root) == Path("/sys/class/drm"):
                 device_map = discover_amd_smi_device_map()
                 missing = set(request.visible_ids) - set(device_map)
-                if missing:
+                insufficient_dynamic_pool = (
+                    request.fixed_ids is None
+                    and len(set(request.pool_ids) & set(device_map))
+                    < request.count
+                )
+                if request.fixed_ids is not None and missing or insufficient_dynamic_pool:
                     missing_text = ",".join(str(gpu_id) for gpu_id in sorted(missing))
                     raise ValueError(
                         "cannot resolve sysfs devices for required GPU idle check: "

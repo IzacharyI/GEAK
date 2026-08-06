@@ -13,6 +13,7 @@ import pytest
 
 MODULE_PATH = Path(__file__).parents[1] / "scripts" / "gpu_lease.py"
 GPU_LOCK_WRAPPER = Path(__file__).parents[1] / "scripts" / "gpu_lock.sh"
+PROFILE_WRAPPER = Path(__file__).parents[1] / "scripts" / "profile_kernel.sh"
 
 
 def load_gpu_lease():
@@ -48,6 +49,13 @@ def test_fixed_request_rejects_invalid_input(gpu_ids, count, message):
         gpu_lease.GpuRequest.from_fixed_ids(gpu_ids, count=count)
 
 
+def test_dynamic_request_rejects_count_larger_than_pool():
+    gpu_lease = load_gpu_lease()
+
+    with pytest.raises(ValueError, match="count=3"):
+        gpu_lease.GpuRequest.from_pool("0,1", count=3)
+
+
 def attempt_lease(lock_dir, gpu_ids, count, wait_timeout_s, result_queue):
     gpu_lease = load_gpu_lease()
     request = gpu_lease.GpuRequest.from_fixed_ids(gpu_ids, count=count)
@@ -70,6 +78,19 @@ def hold_lease(lock_dir, gpu_ids, count, ready_queue, release_queue):
         request,
         lock_dir=Path(lock_dir),
         wait_timeout_s=1.0,
+        poll_interval_s=0.01,
+    ):
+        ready_queue.put("ready")
+        release_queue.get(timeout=5)
+
+
+def hold_dynamic_lease(lock_dir, pool_ids, count, ready_queue, release_queue):
+    gpu_lease = load_gpu_lease()
+    request = gpu_lease.GpuRequest.from_pool(pool_ids, count=count)
+    with gpu_lease.GpuLease(
+        request,
+        lock_dir=Path(lock_dir),
+        wait_timeout_s=2.0,
         poll_interval_s=0.01,
     ):
         ready_queue.put("ready")
@@ -113,6 +134,110 @@ def test_group_lease_blocks_overlapping_single_and_group_requests(tmp_path):
         assert run_attempt(tmp_path, "0", 1) == "timeout"
         assert run_attempt(tmp_path, "1,2", 2) == "timeout"
         assert run_attempt(tmp_path, "2,3", 2) == "acquired"
+
+
+def test_dynamic_pool_selects_first_complete_available_group(tmp_path):
+    gpu_lease = load_gpu_lease()
+    ctx = multiprocessing.get_context("spawn")
+    ready_queue = ctx.Queue()
+    release_queue = ctx.Queue()
+    holder = ctx.Process(
+        target=hold_lease,
+        args=(str(tmp_path), "0", 1, ready_queue, release_queue),
+    )
+    holder.start()
+    assert ready_queue.get(timeout=5) == "ready"
+
+    try:
+        request = gpu_lease.GpuRequest.from_pool("0,1,2", count=2)
+        with gpu_lease.GpuLease(
+            request,
+            lock_dir=tmp_path,
+            wait_timeout_s=0.2,
+            poll_interval_s=0.005,
+        ) as lease:
+            assert lease.selected_ids == (1, 2)
+    finally:
+        release_queue.put("release")
+        holder.join(timeout=5)
+        assert holder.exitcode == 0
+
+
+def test_dynamic_pool_skips_lockable_but_externally_busy_group(tmp_path):
+    gpu_lease = load_gpu_lease()
+    request = gpu_lease.GpuRequest.from_pool("0,1,2", count=2)
+
+    with gpu_lease.GpuLease(
+        request,
+        lock_dir=tmp_path,
+        wait_timeout_s=0.1,
+        poll_interval_s=0.005,
+        idle_checker=lambda gpu_id: gpu_id != 0,
+    ) as lease:
+        assert lease.selected_ids == (1, 2)
+
+
+def test_older_group_request_blocks_younger_single_backfill(tmp_path):
+    ctx = multiprocessing.get_context("spawn")
+    holder_ready = ctx.Queue()
+    holder_release = ctx.Queue()
+    holder = ctx.Process(
+        target=hold_lease,
+        args=(str(tmp_path), "0", 1, holder_ready, holder_release),
+    )
+    holder.start()
+    assert holder_ready.get(timeout=5) == "ready"
+
+    group_ready = ctx.Queue()
+    group_release = ctx.Queue()
+    group = ctx.Process(
+        target=hold_dynamic_lease,
+        args=(str(tmp_path), "0,1", 2, group_ready, group_release),
+    )
+    group.start()
+    deadline = time.monotonic() + 1
+    while (
+        not list(tmp_path.glob("request_*.json"))
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+    assert list(tmp_path.glob("request_*.json"))
+
+    try:
+        assert run_attempt(
+            tmp_path, "1", 1, wait_timeout_s=0.05
+        ) == "timeout"
+        holder_release.put("release")
+        holder.join(timeout=5)
+        assert holder.exitcode == 0
+        assert group_ready.get(timeout=5) == "ready"
+    finally:
+        group_release.put("release")
+        group.join(timeout=5)
+        if holder.is_alive():
+            holder_release.put("release")
+            holder.join(timeout=5)
+
+    assert group.exitcode == 0
+
+
+def test_dead_pending_request_is_removed_without_blocking(tmp_path):
+    stale = tmp_path / "request_dead.json"
+    stale.write_text(
+        json.dumps(
+            {
+                "request_id": "dead",
+                "manager_pid": 999999999,
+                "pid_namespace": os.readlink("/proc/self/ns/pid"),
+                "pool_ids": [0, 1],
+                "count": 2,
+                "started_at_ns": 1,
+            }
+        )
+    )
+
+    assert run_attempt(tmp_path, "0", 1) == "acquired"
+    assert not stale.exists()
 
 
 def test_failed_group_acquire_releases_partial_locks(tmp_path):
@@ -245,6 +370,46 @@ def test_live_stale_lease_metadata_blocks_reallocation(tmp_path):
     assert not stale_path.exists()
 
 
+def test_zombie_only_process_group_does_not_keep_stale_lease_live(tmp_path):
+    gpu_lease = load_gpu_lease()
+    child = subprocess.Popen(
+        [sys.executable, "-c", "raise SystemExit(0)"],
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 2
+    while process_is_live(child.pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert Path(f"/proc/{child.pid}").exists()
+    stale_path = tmp_path / "lease_zombie.json"
+    stale_path.write_text(
+        json.dumps(
+            {
+                "lease_id": "zombie",
+                "manager_pid": 999999999,
+                "pid_namespace": os.readlink("/proc/self/ns/pid"),
+                "gpu_ids": [0],
+                "lock_ids": [0],
+                "child_pgid": child.pid,
+                "started_at_ns": 1,
+            }
+        )
+    )
+
+    try:
+        request = gpu_lease.GpuRequest.from_fixed_ids("0", count=1)
+        with gpu_lease.GpuLease(
+            request,
+            lock_dir=tmp_path,
+            wait_timeout_s=0.05,
+            poll_interval_s=0.005,
+        ):
+            pass
+    finally:
+        child.wait(timeout=5)
+
+    assert not stale_path.exists()
+
+
 def test_stale_lease_from_other_pid_namespace_fails_closed(tmp_path):
     gpu_lease = load_gpu_lease()
     stale_path = tmp_path / "lease_other_namespace.json"
@@ -331,6 +496,46 @@ def test_required_idle_check_fails_closed_when_telemetry_is_missing(tmp_path):
     )
 
     assert not checker(0)
+
+
+def test_dynamic_pool_allows_partial_mapping_when_enough_candidates_remain(
+    tmp_path, monkeypatch
+):
+    gpu_lease = load_gpu_lease()
+    devices = {}
+    for gpu_id in (1, 2):
+        device = tmp_path / f"card{gpu_id}" / "device"
+        device.mkdir(parents=True)
+        (device / "gpu_busy_percent").write_text("0\n")
+        devices[gpu_id] = device
+    monkeypatch.setattr(
+        gpu_lease, "discover_amd_smi_device_map", lambda: devices
+    )
+    captured = {}
+
+    def fake_run(request, command, **kwargs):
+        captured["idle_checker"] = kwargs["idle_checker"]
+        return 0
+
+    monkeypatch.setattr(gpu_lease, "run_command", fake_run)
+
+    result = gpu_lease.main(
+        [
+            "run",
+            "--pool",
+            "0,1,2",
+            "--count",
+            "2",
+            "--require-idle",
+            "--",
+            "true",
+        ]
+    )
+
+    assert result == 0
+    assert captured["idle_checker"](0) is False
+    assert captured["idle_checker"](1) is True
+    assert captured["idle_checker"](2) is True
 
 
 def test_run_command_sets_group_environment_and_preserves_exit_code(tmp_path):
@@ -675,6 +880,37 @@ def test_group_wrapper_preserves_command_output_exit_code_and_build_environment(
     }
 
 
+def test_fixed_group_wrapper_rejects_mismatched_optional_count(tmp_path):
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(tmp_path / "locks"),
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(GPU_LOCK_WRAPPER),
+            "--group",
+            "0,1",
+            "--count",
+            "1",
+            "--",
+            "true",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "does not match fixed GPU group size" in result.stderr
+
+
 def test_group_wrapper_rejects_busy_gpu_from_configured_sysfs(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -719,7 +955,7 @@ def test_group_wrapper_rejects_busy_gpu_from_configured_sysfs(tmp_path):
 
     assert result.returncode == 2
     assert not marker.exists()
-    assert "failed to acquire GPU group" in result.stderr
+    assert "failed to acquire 2 GPU(s)" in result.stderr
 
 
 def test_group_wrapper_and_legacy_single_wrapper_share_configured_lock_dir(tmp_path):
@@ -786,6 +1022,194 @@ def test_group_wrapper_and_legacy_single_wrapper_share_configured_lock_dir(tmp_p
     assert elapsed >= 0.25
 
 
+def test_pool_wrapper_selects_available_n_gpu_group(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    ready = tmp_path / "pool-ready"
+    selected = tmp_path / "selected"
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(tmp_path / "locks"),
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+    }
+    holder = subprocess.Popen(
+        [
+            "bash",
+            str(GPU_LOCK_WRAPPER),
+            "--group",
+            "0",
+            "--wait-timeout",
+            "1",
+            "--run-timeout",
+            "5",
+            "--",
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; import time; "
+                f"Path({str(ready)!r}).write_text('ready'); "
+                "time.sleep(0.5)"
+            ),
+        ],
+        cwd=workspace,
+        env=env,
+    )
+    deadline = time.monotonic() + 5
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists()
+
+    try:
+        result = subprocess.run(
+            [
+                "bash",
+                str(GPU_LOCK_WRAPPER),
+                "--pool",
+                "0,1,2",
+                "--count",
+                "2",
+                "--wait-timeout",
+                "1",
+                "--run-timeout",
+                "5",
+                "--",
+                sys.executable,
+                "-c",
+                (
+                    "import os; from pathlib import Path; "
+                    f"Path({str(selected)!r}).write_text("
+                    "os.environ['HIP_VISIBLE_DEVICES'])"
+                ),
+            ],
+            cwd=workspace,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    finally:
+        holder.wait(timeout=5)
+
+    assert result.returncode == 0
+    assert selected.read_text() == "1,2"
+
+
+@pytest.mark.parametrize(
+    ("gpu_spec", "expected"),
+    [
+        ("group:2,0", "2,0"),
+        ("pool:2:0,1,2", "0,1"),
+    ],
+)
+def test_compact_gpu_spec_is_accepted_by_legacy_wrapper(tmp_path, gpu_spec, expected):
+    output = tmp_path / "compact-spec"
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(tmp_path / "locks"),
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(GPU_LOCK_WRAPPER),
+            gpu_spec,
+            sys.executable,
+            "-c",
+            (
+                "import os; from pathlib import Path; "
+                f"Path({str(output)!r}).write_text("
+                "os.environ['HIP_VISIBLE_DEVICES'])"
+            ),
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert output.read_text() == expected
+
+
+def test_compact_gpu_spec_accepts_optional_command_separator(tmp_path):
+    output = tmp_path / "separator"
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(tmp_path / "locks"),
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(GPU_LOCK_WRAPPER),
+            "group:1,0",
+            "--",
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; Path({str(output)!r}).write_text('ran')",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert output.read_text() == "ran"
+
+
+def test_profile_wrapper_accepts_compact_group_spec(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = tmp_path / "profile-visible"
+    profile_dir = tmp_path / "profile"
+    benchmark = (
+        "python -c \"import os; from pathlib import Path; "
+        f"Path({str(output)!r}).write_text(os.environ['HIP_VISIBLE_DEVICES'])\""
+    )
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(tmp_path / "locks"),
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+        "PROFILER_PRIORITY": "definitely-not-a-profiler",
+        "WARMUP_RUNS": "1",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PROFILE_WRAPPER),
+            "group:1,0",
+            benchmark,
+            str(profile_dir),
+        ],
+        cwd=workspace,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert output.read_text() == "1,0"
+    assert "Profiler used: benchmark-only" in result.stdout
+    assert (profile_dir / "profile_report.txt").exists()
+
+
 def test_legacy_single_wrapper_rejects_nested_active_lease(tmp_path):
     marker = tmp_path / "nested-ran"
     env = {
@@ -816,6 +1240,56 @@ def test_legacy_single_wrapper_rejects_nested_active_lease(tmp_path):
     assert result.returncode == 2
     assert not marker.exists()
     assert "nested GPU lease" in result.stderr
+
+
+def test_legacy_single_wrapper_honors_live_group_stale_metadata(tmp_path):
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir()
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+    )
+    metadata = {
+        "lease_id": "live-group",
+        "manager_pid": 999999999,
+        "pid_namespace": os.stat("/proc/self/ns/pid").st_ino,
+        "gpu_ids": [0, 1],
+        "lock_ids": [0, 1],
+        "child_pgid": child.pid,
+        "started_at_ns": time.time_ns(),
+    }
+    (lock_dir / "lease_live-group.json").write_text(json.dumps(metadata))
+    env = {
+        **os.environ,
+        "GEAK_GPU_LOCK_DIR": str(lock_dir),
+        "GEAK_GPU_WAIT_TIMEOUT": "0.05",
+        "GEAK_GPU_REQUIRE_IDLE": "0",
+        "KERNEL_ENV_SKIP_ENUM_REAP": "1",
+        "KERNEL_ENV_KEEP_ARCH": "1",
+    }
+
+    try:
+        result = subprocess.run(
+            [
+                "bash",
+                str(GPU_LOCK_WRAPPER),
+                "0",
+                sys.executable,
+                "-c",
+                "raise SystemExit(0)",
+            ],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    finally:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)
+
+    assert result.returncode == 2
+    assert "failed to acquire 1 GPU(s)" in result.stderr
 
 
 def test_cli_signal_terminates_child_process_group_and_releases_locks(tmp_path):
@@ -865,3 +1339,52 @@ def test_cli_signal_terminates_child_process_group_and_releases_locks(tmp_path):
         for pid in pids.values():
             if process_is_live(pid):
                 os.kill(pid, signal.SIGKILL)
+
+
+def test_manager_sigkill_does_not_release_locks_while_launcher_survives(tmp_path):
+    child_pid_path = tmp_path / "sigkill-child"
+    command = [
+        sys.executable,
+        str(MODULE_PATH),
+        "run",
+        "--fixed-ids",
+        "0,1",
+        "--lock-dir",
+        str(tmp_path / "locks"),
+        "--wait-timeout",
+        "1",
+        "--run-timeout",
+        "60",
+        "--",
+        sys.executable,
+        "-c",
+        (
+            "import os, time; from pathlib import Path; "
+            f"Path({str(child_pid_path)!r}).write_text(str(os.getpid())); "
+            "time.sleep(60)"
+        ),
+    ]
+    manager = subprocess.Popen(command)
+    deadline = time.monotonic() + 5
+    while not child_pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert child_pid_path.exists()
+    child_pid = int(child_pid_path.read_text())
+
+    os.kill(manager.pid, signal.SIGKILL)
+    manager.wait(timeout=5)
+    for metadata in (tmp_path / "locks").glob("lease_*.json"):
+        metadata.unlink()
+    try:
+        assert process_is_live(child_pid)
+        assert run_attempt(
+            tmp_path / "locks", "0", 1, wait_timeout_s=0.05
+        ) == "timeout"
+    finally:
+        if process_is_live(child_pid):
+            os.killpg(child_pid, signal.SIGKILL)
+        deadline = time.monotonic() + 2
+        while process_is_live(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    assert run_attempt(tmp_path / "locks", "0", 1) == "acquired"

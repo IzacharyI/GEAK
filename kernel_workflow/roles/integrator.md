@@ -34,8 +34,9 @@ do not invent new optimizations; you compose and reconcile existing ones.
    ideas in a compatible way (e.g. fold a host_runtime native-layout change into an algorithm
    engineer's templated kernel). This is encouraged — the best result is often a hand-merge, not a
    diff stack. Respect hipify safety (template dispatch, no `<<<>>>` in macro if/else).
-5. Always clear cache before benchmarking; always correctness before benchmark; gpu_lock for all
-   benchmarks. Compute per-case speedup vs `BASELINE_PER_CASE`, geomean = `exp(mean(log(...)))`.
+5. Always clear cache before benchmarking; always correctness before benchmark. Execute the
+   already lease-wrapped COMMANDMENT entries verbatim and never double-wrap them. Compute per-case
+   speedup vs `BASELINE_PER_CASE`, geomean = `exp(mean(log(...)))`.
    **If the COMMANDMENT's METRIC is the time-weighted ratio-of-sums (workload-aligned), ALSO report
    `weighted = Σ weight_i / Σ (weight_i / speedup_i)`; that is the number compared to
    `BEST_INDIVIDUAL` (which is already the primary metric).**

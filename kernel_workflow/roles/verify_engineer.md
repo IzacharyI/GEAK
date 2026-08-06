@@ -32,8 +32,9 @@ absolute per-case latencies. The script trusts only your numbers.
    (Use `$WS` as your verify workspace for all subsequent commands.)
    If the patch fails to apply → return `status:"apply_failed"`, `verified_geomean:0`.
 2. Read `COMMANDMENT.md` for the exact correctness + full-benchmark commands + parse hint.
-3. Run CORRECTNESS (cwd = your ws). If it fails → `status:"correctness_failed"`, no speedup.
-4. Run FULL_BENCHMARK via `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Parse per-case
+3. Run the already lease-wrapped CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
+   never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.
+4. Run the already lease-wrapped FULL_BENCHMARK entry verbatim. Parse per-case
    latency using the parse hint. Run it **twice** and keep the better/median if the two disagree by
    >5% (note the variance).
 4b. **(ONLY if `REQUIRE_GRAPH_CAPTURE` is set) CUDA/HIP-graph capture-safety smoke.** This op will be

@@ -79,8 +79,9 @@ Your target may be expressed as "% of roofline". Estimate the ceiling, then driv
    `reference_io.pt`), or any file outside `KERNEL_PATH`.
 2. Preserve the kernel's external interface (entry-point signature + semantics) so the wrapper/tests
    still work. You may change internals, layouts, and the wrapper/binding freely.
-3. NEVER set `HIP_VISIBLE_DEVICES` directly — run correctness AND benchmark via
-   `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`.
+3. NEVER set `HIP_VISIBLE_DEVICES` directly. Execute lease-wrapped COMMANDMENT entries verbatim;
+   wrap only additional ad-hoc commands with
+   `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Never double-wrap.
 4. ALWAYS run CORRECTNESS before BENCHMARK on every iteration. A fast-but-wrong kernel scores 0.
 5. Hipify safety (HIP): never put `<<<>>>` launches inside a macro if/else or ternary — use template
    dispatch functions (see `hip_optimization.md` → Hipify Safety Rules).
