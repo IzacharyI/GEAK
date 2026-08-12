@@ -11,20 +11,38 @@ These lock two things:
    file, or a bad category-map pattern must degrade (excluded ranks / `error` field / `__errors__`
    key), never throw, so one bad rank cannot block the rest of an analysis.
 """
+import csv
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 from multi_rank_analysis import (  # noqa: E402
+    ANALYSIS_BUNDLE_SCHEMA_VERSION,
+    COLLECTION_PROVENANCE_SCHEMA_VERSION,
+    EXPERIMENT_SCHEMA_VERSION,
+    HARDWARE_CONTEXT_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    analyze_category_overlap,
     bucket_trace_events,
+    bundle_from_rank_report,
     build_report,
     classify_case_speedup,
+    compare_controlled_variants,
+    critical_path,
     load_category_map,
+    load_instruction_category_map,
+    merge_intervals,
     merge_rank_records,
+    parse_att_stats_csv,
+    validate_experiment_manifest,
+    validate_analysis_bundle,
+    validate_collection_provenance,
+    validate_hardware_context,
 )
 
 WORLD_SIZE = 8
@@ -37,6 +55,22 @@ def _synthetic_rank_records(base_ms=0.49, skew_rank=None, skew_factor=3.0):
         ms = base_ms * skew_factor if r == skew_rank else base_ms
         records.append({"rank": r, "timing_ms": {"stage1": ms, "e2e": ms * 1.5}})
     return records
+
+
+def _collection_provenance(raw_artifact="raw.json"):
+    return {
+        "schema_version": COLLECTION_PROVENANCE_SCHEMA_VERSION,
+        "collector_id": "test",
+        "tool_version": "1.0",
+        "command": "test --collect",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "synthetic test",
+        "repetitions": 1,
+        "raw_artifacts": [raw_artifact],
+        "confidence": "high",
+        "profiler_perturbation_pct": 0.0,
+        "cross_checks": [],
+    }
 
 
 class TestMergeRankRecords(unittest.TestCase):
@@ -68,7 +102,7 @@ class TestMergeRankRecords(unittest.TestCase):
         self.assertIsNotNone(entry["rank_mean"])  # still computed from the remaining 7 ranks
 
     def test_all_missing_degrades_to_none_not_raise(self):
-        records = [{"timing_ms": {}} for _ in range(WORLD_SIZE)]
+        records = [{"rank": rank, "timing_ms": {}} for rank in range(WORLD_SIZE)]
         merged = merge_rank_records(records, ["timing_ms.stage1"])
         entry = merged["timing_ms.stage1"]
         self.assertEqual(len(entry["missing_ranks"]), WORLD_SIZE)
@@ -83,6 +117,25 @@ class TestMergeRankRecords(unittest.TestCase):
         self.assertEqual(len(entry["rank_max_runs"]), 3)
         self.assertGreaterEqual(entry["rank_mean_span_pct"], 0.0)
         self.assertLess(entry["rank_mean_span_pct"], 5.0)  # matches the noise band seen in evidence
+
+    def test_duplicate_rank_rejected(self):
+        records = _synthetic_rank_records()
+        records[-1]["rank"] = 0
+        with self.assertRaisesRegex(ValueError, "duplicate rank"):
+            merge_rank_records(records, ["timing_ms.stage1"])
+
+    def test_expected_rank_absence_uses_real_rank_ids(self):
+        records = [
+            record
+            for record in reversed(_synthetic_rank_records())
+            if record["rank"] != 0
+        ]
+        merged = merge_rank_records(
+            records,
+            ["timing_ms.stage1"],
+            expected_ranks=range(WORLD_SIZE),
+        )
+        self.assertEqual(merged["timing_ms.stage1"]["missing_ranks"], [0])
 
 
 class TestClassifyCaseSpeedup(unittest.TestCase):
@@ -102,6 +155,11 @@ class TestClassifyCaseSpeedup(unittest.TestCase):
     def test_raises_on_nonpositive_baseline(self):
         with self.assertRaises(ValueError):
             classify_case_speedup(candidate_rank_max=0.3, baseline_rank_max=0.0)
+
+    def test_rejects_invalid_candidate_latency(self):
+        for value in (0.0, -1.0, float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                classify_case_speedup(candidate_rank_max=value, baseline_rank_max=1.0)
 
 
 class TestTraceCategories(unittest.TestCase):
@@ -139,6 +197,8 @@ class TestTraceCategories(unittest.TestCase):
         self.assertIn("combine", result["per_category_ms"])
         self.assertIn("quantize", result["per_category_ms"])
         self.assertAlmostEqual(result["per_category_ms"]["combine"], 0.3125, places=4)
+        self.assertEqual(result["per_category_event_count"]["combine"], 1)
+        self.assertEqual(len(result["per_category_intervals_us"]["combine"]), 1)
 
     def test_unmatched_kernel_goes_to_unclassified_not_dropped(self):
         cat_map = load_category_map({"stage1": "megamoe_stage1"})
@@ -161,6 +221,341 @@ class TestTraceCategories(unittest.TestCase):
         self.assertIn("__errors__", cat_map)
         self.assertEqual(cat_map["__errors__"][0]["category"], "bad")
 
+    def test_malformed_kernel_event_is_reported_not_raised(self):
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump(
+            {
+                "traceEvents": [
+                    {
+                        "ph": "X",
+                        "cat": "kernel",
+                        "name": "megamoe_stage1",
+                        "ts": 0.0,
+                        "dur": "bad",
+                    }
+                ]
+            },
+            f,
+        )
+        f.close()
+        try:
+            result = bucket_trace_events(
+                f.name,
+                load_category_map({"stage1": "megamoe_stage1"}),
+            )
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(result["event_count"], 0)
+        self.assertEqual(len(result["malformed_events"]), 1)
+
+
+class TestATTInstructionAnalysis(unittest.TestCase):
+    def _write_csv(self, rows, fields=None):
+        fields = fields or [
+            "CodeObj",
+            "Vaddr",
+            "Instruction",
+            "Hitcount",
+            "Latency",
+            "Stall",
+            "Idle",
+            "Source",
+        ]
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="")
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+        f.close()
+        return f.name
+
+    def test_att_categories_and_cycle_semantics(self):
+        path = self._write_csv(
+            [
+                {
+                    "Instruction": "v_mfma_f32_16x16x32_fp8",
+                    "Hitcount": "10",
+                    "Latency": "100",
+                    "Stall": "20",
+                    "Idle": "5",
+                },
+                {
+                    "Instruction": "s_barrier",
+                    "Hitcount": "2",
+                    "Latency": "4",
+                    "Stall": "10",
+                    "Idle": "80",
+                },
+                {
+                    "Instruction": "buffer_load_dwordx4",
+                    "Hitcount": "8",
+                    "Latency": "40",
+                    "Stall": "30",
+                    "Idle": "0",
+                },
+            ]
+        )
+        category_map = load_instruction_category_map(
+            {
+                "mfma": "^v_mfma",
+                "barrier": "^s_barrier",
+                "vmem_read": "^buffer_load",
+            }
+        )
+        try:
+            report = parse_att_stats_csv(path, category_map)
+        finally:
+            os.unlink(path)
+        self.assertEqual(report["categories"]["mfma"]["hitcount"], 10)
+        self.assertEqual(report["categories"]["barrier"]["idle_cycles"], 80)
+        self.assertEqual(
+            report["top_stall_idle_instructions"][0]["category"],
+            "barrier",
+        )
+        self.assertIn("sampled thread/wave", report["scope_warning"])
+
+    def test_att_missing_columns_rejected(self):
+        path = self._write_csv([], fields=["Instruction", "Hitcount"])
+        try:
+            with self.assertRaisesRegex(ValueError, "missing columns"):
+                parse_att_stats_csv(path, {})
+        finally:
+            os.unlink(path)
+
+
+class TestIntervals(unittest.TestCase):
+    def test_merge_and_overlap(self):
+        self.assertEqual(merge_intervals([[0, 10], [5, 15], [20, 25]]), [[0.0, 15.0], [20.0, 25.0]])
+        result = analyze_category_overlap(
+            {
+                "compute": [[0, 10], [20, 30]],
+                "communication": [[5, 25]],
+            }
+        )
+        pair = result["pairwise"]["communication|compute"]
+        self.assertAlmostEqual(pair["overlap_ms"], 0.010)
+        self.assertAlmostEqual(result["profile_window_union_ms"], 0.030)
+
+    def test_critical_path(self):
+        result = critical_path(
+            {"dispatch": 1.0, "gemm": 3.0, "combine": 2.0, "shared": 2.5},
+            [["dispatch", "gemm"], ["gemm", "combine"]],
+        )
+        self.assertEqual(result["path"], ["dispatch", "gemm", "combine"])
+        self.assertEqual(result["critical_path_ms"], 6.0)
+
+    def test_critical_path_rejects_cycle(self):
+        with self.assertRaisesRegex(ValueError, "cycle"):
+            critical_path({"a": 1, "b": 1}, [["a", "b"], ["b", "a"]])
+
+
+class TestControlledExperiments(unittest.TestCase):
+    def test_manifest_and_variant_comparison(self):
+        manifest = validate_experiment_manifest(
+            {
+                "schema_version": EXPERIMENT_SCHEMA_VERSION,
+                "experiment_id": "dpep-vs-tpdp",
+                "workload": {"tokens": 512, "seed": 1},
+                "variants": [
+                    {"name": "full", "command": "run-full"},
+                    {"name": "no_payload", "command": "run-no-payload"},
+                ],
+            }
+        )
+        self.assertEqual(manifest["experiment_id"], "dpep-vs-tpdp")
+        result = compare_controlled_variants(
+            {"latency_ms": 10.0, "xgmi_bytes": 100.0},
+            {"no_payload": {"latency_ms": 7.0, "xgmi_bytes": 10.0}},
+            {"latency_ms": "lower", "xgmi_bytes": "lower"},
+        )
+        self.assertAlmostEqual(
+            result["variants"]["no_payload"]["latency_ms"]["improvement_pct"],
+            30.0,
+        )
+        self.assertIn("not additive", result["note"])
+
+    def test_manifest_requires_full_variant(self):
+        with self.assertRaisesRegex(ValueError, "full"):
+            validate_experiment_manifest(
+                {
+                    "schema_version": EXPERIMENT_SCHEMA_VERSION,
+                    "experiment_id": "bad",
+                    "workload": {"tokens": 1},
+                    "variants": [{"name": "control", "command": "run"}],
+                }
+            )
+
+
+class TestAnalysisBundle(unittest.TestCase):
+    def test_normalizes_aiter_cases_rank_shape(self):
+        report = {
+            "metadata": {"network": "v4_pro"},
+            "cases": [
+                {
+                    "case_id": "v4_pro_bs128",
+                    "ranks": _synthetic_rank_records(),
+                    "path": "fixed",
+                }
+            ],
+        }
+        bundle = bundle_from_rank_report(report, ["timing_ms.e2e"])
+        self.assertEqual(bundle["schema_version"], ANALYSIS_BUNDLE_SCHEMA_VERSION)
+        self.assertEqual(bundle["cases"][0]["case_id"], "v4_pro_bs128")
+        self.assertEqual(len(bundle["cases"][0]["rank_records"]), WORLD_SIZE)
+        self.assertEqual(bundle["cases"][0]["source_case"]["path"], "fixed")
+
+    def test_normalizes_bare_rank_record_list(self):
+        bundle = bundle_from_rank_report(
+            _synthetic_rank_records(),
+            ["timing_ms.e2e"],
+        )
+        self.assertEqual(bundle["cases"][0]["case_id"], "default")
+        self.assertEqual(len(bundle["cases"][0]["rank_records"]), WORLD_SIZE)
+
+    def test_rejects_comparison_to_unknown_case(self):
+        bundle = {
+            "schema_version": ANALYSIS_BUNDLE_SCHEMA_VERSION,
+            "workload": {"tokens": 1},
+            "cases": [
+                {
+                    "case_id": "known",
+                    "rank_records": _synthetic_rank_records(),
+                    "metric_paths": ["timing_ms.e2e"],
+                }
+            ],
+            "route_comparisons": [
+                {
+                    "baseline_case_id": "known",
+                    "candidate_case_id": "missing",
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "unknown case"):
+            validate_analysis_bundle(bundle)
+
+    def test_complete_track_requires_evidence(self):
+        bundle = bundle_from_rank_report(
+            {"records": _synthetic_rank_records()},
+            ["timing_ms.e2e"],
+        )
+        bundle["measurement_tracks"] = {
+            "communication_bytes": {"status": "complete"}
+        }
+        with self.assertRaisesRegex(ValueError, "requires evidence"):
+            validate_analysis_bundle(bundle)
+
+    def test_att_file_must_be_named_in_provenance(self):
+        bundle = bundle_from_rank_report(
+            {"records": _synthetic_rank_records()},
+            ["timing_ms.e2e"],
+        )
+        bundle["cases"][0]["att_stats_files"] = ["att.csv"]
+        bundle["cases"][0]["att_provenance"] = _collection_provenance("other.csv")
+        with self.assertRaisesRegex(ValueError, "missing from provenance"):
+            validate_analysis_bundle(bundle)
+
+
+class TestCollectionProvenance(unittest.TestCase):
+    def test_valid_provenance(self):
+        validated = validate_collection_provenance(_collection_provenance())
+        self.assertEqual(validated["collector_id"], "test")
+
+    def test_rejects_missing_raw_artifact(self):
+        provenance = _collection_provenance()
+        provenance["raw_artifacts"] = []
+        with self.assertRaisesRegex(ValueError, "raw_artifacts"):
+            validate_collection_provenance(provenance)
+
+    def test_rejects_non_iso_timestamp(self):
+        provenance = _collection_provenance()
+        provenance["timestamp"] = "yesterday"
+        with self.assertRaisesRegex(ValueError, "ISO-8601"):
+            validate_collection_provenance(provenance)
+
+
+class TestCollectorRegistry(unittest.TestCase):
+    def test_collector_specs_have_required_contract(self):
+        collector_dir = (
+            Path(__file__).resolve().parents[1] / "knowledge" / "collectors"
+        )
+        specs = sorted(collector_dir.glob("*.json"))
+        self.assertTrue(specs)
+        for path in specs:
+            with self.subTest(path=path.name):
+                spec = json.loads(path.read_text())
+                self.assertEqual(spec["schema_version"], "geak-collector-v1")
+                for field in (
+                    "id",
+                    "maturity",
+                    "tool",
+                    "purpose",
+                    "capability_probe",
+                    "preconditions",
+                    "outputs",
+                    "helps_diagnose",
+                    "not_measured",
+                    "provenance",
+                ):
+                    self.assertIn(field, spec)
+                self.assertTrue(
+                    spec.get("command_template") or spec.get("command_templates")
+                )
+
+
+class TestHardwareContext(unittest.TestCase):
+    def _context(self):
+        context = {
+            "schema_version": HARDWARE_CONTEXT_SCHEMA_VERSION,
+            "vendor": "AMD",
+            "model": "MI355X",
+            "arch": "gfx950",
+            "device_count": 8,
+            "execution_units_per_device": 256,
+            "thread_group_width": 64,
+            "local_memory_bytes_per_execution_unit": 163840,
+            "device_memory_bytes": 309220868096,
+            "interconnect": {"type": "XGMI", "topology": "fully_connected"},
+            "runtime": {"rocm": "7.2"},
+            "measured": {"all_to_all_interconnect_gbps": None},
+        }
+        context["provenance"] = {
+            field: {
+                "collector": "test",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "confidence": "high",
+                "raw_artifact": "synthetic:test",
+            }
+            for field in (
+                "vendor",
+                "model",
+                "arch",
+                "device_count",
+                "execution_units_per_device",
+                "thread_group_width",
+                "local_memory_bytes_per_execution_unit",
+                "device_memory_bytes",
+                "interconnect",
+                "runtime",
+            )
+        }
+        return context
+
+    def test_valid_context(self):
+        context = validate_hardware_context(self._context())
+        self.assertEqual(context["arch"], "gfx950")
+        self.assertEqual(context["device_count"], 8)
+
+    def test_invalid_execution_units_rejected(self):
+        context = self._context()
+        context["execution_units_per_device"] = 0
+        with self.assertRaises(ValueError):
+            validate_hardware_context(context)
+
+    def test_missing_field_provenance_rejected(self):
+        context = self._context()
+        del context["provenance"]["arch"]
+        with self.assertRaisesRegex(ValueError, "provenance.arch"):
+            validate_hardware_context(context)
+
 
 class TestBuildReport(unittest.TestCase):
     def test_envelope_shape(self):
@@ -169,17 +564,262 @@ class TestBuildReport(unittest.TestCase):
             cases=[{"case_id": "t512_uniform"}, {"case_id": "t512_skew"}],
             route_comparisons=[{"tokens_per_rank": 512}],
             secondary_comparator_role="secondary comparison only; never the speedup denominator",
+            hardware_context={"schema_version": HARDWARE_CONTEXT_SCHEMA_VERSION},
+            measurement_tracks={"communication_bytes": {"status": "complete"}},
+            experiment_manifest={"schema_version": EXPERIMENT_SCHEMA_VERSION},
         )
         self.assertEqual(report["schema_version"], SCHEMA_VERSION)
         self.assertEqual(report["status"], "pass")
         self.assertEqual(len(report["cases"]), 2)
         self.assertIn("route_comparisons", report)
         self.assertIn("secondary_comparator_role", report)
+        self.assertIn("hardware_context", report)
+        self.assertIn("measurement_tracks", report)
+        self.assertIn("experiment_manifest", report)
 
     def test_optional_fields_omitted_when_not_given(self):
         report = build_report(primary_metric="x", cases=[])
         self.assertNotIn("route_comparisons", report)
         self.assertNotIn("secondary_comparator_role", report)
+
+
+class TestRunnerCLI(unittest.TestCase):
+    def test_bundle_builder_accepts_aiter_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            source = os.path.join(directory, "aiter.json")
+            output = os.path.join(directory, "bundle.json")
+            with open(source, "w") as f:
+                json.dump(
+                    {
+                        "metadata": {"network": "v4_pro"},
+                        "cases": [
+                            {
+                                "case_id": "v4_pro_bs128",
+                                "ranks": _synthetic_rank_records(),
+                            }
+                        ],
+                    },
+                    f,
+                )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(
+                        root,
+                        "scripts",
+                        "multi_rank_analysis",
+                        "build_bundle.py",
+                    ),
+                    "--rank-report",
+                    source,
+                    "--metric",
+                    "timing_ms.e2e",
+                    "--output",
+                    output,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            with open(output) as f:
+                bundle = json.load(f)
+            self.assertEqual(
+                bundle["schema_version"],
+                ANALYSIS_BUNDLE_SCHEMA_VERSION,
+            )
+            self.assertEqual(bundle["cases"][0]["case_id"], "v4_pro_bs128")
+            self.assertEqual(
+                len(
+                    bundle["artifacts"]["assembly_inputs"]["rank_report"][
+                        "sha256"
+                    ]
+                ),
+                64,
+            )
+
+    def test_rank_record_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            records = os.path.join(directory, "records.json")
+            output = os.path.join(directory, "report.json")
+            with open(records, "w") as f:
+                json.dump({"records": _synthetic_rank_records()}, f)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(root, "scripts", "multi_rank_analysis", "runner.py"),
+                    "--rank-records",
+                    records,
+                    "--metric",
+                    "timing_ms.e2e",
+                    "--case-id",
+                    "case",
+                    "--primary-metric",
+                    "e2e rank max",
+                    "--expected-world-size",
+                    str(WORLD_SIZE),
+                    "--output",
+                    output,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            with open(output) as f:
+                report = json.load(f)
+            self.assertEqual(report["schema_version"], SCHEMA_VERSION)
+            self.assertEqual(
+                report["cases"][0]["rank_metrics"]["timing_ms.e2e"]["missing_ranks"],
+                [],
+            )
+            self.assertEqual(
+                len(report["input_artifacts"]["rank_records"]["sha256"]),
+                64,
+            )
+
+    def test_runner_accepts_aiter_cases_ranks_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            source = os.path.join(directory, "aiter.json")
+            output = os.path.join(directory, "report.json")
+            with open(source, "w") as f:
+                json.dump(
+                    {
+                        "metadata": {"network": "v4_pro"},
+                        "cases": [
+                            {
+                                "case_id": "v4_pro_bs128",
+                                "ranks": _synthetic_rank_records(),
+                            }
+                        ],
+                    },
+                    f,
+                )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(root, "scripts", "multi_rank_analysis", "runner.py"),
+                    "--rank-records",
+                    source,
+                    "--metric",
+                    "timing_ms.e2e",
+                    "--case-id",
+                    "v4_pro_bs128",
+                    "--primary-metric",
+                    "e2e rank max",
+                    "--expected-world-size",
+                    str(WORLD_SIZE),
+                    "--output",
+                    output,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            with open(output) as f:
+                report = json.load(f)
+            self.assertEqual(report["cases"][0]["case_id"], "v4_pro_bs128")
+
+    def test_runner_bundle_comparison_and_att(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            att_path = os.path.join(directory, "uniform_rank0.csv")
+            with open(att_path, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "Instruction",
+                        "Hitcount",
+                        "Latency",
+                        "Stall",
+                        "Idle",
+                        "Source",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "Instruction": "v_mfma_f32_16x16x32_fp8",
+                        "Hitcount": 1,
+                        "Latency": 10,
+                        "Stall": 2,
+                        "Idle": 1,
+                    }
+                )
+            baseline = _synthetic_rank_records(base_ms=1.0)
+            candidate = _synthetic_rank_records(base_ms=1.2)
+            bundle_path = os.path.join(directory, "bundle.json")
+            output = os.path.join(directory, "report.json")
+            with open(bundle_path, "w") as f:
+                json.dump(
+                    {
+                        "schema_version": ANALYSIS_BUNDLE_SCHEMA_VERSION,
+                        "workload": {"tokens": 512},
+                        "cases": [
+                            {
+                                "case_id": "uniform",
+                                "rank_records": baseline,
+                                "metric_paths": ["timing_ms.e2e"],
+                                "att_stats_files": [att_path],
+                                "att_provenance": _collection_provenance(att_path),
+                            },
+                            {
+                                "case_id": "skew",
+                                "rank_records": candidate,
+                                "metric_paths": ["timing_ms.e2e"],
+                            },
+                        ],
+                        "route_comparisons": [
+                            {
+                                "baseline_case_id": "uniform",
+                                "candidate_case_id": "skew",
+                                "metric_path": "timing_ms.e2e",
+                                "tokens_per_rank": 512,
+                            }
+                        ],
+                    },
+                    f,
+                )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(root, "scripts", "multi_rank_analysis", "runner.py"),
+                    "--analysis-bundle",
+                    bundle_path,
+                    "--primary-metric",
+                    "e2e rank max",
+                    "--expected-world-size",
+                    str(WORLD_SIZE),
+                    "--output",
+                    output,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            with open(output) as f:
+                report = json.load(f)
+            self.assertGreater(
+                report["route_comparisons"][0]["e2e_rank_max_delta_pct"],
+                0,
+            )
+            self.assertEqual(
+                report["cases"][0]["att"]["reports"][0]["categories"]["mfma"][
+                    "hitcount"
+                ],
+                1,
+            )
+            self.assertEqual(
+                report["raw_artifact_identities"]["att_stats_files"][0][
+                    "status"
+                ],
+                "available",
+            )
 
     def test_no_operator_names_in_schema_version(self):
         # Regression guard: the generic schema must never hardcode an operator name.

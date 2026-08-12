@@ -167,19 +167,21 @@ const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 
 // knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, it may run
 // ONE analysis skill to enrich the classification with operator-specific structure (e.g. MoE
 // route/expert imbalance, Stage1/Stage2/combine time-share) that the generic bottleneck labels
-// (compute/memory/latency/lds/balanced/overhead) cannot express. STRICTLY ADVISORY: annotates and
-// suggests directions, never overrides `bottleneck` and never prunes a candidate.
-// `analysis_skill=none` (the default here) or a missing/unreadable skill dir disables the step
-// entirely -> ANALYSIS_SKILL_* are '' and nothing is injected (byte-identical to before this feature).
+// (compute/memory/latency/lds/balanced/overhead) cannot express. ANALYSIS ONLY: emits findings,
+// bounded hypotheses, constraints, bounds, unknowns and unranked references—never directions.
+// `analysis_skill=none` (the default here) injects no input keys and no role-prompt text.
 // Default OFF (unlike e2e's default-ON 'roofline'): kernel_workflow serves many non-MoE kernels, so an
 // MoE-specific skill should not silently fire on every run — matches the USE_EXPERT_SKILLS precedent.
 const ANALYSIS_SKILL = String(A.analysis_skill != null ? A.analysis_skill : 'none').trim();
 const ANALYSIS_SKILL_ON = !!ANALYSIS_SKILL && ANALYSIS_SKILL !== 'none' && ANALYSIS_SKILL !== 'false';
+if (ANALYSIS_SKILL_ON && !/^[a-z0-9][a-z0-9_-]*$/.test(ANALYSIS_SKILL)) {
+  throw new Error(`args.analysis_skill must be a safe skill slug, got ${JSON.stringify(ANALYSIS_SKILL)}`);
+}
 const ANALYSIS_SKILL_INPUTS = ANALYSIS_SKILL_ON ? {
   ANALYSIS_SKILL: ANALYSIS_SKILL,
   ANALYSIS_SKILL_DIR: `${WORKFLOW_DIR}/knowledge/analysis_skills/${ANALYSIS_SKILL}`,
-} : { ANALYSIS_SKILL: '', ANALYSIS_SKILL_DIR: '' };
-if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (advisory; never overrides bottleneck/pruning).`);
+} : {};
+if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis only; Step-3 TechLead owns directions).`);
 
 // ---------------------------------------------------------------------------
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
@@ -311,6 +313,7 @@ const PROFILE_SCHEMA = obj({
   top_kernels: { type: 'array', items: { type: 'object', additionalProperties: true } },
   top_opportunities: { type: 'array', items: { type: 'string' } },
   summary_path: { type: 'string' }, shift_note: { type: 'string' },
+  moe_analysis_json: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
 
 const PLAN_SCHEMA = obj({
@@ -455,6 +458,25 @@ function expertSkillsBlock(role) {
     `A/B vs the oracle, never reducing a result below the measured baseline.`;
 }
 
+function analysisSkillBlock(role, phase) {
+  if (!ANALYSIS_SKILL_ON) return '';
+  if (role === 'profile_engineer') {
+    return `\n\n## Profile-analysis skill (ANALYSIS ONLY — explicitly enabled this run)\n` +
+      `After completing the generic bottleneck classification and top_opportunities, check that ` +
+      `${ANALYSIS_SKILL_INPUTS.ANALYSIS_SKILL_DIR}/SKILL.md exists, Read it, and follow its deterministic ` +
+      `runner/contract against the profile artifacts. Write its analysis JSON under EVAL_DIR (or the ` +
+      `round directory for reprofile) and return that path as moe_analysis_json. Never overwrite the ` +
+      `generic bottleneck/top_opportunities and never fail profiling if the optional skill degrades.`;
+  }
+  if (role === 'tech_lead' && phase === 'plan_round') {
+    return `\n\n## Profile-analysis evidence (explicitly enabled this run)\n` +
+      `If PROFILE_SUMMARY.moe_analysis_json is non-empty, Read its findings, hypotheses, constraints, ` +
+      `bounds, unknowns, and unranked reference patterns. Use these as Step-2 evidence while YOU generate ` +
+      `and rank Step-3 directions from measured top_opportunities, per-case data, and HISTORY.`;
+  }
+  return '';
+}
+
 function roleAgent(role, phase, intro, inputs) {
   const base = `You are the ${role}. PHASE=${phase}.
 First Read ${WORKFLOW_DIR}/roles/${role}.md and follow its instructions for PHASE=${phase}.
@@ -465,7 +487,7 @@ Do all filesystem/shell work yourself (Bash/Read/Write). ${intro}
 ${cfg(inputs)}
 
 Return ONLY the structured JSON the role file specifies (a StructuredOutput tool is forced).`;
-  return base + expertSkillsBlock(role);
+  return base + expertSkillsBlock(role) + analysisSkillBlock(role, phase);
 }
 
 // ===========================================================================

@@ -16,20 +16,19 @@ vice versa.
 
 | skill | dir | what it adds | when to use |
 |---|---|---|---|
-| `moe_bottleneck` | `moe_bottleneck/` | route/expert-imbalance signal, per-stage (dispatch/GEMM/combine) rank-mean/max/tail-spread decomposition, candidate optimization directions | a distributed MoE kernel (dispatch+GEMM+combine style) with multi-rank profiling data available |
+| `moe_bottleneck` | `moe_bottleneck/` | **DRAFT** measurement coverage, corrected stage deltas, route/wait/byte/overlap/fusion hypotheses via deterministic runner | a distributed MoE kernel with multi-rank profiling and controlled-experiment data |
 | `none` | — | nothing (pre-feature behavior) | any non-MoE kernel; reproducing an old run byte-for-byte; skill is misbehaving |
 
 ## Contract every skill must honour
 
-1. **Advisory only.** A skill may ADD fields, ADD annotations and SUGGEST an ordering. It may never
-   prune a candidate, never overwrite the measured `bottleneck` classification or `top_kernels`, and
-   never be the sole reason a direction is or isn't taken. The on-box measurement (the isolated A/B
-   against the frozen oracle) is always the judge.
-2. **Markdown-first.** The skill's logic lives in its `SKILL.md` so an agent can execute it by reading.
-   Helper scripts are OPTIONAL mechanical primitives (parsing, unit math) built on
-   `kernel_workflow/scripts/multi_rank_analysis/` (the generic, operator-agnostic library). If a helper
-   is missing or raises, the agent completes the analysis by hand from `SKILL.md` — a broken script
-   must not disable the skill, and a broken skill must not fail the run.
+1. **Analysis only.** A Skill emits findings, bounded hypotheses, constraints, bounds, unknowns, and
+   unranked reference patterns. It never emits or ranks implementation `directions[]`, never prunes a
+   candidate, and never overwrites `bottleneck` or `top_kernels`. Step-3 TechLead owns candidate
+   generation/ranking; isolated A/B against the frozen oracle remains the judge.
+2. **Deterministic arithmetic first.** Each skill provides a checked-in runner for parsing and unit
+   math, built on `kernel_workflow/scripts/multi_rank_analysis/`. `SKILL.md` defines doctrine,
+   required evidence, and degradation. A runner failure degrades to the generic profile result; an
+   agent must not improvise a confident numerical verdict by hand.
 3. **Degrade, never fail.** Every skill defines an explicit degradation ladder ending in "emit nothing
    and let the caller fall back to the pre-skill behavior".
 4. **Declare confidence.** Every emitted number carries a confidence level, and the consumer

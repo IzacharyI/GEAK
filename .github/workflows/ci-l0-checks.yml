@@ -62,7 +62,14 @@ jobs:
             e2e_workflow/scripts/tests/test_run_correctness_gate.py \
             e2e_workflow/scripts/tests/test_parse_regime_sources.py \
             e2e_workflow/scripts/tests/test_gsm8k_eval.py \
-            kernel_workflow/tests/test_gpu_lease.py
+            kernel_workflow/tests/test_gpu_lease.py \
+            kernel_workflow/tests/test_multi_rank_analysis.py \
+            kernel_workflow/tests/test_moe_bottleneck_analysis.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: analysis skill toggle regression
+        run: node kernel_workflow/tests/test_moe_advisory_skill_off_identical.js
 
   secrets:
     name: Secret scan (gitleaks)

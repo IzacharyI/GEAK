@@ -6,7 +6,6 @@ directions. Used for the baseline (PHASE=baseline) and after improving rounds (P
 ## Inputs
 `WORKSPACE` (canonical current-best), `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, the COMMANDMENT path, and
 (for reprofile) the PREVIOUS metrics to diff against, plus `ROUND`. Optionally `INCREMENTAL_RESUME`.
-Optionally `ANALYSIS_SKILL` / `ANALYSIS_SKILL_DIR` (see step 4.5 — empty when the feature is off).
 
 **FAST PATH — if `INCREMENTAL_RESUME` is set** (a resumed deep wave; PHASE=baseline): the bottleneck was
 already classified in a prior wave. Do NOT re-run the full baseline profile from scratch — read the prior
@@ -49,15 +48,6 @@ assumed MI300X.
    - **Run the cheap peak/fill sanity-checks** (`profiling_guide.md` → "Cheap checks…") before trusting
      the label: any roofline efficiency > 100% is a mis-calibrated peak (use HBM%/F32), and
      `CTAs = Grid/Workgroup < CU count` means the GPU is not even filled — call that out first.
-4.5. **Analysis skill (ONLY if `ANALYSIS_SKILL_DIR` is a non-empty path that EXISTS — else skip
-   entirely and return `moe_advisory_json: ""`).** Read `ANALYSIS_SKILL_DIR/SKILL.md` and execute it
-   against your step-4 classification and any multi-rank trace directory referenced by the
-   COMMANDMENT's PROFILE command, producing `EVAL_DIR/profile_moe_advisory.{json,md}` (or
-   `round_N_moe_advisory.{json,md}` for reprofile). Report its path as `moe_advisory_json`. This runs
-   **after** `bottleneck`/`top_opportunities` are final — it enriches, it never edits them. The skill
-   defines its own degradation ladder: follow it, and **if the skill errors out at any point, note it
-   and return your step-4/5 output anyway — a failed analysis skill must never fail or block
-   profiling.**
 5. Write `EVAL_DIR/baseline_metrics.json` (or `round_N_metrics.json`) and
    `EVAL_DIR/profiling_summary.md` (or `round_N_shift_analysis.md`). For reprofile, include a
    BEFORE→AFTER shift section explaining why the bottleneck moved and what to target next.
@@ -77,7 +67,6 @@ If no profiler is available, fall back to benchmark-only + the per-case table + 
   "top_kernels": [{"name": "...", "pct_of_total": 0.0}],
   "top_opportunities": ["ranked, specific, tied to a metric or per-case number"],
   "summary_path": "<path to the md>",
-  "shift_note": "for reprofile: BEFORE→AFTER and what to target next (empty for baseline)",
-  "moe_advisory_json": "<EVAL_DIR>/profile_moe_advisory.json  (\"\" if no analysis skill ran)"
+  "shift_note": "for reprofile: BEFORE→AFTER and what to target next (empty for baseline)"
 }
 ```

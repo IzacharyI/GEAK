@@ -62,6 +62,8 @@ def reduce_scalar(value: float, op: str = "mean", device=None) -> float:
     }
     if op not in ops:
         raise ValueError(f"reduce_scalar: unsupported op={op!r}, expected one of {sorted(ops)}")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"reduce_scalar: value must be finite, got {value}")
     result = torch.tensor(float(value), dtype=torch.float32, device=device)
     dist.all_reduce(result, op=ops[op])
     out = float(result.item())
@@ -86,6 +88,9 @@ def time_distributed(fn: Callable[[], Any], iters: int, device=None) -> dict:
 
     if iters <= 0:
         raise ValueError(f"time_distributed: iters must be positive, got {iters}")
+    _, dist = _require_torch_distributed()
+    dist.barrier()
+    torch.cuda.synchronize()
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     start.record()
@@ -110,10 +115,44 @@ def _get_path(record: Mapping[str, Any], dotted_path: str):
     return node
 
 
+def _ranked_records(
+    records: Sequence[Mapping[str, Any]],
+    expected_ranks: Iterable[int] | None = None,
+) -> tuple[list[tuple[int, Mapping[str, Any]]], list[int]]:
+    ranked = []
+    seen = set()
+    for index, record in enumerate(records):
+        if not isinstance(record, Mapping):
+            raise TypeError(f"rank record at index {index} must be a mapping")
+        rank = record.get("rank", index)
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0:
+            raise ValueError(f"rank record at index {index} has invalid rank={rank!r}")
+        if rank in seen:
+            raise ValueError(f"duplicate rank record: rank={rank}")
+        seen.add(rank)
+        ranked.append((rank, record))
+    expected = set(expected_ranks or [])
+    invalid_expected = [
+        rank
+        for rank in expected
+        if not isinstance(rank, int) or isinstance(rank, bool) or rank < 0
+    ]
+    if invalid_expected:
+        raise ValueError(
+            "expected_ranks must contain non-negative integers, "
+            f"got invalid values {invalid_expected!r}"
+        )
+    unexpected = seen - expected if expected else set()
+    if unexpected:
+        raise ValueError(f"rank records contain unexpected ranks: {sorted(unexpected)}")
+    return ranked, sorted(expected - seen)
+
+
 def merge_rank_records(
     records: Sequence[Mapping[str, Any]],
     metric_paths: Iterable[str],
     repetitions: Sequence[Sequence[Mapping[str, Any]]] | None = None,
+    expected_ranks: Iterable[int] | None = None,
 ) -> dict:
     """Merge N per-rank records (already gathered by the caller) into rank_mean/max/min/tail stats.
 
@@ -131,17 +170,19 @@ def merge_rank_records(
     metric's aggregate (recorded in ``missing_ranks``), so a partially-populated record set still
     produces a usable (if incomplete) report; callers/skills decide how to react to `missing_ranks`.
     """
+    ranked_records, absent_ranks = _ranked_records(records, expected_ranks)
+    paths = list(metric_paths)
     out: dict[str, dict] = {}
-    for path in metric_paths:
+    for path in paths:
         values = []
-        missing_ranks = []
-        for i, rec in enumerate(records):
+        missing_ranks = list(absent_ranks)
+        for rank, rec in ranked_records:
             v = _get_path(rec, path)
             if v is None or not isinstance(v, (int, float)) or not math.isfinite(v):
-                missing_ranks.append(i)
+                missing_ranks.append(rank)
                 continue
             values.append(float(v))
-        entry: dict[str, Any] = {"missing_ranks": missing_ranks}
+        entry: dict[str, Any] = {"missing_ranks": sorted(missing_ranks)}
         if values:
             vmax, vmin = max(values), min(values)
             entry["rank_mean"] = sum(values) / len(values)
@@ -156,11 +197,15 @@ def merge_rank_records(
         out[path] = entry
 
     if repetitions:
-        for path in metric_paths:
+        for path in paths:
             mean_runs = []
             max_runs = []
             for rep_records in repetitions:
-                rep_merged = merge_rank_records(rep_records, [path])
+                rep_merged = merge_rank_records(
+                    rep_records,
+                    [path],
+                    expected_ranks=expected_ranks,
+                )
                 m = rep_merged[path]
                 if m["rank_mean"] is not None:
                     mean_runs.append(m["rank_mean"])
@@ -191,8 +236,18 @@ def classify_case_speedup(
 
     Returns ``{"speedup_pct", "status": "pass"|"fail"|"unguarded"}``.
     """
+    if candidate_rank_max <= 0 or not math.isfinite(candidate_rank_max):
+        raise ValueError(
+            "classify_case_speedup: candidate_rank_max must be positive finite, "
+            f"got {candidate_rank_max}"
+        )
     if baseline_rank_max <= 0 or not math.isfinite(baseline_rank_max):
-        raise ValueError(f"classify_case_speedup: baseline_rank_max must be positive finite, got {baseline_rank_max}")
+        raise ValueError(
+            "classify_case_speedup: baseline_rank_max must be positive finite, "
+            f"got {baseline_rank_max}"
+        )
+    if min_pct is not None and not math.isfinite(min_pct):
+        raise ValueError(f"classify_case_speedup: min_pct must be finite, got {min_pct}")
     speedup_pct = (baseline_rank_max / candidate_rank_max - 1.0) * 100.0
     if min_pct is None:
         status = "unguarded"

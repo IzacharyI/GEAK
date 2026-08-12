@@ -21,6 +21,9 @@ def build_report(
     route_comparisons: Sequence[dict] | None = None,
     status: str = "pass",
     secondary_comparator_role: str | None = None,
+    hardware_context: dict | None = None,
+    measurement_tracks: dict | None = None,
+    experiment_manifest: dict | None = None,
 ) -> dict:
     """Assemble the top-level report object.
 
@@ -33,6 +36,11 @@ def build_report(
     ``secondary_comparator_role``: optional free-text note (e.g. "secondary comparison only; never
         the speedup denominator") — generalizes the artifact's ``mori_role`` field without naming
         MORI; omitted entirely when the caller has no secondary comparator.
+    ``measurement_tracks``: optional completion/evidence map consumed by comprehensive advisory
+        skills; absent tracks must not be inferred.
+    ``hardware_context``: optional device/topology/runtime/capability context used to interpret
+        counters and constrain candidate applicability; it does not select an implementation.
+    ``experiment_manifest``: optional normalized controlled-experiment contract.
     """
     report: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -44,4 +52,10 @@ def build_report(
         report["secondary_comparator_role"] = secondary_comparator_role
     if route_comparisons:
         report["route_comparisons"] = list(route_comparisons)
+    if hardware_context:
+        report["hardware_context"] = dict(hardware_context)
+    if measurement_tracks:
+        report["measurement_tracks"] = dict(measurement_tracks)
+    if experiment_manifest:
+        report["experiment_manifest"] = dict(experiment_manifest)
     return report

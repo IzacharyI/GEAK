@@ -1,201 +1,442 @@
-# SKILL — MoE dispatch/GEMM/combine bottleneck advisory
+# SKILL — Measurement-first distributed MoE bottleneck analysis
 
-Turn a distributed MoE kernel's generic bottleneck label (`compute`/`memory`/`latency`/`lds`/
-`balanced`/`overhead`, from `profile_engineer` step 4) into an answer to: **which stage is actually
-slow, is the slowness data-dependent (routing) or structural (kernel config), and what class of fix
-follows?**
+Framework status: **READY**. A workload analysis remains `awaiting_measurement` until its evidence
+contract is complete.
 
-You (an agent) can execute this skill by reading this file. It is built on
-`kernel_workflow/scripts/multi_rank_analysis/` (the generic, operator-agnostic library) — use its
-functions if they import; do the arithmetic by hand from the formulas below if they don't. **A broken
-helper must not disable this skill; a broken skill must not fail the run.**
+## Doctrine
 
----
+This Skill converts measured multi-rank evidence into:
 
-## 0. The one doctrine that matters
+1. explicit missing measurements;
+2. bounded bottleneck hypotheses;
+3. a measured path toward communication/computation overlap and fusion.
 
-> This skill explains **why** a multi-rank MoE kernel classified `latency`- or `overhead`-bound is
-> slow, in terms the generic classification cannot express (which stage, whether it's routing-data-
-> dependent). It **never** re-labels `bottleneck`, **never** overrides a `top_kernels` entry, and
-> **never** prunes a `directions[]` candidate the TechLead was otherwise going to propose.
+It never:
 
-Corollary: this skill is **advisory**. `bottleneck` and `top_opportunities` from `profile_engineer`
-remain the primary signal; this skill only ever adds a parallel, more specific hypothesis. See §8.
+- overwrites the generic `bottleneck`, `top_kernels`, or `top_opportunities`;
+- treats profiler category sum as wall-clock critical path;
+- treats relative category growth as share of total delta;
+- claims dispatch cost from a fused dispatch+GEMM category;
+- infers route-to-rank causality without per-rank expert-load and wait evidence;
+- hardcodes queue type, CU split, tile order, publication granularity, or fusion schedule;
+- prunes another candidate;
+- turns a public NVIDIA speedup into an AMD expected speedup.
 
----
+Every analysis output contains:
 
-## 1. Inputs
+- the observation and exact metric;
+- constraints implied by that observation;
+- bounded hypotheses and what they do not prove;
+- unranked public reference patterns with applicability and caveats;
+- the next collection experiment that distinguishes hypotheses.
 
-- `EVAL_DIR/baseline_metrics.json` (or `round_N_metrics.json`) — `profile_engineer`'s step-4
-  classification output (required: `bottleneck`, `key_metrics`, `top_kernels`).
-- A **multi-rank trace directory** — one Chrome/Perfetto trace JSON per rank
-  (`torch.profiler.export_chrome_trace` output), produced by the same distributed benchmark the
-  COMMANDMENT's PROFILE command runs. Path comes from the COMMANDMENT or is passed explicitly by the
-  caller (required for §3 steps 1–2; without it, degrade per §6 L3).
-- A **category map** — `{category_name: regex}` describing how this MoE kernel's raw kernel names
-  split into logical stages. This skill ships `default_moe_category_map.json` as a **worked example**
-  (matching a dispatch→GEMM1→GEMM2→P2P-combine MoE kernel family: `stage1`/`stage2`/`combine`/
-  `quantize`); if the kernel under analysis uses different stage names, the caller/TechLead supplies
-  its own map instead (optional; falls back to the shipped default, confidence lowered — §6 L1).
-- **Route/expert load summary**, if the benchmark prints one (e.g. `[ROUTES]`/`[EXPERTS]`-style
-  per-destination-rank counts and per-expert max/mean route counts) — optional; enables §4's
-  route-imbalance correlation (absent → skip that section only, §6 L4).
+The Skill never ranks or selects implementation candidates. Kernel Workflow's Step-3 TechLead uses
+the Step-2 findings, hypotheses, constraints, bounds, unknowns, and references to generate and rank
+`directions[]`.
 
----
+## Required deterministic entrypoint
 
-## 2. Output artifact
+Run the checked-in analyzer instead of reproducing arithmetic manually:
 
-Write `EVAL_DIR/profile_moe_advisory.json` (or `round_N_moe_advisory.json` for reprofile) and a
-human-readable `.md` beside it. Report its path as `moe_advisory_json` in `profile_engineer`'s return.
-
-```jsonc
-{
-  "skill": "moe_bottleneck", "skill_version": "1",
-  "category_map_source": "caller|default",
-  "categories": {
-    "<cat>": {
-      "rank_mean_ms": 0.0, "rank_max_ms": 0.0, "rank_min_ms": 0.0,
-      "rank_tail_spread_pct": 0.0,           // (max-min)/min*100 — the "is this stage skewed" signal
-      "share_of_classified_pct": 0.0,        // this category's share of total classified time
-      "kernel_names": ["..."],
-      "missing_ranks": []                     // ranks whose trace lacked this category (degraded, not dropped)
-    }
-  },
-  "unclassified_share_pct": 0.0,              // time in kernels no category matched — never silently hidden
-  "route_imbalance": {                        // OMITTED entirely if route/expert data unavailable (§6 L4)
-    "active_experts": 0, "expert_max_to_mean": 0.0,
-    "correlates_with_tail_category": "combine|stage1|stage2|none"
-  },
-  "directions": [{
-    "hypothesis": "...",                      // one sentence, tied to a specific number above
-    "specialty": "algorithm|memory|compute|host_runtime",  // matches tech_lead.md's direction taxonomy
-    "confidence": "low|medium|high",
-    "data_dependent": false,                  // true = routing-driven; a static kernel-config sweep will not fix it
-    "evidence": "the exact category/metric this hypothesis is derived from"
-  }],
-  "degraded": [{"reason": "..."}],
-  "skill_errors": []
-}
+```bash
+python3 <ANALYSIS_SKILL_DIR>/analyze.py \
+  --report <multi-rank-analysis.json> \
+  --output <EVAL_DIR>/profile_moe_analysis.json \
+  --markdown-output <EVAL_DIR>/profile_moe_analysis.md
 ```
 
----
+The runner accepts both the frozen `geak-megamoe-analysis-v1` artifact shape and future generic
+reports carrying equivalent `cases[]` / `route_comparisons[]` fields. A runner failure degrades to
+the generic profile result; it must never fail Kernel Workflow.
 
-## 3. Procedure
+## Inputs
 
-0. Read `EVAL_DIR/baseline_metrics.json` for `bottleneck`/`key_metrics`/`top_kernels`. If `bottleneck`
-   is `compute`- or `memory`-bound with high utilization on that axis, this skill still runs (a
-   compute-bound GEMM stage can coexist with a latency-bound combine stage) but should note in
-   `directions[].evidence` that the generic classification already points at a structural fix for that
-   axis — do not manufacture a competing hypothesis for the same evidence.
-1. For each rank's trace file, call `multi_rank_analysis.trace_categories.bucket_trace_events(path,
-   category_map)`. A trace file that fails to load returns `{"error": ...}` (§6 L2) — exclude that
-   rank from every category's aggregate and record it, do not abort.
-2. Merge across ranks with `multi_rank_analysis.aggregate.merge_rank_records(records,
-   ["per_category_ms.<cat>" for each cat in category_map])` to get `rank_mean_ms`/`rank_max_ms`/
-   `rank_min_ms`/`rank_tail_spread_pct` per category. Compute `share_of_classified_pct` as
-   `rank_mean_ms / sum(rank_mean_ms over all categories) * 100` — **never** against total wall time,
-   since profiler instrumentation overhead inflates the denominator (this mirrors the existing
-   evidence's explicit note: "Chrome-trace category durations include profiler overhead and are used
-   only for within-profile decomposition, never as the speedup denominator").
-3. If route/expert data is available, compute `expert_max_to_mean` (max per-expert route count /
-   mean per-expert route count across all experts) and check whether the category with the highest
-   `rank_tail_spread_pct` also has a rank ordering that correlates with the per-destination-rank route
-   counts (the rank receiving the most tokens is also the rank with the highest time in that
-   category). This is the signal, not a guess: it is the exact mechanism recorded as evidence for one
-   real MoE kernel (§4 worked pattern below) — skewed routing (`expert_max_to_mean` ~48x) made a
-   specific stage's rank-max blow out ~98% while GEMM stages moved only ~10–17%.
-4. Apply §4's routing rules to produce `directions[]`. Every hypothesis MUST cite the specific
-   category/metric it came from (`evidence` field) — no direction may be justified by "MoE kernels are
-   generally slow at X".
-5. Sanity-check: `unclassified_share_pct` should be small. If it is large (e.g. >30%), the category
-   map is a poor fit for this kernel — lower confidence on every entry and say so, rather than silently
-   presenting confident numbers derived mostly from unclassified time.
+Required:
 
----
+- generic profile engineer output (`bottleneck`, `top_kernels`, `top_opportunities`);
+- versioned multi-rank report with explicit case IDs and rank-max latency;
+- route comparisons only when both cases use the same workload contract;
+- validated `geak-hardware-context-v1` target context.
 
-## 4. Domain model — routing rules
+## Profile-to-analysis artifact contract
 
-These are the general principles this skill applies; they are illustrated with (not limited to) the
-worked pattern from one real distributed-MoE dispatch/GEMM/combine kernel's measured evidence.
+Profile packages raw inputs as `geak-analysis-bundle-v1`. Each case carries embedded rank records
+plus optional route summary, Chrome traces, ATT CSVs, and software counters. Every non-UT artifact
+must carry `geak-collection-provenance-v1`; a measurement track cannot be `complete` without
+non-empty evidence.
 
-- **High tail-spread in a "publish to peers" / combine-style category, correlated with route skew**
-  → hypothesis: "this stage's cost is destination-dependent — a rank that is a popular routing target
-  receives disproportionate P2P/scatter writes and serializes on them." →
-  `specialty: "algorithm"`, `data_dependent: true`. Candidate fix class: rebalance the stage's grid/CU
-  assignment to the actual per-destination load, or overlap this stage's publication with the
-  preceding GEMM stage's completion (pipeline across the two rather than a hard barrier between them).
-  Worked evidence: one MoE kernel's combine-stage rank-max delta between uniform and skewed routing
-  was ~98% of that route pair's total per-category delta, while its two GEMM stages moved only
-  ~10–17% — i.e. **the imbalance concentrates almost entirely in the combine/publish stage**, not the
-  GEMMs, even though the GEMMs are the larger absolute time.
-- **Low tail-spread in the GEMM-shaped categories but high tail-spread in the combine-shaped
-  category** → the bottleneck is **stage-specific to combine**, not a general GEMM tiling problem.
-  Steers the TechLead away from another GEMM `block_m`/`block_n`/`num_stages` sweep and toward
-  `algorithm`/`host_runtime` directions targeting the combine/publish kernel specifically.
-- **Route-imbalance-driven latency is flagged `data_dependent: true`** whenever
-  `expert_max_to_mean` is large (order ~10x or more) — this is a hard signal that **static kernel
-  launch-geometry knobs cannot fix it**: a knob tuned for one routing distribution will not generalize
-  to another, because the imbalance is a property of the input data, not the kernel's code. A round of
-  static-knob sweeps (persistent-CU counts, strided-vs-contiguous work assignment, fixed skew-CU
-  splits) that each come back near-parity with the default is the expected, predictable outcome of
-  trying to fix a data-dependent problem with a data-independent knob — report this as confirming
-  evidence for a code-level (route-aware) direction, not as "nothing helped, give up."
-- **All categories show low tail-spread (routing looks uniform) but the generic classification is
-  still `latency`-bound** → this skill has nothing more specific to add than `profile_engineer`
-  already found; return `directions: []` rather than inventing an MoE-flavored story where none is
-  supported by the data.
+```bash
+python3 <WORKFLOW_DIR>/scripts/multi_rank_analysis/build_bundle.py \
+  --rank-report <PROFILE_DIR>/rank_report.json \
+  --metric timing_ms.e2e \
+  --case-artifacts <PROFILE_DIR>/case_artifacts.json \
+  --route-comparisons <PROFILE_DIR>/route_comparisons.json \
+  --hardware-context <PROFILE_DIR>/hardware_context.json \
+  --measurement-tracks <PROFILE_DIR>/measurement_tracks.json \
+  --experiment-manifest <PROFILE_DIR>/experiment_manifest.json \
+  --output <EVAL_DIR>/analysis_bundle.json
 
----
+python3 <WORKFLOW_DIR>/scripts/multi_rank_analysis/runner.py \
+  --analysis-bundle <EVAL_DIR>/analysis_bundle.json \
+  --primary-metric "candidate E2E rank-max latency" \
+  --category-map <ANALYSIS_SKILL_DIR>/default_moe_category_map.json \
+  --output <EVAL_DIR>/multi_rank_analysis.json
+```
 
-## 5. Confidence stages
+The generic runner also directly normalizes existing AITER `cases[].ranks[]` or legacy
+`records[]` reports. That direct path is sufficient for rank metrics; comprehensive analysis uses
+the bundle to join traces, ATT, counters, controlled experiments, and provenance.
 
-| stage | source | confidence | consumer may |
-|---|---|---|---|
-| **A** default category map, no route data | shipped `default_moe_category_map.json`, `route_imbalance` omitted | `low` | display + annotate only |
-| **B** caller-supplied category map, no route data | operator-specific map, still no imbalance correlation | `medium` | cite in `directions[].evidence` |
-| **C** caller-supplied category map + route/expert data present | full correlation check (§3 step 3) | `high` | rank as a secondary key for `directions[]` ordering |
+## Hardware context is analysis input, not an implementation answer
 
----
+Record before interpreting measurements:
 
-## 6. Degradation ladder — every level is non-fatal
+```text
+vendor / model / architecture
+device count and topology
+execution units per device
+wave/warp width
+local memory and device memory
+runtime/driver/toolchain versions
+available communication/synchronization/transfer capabilities
+theoretical ceilings with sources
+measured pairwise/all-to-all interconnect, HBM, and launch ceilings
+```
 
-| level | trigger | behavior |
-|---|---|---|
-| **L0** | `analysis_skill=none`, skill dir missing/unreadable | Emit nothing. Caller behaves exactly as before this feature existed. |
-| **L1** | no category map supplied | Fall back to `default_moe_category_map.json`; every entry's confidence capped at stage A. |
-| **L2** | one rank's trace file missing/unreadable | Exclude that rank from every category's aggregate (via `merge_rank_records`'s `missing_ranks`); note it in `degraded[]`; other ranks unaffected. |
-| **L3** | no trace directory available at all | Skip categories/route sections entirely; return `directions: []` with a note that only `baseline_metrics.json` was available — never fail the profile step. |
-| **L4** | route/expert data unavailable | Omit `route_imbalance` entirely (not a null-filled stub); every `directions[].data_dependent` defaults to `false` since imbalance cannot be confirmed. |
-| **L5** | anything else raises | Catch it, append to `skill_errors[]`, write whatever categories succeeded, and continue. **The run never fails because of this skill.** |
+Every required static field and every non-null measured field carries collector, ISO-8601
+timestamp, confidence, and raw-artifact provenance.
 
----
+Use it to:
 
-## 7. Routing table — mapping `directions[]` into `plan_round`'s taxonomy
+- normalize XGMI/HBM utilization against measured target ceilings;
+- determine whether low bandwidth indicates transfer inefficiency or unavoidable byte volume;
+- evaluate whether candidate workgroup/LDS/VGPR unions can remain resident;
+- identify which mechanisms are available for experiments (for example SDMA or device-side signals);
+- reject hardware-incompatible public references.
 
-| `directions[].specialty` | maps to `tech_lead.md` direction `specialty` | typical fix shape |
-|---|---|---|
-| `algorithm` | `algorithm` | rebalance grid/CU assignment to load; pipeline/overlap two stages instead of a hard barrier |
-| `host_runtime` | `host_runtime` | reduce launch/dispatch overhead for a many-small-kernel stage |
-| `compute`/`memory` | same | only emitted when this skill's category-level evidence sharpens (not replaces) what `profile_engineer` already found on that axis |
+Do not turn hardware capabilities into a prescribed tile, CU split, queue, or scheduler. They constrain
+and interpret evidence; Step-3 planning later chooses among candidates. Missing target context or
+measured ceilings keeps the analysis `awaiting_measurement`.
 
-No new specialty is invented — every `directions[]` entry must map onto one of the TechLead's existing
-four specialties (`algorithm|memory|compute|host_runtime`; `deep_explore` is never proposed by this
-skill, that decision is the TechLead's alone).
+## AMD Thread Trace instruction evidence
 
----
+When stage or fused-kernel time is high but the instruction-pipeline cause is unknown, use the
+`rocprofv3_att` collector in `kernel_workflow/knowledge/collectors/`.
 
-## 8. Guarding against being wrong
+ATT can provide per-instruction:
 
-1. **The advisory can be wrong.** The isolated A/B against the frozen oracle is the ONLY acceptance
-   criterion for any candidate this skill's `directions[]` inspired — matching this repo's
-   `roofline` skill's §8.6 "never sole authority" doctrine.
-2. **Do not confuse correlation with proof.** §3 step 3's route/tail-spread correlation is a
-   hypothesis generator, not a measurement. A `data_dependent: true` flag means "worth checking against
-   a route-aware redesign first", not "confirmed root cause."
-3. **A rejected static-knob sweep is evidence, not noise.** If the TechLead already tried several
-   static launch-geometry knobs for a category this skill flags `data_dependent: true`, and they all
-   came back within the acceptance noise band, that is **confirming** evidence for this skill's
-   hypothesis (see §4) — record it in `HISTORY`/the insight ledger rather than re-trying more knobs
-   from the same family.
-4. **No candidate is ever pruned because of this skill.** It only ever adds candidate directions or
-   annotates evidence for/against a direction already under consideration.
+```text
+Hitcount
+Latency cycles
+Stall cycles
+Idle cycles
+Source/disassembly mapping
+VMEM/LDS instruction-level perfcounters
+wave states and occupancy context
+```
+
+Use it to distinguish MFMA starvation, barrier idle, waitcnt dependencies, LDS pressure, VMEM/global
+latency, VALU promote/scale/convert overhead, and producer/consumer wave-role imbalance.
+
+ATT samples selected GPU/CU/SIMD/waves. It does not measure whole-device E2E time, XGMI bytes,
+cross-rank waiting, or critical-path contribution. Warm caches outside the trace, capture one
+steady-state dispatch with a kernel regex, record target CU/SIMDs, and repeat representative roles.
+
+For comprehensive/root-cause or fusion conclusions, the report must also contain:
+
+```text
+measurement_tracks.mode_comparison
+measurement_tracks.communication_bytes
+measurement_tracks.wait_padding
+measurement_tracks.shared_routed_overlap
+measurement_tracks.publication_granularity
+measurement_tracks.fusion_dag
+```
+
+Each track is `{"status":"complete", ...evidence...}` only after its experiment contract and
+correctness gate pass. Missing tracks are not silently inferred.
+
+## Metric semantics
+
+For category `c` comparing a skew/candidate case against a uniform/baseline case:
+
+```text
+absolute_delta_ms(c) = rank_max_ms_new(c) - rank_max_ms_base(c)
+relative_growth_pct(c) = absolute_delta_ms(c) / rank_max_ms_base(c) * 100
+positive_absolute_delta_share_pct(c)
+  = max(absolute_delta_ms(c), 0) / sum_j max(absolute_delta_ms(j), 0) * 100
+```
+
+These answer different questions:
+
+- relative growth: how much that category changed relative to itself;
+- positive absolute-delta share: how much of the summed category increase it represents;
+- neither is automatically critical-path contribution when kernels overlap.
+
+Worked frozen evidence:
+
+```text
+8192 uniform→rank-mixed-skew
+combine: +0.3431 ms, +97.68% relative growth, 35.1% positive absolute-delta share
+stage2:  +0.3558 ms, +17.13% relative growth, 36.4% positive absolute-delta share
+stage1:  +0.2786 ms,  +9.65% relative growth, 28.5% positive absolute-delta share
+```
+
+Correct conclusion: combine grows most relative to its own baseline, while Stage2 has the largest
+positive absolute category delta. This does not prove combine alone is the root cause.
+
+## Category naming
+
+Until separately instrumented, use:
+
+```text
+stage1_dispatch_gemm1
+stage2
+combine
+quantize
+```
+
+The existing Stage1 kernel fuses planning/counting, dispatch/P2P payload publication, synchronization,
+and GEMM1. A Stage1 timing delta cannot be attributed to any one of these.
+
+Category maps are caller-supplied regexes. Record:
+
+- matched kernel names;
+- event counts;
+- per-call or per-replay normalization;
+- unclassified time;
+- malformed/missing rank traces;
+- physical interval overlap, not only summed duration.
+
+## Six mandatory measurement tracks
+
+### A. Frozen scattered EP baseline decomposition
+
+Use the existing AITER MegaMoEV2 EP8 UT and benchmark directly. Freeze identical inputs, routing,
+quantization, graph mode, and iteration count.
+
+Decompose:
+
+- BF16 quantization;
+- planning/counting and dispatch/P2P input publication;
+- GEMM1 and activation/quantization;
+- GEMM2, route weighting, and P2P output publication;
+- combine;
+- host launch gaps and intermediate materialization;
+- rank wait and physical overlap.
+
+The performance denominator is the frozen scattered AITER implementation. TPDP is optional
+model-level context and is not a required kernel-analysis track.
+
+### B. Communication bytes and causal controls
+
+Collect software counters per source→destination:
+
+- payload rows and bytes;
+- scale/metadata bytes;
+- local and remote token copies;
+- signal/fence/atomic counts;
+- send/receive completion and wait cycles.
+
+Pair with repeated rocprof-sys XGMI sampling and TransferBench topology ceilings.
+
+Run controlled variants:
+
+```text
+full
+metadata+sync/no-payload
+local-loopback payload
+compute-only
+communication-only (when semantically possible)
+```
+
+Variant differences are controlled bounds, not additive components when overlap exists.
+
+### C. First-arrival compute, straggler wait, and padding
+
+Require:
+
+- per-rank/per-expert load matrix;
+- per-expert/per-tile readiness;
+- local wait cycles or durations;
+- useful/padded tile counts;
+- epoch-qualified readiness and stale-read/deadlock tests.
+
+Only then may a Step-2 hypothesis be marked route-data-dependent or causally tied to a slow rank;
+Step-3 TechLead consumes that evidence label.
+
+### D. Publication granularity
+
+Sweep:
+
+```text
+token
+remote-owner-aligned row band
+GEMM M tile
+64/128/256/384-row chunk
+```
+
+Report downstream first-start time, atomics/fences, XGMI effective bandwidth, producer/consumer
+occupancy, and pipeline bubbles. Never assume token granularity is best.
+
+### E. One-kernel dependency DAG and ceiling
+
+Build measured nodes/edges for:
+
+```text
+planning/dispatch
+GEMM1
+activation/quantization
+GEMM2/publication
+combine
+shared expert
+launch/materialization
+```
+
+Compute current critical path and Amdahl ceiling for:
+
+1. Stage2 producer + combine consumer readiness;
+2. rank-wide persistent expert GEMM scheduling;
+3. dispatch receive + GEMM1 readiness;
+4. quantization ingress;
+5. one complete persistent kernel per EP rank.
+
+The Step-2 record does not emit a fusion direction. It records the measured constraints that a later
+Step-3 direction must account for: CU-role resources, buffer lifetime, synchronization requirements,
+extra memory, unsupported shapes/routes, and correctness/deadlock gates.
+
+### F. Resource residency and scheduler liveness
+
+Measure and validate:
+
+- one common workgroup shape for all roles;
+- LDS/VGPR/instruction-footprint union;
+- actual resident CTA capacity;
+- resource bounds across caller-supplied static/dynamic role-allocation probes;
+- producer and consumer progress guarantees;
+- scheduler-state, stealing, or arithmetic-schedule pressure and termination;
+- no oversubscribed spinning consumer can block a required producer.
+
+The final target is one operator launch and one complete persistent kernel per rank. The Skill
+reports measured resource constraints and unranked reference patterns; it does not prescribe queues,
+role counts, granularity, scheduler, or an intermediate implementation.
+
+## Optional model-level extension
+
+Shared/routed expert overlap and DPEP/TPDP can be measured later for model E2E context. They do not
+block the MegaMoEV2 fused-kernel work because they include operations outside this EP operator.
+
+## Step-3 handoff acceptance constraints (reported, not decided here)
+
+Correctness:
+
+- pass the existing distributed PyTorch oracle;
+- reject non-finite output and protocol errors;
+- preserve deterministic top-k reduction order/tolerance;
+- cover fixed/compact token buckets, uniform/skew/hot/empty experts, graph replay, and repeated epochs;
+- pass deadlock, stale-read, invalid-route, overflow, and non-default-stream gates.
+
+Functionality:
+
+- one complete kernel per EP rank performs quantization, dispatch/planning, GEMM1, activation,
+  GEMM2/P2P publication, and combine;
+- no whole-stage CPU synchronization or intermediate kernel launch remains;
+- the old scattered implementation stays available as fallback/reference.
+
+Performance:
+
+- compare against both the frozen public scattered baseline and the current best scattered incumbent;
+- use E2E rank-max latency over at least three repetitions;
+- exceed the configured minimum improvement after noise, with no required-case regression;
+- report launch count, exposed communication, wait/padding, and overlap—not only total latency.
+
+## Current-implementation safety gates
+
+Before accepting a persistent/fused candidate, audit and test:
+
+- completion/readiness arrays are sized for every index used by each execution mode;
+- every rank uses one protocol hash covering world size, capacities, dimensions, transport dtype,
+  publication width, and chunk rows;
+- unequal rank token buckets cannot select incompatible exact-count protocols;
+- invalid/dropped routes cannot leave stale direct-combine slots;
+- data and scale stores both complete before system-visible publication;
+- every relaxed remote wait is followed by an acquire fence;
+- every exact-epoch wait has a bounded diagnostic/timeout path in debug validation;
+- non-default stream ownership is explicit across quantize, dispatch, both GEMMs, and combine;
+- class-global gates cannot change another instance's IPC contract;
+- every waiting consumer has a guaranteed resident producer and vice versa;
+- 32-bit source/slot encodings and buffer-resource offsets remain within bounds.
+
+Do not infer liveness from a successful allocator-granularity accident or from one fixed-route UT.
+
+## Public design priors
+
+Use as design references:
+
+- DeepGEMM Mega MoE: symmetric workspace, expert waves, full fusion;
+- DeepEP SBO: `block_m` producer signals and Combine Send polling;
+- Comet/Flux: shared-tensor decomposition and adaptive block specialization;
+- tile-level producer/consumer work: rank-wide persistent GEMM plus a small communication partition;
+- MORI/SGLang: dual HIP streams, async/SDMA paths, shared-expert overlap;
+- Tutel/FasterMoE/Lina/AEP: adaptive pipelining, dynamic scheduling, and straggler models.
+
+Hardware-specific primitives and performance numbers do not transfer without local reproduction.
+
+## Output contract
+
+`profile_moe_analysis.json` uses `geak-moe-bottleneck-analysis-v3` and contains:
+
+```text
+framework_status: ready
+analysis_status: awaiting_measurement | evidence_complete
+analysis_boundary
+  workflow_step: 2
+  decision_fields_emitted: false
+  decision_owner: Step-3 TechLead
+source_schema
+source_provenance
+analysis_inputs  # resolved path + SHA-256 + byte count
+hardware_guidance
+measurement_coverage
+route_comparisons
+findings[]
+hypotheses[]
+constraints[]
+bounds[]
+unknowns[]
+reference_patterns[]  # unranked
+degraded[]
+claims
+  root_cause_proven
+  dispatch_independently_measured
+```
+
+When any required measurement track is missing:
+
+- analysis status is `awaiting_measurement`;
+- root-cause and fusion verdicts are prohibited;
+- missing-track collection questions are emitted under `unknowns[]`;
+- no Step-3 implementation direction is generated.
+
+A track labelled `complete` without non-empty evidence is normalized to `invalid`; labels alone
+cannot satisfy the contract. Complete evidence contains non-empty `artifact_refs`, `metrics`, and
+`provenance_refs`; `fusion_dag` additionally contains measured `bounds`.
+
+## Degradation ladder
+
+1. Missing optional route data: omit route causality and continue.
+2. Missing/malformed rank trace: record rank/error and lower confidence.
+3. Missing category map: use the shipped map, label it default, lower confidence.
+4. Missing any comprehensive track: analysis remains `awaiting_measurement`; emit unknowns.
+5. Runner failure: return `moe_analysis_json: ""` and preserve generic profiling output.
+
+## Research dossier
+
+Read the checked-in source and architecture summary:
+
+```text
+<ANALYSIS_SKILL_DIR>/RESEARCH.md
+```
+
+The originating workspace may also contain a longer experiment dossier under
+`artifacts/research/MEGAMOE_FUSION_RESEARCH.md`, but the Skill must not depend on that external path.
