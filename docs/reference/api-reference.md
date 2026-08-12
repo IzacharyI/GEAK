@@ -134,6 +134,8 @@ budget-controlled, each patch independently verified.
 | `min_improve` | `0.02` | Minimum accepted improvement (2%). |
 | `deep_cost` | `2` | Budget cost of a deep-explore engineer. |
 | `gpu_ids` | `0` | CSV GPU pool. |
+| `gpus_per_job` | `1` | Number of GPUs atomically leased for every GPU phase. |
+| `job_gpu_ids` | `""` | Fixed ordered GPU group; when set, its size must equal `gpus_per_job` and it must be a subset of `gpu_ids`. |
 | `task` | `""` | Natural-language steer. |
 | `exp_root` | sibling `exp/` | Output root. |
 | `eval_dir` | — | Isolated evaluation directory. |
@@ -145,6 +147,11 @@ budget-controlled, each patch independently verified.
 | `workload_spec_path` | — | Workload-alignment spec; makes the primary metric the time-weighted ratio-of-sums. |
 | `agent_timeout_ms` | `3600000` | Per-agent timeout (1h). |
 | `agent_retries` | `4` | Agent retry count (min 1). |
+
+`op_spec.resource` may also declare `gpus_per_job` and `job_gpu_ids`, but direct workflow arguments
+take precedence. Task files are not loaded by the JavaScript resource resolver, and a fixed group
+must still be contained in the explicit `gpu_ids` pool. Use `job_gpu_ids` for topology-sensitive
+multi-GPU jobs.
 
 **Speedup metric** = `geomean(baseline_ms / optimized_ms)`; with a workload spec it becomes the
 time-weighted ratio-of-sums. Author mode writes a fresh baseline against an immutable oracle, then runs
