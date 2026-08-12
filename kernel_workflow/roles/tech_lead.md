@@ -117,6 +117,10 @@ Inputs: `EVAL_DIR`, `ROUND` (1-based), `BUDGET_REMAINING` (hard cap on direction
 `PROFILE_SUMMARY` (path + inline), and `HISTORY` (the insight blackboard + hypothesis ledger from
 prior rounds — see below). Also the current best per-case table. Plus `KERNEL_KNOWLEDGE_DIR`,
 `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` (the kk pointer resolved in analyze; may be empty).
+If `PROFILE_SUMMARY.moe_advisory_json` is non-empty, read it and treat its `directions[]` as
+high-prior candidates for this round's `specialty` choices — advisory only, same weight as
+`top_opportunities`, never a substitute for your own reasoning about `HISTORY` (empty/absent when the
+optional `analysis_skill` feature is off — the default).
 
 **DEEP-MODE hooks (act on these ONLY if present in your inputs; otherwise ignore — a normal run never
 passes them):**

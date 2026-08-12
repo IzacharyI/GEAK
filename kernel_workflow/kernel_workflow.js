@@ -163,6 +163,24 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 // Only planning + authoring roles consult skills; every other role gets no injection.
 const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
 
+// ---- Profile-analysis skill (OPTIONAL, pluggable; mirrors e2e_workflow's analysis_skill — see
+// knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, it may run
+// ONE analysis skill to enrich the classification with operator-specific structure (e.g. MoE
+// route/expert imbalance, Stage1/Stage2/combine time-share) that the generic bottleneck labels
+// (compute/memory/latency/lds/balanced/overhead) cannot express. STRICTLY ADVISORY: annotates and
+// suggests directions, never overrides `bottleneck` and never prunes a candidate.
+// `analysis_skill=none` (the default here) or a missing/unreadable skill dir disables the step
+// entirely -> ANALYSIS_SKILL_* are '' and nothing is injected (byte-identical to before this feature).
+// Default OFF (unlike e2e's default-ON 'roofline'): kernel_workflow serves many non-MoE kernels, so an
+// MoE-specific skill should not silently fire on every run — matches the USE_EXPERT_SKILLS precedent.
+const ANALYSIS_SKILL = String(A.analysis_skill != null ? A.analysis_skill : 'none').trim();
+const ANALYSIS_SKILL_ON = !!ANALYSIS_SKILL && ANALYSIS_SKILL !== 'none' && ANALYSIS_SKILL !== 'false';
+const ANALYSIS_SKILL_INPUTS = ANALYSIS_SKILL_ON ? {
+  ANALYSIS_SKILL: ANALYSIS_SKILL,
+  ANALYSIS_SKILL_DIR: `${WORKFLOW_DIR}/knowledge/analysis_skills/${ANALYSIS_SKILL}`,
+} : { ANALYSIS_SKILL: '', ANALYSIS_SKILL_DIR: '' };
+if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (advisory; never overrides bottleneck/pruning).`);
+
 // ---------------------------------------------------------------------------
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
 // When none are passed (every normal/fast e2e run, and every standalone run) these are '' / the
@@ -566,7 +584,7 @@ let profileSummary = await agentT(
   roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
     COMMANDMENT,
-    ...RESUME_INPUT,
+    ...RESUME_INPUT, ...ANALYSIS_SKILL_INPUTS,
   }),
   { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA });
 log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (dispatch_count=${profileSummary ? profileSummary.dispatch_count : '?'})`);
@@ -786,6 +804,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       roleAgent('profile_engineer', 'reprofile', 'Re-profile the new best and explain the bottleneck shift.', {
         WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: round,
         COMMANDMENT, PREVIOUS_METRICS: profileSummary,
+        ...ANALYSIS_SKILL_INPUTS,
       }),
       { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
   } else {
