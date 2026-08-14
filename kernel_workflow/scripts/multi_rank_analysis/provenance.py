@@ -67,9 +67,23 @@ def validate_collection_provenance(provenance: Mapping[str, Any]) -> dict:
     cross_checks = provenance.get("cross_checks", [])
     if not isinstance(cross_checks, list):
         raise ValueError("collection provenance cross_checks must be a list")
+    units = provenance.get("units")
+    if not isinstance(units, Mapping) or not units:
+        raise ValueError("collection provenance units must be a non-empty mapping")
+    if not all(
+        isinstance(metric, str)
+        and metric
+        and isinstance(unit, str)
+        and unit
+        for metric, unit in units.items()
+    ):
+        raise ValueError(
+            "collection provenance units must map non-empty strings"
+        )
     return {
         **dict(provenance),
         "raw_artifacts": list(raw_artifacts),
         "cross_checks": list(cross_checks),
+        "units": dict(units),
         "profiler_perturbation_pct": perturbation,
     }

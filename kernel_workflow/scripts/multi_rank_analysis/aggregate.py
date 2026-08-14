@@ -64,6 +64,8 @@ def reduce_scalar(value: float, op: str = "mean", device=None) -> float:
         raise ValueError(f"reduce_scalar: unsupported op={op!r}, expected one of {sorted(ops)}")
     if not math.isfinite(float(value)):
         raise ValueError(f"reduce_scalar: value must be finite, got {value}")
+    if device is None and "nccl" in str(dist.get_backend()).lower():
+        device = torch.device("cuda", torch.cuda.current_device())
     result = torch.tensor(float(value), dtype=torch.float32, device=device)
     dist.all_reduce(result, op=ops[op])
     out = float(result.item())
@@ -113,6 +115,13 @@ def _get_path(record: Mapping[str, Any], dotted_path: str):
             return None
         node = node[part]
     return node
+
+
+def _span_pct(values: Sequence[float]) -> float:
+    if not values:
+        raise ValueError("span requires at least one value")
+    mean = sum(values) / len(values)
+    return (max(values) - min(values)) / max(abs(mean), _EPS) * 100.0
 
 
 def _ranked_records(
@@ -178,7 +187,12 @@ def merge_rank_records(
         missing_ranks = list(absent_ranks)
         for rank, rec in ranked_records:
             v = _get_path(rec, path)
-            if v is None or not isinstance(v, (int, float)) or not math.isfinite(v):
+            if (
+                v is None
+                or isinstance(v, bool)
+                or not isinstance(v, (int, float))
+                or not math.isfinite(v)
+            ):
                 missing_ranks.append(rank)
                 continue
             values.append(float(v))
@@ -188,7 +202,7 @@ def merge_rank_records(
             entry["rank_mean"] = sum(values) / len(values)
             entry["rank_max"] = vmax
             entry["rank_min"] = vmin
-            entry["rank_tail_spread_pct"] = (vmax - vmin) / max(vmin, _EPS) * 100.0
+            entry["rank_tail_spread_pct"] = _span_pct(values)
         else:
             entry["rank_mean"] = None
             entry["rank_max"] = None
@@ -200,7 +214,10 @@ def merge_rank_records(
         for path in paths:
             mean_runs = []
             max_runs = []
-            for rep_records in repetitions:
+            min_runs = []
+            tail_spread_runs = []
+            missing_by_run = []
+            for repetition_index, rep_records in enumerate(repetitions):
                 rep_merged = merge_rank_records(
                     rep_records,
                     [path],
@@ -211,13 +228,34 @@ def merge_rank_records(
                     mean_runs.append(m["rank_mean"])
                 if m["rank_max"] is not None:
                     max_runs.append(m["rank_max"])
+                if m["rank_min"] is not None:
+                    min_runs.append(m["rank_min"])
+                if m["rank_tail_spread_pct"] is not None:
+                    tail_spread_runs.append(m["rank_tail_spread_pct"])
+                if m["missing_ranks"]:
+                    missing_by_run.append(
+                        {
+                            "repetition": repetition_index,
+                            "missing_ranks": list(m["missing_ranks"]),
+                        }
+                    )
             entry = out[path]
             entry["rank_mean_runs"] = mean_runs
             entry["rank_max_runs"] = max_runs
+            entry["rank_min_runs"] = min_runs
+            entry["rank_tail_spread_pct_runs"] = tail_spread_runs
+            entry["repetition_missing_ranks"] = missing_by_run
+            for headline, runs in (
+                ("rank_mean", mean_runs),
+                ("rank_max", max_runs),
+                ("rank_min", min_runs),
+                ("rank_tail_spread_pct", tail_spread_runs),
+            ):
+                if runs:
+                    entry[headline] = sum(runs) / len(runs)
             for key, runs in (("rank_mean_span_pct", mean_runs), ("rank_max_span_pct", max_runs)):
                 if len(runs) >= 2:
-                    rmax, rmin = max(runs), min(runs)
-                    entry[key] = (rmax - rmin) / max(rmin, _EPS) * 100.0
+                    entry[key] = _span_pct(runs)
                 else:
                     entry[key] = 0.0 if runs else None
     return out

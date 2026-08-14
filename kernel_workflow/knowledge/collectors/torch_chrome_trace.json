@@ -9,6 +9,11 @@
     "verify the benchmark supports --profile-dir and exports one JSON per rank"
   ],
   "command_template": "torchrun --nproc-per-node=8 {aiter_root}/op_tests/multigpu_tests/bench_mega_moe_v2.py --mega-only --tokens {tokens} --route {route} --iters {iterations} --profile-dir {output_dir}",
+  "bundle_fields": {
+    "trace_files": "one Chrome trace path per rank",
+    "trace_replays": "exact graph replay count captured inside each trace file",
+    "trace_provenance": "geak-collection-provenance-v1 with units in microseconds/milliseconds"
+  },
   "preconditions": [
     "warm JIT and tuned-config caches before profiler start",
     "use the same fixed workload and rank mapping as the unprofiled timing run",

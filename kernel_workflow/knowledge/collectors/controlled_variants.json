@@ -26,7 +26,7 @@
   ],
   "outputs": [
     {
-      "artifact": "geak-controlled-experiment-v1 manifest",
+      "artifact": "geak-controlled-experiment-v2 manifest",
       "information": "variant IDs, changed components, invariants and non-additivity warnings"
     },
     {

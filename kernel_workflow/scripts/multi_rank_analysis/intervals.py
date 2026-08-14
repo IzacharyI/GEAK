@@ -83,7 +83,7 @@ def analyze_category_overlap(
     return {
         "category_active_ms": active,
         "pairwise": pairwise,
-        "profile_window_union_ms": interval_union_us(all_intervals) / 1000.0,
+        "categorized_kernel_union_ms": interval_union_us(all_intervals) / 1000.0,
         "summed_category_active_ms": sum(active.values()),
     }
 

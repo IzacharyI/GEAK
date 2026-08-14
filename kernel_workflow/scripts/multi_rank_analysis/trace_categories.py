@@ -4,7 +4,7 @@ A raw per-rank trace (the kind ``torch.profiler`` / rocprofv3 export via ``expor
 carries only a ``name`` string per kernel event — there is no category field. Turning "kernel names"
 into "logical stages" (e.g. a MoE kernel's dispatch/GEMM1/GEMM2/combine split) is operator-specific
 knowledge, so this module takes the category map as a PARAMETER rather than hardcoding one: the
-generic framework knows how to bucket by regex, an advisory Skill (or any caller) supplies what the
+generic framework knows how to bucket by regex, an analysis Skill (or any caller) supplies what the
 regexes ARE.
 
 See README.md for why this split exists (mirrors the intent of e2e_workflow's

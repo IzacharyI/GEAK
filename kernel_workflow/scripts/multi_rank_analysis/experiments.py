@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping, Sequence
 
-EXPERIMENT_SCHEMA_VERSION = "geak-controlled-experiment-v1"
+EXPERIMENT_SCHEMA_VERSION = "geak-controlled-experiment-v2"
 
 __all__ = [
     "EXPERIMENT_SCHEMA_VERSION",
@@ -28,6 +28,9 @@ def validate_experiment_manifest(manifest: Mapping[str, Any]) -> dict:
     workload = manifest.get("workload")
     if not isinstance(workload, Mapping) or not workload:
         raise ValueError("workload must be a non-empty mapping")
+    invariants = manifest.get("invariants")
+    if not isinstance(invariants, Mapping) or not invariants:
+        raise ValueError("invariants must be a non-empty mapping")
     variants = manifest.get("variants")
     if not isinstance(variants, Sequence) or isinstance(variants, (str, bytes)):
         raise ValueError("variants must be a sequence")
@@ -45,14 +48,72 @@ def validate_experiment_manifest(manifest: Mapping[str, Any]) -> dict:
         command = variant.get("command")
         if not isinstance(command, str) or not command.strip():
             raise ValueError(f"variant {name!r} must have a command")
-        normalized_variants.append(dict(variant))
+        changed_components = variant.get("changed_components")
+        if not isinstance(changed_components, list) or not all(
+            isinstance(component, str) and component
+            for component in changed_components
+        ):
+            raise ValueError(
+                f"variant {name!r} changed_components must be a string list"
+            )
+        if name == "full" and changed_components:
+            raise ValueError("full variant changed_components must be empty")
+        case_id = variant.get("case_id")
+        if not isinstance(case_id, str) or not case_id:
+            raise ValueError(f"variant {name!r} must have a case_id")
+        correctness_status = variant.get("correctness_status")
+        if correctness_status not in ("pass", "intentional_semantic_change"):
+            raise ValueError(
+                f"variant {name!r} has invalid correctness_status"
+            )
+        repetitions = variant.get("repetitions")
+        if (
+            isinstance(repetitions, bool)
+            or not isinstance(repetitions, int)
+            or repetitions < 2
+        ):
+            raise ValueError(
+                f"variant {name!r} repetitions must be an integer >= 2"
+            )
+        provenance_ref = variant.get("provenance_ref")
+        if not isinstance(provenance_ref, str) or not provenance_ref:
+            raise ValueError(
+                f"variant {name!r} must have a provenance_ref"
+            )
+        normalized_variants.append(
+            {
+                **dict(variant),
+                "changed_components": list(changed_components),
+            }
+        )
     if "full" not in names:
         raise ValueError("variants must include the full implementation")
+    overlap_pairs = []
+    non_full = [
+        variant for variant in normalized_variants if variant["name"] != "full"
+    ]
+    for left_index, left in enumerate(non_full):
+        for right in non_full[left_index + 1 :]:
+            overlap = sorted(
+                set(left["changed_components"])
+                & set(right["changed_components"])
+            )
+            if overlap:
+                overlap_pairs.append(
+                    {
+                        "left": left["name"],
+                        "right": right["name"],
+                        "changed_components": overlap,
+                    }
+                )
     return {
         **dict(manifest),
         "experiment_id": experiment_id.strip(),
         "workload": dict(workload),
+        "invariants": dict(invariants),
         "variants": normalized_variants,
+        "overlap_pairs": overlap_pairs,
+        "delta_additivity_allowed": False,
     }
 
 

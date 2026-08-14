@@ -144,6 +144,7 @@ budget-controlled, each patch independently verified.
 | `target_language` | `triton` | Author-mode language: `triton` \| `flydsl` \| `hip` \| `ck`. |
 | `op_spec` | `{}` | Op specification (author mode). |
 | `perf_knowledge_dir` | sibling `perf_knowledge/` | Knowledge base. |
+| `analysis_skill` | `none` | Optional post-Profile Step-2 Skill, executed by a separate analysis engineer (for example `moe_bottleneck`). |
 | `workload_spec_path` | — | Workload-alignment spec; makes the primary metric the time-weighted ratio-of-sums. |
 | `agent_timeout_ms` | `3600000` | Per-agent timeout (1h). |
 | `agent_retries` | `4` | Agent retry count (min 1). |

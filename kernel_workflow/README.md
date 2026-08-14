@@ -84,6 +84,8 @@ Workflow({
     target_language: "triton", // author mode: triton (always) | flydsl | hip | ck — the language to write
     op_spec: {},               // author mode: op contract; may include resource.gpus_per_job/job_gpu_ids
     perf_knowledge_dir: "",  // optional: AMD authoring knowledge base the author_engineer reads
+    analysis_skill: "none",  // optional, default none; e.g. "moe_bottleneck" dispatches a separate
+                              //   analysis_engineer after each successful generic Profile
     // --- workload alignment (optional; aligns the PERF harness with the real workload) ---
     workload_spec_path: "",    // optional: path to a workload-v1 json (parse_profile.py --workload-out).
                                //   The benchmark harness then times the EXACT (shape,dtype) cases the

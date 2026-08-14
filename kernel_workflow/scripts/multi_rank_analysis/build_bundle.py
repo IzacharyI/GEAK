@@ -46,20 +46,43 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rank-report", type=Path, required=True)
     parser.add_argument("--metric", action="append", required=True)
+    parser.add_argument("--metric-definitions", type=Path)
+    parser.add_argument("--expected-world-size", type=int)
     parser.add_argument("--workload", type=Path)
     parser.add_argument("--case-artifacts", type=Path)
     parser.add_argument("--route-comparisons", type=Path)
     parser.add_argument("--hardware-context", type=Path)
     parser.add_argument("--measurement-tracks", type=Path)
     parser.add_argument("--experiment-manifest", type=Path)
+    parser.add_argument("--derived-evidence", type=Path)
+    parser.add_argument("--provenance-catalog", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     workload = _read_json(args.workload) if args.workload else None
+    hardware_context = (
+        _read_json(args.hardware_context)
+        if args.hardware_context
+        else None
+    )
+    metric_definitions = (
+        _read_json(args.metric_definitions)
+        if args.metric_definitions
+        else None
+    )
     bundle = bundle_from_rank_report(
         _read_json(args.rank_report),
         args.metric,
         workload=workload,
+        metric_definitions=metric_definitions,
+        expected_world_size=(
+            args.expected_world_size
+            or (
+                hardware_context.get("device_count")
+                if isinstance(hardware_context, dict)
+                else None
+            )
+        ),
     )
     if args.case_artifacts:
         case_artifacts = _read_json(args.case_artifacts)
@@ -78,6 +101,29 @@ def main() -> int:
         unknown = sorted(set(case_artifacts) - known)
         if unknown:
             parser.error(f"--case-artifacts references unknown cases: {unknown}")
+        allowed_fields = {
+            "repetitions",
+            "workload",
+            "comparison_group",
+            "trace_files",
+            "trace_replays",
+            "trace_provenance",
+            "att_stats_files",
+            "att_occupancy_files",
+            "att_provenance",
+            "route_summary",
+            "route_provenance",
+            "software_counters",
+        }
+        forbidden = {
+            case_id: sorted(set(fields) - allowed_fields)
+            for case_id, fields in case_artifacts.items()
+            if set(fields) - allowed_fields
+        }
+        if forbidden:
+            parser.error(
+                f"--case-artifacts contains immutable/core fields: {forbidden}"
+            )
         bundle["cases"] = [
             {
                 **case,
@@ -87,20 +133,26 @@ def main() -> int:
         ]
     for field, path in (
         ("route_comparisons", args.route_comparisons),
-        ("hardware_context", args.hardware_context),
         ("measurement_tracks", args.measurement_tracks),
         ("experiment_manifest", args.experiment_manifest),
+        ("derived_evidence", args.derived_evidence),
+        ("provenance_catalog", args.provenance_catalog),
     ):
         if path:
             bundle[field] = _read_json(path)
+    if hardware_context is not None:
+        bundle["hardware_context"] = hardware_context
     assembly_paths = {"rank_report": args.rank_report}
     for name, path in (
         ("workload", args.workload),
+        ("metric_definitions", args.metric_definitions),
         ("case_artifacts", args.case_artifacts),
         ("route_comparisons", args.route_comparisons),
         ("hardware_context", args.hardware_context),
         ("measurement_tracks", args.measurement_tracks),
         ("experiment_manifest", args.experiment_manifest),
+        ("derived_evidence", args.derived_evidence),
+        ("provenance_catalog", args.provenance_catalog),
     ):
         if path:
             assembly_paths[name] = path

@@ -32,7 +32,7 @@ known profiler perturbation
   marked `contract_only_not_implemented`.
 
 Every trace, ATT, route, or software-counter artifact admitted to
-`geak-analysis-bundle-v1` must carry `geak-collection-provenance-v1`.
+`geak-analysis-bundle-v2` must carry `geak-collection-provenance-v1`.
 
 ## Required collector families
 

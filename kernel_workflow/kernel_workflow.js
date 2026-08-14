@@ -7,7 +7,7 @@ export const meta = {
     { title: 'Author', detail: 'author_engineer writes a fresh optimize-loop seed (only when mode=author); speedup denominator stays the frozen online kernel' },
     { title: 'Analyze', detail: 'tech_lead analyzes kernel + writes roadmap' },
     { title: 'Benchmark', detail: 'benchmark_engineer builds the COMMANDMENT + baseline' },
-    { title: 'Profile', detail: 'profile_engineer classifies the bottleneck' },
+    { title: 'Profile', detail: 'profile_engineer classifies; optional analysis_engineer validates Step-2 evidence' },
     { title: 'Optimize', detail: 'budget loop: tech_lead plans, specialist OR deep_explore engineers optimize, reprofile' },
     { title: 'Verify', detail: 'each candidate patch independently re-benchmarked' },
     { title: 'Merge', detail: 'integrator combines the round winners' },
@@ -164,8 +164,8 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
 
 // ---- Profile-analysis skill (OPTIONAL, pluggable; mirrors e2e_workflow's analysis_skill — see
-// knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, it may run
-// ONE analysis skill to enrich the classification with operator-specific structure (e.g. MoE
+// knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, a separate
+// analysis_engineer may run ONE analysis skill to enrich it with operator-specific structure (e.g. MoE
 // route/expert imbalance, Stage1/Stage2/combine time-share) that the generic bottleneck labels
 // (compute/memory/latency/lds/balanced/overhead) cannot express. ANALYSIS ONLY: emits findings,
 // bounded hypotheses, constraints, bounds, unknowns and unranked references—never directions.
@@ -313,8 +313,26 @@ const PROFILE_SCHEMA = obj({
   top_kernels: { type: 'array', items: { type: 'object', additionalProperties: true } },
   top_opportunities: { type: 'array', items: { type: 'string' } },
   summary_path: { type: 'string' }, shift_note: { type: 'string' },
-  moe_analysis_json: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
+
+const ANALYSIS_RESULT_SCHEMA = obj({
+  status: { type: 'string', enum: ['ready', 'degraded'] },
+  analysis_skill: { type: 'string' },
+  analysis_schema_version: { type: 'string' },
+  analysis_status: {
+    type: 'string',
+    enum: ['awaiting_measurement', 'evidence_complete', 'unavailable'],
+  },
+  analysis_json: { type: 'string' },
+  failure_note: { type: 'string' },
+}, [
+  'status',
+  'analysis_skill',
+  'analysis_schema_version',
+  'analysis_status',
+  'analysis_json',
+  'failure_note',
+]);
 
 const PLAN_SCHEMA = obj({
   stop: { type: 'boolean' }, reasoning: { type: 'string' },
@@ -460,19 +478,20 @@ function expertSkillsBlock(role) {
 
 function analysisSkillBlock(role, phase) {
   if (!ANALYSIS_SKILL_ON) return '';
-  if (role === 'profile_engineer') {
+  if (role === 'analysis_engineer') {
     return `\n\n## Profile-analysis skill (ANALYSIS ONLY — explicitly enabled this run)\n` +
-      `After completing the generic bottleneck classification and top_opportunities, check that ` +
-      `${ANALYSIS_SKILL_INPUTS.ANALYSIS_SKILL_DIR}/SKILL.md exists, Read it, and follow its deterministic ` +
-      `runner/contract against the profile artifacts. Write its analysis JSON under EVAL_DIR (or the ` +
-      `round directory for reprofile) and return that path as moe_analysis_json. Never overwrite the ` +
-      `generic bottleneck/top_opportunities and never fail profiling if the optional skill degrades.`;
+      `Read ${ANALYSIS_SKILL_INPUTS.ANALYSIS_SKILL_DIR}/SKILL.md, execute only its checked-in ` +
+      `builder/runner/analyzer/validator chain, and return the validated artifact contract. ` +
+      `Never improvise arithmetic or change the generic Profile result.`;
   }
   if (role === 'tech_lead' && phase === 'plan_round') {
     return `\n\n## Profile-analysis evidence (explicitly enabled this run)\n` +
-      `If PROFILE_SUMMARY.moe_analysis_json is non-empty, Read its findings, hypotheses, constraints, ` +
-      `bounds, unknowns, and unranked reference patterns. Use these as Step-2 evidence while YOU generate ` +
-      `and rank Step-3 directions from measured top_opportunities, per-case data, and HISTORY.`;
+      `Inspect PROFILE_SUMMARY.analysis_result. Only Read analysis_json when status=ready and ` +
+      `analysis_schema_version is the Skill's current schema. If analysis_status=awaiting_measurement, ` +
+      `use findings only at their declared confidence; do not treat hypotheses, bounds, or claims as ` +
+      `root cause and do not rank a direction from them. If evidence_complete, use only resolved ` +
+      `high/medium-confidence evidence alongside generic profile/per-case data. A degraded or unavailable ` +
+      `analysis contributes nothing; continue from the generic Profile result.`;
   }
   return '';
 }
@@ -507,6 +526,39 @@ const CANONICAL = setup.workspace;       // canonical current-best workspace (ad
 const KERNEL_NAME = setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
 log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
+
+async function runProfileAnalysis(profileSummary, round, label) {
+  if (!ANALYSIS_SKILL_ON || !profileSummary) return null;
+  const result = await agentT(
+    roleAgent(
+      'analysis_engineer',
+      'analyze_profile',
+      'Execute and validate the optional Step-2 analysis pipeline.',
+      {
+        WORKSPACE: CANONICAL,
+        EVAL_DIR,
+        ROUND: round,
+        COMMANDMENT,
+        PROFILE_SUMMARY: profileSummary,
+        SKILL_DIR: WORKFLOW_DIR,
+        ...ANALYSIS_SKILL_INPUTS,
+      },
+    ),
+    {
+      phase: 'Profile',
+      label,
+      schema: ANALYSIS_RESULT_SCHEMA,
+    },
+  );
+  return result || {
+    status: 'degraded',
+    analysis_skill: ANALYSIS_SKILL,
+    analysis_schema_version: '',
+    analysis_status: 'unavailable',
+    analysis_json: '',
+    failure_note: 'analysis agent failed or returned invalid structured output',
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Enforce a FROZEN REAL-ONLINE BASELINE in BOTH modes (author AND same-language
@@ -606,9 +658,20 @@ let profileSummary = await agentT(
   roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
     COMMANDMENT,
-    ...RESUME_INPUT, ...ANALYSIS_SKILL_INPUTS,
+    ...RESUME_INPUT,
   }),
   { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA });
+const baselineAnalysisResult = await runProfileAnalysis(
+  profileSummary,
+  0,
+  'analysis_engineer:baseline',
+);
+if (profileSummary) {
+  profileSummary = {
+    ...profileSummary,
+    analysis_result: baselineAnalysisResult,
+  };
+}
 log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (dispatch_count=${profileSummary ? profileSummary.dispatch_count : '?'})`);
 
 // ===========================================================================
@@ -826,9 +889,19 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       roleAgent('profile_engineer', 'reprofile', 'Re-profile the new best and explain the bottleneck shift.', {
         WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: round,
         COMMANDMENT, PREVIOUS_METRICS: profileSummary,
-        ...ANALYSIS_SKILL_INPUTS,
       }),
       { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
+    const reprofileAnalysisResult = await runProfileAnalysis(
+      profileSummary,
+      round,
+      `analysis_engineer:reprofile r${round}`,
+    );
+    if (profileSummary) {
+      profileSummary = {
+        ...profileSummary,
+        analysis_result: reprofileAnalysisResult,
+      };
+    }
   } else {
     noImprove++;
   }
@@ -875,6 +948,7 @@ const report = await agentT(
     EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR,
     HISTORY: history, FINAL_WINNER: finalWinner, BASELINE_PER_CASE,
     BASELINE_GEOMEAN_MS, CUMULATIVE_SPEEDUP: cumulative,
+    PROFILE_SUMMARY: profileSummary,
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 

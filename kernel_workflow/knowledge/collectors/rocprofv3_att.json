@@ -22,7 +22,7 @@
       "information": "raw AMD thread trace"
     },
     {
-      "artifact": "stats_ui_output_*.csv",
+      "artifact": "stats_*.csv (or version-specific stats_ui_output_*.csv)",
       "information": "per-instruction Hitcount, Latency, Stall, Idle and Source"
     },
     {
@@ -58,6 +58,12 @@
     "cross-GPU critical path",
     "causal speedup without a controlled candidate"
   ],
+  "metric_semantics": {
+    "Latency": "Stall + Issue on gfx9, or Stall + Execute on gfx10+",
+    "Stall": "hardware-pipe backpressure cycles already included in Latency",
+    "Idle": "gap caused by arbitration, register dependency, or instruction-cache miss",
+    "accounted_cycles": "Latency + Idle; never add Stall twice"
+  },
   "parser": "kernel_workflow/scripts/multi_rank_analysis/instruction_analysis.py",
   "provenance": {
     "reference": "artifacts/archives/gemm_bottleneck_analysis.zip",

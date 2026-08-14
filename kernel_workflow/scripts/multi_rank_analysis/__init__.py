@@ -28,6 +28,11 @@ from .experiments import (
     compare_controlled_variants,
     validate_experiment_manifest,
 )
+from .evidence import (
+    EVIDENCE_CATALOG_SCHEMA_VERSION,
+    resolve_measurement_tracks,
+    validate_evidence_catalog,
+)
 from .hardware import (
     HARDWARE_CONTEXT_SCHEMA_VERSION,
     validate_hardware_context,
@@ -55,6 +60,7 @@ from .trace_categories import bucket_trace_events, load_category_map
 __all__ = [
     "SCHEMA_VERSION",
     "EXPERIMENT_SCHEMA_VERSION",
+    "EVIDENCE_CATALOG_SCHEMA_VERSION",
     "HARDWARE_CONTEXT_SCHEMA_VERSION",
     "ATT_COLUMNS",
     "ANALYSIS_BUNDLE_SCHEMA_VERSION",
@@ -74,10 +80,12 @@ __all__ = [
     "merge_intervals",
     "merge_rank_records",
     "reduce_scalar",
+    "resolve_measurement_tracks",
     "parse_att_stats_csv",
     "read_att_occupancy",
     "time_distributed",
     "validate_experiment_manifest",
+    "validate_evidence_catalog",
     "validate_analysis_bundle",
     "validate_measurement_tracks",
     "validate_collection_provenance",

@@ -43,6 +43,8 @@ python3 <ANALYSIS_SKILL_DIR>/analyze.py \
   --report <multi-rank-analysis.json> \
   --output <EVAL_DIR>/profile_moe_analysis.json \
   --markdown-output <EVAL_DIR>/profile_moe_analysis.md
+python3 <ANALYSIS_SKILL_DIR>/validate_output.py \
+  --analysis <EVAL_DIR>/profile_moe_analysis.json
 ```
 
 The runner accepts both the frozen `geak-megamoe-analysis-v1` artifact shape and future generic
@@ -56,11 +58,11 @@ Required:
 - generic profile engineer output (`bottleneck`, `top_kernels`, `top_opportunities`);
 - versioned multi-rank report with explicit case IDs and rank-max latency;
 - route comparisons only when both cases use the same workload contract;
-- validated `geak-hardware-context-v1` target context.
+- validated `geak-hardware-context-v2` target context.
 
 ## Profile-to-analysis artifact contract
 
-Profile packages raw inputs as `geak-analysis-bundle-v1`. Each case carries embedded rank records
+Profile packages raw inputs as `geak-analysis-bundle-v2`. Each case carries embedded rank records
 plus optional route summary, Chrome traces, ATT CSVs, and software counters. Every non-UT artifact
 must carry `geak-collection-provenance-v1`; a measurement track cannot be `complete` without
 non-empty evidence.
@@ -69,6 +71,7 @@ non-empty evidence.
 python3 <WORKFLOW_DIR>/scripts/multi_rank_analysis/build_bundle.py \
   --rank-report <PROFILE_DIR>/rank_report.json \
   --metric timing_ms.e2e \
+  --expected-world-size 8 \
   --case-artifacts <PROFILE_DIR>/case_artifacts.json \
   --route-comparisons <PROFILE_DIR>/route_comparisons.json \
   --hardware-context <PROFILE_DIR>/hardware_context.json \
@@ -79,6 +82,7 @@ python3 <WORKFLOW_DIR>/scripts/multi_rank_analysis/build_bundle.py \
 python3 <WORKFLOW_DIR>/scripts/multi_rank_analysis/runner.py \
   --analysis-bundle <EVAL_DIR>/analysis_bundle.json \
   --primary-metric "candidate E2E rank-max latency" \
+  --primary-metric-path timing_ms.e2e \
   --category-map <ANALYSIS_SKILL_DIR>/default_moe_category_map.json \
   --output <EVAL_DIR>/multi_rank_analysis.json
 ```
@@ -141,16 +145,18 @@ latency, VALU promote/scale/convert overhead, and producer/consumer wave-role im
 ATT samples selected GPU/CU/SIMD/waves. It does not measure whole-device E2E time, XGMI bytes,
 cross-rank waiting, or critical-path contribution. Warm caches outside the trace, capture one
 steady-state dispatch with a kernel regex, record target CU/SIMDs, and repeat representative roles.
+ROCm defines ATT `Latency` as Stall + Issue/Execute; use `Latency + Idle` for accounted cycles and
+never add Stall a second time.
 
 For comprehensive/root-cause or fusion conclusions, the report must also contain:
 
 ```text
-measurement_tracks.mode_comparison
+measurement_tracks.ep_baseline_decomposition
 measurement_tracks.communication_bytes
 measurement_tracks.wait_padding
-measurement_tracks.shared_routed_overlap
 measurement_tracks.publication_granularity
 measurement_tracks.fusion_dag
+measurement_tracks.resource_residency
 ```
 
 Each track is `{"status":"complete", ...evidence...}` only after its experiment contract and
@@ -384,7 +390,7 @@ Hardware-specific primitives and performance numbers do not transfer without loc
 
 ## Output contract
 
-`profile_moe_analysis.json` uses `geak-moe-bottleneck-analysis-v3` and contains:
+`profile_moe_analysis.json` uses `geak-moe-bottleneck-analysis-v4` and contains:
 
 ```text
 framework_status: ready
@@ -394,6 +400,7 @@ analysis_boundary
   decision_fields_emitted: false
   decision_owner: Step-3 TechLead
 source_schema
+source_report_status
 source_provenance
 analysis_inputs  # resolved path + SHA-256 + byte count
 hardware_guidance
@@ -405,10 +412,12 @@ constraints[]
 bounds[]
 unknowns[]
 reference_patterns[]  # unranked
+evidence_catalog_summary
 degraded[]
 claims
   root_cause_proven
   dispatch_independently_measured
+  dispatch_metric_refs
 ```
 
 When any required measurement track is missing:
@@ -418,9 +427,10 @@ When any required measurement track is missing:
 - missing-track collection questions are emitted under `unknowns[]`;
 - no Step-3 implementation direction is generated.
 
-A track labelled `complete` without non-empty evidence is normalized to `invalid`; labels alone
+A track labelled `complete` without resolved evidence is normalized to `invalid`; labels alone
 cannot satisfy the contract. Complete evidence contains non-empty `artifact_refs`, `metrics`, and
-`provenance_refs`; `fusion_dag` additionally contains measured `bounds`.
+`provenance_refs` that resolve to complete typed catalog entries. Track-specific evidence kinds are
+required; `fusion_dag` additionally contains finite, internally consistent measured `bounds`.
 
 ## Degradation ladder
 
@@ -428,7 +438,8 @@ cannot satisfy the contract. Complete evidence contains non-empty `artifact_refs
 2. Missing/malformed rank trace: record rank/error and lower confidence.
 3. Missing category map: use the shipped map, label it default, lower confidence.
 4. Missing any comprehensive track: analysis remains `awaiting_measurement`; emit unknowns.
-5. Runner failure: return `moe_analysis_json: ""` and preserve generic profiling output.
+5. Dedicated analysis call failure: return `analysis_result.status=degraded` with an empty
+   `analysis_json`; the already-complete generic Profile result is preserved.
 
 ## Research dossier
 

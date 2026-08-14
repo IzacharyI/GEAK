@@ -74,20 +74,33 @@ if (blockSource) {
     ANALYSIS_SKILL: 'moe_bottleneck',
     ANALYSIS_SKILL_DIR: '/wf/knowledge/analysis_skills/moe_bottleneck',
   });
-  ok(on('profile_engineer', 'baseline').includes('deterministic'), 'ON injects deterministic profile instructions');
+  ok(on('profile_engineer', 'baseline') === '', 'generic Profile remains analysis-free');
+  ok(on('analysis_engineer', 'analyze_profile').includes('checked-in'), 'ON injects deterministic analysis instructions');
   ok(on('tech_lead', 'plan_round').includes('Step-2 evidence'), 'ON injects analysis-to-planning boundary');
   ok(on('engineer', 'optimize') === '', 'unrelated roles receive no analysis text');
 }
 
 const sites = (src.match(/\.\.\.ANALYSIS_SKILL_INPUTS/g) || []).length;
-ok(sites === 2, `inputs spread only at baseline/reprofile profile calls (${sites})`);
+ok(sites === 1, `inputs spread only into dedicated analysis call (${sites})`);
 ok(
   /base \+ expertSkillsBlock\(role\) \+ analysisSkillBlock\(role, phase\)/.test(src),
   'roleAgent appends analysis text dynamically',
 );
 ok(
-  /moe_analysis_json:\s*\{\s*type:\s*'string'\s*\}/.test(src),
-  'PROFILE_SCHEMA explicitly allows moe_analysis_json',
+  /const ANALYSIS_RESULT_SCHEMA[\s\S]*?analysis_json:\s*\{\s*type:\s*'string'\s*\}/.test(src),
+  'dedicated analysis-result schema carries generic analysis_json',
+);
+ok(
+  /async function runProfileAnalysis[\s\S]*?analysis_engineer[\s\S]*?ANALYSIS_RESULT_SCHEMA/.test(src),
+  'workflow has a dedicated analysis-agent call and schema',
+);
+ok(
+  (src.match(/analysis_result:/g) || []).length >= 2,
+  'baseline and reprofile attach validated analysis_result separately',
+);
+ok(
+  !/moe_analysis_json:\s*\{/.test(src),
+  'core workflow schema no longer hardcodes a MoE output field',
 );
 
 for (const roleFile of ['profile_engineer.md', 'tech_lead.md']) {

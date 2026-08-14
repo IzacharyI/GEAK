@@ -1,7 +1,8 @@
 # Analysis skills — index (kernel_workflow)
 
-Pluggable **profile-analysis** skills for Kernel Workflow. `profile_engineer` runs at most ONE of
-these, after its own bottleneck classification (compute/memory/latency/lds/balanced/overhead), to
+Pluggable **profile-analysis** skills for Kernel Workflow. A dedicated `analysis_engineer` runs at
+most ONE of these after `profile_engineer` completes its own bottleneck classification
+(compute/memory/latency/lds/balanced/overhead), to
 enrich that classification with operator-specific structure the generic labels cannot express — e.g.
 a distributed MoE kernel's route/expert imbalance and Stage1/Stage2/combine time-share.
 
@@ -16,7 +17,7 @@ vice versa.
 
 | skill | dir | what it adds | when to use |
 |---|---|---|---|
-| `moe_bottleneck` | `moe_bottleneck/` | **DRAFT** measurement coverage, corrected stage deltas, route/wait/byte/overlap/fusion hypotheses via deterministic runner | a distributed MoE kernel with multi-rank profiling and controlled-experiment data |
+| `moe_bottleneck` | `moe_bottleneck/` | **READY contract** with typed evidence catalog, corrected timing/ATT math, and conservative findings; workload status may remain `awaiting_measurement` | a distributed MoE kernel with multi-rank profiling and controlled-experiment data |
 | `none` | — | nothing (pre-feature behavior) | any non-MoE kernel; reproducing an old run byte-for-byte; skill is misbehaving |
 
 ## Contract every skill must honour

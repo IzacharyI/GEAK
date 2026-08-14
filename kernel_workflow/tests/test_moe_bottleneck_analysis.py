@@ -16,6 +16,13 @@ ANALYZER = os.path.join(
     "moe_bottleneck",
     "analyze.py",
 )
+VALIDATOR = os.path.join(
+    ROOT,
+    "knowledge",
+    "analysis_skills",
+    "moe_bottleneck",
+    "validate_output.py",
+)
 SPEC = importlib.util.spec_from_file_location("moe_bottleneck_analyze", ANALYZER)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -52,25 +59,153 @@ def _report(with_tracks=False):
         ],
     }
     if with_tracks:
-        report["measurement_tracks"] = {
-            track: {
+        report["schema_version"] = "geak-multirank-analysis-v2"
+        report["status"] = "pass"
+        report["input_artifacts"] = {
+            "analysis_bundle": {"sha256": "a" * 64}
+        }
+        kinds = {
+            "rank": ("rank_metric", "rank:max"),
+            "trace": ("trace", "trace:stage1"),
+            "software": ("software_counters", "counter:payload_bytes"),
+            "xgmi": ("xgmi", "xgmi:bytes"),
+            "experiment": (
+                "controlled_experiment",
+                "experiment:publication_latency",
+            ),
+            "dag": ("dependency_dag", "dag:critical_path_ms"),
+            "residency": (
+                "resource_residency",
+                "residency:resident_ctas",
+            ),
+        }
+        entries = {}
+        for evidence_id, (kind, metric_id) in kinds.items():
+            data = {}
+            if kind == "xgmi":
+                data = {
+                    "logical_bytes": 100000000,
+                    "physical_bytes": 125000000,
+                    "duration_ms": 1000.0,
+                    "effective_gbps": 1.0,
+                    "ceiling_gbps": 2.0,
+                    "utilization_pct": 50.0,
+                }
+            elif kind == "dependency_dag":
+                data = {
+                    "nodes": {"critical": 1.0},
+                    "edges": [],
+                    "critical_path": {
+                        "critical_path_ms": 1.0,
+                        "path": ["critical"],
+                    },
+                }
+            elif kind == "resource_residency":
+                data = {
+                    "workgroup_size": 256,
+                    "lds_bytes_per_workgroup": 32768,
+                    "vgpr_per_thread": 64,
+                    "resident_workgroups_per_cu": 2,
+                    "liveness": {
+                        "producer_progress": True,
+                        "consumer_progress": True,
+                        "termination_proven": True,
+                    },
+                }
+            elif kind == "controlled_experiment":
+                data = {
+                    "variants": [
+                        {"name": "full", "changed_components": []},
+                        {
+                            "name": "token",
+                            "changed_components": [
+                                "publication_granularity"
+                            ],
+                        },
+                        {
+                            "name": "tile",
+                            "changed_components": [
+                                "publication_granularity"
+                            ],
+                        },
+                    ],
+                    "overlap_pairs": [
+                        {
+                            "left": "token",
+                            "right": "tile",
+                            "changed_components": [
+                                "publication_granularity"
+                            ],
+                        }
+                    ],
+                    "delta_additivity_allowed": False,
+                }
+            entries[evidence_id] = {
+                "kind": kind,
+                "status": "complete",
+                "metric_ids": [metric_id],
+                "provenance_refs": [f"prov:{evidence_id}"],
+                "data": data,
+            }
+        report["evidence_catalog"] = {
+            "schema_version": "geak-evidence-catalog-v1",
+            "entries": entries,
+            "provenance": {
+                f"prov:{evidence_id}": {
+                    "kind": "synthetic",
+                    "status": "complete",
+                }
+                for evidence_id in kinds
+            },
+        }
+
+        def track(artifacts, metrics):
+            return {
                 "status": "complete",
                 "evidence": {
-                    "artifact_refs": [f"synthetic:{track}"],
-                    "metrics": [f"synthetic_metric:{track}"],
-                    "provenance_refs": [f"synthetic_provenance:{track}"],
+                    "artifact_refs": artifacts,
+                    "metrics": metrics,
+                    "provenance_refs": [
+                        f"prov:{artifact}" for artifact in artifacts
+                    ],
                 },
             }
-            for track in MODULE.REQUIRED_TRACKS
+
+        report["measurement_tracks"] = {
+            "ep_baseline_decomposition": track(
+                ["rank", "trace"],
+                ["rank:max", "trace:stage1"],
+            ),
+            "communication_bytes": track(
+                ["software", "xgmi"],
+                ["counter:payload_bytes", "xgmi:bytes"],
+            ),
+            "wait_padding": track(
+                ["software"],
+                ["counter:payload_bytes"],
+            ),
+            "publication_granularity": track(
+                ["experiment"],
+                ["experiment:publication_latency"],
+            ),
+            "fusion_dag": track(["dag"], ["dag:critical_path_ms"]),
+            "resource_residency": track(
+                ["residency"],
+                ["residency:resident_ctas"],
+            ),
         }
         report["measurement_tracks"]["fusion_dag"]["evidence"]["bounds"] = [
             {
                 "name": "synthetic",
-                "ceiling_speedup": 1.1,
+                "baseline_ms": 1.0,
+                "lower_bound_ms": 0.5,
+                "ceiling_speedup": 2.0,
+                "assumptions": ["synthetic"],
+                "provenance_refs": ["prov:dag"],
             }
         ]
         hardware_context = {
-            "schema_version": "geak-hardware-context-v1",
+            "schema_version": "geak-hardware-context-v2",
             "vendor": "AMD",
             "model": "MI355X",
             "arch": "gfx950",
@@ -117,6 +252,120 @@ def _report(with_tracks=False):
 
 
 class TestMoEBottleneckAnalysis(unittest.TestCase):
+    def test_workflow_uses_separate_validated_analysis_call(self):
+        workflow_path = os.path.join(ROOT, "kernel_workflow.js")
+        with open(workflow_path) as f:
+            source = f.read()
+        self.assertIn("async function runProfileAnalysis", source)
+        self.assertEqual(source.count("await runProfileAnalysis("), 2)
+        self.assertIn("'analysis_engineer'", source)
+        self.assertIn("ANALYSIS_RESULT_SCHEMA", source)
+        self.assertIn("analysis_status=awaiting_measurement", source)
+        self.assertIn("status=ready", source)
+        self.assertNotIn("moe_analysis_json", source)
+        self.assertTrue(
+            os.path.exists(os.path.join(ROOT, "roles", "analysis_engineer.md"))
+        )
+
+    def test_full_builder_runner_analyzer_validator_chain(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "rank_report.json")
+            bundle_path = os.path.join(directory, "bundle.json")
+            report_path = os.path.join(directory, "multi_rank.json")
+            analysis_path = os.path.join(directory, "analysis.json")
+            with open(source_path, "w") as f:
+                json.dump(
+                    {
+                        "schema_version": "aiter-fixture-v1",
+                        "status": "pass",
+                        "record_type": "run",
+                        "metadata": {"world_size": 2, "network": "test"},
+                        "cases": [
+                            {
+                                "case_id": "case",
+                                "network": "test",
+                                "tokens_per_rank": 128,
+                                "world_size": 2,
+                                "ranks": [
+                                    {
+                                        "rank": 0,
+                                        "timing_ms": {"e2e": 1.0},
+                                    },
+                                    {
+                                        "rank": 1,
+                                        "timing_ms": {"e2e": 1.1},
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                    f,
+                )
+            commands = [
+                [
+                    sys.executable,
+                    os.path.join(
+                        ROOT,
+                        "scripts",
+                        "multi_rank_analysis",
+                        "build_bundle.py",
+                    ),
+                    "--rank-report",
+                    source_path,
+                    "--metric",
+                    "timing_ms.e2e",
+                    "--output",
+                    bundle_path,
+                ],
+                [
+                    sys.executable,
+                    os.path.join(
+                        ROOT,
+                        "scripts",
+                        "multi_rank_analysis",
+                        "runner.py",
+                    ),
+                    "--analysis-bundle",
+                    bundle_path,
+                    "--primary-metric",
+                    "E2E rank-max latency",
+                    "--output",
+                    report_path,
+                ],
+                [
+                    sys.executable,
+                    ANALYZER,
+                    "--report",
+                    report_path,
+                    "--output",
+                    analysis_path,
+                ],
+                [
+                    sys.executable,
+                    VALIDATOR,
+                    "--analysis",
+                    analysis_path,
+                ],
+            ]
+            for command in commands:
+                process = subprocess.run(
+                    command,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(process.returncode, 0, process.stderr)
+            with open(analysis_path) as f:
+                analysis = json.load(f)
+            self.assertEqual(
+                analysis["schema_version"],
+                "geak-moe-bottleneck-analysis-v4",
+            )
+            self.assertEqual(
+                analysis["analysis_status"],
+                "awaiting_measurement",
+            )
+
     def test_corrects_relative_growth_vs_absolute_share(self):
         analysis = MODULE.build_analysis(_report())
         comparison = analysis["route_comparisons"][0]
@@ -176,10 +425,100 @@ class TestMoEBottleneckAnalysis(unittest.TestCase):
             "invalid",
         )
 
+    def test_unresolved_nonempty_evidence_is_invalid(self):
+        report = _report(with_tracks=True)
+        report["measurement_tracks"]["communication_bytes"]["evidence"] = {
+            "artifact_refs": ["missing"],
+            "metrics": ["missing:metric"],
+            "provenance_refs": ["missing:provenance"],
+        }
+        analysis = MODULE.build_analysis(report)
+        self.assertEqual(analysis["analysis_status"], "awaiting_measurement")
+        self.assertEqual(
+            analysis["measurement_coverage"]["communication_bytes"]["status"],
+            "invalid",
+        )
+
+    def test_caller_claim_booleans_do_not_prove_claims(self):
+        report = _report(with_tracks=True)
+        report["root_cause_proven"] = True
+        report["dispatch_independent_measurement"] = True
+        analysis = MODULE.build_analysis(report)
+        self.assertFalse(analysis["claims"]["root_cause_proven"])
+        self.assertFalse(
+            analysis["claims"]["dispatch_independently_measured"]
+        )
+
+    def test_inconsistent_xgmi_evidence_invalidates_track(self):
+        report = _report(with_tracks=True)
+        report["evidence_catalog"]["entries"]["xgmi"]["data"][
+            "effective_gbps"
+        ] = 99.0
+        analysis = MODULE.build_analysis(report)
+        self.assertEqual(
+            analysis["measurement_coverage"]["communication_bytes"][
+                "status"
+            ],
+            "invalid",
+        )
+        self.assertEqual(analysis["analysis_status"], "awaiting_measurement")
+
+    def test_all_negative_categories_emit_no_positive_growth_hypothesis(self):
+        report = _report()
+        for values in report["route_comparisons"][0][
+            "profile_category_delta"
+        ].values():
+            values["rank_max_delta_ms"] = -abs(values["rank_max_delta_ms"])
+            values["rank_max_delta_pct"] = -abs(values["rank_max_delta_pct"])
+        analysis = MODULE.build_analysis(report)
+        self.assertEqual(analysis["hypotheses"], [])
+
+    def test_generic_comparison_preserves_case_identity_and_noise(self):
+        report = _report(with_tracks=True)
+        report["route_comparisons"] = [
+            {
+                "status": "complete",
+                "baseline_case_id": "t8192_uniform",
+                "candidate_case_id": "t8192_rank_mixed_skew",
+                "comparison_group": "t8192",
+                "tokens_per_rank": 8192,
+                "metric": {
+                    "path": "timing_ms.e2e",
+                    "unit": "ms",
+                    "direction": "lower",
+                    "reduction": "rank_max",
+                    "semantic": "e2e_latency",
+                },
+                "baseline": {
+                    "case_id": "t8192_uniform",
+                    "rank_max": 4.745,
+                    "rank_max_runs": [4.7, 4.8],
+                    "rank_max_span_pct": 2.1,
+                    "missing_ranks": [],
+                },
+                "candidate": {
+                    "case_id": "t8192_rank_mixed_skew",
+                    "rank_max": 5.5658,
+                    "rank_max_runs": [5.5, 5.63],
+                    "rank_max_span_pct": 2.3,
+                    "missing_ranks": [],
+                },
+                "delta": 0.8208,
+                "delta_pct": (5.5658 / 4.745 - 1.0) * 100.0,
+            }
+        ]
+        analysis = MODULE.build_analysis(report)
+        evidence = analysis["findings"][-1]["evidence"]
+        self.assertEqual(evidence["baseline_case_id"], "t8192_uniform")
+        self.assertEqual(
+            evidence["candidate"]["rank_max_runs"],
+            [5.5, 5.63],
+        )
+
     def test_cli_writes_versioned_json(self):
         with tempfile.TemporaryDirectory() as directory:
             report_path = os.path.join(directory, "report.json")
-            output_path = os.path.join(directory, "advisory.json")
+            output_path = os.path.join(directory, "analysis.json")
             with open(report_path, "w") as f:
                 json.dump(_report(), f)
             process = subprocess.run(
@@ -203,6 +542,24 @@ class TestMoEBottleneckAnalysis(unittest.TestCase):
                 len(analysis["analysis_inputs"]["report"]["sha256"]),
                 64,
             )
+            validated = subprocess.run(
+                [
+                    sys.executable,
+                    VALIDATOR,
+                    "--analysis",
+                    output_path,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(validated.returncode, 0, validated.stderr)
+
+    def test_output_validator_rejects_decision_fields(self):
+        analysis = MODULE.build_analysis(_report())
+        analysis["directions"] = [{"specialty": "algorithm"}]
+        with self.assertRaisesRegex(ValueError, "decision field"):
+            MODULE.validate_analysis_output(analysis)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from typing import Any, Mapping
 
-HARDWARE_CONTEXT_SCHEMA_VERSION = "geak-hardware-context-v1"
+HARDWARE_CONTEXT_SCHEMA_VERSION = "geak-hardware-context-v2"
 _PROVENANCE_FIELDS = (
     "vendor",
     "model",
@@ -65,11 +65,18 @@ def validate_hardware_context(context: Mapping[str, Any]) -> dict:
             raise ValueError(f"hardware_context.{section} must be a mapping")
         for metric, value in values.items():
             if value is not None and (
-                not isinstance(value, (int, float)) or not math.isfinite(value)
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
             ):
                 raise ValueError(
-                    f"hardware_context.{section}.{metric} must be finite or null"
+                    f"hardware_context.{section}.{metric} "
+                    "must be positive finite or null"
                 )
+    capabilities = context.get("capabilities", {})
+    if not isinstance(capabilities, Mapping):
+        raise ValueError("hardware_context.capabilities must be a mapping")
     provenance = context.get("provenance")
     if not isinstance(provenance, Mapping):
         raise ValueError("hardware_context.provenance must be a mapping")
@@ -78,6 +85,15 @@ def validate_hardware_context(context: Mapping[str, Any]) -> dict:
         f"measured.{metric}"
         for metric, value in context.get("measured", {}).items()
         if value is not None
+    )
+    required_provenance.extend(
+        f"theoretical.{metric}"
+        for metric, value in context.get("theoretical", {}).items()
+        if value is not None
+    )
+    required_provenance.extend(
+        f"capabilities.{capability}"
+        for capability in capabilities
     )
     for field in required_provenance:
         entry = provenance.get(field)
@@ -108,7 +124,7 @@ def validate_hardware_context(context: Mapping[str, Any]) -> dict:
         "arch": context["arch"].strip(),
         "interconnect": dict(interconnect),
         "runtime": dict(runtime),
-        "capabilities": dict(context.get("capabilities", {})),
+        "capabilities": dict(capabilities),
         "theoretical": dict(context.get("theoretical", {})),
         "measured": dict(context.get("measured", {})),
         "provenance": {
