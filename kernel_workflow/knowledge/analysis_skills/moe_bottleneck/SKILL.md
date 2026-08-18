@@ -122,6 +122,22 @@ Do not turn hardware capabilities into a prescribed tile, CU split, queue, or sc
 and interpret evidence; Step-3 planning later chooses among candidates. Missing target context or
 measured ceilings keeps the analysis `awaiting_measurement`.
 
+**Record the cache/coherence domain count, not just the cache sizes.** On a multi-die part the
+last-level cache is per-die, which changes what an in-kernel readiness edge costs and whether it is
+even correct. Step-3 feedback (MegaMoE EP8, gfx950 / 8 XCDs, 2026-08), three facts that any
+one-kernel fusion analysis on such a part needs as input:
+
+- a poll loop built on a relaxed load sees only its own die's last-level cache, so a counter it waits
+  on must be published with system-scope atomics; an agent-scope increment lands in the adder's cache
+  and the waiter can hang forever;
+- a release fence lowers to a full last-level-cache writeback per issuing block, measured at +0.411 ms
+  when every producer block issued one — so per-block release is not a rounding error at this scale;
+- marking the payload stores write-through instead (system-scope, non-temporal) removes the fence
+  entirely and leaves a store-completion wait as the whole release, improving all four route guards.
+
+Report the die/cache-domain count and the measured cost of a per-block release alongside the
+interconnect ceilings; without them a fusion ceiling for an in-kernel readiness edge is unbounded.
+
 ## AMD Thread Trace instruction evidence
 
 When stage or fused-kernel time is high but the instruction-pipeline cause is unknown, use the
@@ -190,6 +206,14 @@ stage1:  +0.2786 ms,  +9.65% relative growth, 28.5% positive absolute-delta shar
 
 Correct conclusion: combine grows most relative to its own baseline, while Stage2 has the largest
 positive absolute category delta. This does not prove combine alone is the root cause.
+
+**Small margins require interleaved measurement, not batch-to-batch comparison.** Step-3 feedback
+(MegaMoE EP8, gfx950, 2026-08): the 512-token buckets drift by up to 4% between batches, so a
+candidate measured in one batch against a baseline measured in another read as a 1% *regression* on
+one route while alternating the two arms inside a single script showed the candidate winning 3 of 4
+paired reps. Any margin under roughly 2% must be measured with the arms interleaved in one batch and
+reported per-pair, and a frozen single-sample baseline is not precise enough to adjudicate it. State
+the method and the rep count next to any delta smaller than the observed drift.
 
 ## Category naming
 
@@ -271,6 +295,15 @@ Require:
 Only then may a Step-2 hypothesis be marked route-data-dependent or causally tied to a slow rank;
 Step-3 TechLead consumes that evidence label.
 
+**Skew is an intra-rank property; a per-rank load test can miss it entirely.** Step-3 feedback
+(MegaMoE EP8, gfx950, 2026-08): on a `rank-mixed-skew` route every rank received approximately the
+balanced row count, so a detector comparing this rank's received rows against `cur_tok * topk` never
+fired even at threshold 1.0 — while the route was in fact the most skewed one measured. The imbalance
+lived *inside* the rank: one local expert owned a disproportionate share of tiles and its tail was
+what remote peers waited on. The discriminating statistic is per-expert tile count against the
+per-expert mean (`max_expert_tiles` vs `num_valid / tile_m / experts_per_rank`), not any per-rank
+aggregate. Report both; a per-rank load matrix alone does not satisfy this track.
+
 ### D. Publication granularity
 
 Sweep:
@@ -311,6 +344,24 @@ The Step-2 record does not emit a fusion direction. It records the measured cons
 Step-3 direction must account for: CU-role resources, buffer lifetime, synchronization requirements,
 extra memory, unsupported shapes/routes, and correctness/deadlock gates.
 
+**The ceiling must be charged for the kernel boundary the fusion removes.** An Amdahl bound computed
+as "serialized stage time that fusion could hide" silently assumes the boundary itself costs nothing
+to replace. It is not free: a kernel boundary ends in a hardware-managed, load-balanced join over
+many small workgroups, whereas an in-kernel phase replacing it is typically a software static
+partition whose consumers pay `max` over all participating blocks. Step-3 feedback (MegaMoE EP8,
+gfx950, 2026-08): folding an ingress pass that costs ~1.4 us of bandwidth into the persistent kernel
+made end-to-end *worse* by 0.15%–1.2% across four route guards, entirely from this effect, and a
+work-stealing claim queue was worse still at ~89 ns of end-to-end cost per claimed chunk. Record the
+fusion ceiling as a *range* whose pessimistic end includes a re-implemented join, and note that the
+optimistic end is only reachable if consumers can wait on their own rows rather than on a whole-phase
+barrier.
+
+**Straggler-gating has a variance signature, and it is the cheap way to detect it.** The same
+feedback: the separate-launch arm reproduced to a 1.7 us spread over three reps while the fused arm
+spread 25.6 us at a similar mean. A fused/in-kernel arm that is both slightly slower and markedly
+noisier is gated by its slowest participant, not throughput- or latency-bound. Report per-rep spread
+alongside the median for every fusion candidate; a mean-only comparison cannot distinguish these.
+
 ### F. Resource residency and scheduler liveness
 
 Measure and validate:
@@ -326,6 +377,22 @@ Measure and validate:
 The final target is one operator launch and one complete persistent kernel per rank. The Skill
 reports measured resource constraints and unranked reference patterns; it does not prescribe queues,
 role counts, granularity, scheduler, or an intermediate implementation.
+
+**Report which resource binds, not just the LDS figure.** Residency is `min` over every per-CU
+resource, and an analysis that reports LDS occupancy alone will propose an unreachable target.
+Step-3 feedback (MegaMoE EP8, gfx950, 2026-08): a GEMM1 block at 97.5% LDS looked like an obvious
+LDS-reduction candidate, but at 256 VGPR/thread a 512-thread block is pinned to 1 WG/CU by the
+register file *regardless of LDS*, so 2 WG/CU requires a 256-thread block first. The one geometry
+that did reach 2 WG/CU cost +2.33 ms end to end, because quartering the tile quartered the MACs while
+only halving the bytes read. State the binding resource, the block shape it implies, and the
+arithmetic-intensity cost of the shape change — an occupancy target without those three is not
+actionable.
+
+**A statically partitioned in-kernel phase has a residency precondition that is a deadlock, not a
+slowdown, when violated.** If the kernel runs at N WG/CU and work is assigned by arrival ticket, only
+the first `num_cu` tickets are resident; assigning a share to a higher ticket that resident blocks
+then wait on hangs the grid. Any Step-3 direction proposing static in-kernel partitioning must carry
+the measured resident-ticket window and show every participant index inside it.
 
 ## Optional model-level extension
 
