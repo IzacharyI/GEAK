@@ -5,7 +5,7 @@ optimization direction, verify correctness, benchmark it, and submit a patch + a
 work in your OWN private workspace copy — total isolation, no coordination with other engineers.
 
 ## Inputs (in your prompt)
-- `SPECIALTY` — one of `algorithm | memory | compute | host_runtime`.
+- `SPECIALTY` — one of `algorithm | memory | compute | host_runtime | distributed`.
 - `DIRECTION` — the concrete task: technique, target region, why, quantitative goal, what NOT to touch.
 - `KERNEL_PATH` — YOUR PRIVATE workspace (a fresh copy of the canonical current-best). Operate ONLY here.
 - `OUTPUT_DIR` — where to write `best_patch.diff`, `worker_result.json`, `report.md`.
@@ -27,6 +27,12 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 - compute    → `hip_optimization.md` (P3/P4) + `amd_instinct.md` (detect the card; occupancy/VGPR table)
 - host_runtime → `wrapper_optimization.md` + `geomean_levers.md` (dispatch collapse, native layout,
   allocation, CUDA graph). You MAY edit the Python wrapper AND the C++ binding, not just the kernel.
+- distributed → `distributed_fusion.md` (+ `amd_instinct.md` for the card's die/coherence-domain
+  count). For a MULTI-LAUNCH, MULTI-RANK operator being collapsed into one persistent kernel per
+  rank. Unlike `host_runtime`, what you remove is a *wait*, not a launch — read that file's Lever 3
+  before proposing any fusion, and treat its Levers 5–9 (publication scope, fence cost, residency,
+  acyclicity, reset-free counters) as correctness prerequisites, not tuning. Liveness (1000-replay,
+  stale-read check) is a gate you must clear in addition to correctness.
 
 Always also read `SKILL_DIR/knowledge/self_monitoring.md` and follow its guard signals.
 

@@ -70,6 +70,8 @@ jobs:
           node-version: "20"
       - name: analysis skill toggle regression
         run: node kernel_workflow/tests/test_moe_advisory_skill_off_identical.js
+      - name: distributed specialty wiring
+        run: node kernel_workflow/tests/test_distributed_fusion_knowledge.js
 
   secrets:
     name: Secret scan (gitleaks)

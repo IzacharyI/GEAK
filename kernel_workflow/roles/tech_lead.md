@@ -84,6 +84,16 @@ analysis below exactly as before.)
      (`ls`); drop any that don't. Empty `[]` when `kk_operator` is `null`.
    Treat all of this as facts/how-to to *widen* the candidate set — not decisions (see the contract
    above). Do not let it override the per-case data or measurement.
+4b. **Decide whether `distributed` is in play.** Dispatch that specialty only when ALL of: the op
+   issues ≥2 GPU kernels per call that are strictly serialized, at least one exchanges data with
+   peer ranks, and the profile shows waiting (not arithmetic) dominating. Then read
+   `knowledge/distributed_fusion.md` — its "Priority" section is the round ordering, and its Lever 3
+   is the reason most such directions LOSE: fusion pays when it removes a *wait*, not a *launch*.
+   Before spending a round on it, require the no-payload control to show an exposed transfer cost;
+   if it does not, there is nothing to hide and the direction is not worth dispatching. Note in the
+   roadmap that `distributed` directions carry an extra liveness gate (1000-replay + stale-read),
+   so they cost more than a normal direction to verify.
+
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
 6. Write `EVAL_DIR/roadmap.md`: kernel summary, bottleneck hypothesis, a multi-round strategy sketch
@@ -100,7 +110,7 @@ Return JSON:
   "bottleneck_guess": "memory|compute|latency|lds|overhead|unknown",
   "roadmap_summary": "3-6 sentences",
   "candidate_directions": [
-    {"title": "...", "specialty": "algorithm|memory|compute|host_runtime", "why": "..."}
+    {"title": "...", "specialty": "algorithm|memory|compute|host_runtime|distributed", "why": "..."}
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",

@@ -45,6 +45,10 @@ Read ALL of these before and during your work, and re-consult as the bottleneck 
   layout, graph capture). Re-read every time you re-profile.
 - `SKILL_DIR/knowledge/hip_optimization.md` / `triton_optimization.md` — per the kernel's language.
 - `SKILL_DIR/knowledge/wrapper_optimization.md` — host/runtime patterns (you own these too).
+- `SKILL_DIR/knowledge/distributed_fusion.md` — ONLY when the op issues several serialized launches
+  per rank and exchanges data with peers: the persistent-megakernel playbook (missing readiness
+  edges, per-item vs whole-phase joins, coherence scope, residency/acyclicity invariants, and the
+  measured anti-patterns). Skip entirely for a single-GPU, single-launch kernel.
 - `SKILL_DIR/knowledge/amd_instinct.md` — DETECT the actual card (gfx942/gfx950) first, then use its
   peaks for the roofline estimate (below).
 - `SKILL_DIR/knowledge/profiling_guide.md` — how to read whatever profiler is available.

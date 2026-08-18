@@ -76,7 +76,12 @@ if (blockSource) {
   });
   ok(on('profile_engineer', 'baseline') === '', 'generic Profile remains analysis-free');
   ok(on('analysis_engineer', 'analyze_profile').includes('checked-in'), 'ON injects deterministic analysis instructions');
-  ok(on('tech_lead', 'plan_round').includes('Step-2 evidence'), 'ON injects analysis-to-planning boundary');
+  // The injected text is deliberately operator-agnostic (the skill system is generic, not MoE-
+  // specific), so anchor on the contract it states — read analysis_result, gate on status/version —
+  // not on any wording that names a particular workload.
+  const planText = on('tech_lead', 'plan_round');
+  ok(planText.includes('PROFILE_SUMMARY.analysis_result'), 'ON injects analysis-to-planning boundary');
+  ok(/analysis_schema_version|awaiting_measurement/.test(planText), 'ON states the evidence gating rule');
   ok(on('engineer', 'optimize') === '', 'unrelated roles receive no analysis text');
 }
 

@@ -54,7 +54,10 @@ for (const t of TARGETS) {
     "use_expert_skills defaults to 'false' (opt-in)");
 
   // 4) roleAgent must be purely additive: returns `base + expertSkillsBlock(role)`.
-  ok(/return base \+ expertSkillsBlock\(role\);/.test(src),
+  // Purely additive means `base` comes first and every later term is appended — but kernel_workflow
+  // legitimately appends a second optional block (analysisSkillBlock). Allow further `+ <term>`
+  // terms; reject anything that wraps, replaces, or reorders `base`.
+  ok(/return base \+ expertSkillsBlock\(role\)(?: \+ [A-Za-z_$][\w$]*\([^)]*\))*;/.test(src),
     'roleAgent returns base + expertSkillsBlock(role) (additive)');
   ok(/const base = `You are the \$\{role\}\. PHASE=\$\{phase\}\./.test(src),
     'roleAgent base template preserved (original anchor intact)');

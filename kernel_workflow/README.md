@@ -248,6 +248,7 @@ roles/               director, tech_lead, engineer, deep_engineer (deep_explore)
                      author_engineer, benchmark_engineer, profile_engineer,
                      verify_engineer, integrator
 knowledge/           optimization_strategies, hip/triton/wrapper, profiling_guide,
-                     amd_instinct (multi-card: gfx942/gfx950), self_monitoring, geomean_levers
+                     amd_instinct (multi-card: gfx942/gfx950), self_monitoring, geomean_levers,
+                     distributed_fusion (multi-launch multi-rank -> one persistent kernel)
 scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh
 ```
