@@ -84,7 +84,9 @@ analysis below exactly as before.)
      (`ls`); drop any that don't. Empty `[]` when `kk_operator` is `null`.
    Treat all of this as facts/how-to to *widen* the candidate set — not decisions (see the contract
    above). Do not let it override the per-case data or measurement.
-4b. **Decide whether `distributed` is in play.** Dispatch that specialty only when ALL of: the op
+4b. **Decide whether `distributed` is in play.** `GPUS_PER_JOB` (in your prompt) is the resolved rank
+   count for one job; **`GPUS_PER_JOB == "1"` disqualifies the specialty outright** — stop here, there
+   are no peers. Otherwise dispatch it only when ALL of: the op
    issues ≥2 GPU kernels per call that are strictly serialized, at least one exchanges data with
    peer ranks, and the profile shows waiting (not arithmetic) dominating. Then read
    `knowledge/distributed_fusion.md` — its "Priority" section is the round ordering, and its Lever 3

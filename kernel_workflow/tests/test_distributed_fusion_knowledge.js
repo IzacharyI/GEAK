@@ -97,6 +97,29 @@ ok(/RANK-MAX, not rank-mean/.test(bench), 'multi-rank metric is rank-max');
 ok(/ONLY if `SPECIALTY` is `distributed`/.test(verify), 'liveness gate is opt-in, not always-on');
 ok(/If `drift` exceeds/.test(bench), 'interleaving is conditional on measured drift');
 
+// 3c. Author mode (0→1). The rank count must actually reach the two roles that branch on it, and
+//     the author must be told the seed is the SCATTERED form — a from-scratch fused megakernel is
+//     the single most likely way to burn the whole budget on a hang.
+const plumbed = src.match(/GPUS_PER_JOB: String\(GPU_RESOURCE\.gpusPerJob\)/g) || [];
+ok(plumbed.length >= 2, 'GPUS_PER_JOB reaches both author_engineer and tech_lead analyze');
+
+const author = read('roles', 'author_engineer.md');
+ok(/`GPUS_PER_JOB`/.test(author), 'author_engineer documents GPUS_PER_JOB as an input');
+ok(/GPUS_PER_JOB` > 1/.test(author), 'the distributed section is gated on rank count > 1');
+ok(
+  /NAIVE, SCATTERED, MULTI-LAUNCH form — never a fused megakernel/.test(author),
+  'author seeds the scattered form and leaves fusion to the optimize specialty',
+);
+ok(/shape the seed to be\s*\*fusable\*/.test(author), 'the seed is required to stay legible to the optimizer');
+ok(/timeout 600 bash/.test(author), 'every distributed GPU command carries a wall-clock timeout');
+ok(/return `authored:false`/.test(author), 'a hang is a clean failure, not a stall');
+ok(/launch all N ranks/.test(author), 'the correctness loop launches every rank');
+ok(/distributed_fusion\.md` Levers 7–9/.test(author), 'author cross-references the deadlock levers');
+ok(
+  /`GPUS_PER_JOB == "1"` disqualifies the specialty outright/.test(lead),
+  'tech_lead keys distributed eligibility off the resolved rank count',
+);
+
 // 4. Doctrine content. These are the load-bearing claims: each one, if absent, turns a fusion
 //    that merely underperforms into one that hangs or silently reads stale data.
 console.log(`\n# knowledge/${KNOWLEDGE} content`);

@@ -23,6 +23,11 @@ from the op task dir). The op's correctness contract is an **IMMUTABLE** unittes
 - `TASK_DIR` — the op task dir holding the **IMMUTABLE** `unittest.py` + `reference_io.pt` + `meta.json`.
 - `GPU_ID`, `SKILL_DIR`, the `COMMANDMENT` path (its CORRECTNESS/BENCHMARK point at the immutable
   unittest), and `KERNEL_KNOWLEDGE_DIR` (the AMD authoring knowledge base, may be empty).
+- `GPUS_PER_JOB` — the resolved rank count for ONE job. `"1"` is the ordinary single-GPU case and
+  nothing below changes. **`>1` means you are authoring one rank of a distributed op** — read the
+  "Distributed ops" section; it changes what "simplest correct implementation" even means. Trust this
+  value over anything you infer from `OP_SPEC`; it is resolved from `gpus_per_job` /
+  `op_spec.resource` / `job_gpu_ids`, any of which may individually be absent.
 
 ## The knowledge base is REFERENCE ONLY (read this contract first)
 `KERNEL_KNOWLEDGE_DIR` is reference material that may be **stale, incomplete, or wrong**. It gives you
@@ -86,6 +91,45 @@ Read, as reference, before writing:
    the optimize loop does that next. Aim for a clean, readable, correct first cut.
 5. Match dtype/tolerance to the oracle (the unittest already encodes bf16/fp16 rtol=atol=2e-2 etc.) —
    do not loosen tolerance; fix the math instead.
+
+## Distributed ops (read ONLY if `GPUS_PER_JOB` > 1; otherwise skip — nothing here applies)
+A multi-rank op changes what "simplest correct implementation" means, in four ways. Getting these
+wrong does not produce a slow seed; it produces a seed that **hangs**, which is worse than no seed.
+
+**a. The contract you need is bigger than `OP_SPEC` documents.** Before writing anything, establish —
+from `meta.json` if present, else by reading the immutable unittest, which is authoritative:
+the rank count and how ranks are launched (torchrun / mp.spawn / an existing bootstrap in the
+unittest); the parallel decomposition (for MoE: `topk`, experts-per-rank, whether the routing is
+token-choice or expert-choice); the transport (a symmetric-heap library like mori/nvshmem, or plain
+`torch.distributed` collectives); and **which part of the work is local vs remote**. Do not guess a
+rank count from `GPU_ID` — `GPUS_PER_JOB` is the resolved value. If the unittest does not pin one of
+these down, pick the simplest option, implement it, and say which in `notes`.
+
+**b. The seed must be the NAIVE, SCATTERED, MULTI-LAUNCH form — never a fused megakernel.** This is
+the opposite of the usual instinct. Write each stage as its own kernel/launch with an ordinary
+collective or barrier between them (e.g. dispatch → GEMM1 → GEMM2 → combine, separated by a
+`torch.distributed.barrier()` / all-rank sync). That form is easy to make correct, and correctness is
+your only job. Collapsing stages into one persistent kernel with in-kernel readiness signalling is the
+**`distributed` optimize specialty's** job downstream, and it is a hard one. So shape the seed to be
+*fusable*: stages as separate callables with an explicit, named readiness point between each pair (a
+barrier, or a counter), so the optimizer can see exactly which edge to replace. A seed that hides its
+stage boundaries inside one opaque function is much harder to optimize than a slow but legible one.
+
+**c. The correctness loop must launch all N ranks.** `GPU_ID` is already a group spec
+(`group:0,1,…`) and `gpu_lock.sh` leases the whole group, so the single wrapper is correct — but the
+command inside it must spawn `GPUS_PER_JOB` ranks the way the unittest expects. Verify the oracle
+compares on the rank that owns the output (or on all ranks); a check that passes on rank 0 while other
+ranks diverge is a false PASS.
+
+**d. Put a wall-clock timeout on EVERY GPU command.** A from-scratch distributed seed deadlocks
+routinely — a mismatched collective order, a rank that exits early, a wait whose counter is never
+published (see `SKILL_DIR/knowledge/distributed_fusion.md` Levers 7–9 for why). Without a timeout the
+run stalls until the whole workflow's budget is gone. Wrap each attempt as
+`timeout 600 bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>` (adjust the bound to a few× the
+expected runtime) and treat a timeout as a **failed attempt**, not a hang to wait out. If you cannot
+get a non-hanging correct seed within your attempts, return `authored:false` with the hang described
+in `notes` — that is a clean, useful outcome. Also kill orphaned rank processes between attempts, or
+the next attempt will fail on an already-bound port / stale heap.
 
 ## Workflow
 1. **Read the immutable unittest** to learn the exact entry-point signature, dtypes, and how it builds

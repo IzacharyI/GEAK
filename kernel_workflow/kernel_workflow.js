@@ -599,6 +599,7 @@ if (MODE === 'author') {
     roleAgent('author_engineer', 'author', 'Write the simplest correct baseline in the target language.', {
       TARGET_LANGUAGE, OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
       GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
+      GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     }),
     { phase: 'Author', label: `author:${TARGET_LANGUAGE}`, schema: AUTHOR_SCHEMA });
   if (!authored || !authored.authored || authored.correctness !== 'pass') {
@@ -621,6 +622,9 @@ const analysis = await agentT(
   roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
     KERNEL_KNOWLEDGE_DIR,
+    // Authoritative resolved rank count (from gpus_per_job | op_spec.resource | job_gpu_ids).
+    // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
+    GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
