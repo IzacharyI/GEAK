@@ -148,6 +148,23 @@ The COMMANDMENT MUST contain, with concrete commands (not placeholders):
 ### 5. Record baseline + check reliability
 Run the FULL benchmark **3 times** via gpu_lock. Confirm per-case results are within ~5% across
 runs. If variance is high, investigate (GPU busy? clocks? other procs on this GPU?) and re-run.
+
+**Record the observed drift as a RESOLUTION FLOOR, and if it is not small, make the COMMANDMENT
+interleave.** "Within ~5%" makes the baseline *reliable*; it does not make a 2% improvement
+*measurable*. Two arms timed minutes apart at 4% batch-to-batch drift will disagree by more than the
+effect, in either direction — a real win reads as a regression as often as not. So:
+- Compute `drift = max spread across the 3 runs` per case and put it in `notes` as the smallest
+  margin this harness can resolve sequentially.
+- If `drift` exceeds ~2%, the COMMANDMENT's BENCHMARK entry must run **baseline and candidate
+  alternately inside ONE process invocation** (A,B,A,B,… ≥3 pairs) and report the **paired** delta —
+  per-pair win/loss plus the median — not two independently-collected medians. Say so explicitly in
+  the METRIC section so verify and the integrator compute the same thing.
+- This matters most for multi-rank / `distributed` work, where the whole available gain is often
+  single-digit percent and the drift is largest at small problem sizes. See
+  `SKILL_DIR/knowledge/distributed_fusion.md` → "Measurement discipline".
+- **Multi-rank harnesses: record RANK-MAX, not rank-mean.** A collective is gated by its slowest
+  rank, so rank-mean can improve while the operator gets slower. If the harness prints both, the
+  COMMANDMENT's METRIC is the rank-max; note in `notes` that rank-mean is diagnostic only.
 Save `EVAL_DIR/baseline_timing.json` (the `count`/`dims`/`dtypes`/`weight_source` fields appear only
 when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·latency_i`):
 ```json

@@ -10,6 +10,8 @@ absolute per-case latencies. The script trusts only your numbers.
 - `PATCH` — path to the candidate's `best_patch.diff` (generated relative to `CANONICAL`'s git HEAD).
 - `VERIFY_DIR` — your private scratch dir.
 - `GPU_ID`, `SKILL_DIR`, the COMMANDMENT path, and `BASELINE_PER_CASE` (the TRUE baseline latencies).
+- `SPECIALTY` (optional) — the direction's specialty. `distributed` activates the liveness gate
+  in step 4c; any other value or absent leaves verification exactly as it was.
 - **DEEP-MODE (optional — only if `HARNESS_ADDENDUM` is present; a normal run omits it):** in addition to
   the oracle correctness + unweighted geomean, also re-measure and report the addendum's e2e-aligned
   weighted geomean and ENFORCE its hard gates (decode-no-regress, memory-footprint cap, cudagraph-safe);
@@ -55,6 +57,28 @@ absolute per-case latencies. The script trusts only your numbers.
      kernel entry to capture, set `graph_safe:"n/a"` and continue.
    Do NOT relax or skip this when the flag is set — it is the isolated-stage catch for the
    cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU class that otherwise only surfaces at the costly e2e gate.
+4c. **(ONLY if `SPECIALTY` is `distributed`) Liveness stress — deadlock + stale read.** A fused
+   multi-rank kernel replaces kernel-boundary ordering with in-kernel readiness counters, so it can be
+   numerically correct on a single shot and still **hang or read stale data** at a different block
+   count or on the second iteration. Steps 3/4 cannot see this: correctness runs once, and the
+   graph smoke replays 3×. See `SKILL_DIR/knowledge/distributed_fusion.md` Levers 7–9 for the three
+   failure modes (participant index outside the resident window; coordinator→worker→coordinator
+   cycle; a counter cleared into the next generation).
+   - Run the COMMANDMENT correctness entry under **at least two different problem sizes** — the
+     smallest and largest the harness offers. Residency and grid shape change with size, so a
+     participant count that is legal at one size deadlocks at another. This is the single highest-yield
+     check and it is cheap.
+   - Then a **repeat-iteration stress**: the same call ≥1000 times back-to-back (graph replay if the
+     harness supports capture, otherwise a plain loop) with a **wall-clock timeout**, comparing the
+     LAST iteration's output to the first. A first-iteration-only comparison cannot catch a counter
+     that desyncs on generation 2.
+   - **FAIL → `status:"correctness_failed"`, `liveness:"fail"`**, and in `notes` record which size and
+     which iteration, plus whether it hung (timeout) or returned wrong data (stale read) — the two have
+     different causes and the engineer needs to know which.
+   - **PASS → `liveness:"pass"`.** Set `liveness:"n/a"` only if the patch touches no readiness/
+     synchronization code at all; say so in `notes`.
+   A timeout here is a FAILURE, never a skip. Budget for it: this gate is why a `distributed`
+   direction costs more to verify than a normal one.
 5. Reject if a patch modified the harness/COMMANDMENT/files outside the workspace, or the benchmark
    shows a regression (the PRIMARY metric ≤ 1.0). Report it as `status:"regression"` with the numbers anyway.
 6. Compute per-case speedup = `BASELINE_PER_CASE.latency / your_optimized_ms`; geomean =
@@ -74,6 +98,7 @@ absolute per-case latencies. The script trusts only your numbers.
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0, "weight": 0.0}],
   "variance_note": "e.g. run-to-run within 3%",
   "graph_safe": "pass|fail|n/a (only when REQUIRE_GRAPH_CAPTURE was set; omit otherwise)",
+  "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```

@@ -364,6 +364,7 @@ const VERIFY_SCHEMA = obj({
   verified_weighted: { type: 'number' }, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
   per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
   graph_safe: { type: 'string' },
+  liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
 }, ['status', 'verified_geomean']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -799,6 +800,9 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         roleAgent('verify_engineer', 'verify', 'Independently re-measure this candidate patch.', {
           CANONICAL, PATCH: patch, VERIFY_DIR: `${d.out_dir}/verify`,
           GPU_ID: d.gpu_id, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+          // Verify applies specialty-specific gates (see verify_engineer.md step 4c: a
+          // `distributed` patch can be numerically correct and still deadlock).
+          ...(d.specialty ? { SPECIALTY: d.specialty } : {}),
           ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
           ...(REQUIRE_GRAPH_CAPTURE ? { REQUIRE_GRAPH_CAPTURE: '1' } : {}),
         }),

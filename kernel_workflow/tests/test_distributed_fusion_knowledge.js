@@ -70,6 +70,33 @@ ok(
 
 ok(read('README.md').includes('distributed_fusion'), 'README knowledge list mentions it');
 
+// 3b. The two gates the doctrine assumes. Knowledge that says "you must clear a liveness gate" is
+//     inert unless verify actually applies one, and an interleaving rule is inert unless the
+//     COMMANDMENT is built to interleave.
+ok(
+  /\.\.\.\(d\.specialty \? \{ SPECIALTY: d\.specialty \} : \{\}\)/.test(src),
+  'verify_engineer receives the direction specialty',
+);
+ok(/liveness: \{ type: 'string' \}/.test(src), 'VERIFY_SCHEMA carries a liveness verdict');
+
+const verify = read('roles', 'verify_engineer.md');
+ok(/`SPECIALTY` is `distributed`/.test(verify), 'verify gates the liveness stress on the specialty');
+ok(/≥1000 times/.test(verify), 'liveness stress is quantified');
+ok(/two different problem sizes/.test(verify), 'liveness varies problem size (residency changes with it)');
+ok(/timeout here is a FAILURE, never a skip/.test(verify), 'a hang cannot be silently skipped');
+ok(/liveness.*only when SPECIALTY=distributed/.test(verify), 'return contract documents the field');
+
+const bench = read('roles', 'benchmark_engineer.md');
+ok(/RESOLUTION FLOOR/.test(bench), 'baseline drift is recorded as a resolution floor');
+ok(/alternately inside ONE process invocation/.test(bench), 'COMMANDMENT interleaves when drift is large');
+ok(/paired\*\* delta/.test(bench), 'the reported delta is paired, not two independent medians');
+ok(/RANK-MAX, not rank-mean/.test(bench), 'multi-rank metric is rank-max');
+
+// The gates must stay OFF by default: a normal single-GPU run has no specialty match and no drift,
+// so neither addition may change its behavior.
+ok(/ONLY if `SPECIALTY` is `distributed`/.test(verify), 'liveness gate is opt-in, not always-on');
+ok(/If `drift` exceeds/.test(bench), 'interleaving is conditional on measured drift');
+
 // 4. Doctrine content. These are the load-bearing claims: each one, if absent, turns a fusion
 //    that merely underperforms into one that hangs or silently reads stale data.
 console.log(`\n# knowledge/${KNOWLEDGE} content`);
