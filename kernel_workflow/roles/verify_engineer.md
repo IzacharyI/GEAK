@@ -81,6 +81,22 @@ absolute per-case latencies. The script trusts only your numbers.
    direction costs more to verify than a normal one.
 5. Reject if a patch modified the harness/COMMANDMENT/files outside the workspace, or the benchmark
    shows a regression (the PRIMARY metric ≤ 1.0). Report it as `status:"regression"` with the numbers anyway.
+   **A harness edit is its own rejection, independent of the speedup.** Diff the patch's file list
+   against `MODIFIABLE_FILES`; any path outside it — a test file, a benchmark script, a config the
+   harness reads — is `status:"harness_modified"`, and you must still report the measured numbers so
+   the direction can be re-run cleanly rather than silently lost. A patch that edits the instrument
+   and the subject in the same diff has no readable result, however good the number looks.
+
+5b. **Provenance check (only when `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
+   rewrites, compare it against the same-named file under each reference path. If any file is
+   **byte-identical**, or differs only in whitespace/comments, the direction did not derive its
+   result — it imported it. Return `status:"plagiarized"`, name the file and the reference in
+   `notes`, and report the measured numbers anyway (they are true about the code and false about the
+   run). Do not treat a high speedup as mitigating: in a capability evaluation an imported win is a
+   *negative* result, because it means the run's own reasoning produced nothing. Partial overlap is
+   not plagiarism — a patch that independently arrives at the same 10-line fence sequence is a
+   convergent derivation. The trigger is whole-file identity, especially of a file that does not
+   exist in the baseline at all.
 6. Compute per-case speedup = `BASELINE_PER_CASE.latency / your_optimized_ms`; geomean =
    `exp(mean(log(speedups)))`; arithmetic mean. **If the COMMANDMENT's METRIC is the time-weighted
    ratio-of-sums (workload-aligned), ALSO compute `verified_weighted = Σ weight_i /
@@ -90,7 +106,7 @@ absolute per-case latencies. The script trusts only your numbers.
 ## Return JSON
 ```json
 {
-  "status": "verified|correctness_failed|apply_failed|regression",
+  "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized",
   "correctness": "pass|fail",
   "verified_geomean": 0.0,
   "verified_arithmetic": 0.0,

@@ -177,6 +177,28 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 // Only planning + authoring roles consult skills; every other role gets no injection.
 const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
 
+// ---- Capability-evaluation mode (OPTIONAL, default OFF -> byte-identical behaviour) --------------
+// In production, "this is already implemented next door, port it" is correct and the prior-art sweep
+// exists to say exactly that. When the run is instead being used to measure whether the WORKFLOW can
+// derive a result, that same doctrine imports the answer and the headline number stops meaning
+// anything. Observed: a tech_lead published a reference path/branch/HEAD in roadmap.md §0, and an
+// engineer's patch came back containing a 511-line file BYTE-IDENTICAL to that reference. The
+// measured +4.3% was real; the run had demonstrated nothing.
+//
+// With capability_eval="true": prior art is reduced to CONCLUSIONS for the engineers (mechanism prose,
+// no paths/hashes/source — see tech_lead.md 4d), and verify gains a byte-identity provenance check
+// against known_reference_paths that returns status:"plagiarized" (verify_engineer.md 5b).
+const CAPABILITY_EVAL = String(A.capability_eval != null ? A.capability_eval : 'false') === 'true';
+// Trees whose contents would constitute an imported answer. Given to VERIFY (to compare against) and
+// deliberately NOT to engineers — handing them the list would be handing them the location.
+const KNOWN_REFERENCE_PATHS = (Array.isArray(A.known_reference_paths) ? A.known_reference_paths
+  : String(A.known_reference_paths || '').split(',')).map(s => String(s).trim()).filter(Boolean);
+if (CAPABILITY_EVAL) {
+  log(`CAPABILITY EVAL mode: prior art is advisory CONCLUSIONS only; engineers get no reference ` +
+      `paths, and verify rejects byte-identical files as status:"plagiarized". ` +
+      `known_reference_paths=${KNOWN_REFERENCE_PATHS.length ? KNOWN_REFERENCE_PATHS.join(' ') : '(none given — provenance check DISABLED)'}`);
+}
+
 // ---- Profile-analysis skill (OPTIONAL, pluggable; mirrors e2e_workflow's analysis_skill — see
 // knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, a separate
 // analysis_engineer may run ONE analysis skill to enrich it with operator-specific structure (e.g. MoE
@@ -510,7 +532,18 @@ function expertSkillsBlock(role) {
     `${EXPERT_SKILLS_DIR}/index.yaml for skills whose \`match\` fits this op (operator/dtype/regime, and ` +
     `from_backend->to_backend for migration skills) and whose validation_status is \`validated\`, and ` +
     `treat each as a HIGH-PRIOR candidate to reproduce — advisory only, never overriding your isolated ` +
-    `A/B vs the oracle, never reducing a result below the measured baseline.`;
+    `A/B vs the oracle, never reducing a result below the measured baseline.` +
+    // A skill is written for production, so it rightly cites its own reference implementation by
+    // branch and commit — that is what makes it reproducible. Under capability_eval those citations
+    // become a map to the answer, and the skill is read off disk by the agent, so the orchestrator
+    // cannot redact them. Say what is usable instead. `reproduce` above means re-derive, not fetch.
+    (CAPABILITY_EVAL
+      ? ` **Capability eval: use a skill's MECHANISM and MEASUREMENTS, never its addresses.** Its ` +
+        `Sources/Procedure sections may cite a branch, commit, or sibling checkout containing the ` +
+        `finished implementation. Do not read, port, copy, or diff against any of them — write the ` +
+        `code yourself from the described mechanism. A patch containing a file byte-identical to ` +
+        `such a reference is rejected at verify as \`plagiarized\`, whatever it measures.`
+      : '');
 }
 
 function analysisSkillBlock(role, phase) {
@@ -661,6 +694,7 @@ const analysis = await agentT(
     // Authoritative resolved rank count (from gpus_per_job | op_spec.resource | job_gpu_ids).
     // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+    ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
@@ -673,13 +707,51 @@ const PRIOR_ART = (analysis && Array.isArray(analysis.prior_art)) ? analysis.pri
 for (const pa of PRIOR_ART) {
   const where = pa.implemented_at || '?';
   const eff = pa.measured_effect ? ` (measured ${pa.measured_effect})` : '';
-  if (pa.in_baseline === false) {
+  if (pa.in_baseline === false && CAPABILITY_EVAL) {
+    // Same finding, opposite instruction. Here the absent implementation is the ANSWER KEY: it
+    // bounds what a successful run should reach, and copying it makes the run unreadable.
+    log(`PRIOR ART NOT IN BASELINE (capability eval): "${pa.direction}" exists at ${where}${eff} but ` +
+        `is ABSENT from the tree being optimized. Treat it as the answer key, NOT as a source: it is ` +
+        `the bar this run must reach on its own. Do not port it, and do not surface its location to ` +
+        `engineers.`);
+  } else if (pa.in_baseline === false) {
     log(`PRIOR ART NOT IN BASELINE: "${pa.direction}" is already implemented at ${where}${eff} but ` +
         `is ABSENT from the tree being optimized. Port or measure it before re-deriving it; if the ` +
         `intent was to optimize the tree that HAS it, this run is pointed at the wrong target.`);
   } else {
     log(`PRIOR ART: "${pa.direction}" already implemented at ${where}${eff}; ` +
         `enable via ${pa.how_to_enable || '?'}. Measure it, do not re-derive it.`);
+  }
+}
+
+// Leak scrub. tech_lead.md 4d already forbids writing reference locations into engineer-visible
+// files under capability_eval, but prose instructions are exactly what failed the first time: the
+// roadmap led with the reference path, branch and HEAD, and an engineer copied a whole file from it.
+// So check rather than trust. This warns instead of aborting — the leak may be a bare mention in a
+// sentence the human reader wants, and killing a run at Analyze over a substring match trades one
+// silent failure for another. The provenance gate in verify is the enforcing half.
+if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
+  const needles = KNOWN_REFERENCE_PATHS.flatMap((p) => {
+    const base = p.replace(/\/+$/, '').split('/').pop();
+    return [p.replace(/\/+$/, ''), ...(base && base.length > 6 ? [base] : [])];
+  });
+  for (const f of ['roadmap.md', 'codebase_context.md', 'analysis.json']) {
+    let txt = '';
+    try { txt = fs.readFileSync(`${EVAL_DIR}/${f}`, 'utf8'); } catch { continue; }
+    // analysis.json legitimately carries locations in prior_art[].implemented_at (that field is for
+    // the orchestrator and the human, and is not forwarded to engineers). Scan the rest of it only.
+    if (f === 'analysis.json') {
+      try {
+        const j = JSON.parse(txt); delete j.prior_art; txt = JSON.stringify(j);
+      } catch { /* unparseable -> scan verbatim, a false positive here is cheap */ }
+    }
+    const hit = needles.find((n) => txt.includes(n));
+    if (hit) {
+      log(`LEAK WARNING: ${f} mentions the reference location "${hit}" while capability_eval is on. ` +
+          `Engineers read this file. Prior art must reach them as MECHANISM, never as an address — ` +
+          `a path in the roadmap is how the last run ended up with a byte-identical copy of the ` +
+          `answer. Verify's provenance check will reject any patch that imports from it.`);
+    }
   }
 }
 
@@ -888,6 +960,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           ...(d.specialty ? { SPECIALTY: d.specialty } : {}),
           ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
           ...(REQUIRE_GRAPH_CAPTURE ? { REQUIRE_GRAPH_CAPTURE: '1' } : {}),
+          // Verify is the ONLY role that learns where the reference trees are. It needs the
+          // locations to compare against them; engineers must not have them at all.
+          ...(CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length
+            ? { KNOWN_REFERENCE_PATHS: KNOWN_REFERENCE_PATHS.join(' ') } : {}),
         }),
         { phase: 'Verify', label: `verify ${d.id}`, schema: VERIFY_SCHEMA }
       ).then((ver) => ({ d, eng, ver, patch }));
@@ -897,6 +973,22 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   const clean = results.filter(Boolean);
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
     r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0);
+
+  // `plagiarized` and `harness_modified` are already excluded by the filter above, but exclusion is
+  // invisible — the direction just quietly stops existing, which reads like "it didn't work". Both
+  // are load-bearing findings about the RUN rather than about the kernel, and the speedup that came
+  // with them is exactly the thing that makes them tempting to accept, so print it alongside.
+  for (const r of clean) {
+    const st = r.ver && r.ver.status;
+    if (st !== 'plagiarized' && st !== 'harness_modified') continue;
+    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    log(`${st.toUpperCase()} ${r.d.id}: REJECTED as a win despite ` +
+        `${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'an unreadable number'}. ` +
+        `${st === 'plagiarized'
+          ? 'The patch contains a file byte-identical to a known reference — the result was imported, not derived.'
+          : 'The patch edited the measurement harness, so subject and instrument changed together.'} ` +
+        `${r.ver.notes || ''}`);
+  }
 
   // Flag wins whose provenance cannot support them. This does NOT reject the result — a real win
   // measured sloppily is still probably a win, and silently discarding it would repeat the mistake

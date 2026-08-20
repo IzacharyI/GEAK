@@ -142,6 +142,25 @@ analysis below exactly as before.)
    run proves its own harness can detect a win at all. If you find one, name it in
    `roadmap_summary` as a control candidate.
 
+   **When `CAPABILITY_EVAL=1`, prior art yields CONCLUSIONS ONLY — never implementations.** This mode
+   means the run is being measured on whether it can *derive* a result, so importing the answer
+   destroys the very thing being measured. Concretely, in this mode you MUST NOT:
+   - write a reference path, branch name, worktree, or commit hash into `roadmap.md`,
+     `codebase_context.md`, `analysis.json`, or any engineer-visible file;
+   - instruct anyone to port, copy, cherry-pick, `git apply`, or "start from" a reference tree;
+   - quote reference source. Quote *mechanism* instead ("the cross-rank readiness edge is absent;
+     the payload store's `cache_modifier` is a hint, not a release") and let the engineer write it.
+
+   Put the paths and hashes in `prior_art[].implemented_at` — that field is consumed by the
+   orchestrator and the human reader, and is NOT forwarded to engineers in this mode. This is the
+   one place they may appear. Everything an engineer sees must be a claim about the machine, not a
+   pointer to an existing patch.
+
+   Note that the two situations above are *production* doctrine, where re-deriving working code is
+   pure waste. Capability evaluation inverts it. Check `CAPABILITY_EVAL` before you decide which
+   applies; getting this backwards silently converts a capability run into a copy exercise whose
+   headline number is real and whose conclusion is worthless.
+
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
 6. Write `EVAL_DIR/roadmap.md`: kernel summary, bottleneck hypothesis, a multi-round strategy sketch
