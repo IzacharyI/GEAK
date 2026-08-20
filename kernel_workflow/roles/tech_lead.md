@@ -96,6 +96,30 @@ analysis below exactly as before.)
    roadmap that `distributed` directions carry an extra liveness gate (1000-replay + stale-read),
    so they cost more than a normal direction to verify.
 
+   Two rules that follow from Lever 3, and that have each already cost a round when ignored:
+   - **A small inter-kernel gap does NOT justify closing a fusion direction.** The gap is host-side
+     evidence; the decision test is the no-payload control plus the measured exposed wait. Closing
+     a fusion on "the launches are only N µs apart" inverts Lever 3 and will be re-litigated.
+   - **A static-ISA diff can screen resource claims (VGPR/LDS/occupancy), never scheduling ones.**
+     Use it to order the queue and catch compile-illegality for free; do not record "ISA unchanged"
+     as "no effect" for a latency-hiding direction. Both rules are written out in
+     `knowledge/distributed_fusion.md`.
+
+4c. **When one job needs the WHOLE GPU pool, the lease — not the engineer count — is your budget.**
+   If `GPUS_PER_JOB` equals the total pool, GPU work is strictly serialized: N engineers dispatched
+   in parallel do NOT get N measurements, they get **one**, and the other N−1 spend their slot
+   writing driver scripts they never run. Observed: 5 directions over 2 rounds produced 1 measured
+   result; 4 were starved. So in this regime:
+   - Plan **1–2 directions per round**, not the round budget's worth.
+   - Prefer directions whose primary evidence is **lease-free** (static ISA for resource claims,
+     compile-only legality screens, source reading) so the scarce lease is spent only on the
+     hypotheses that genuinely need wall clock.
+   - Instruct engineers to fold every arm they want into **ONE interleaved multi-arm run under a
+     single lease** (≥5 reps, always including a `null` arm that is byte-identical work), rather
+     than queueing one lease per arm. The null arm is what tells you the noise floor; without it a
+     sub-1% delta is unreadable.
+   - Say this explicitly in each direction's `strategy` — engineers do not infer it.
+
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
 6. Write `EVAL_DIR/roadmap.md`: kernel summary, bottleneck hypothesis, a multi-round strategy sketch

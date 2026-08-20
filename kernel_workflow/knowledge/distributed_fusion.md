@@ -121,6 +121,33 @@ If you build such a fusion anyway, keep it in-tree **default-off as a labelled c
 not as an unfinished feature — the negative result is the deliverable, and leaving it filed as
 "almost done" causes the next person to spend effort finishing something that should not ship.
 
+**The corollary runs in BOTH directions — a small inter-kernel gap is NOT grounds to reject a
+fusion.** The rule above says launch count is not a reason to fuse. It does not say launch gap is a
+reason not to. These are different claims and conflating them has already killed a correctly-scoped
+fusion on the wrong evidence: a planning role measured the total inter-kernel gap at 12.4 µs/iter
+(0.22% of e2e at the large size, 1.42% at the small one) and closed the direction as
+"net-negative before it starts", citing this very file. That reasoning is invalid. The gap is what
+fusion removes **incidentally**; the wait is what it removes **on purpose**. On the same operator the
+gap was 0.22% while the exposed cross-rank wait was a rank-max p95 of 876.6 µs, and the fusion that
+absorbed part of that wait measured **+4.71%** on the large-uniform guard — twenty times the gap it
+also happened to delete.
+
+So the decision test is fixed, and it is not a launch-gap measurement:
+
+- **Run the no-payload control** (Priority item 1). Replace the transferred payload with nothing and
+  keep everything else identical. The delta is the exposed communication cost — the ceiling on what
+  overlap can buy. On this operator it was −38.2% of Stage2+combine under skew.
+- **Then measure the exposed wait directly** — an instrumented peer-wait timer, or the barrier's
+  own duration. If a consumer is blocked on a producer for a time that is large relative to the
+  target, fusion has something to absorb, *regardless of how small the launch gap is*.
+- Only if BOTH come back near zero is "no fusion win available" the right conclusion. **"The kernels
+  launch back-to-back" is evidence about the host, not about whether the GPU is idle waiting.**
+  Kernel boundaries can be 12 µs apart and still serialize a millisecond of dependent work, which is
+  exactly the case a persistent kernel with per-item readiness exists to fix.
+
+Write the decision down with the number that drove it. "Rejected: no-payload control showed 0.3% of
+e2e" is a durable result. "Rejected: launch gap is 0.22%" is a category error and will be re-litigated.
+
 ## Lever 4 — Straggler-gating has a variance signature; use it to diagnose
 
 Same code, 8192 uniform, 100 iters, 3 interleaved reps, rank-max e2e:
@@ -299,6 +326,25 @@ question is under ~1% of e2e, the target is bookkeeping, not performance.
   per process, and make the harness **refuse to report a number without that marker from the same
   run**. Do not use an unrelated field (a variant name, a config string) as a proxy for "fusion is
   on"; it will read plausible on both paths.
+
+- **The static-ISA screen is a screen for RESOURCE hypotheses only. It cannot refute a latency-hiding
+  one.** When the GPU group is a serialized lease, dumping the final ISA and diffing
+  `amdhsa_private_segment_fixed_size` / `amdhsa_next_free_vgpr` / `amdhsa_group_segment_fixed_size`
+  plus instruction-class counts is an excellent way to kill directions in minutes without queueing.
+  It is sound for claims of the form *"this will free registers / shrink LDS / raise occupancy"* —
+  those claims are **defined** by those numbers, so unchanged numbers do disprove them.
+  It is **not** sound for claims of the form *"this will shorten the dependency chain / overlap a
+  load with an MFMA / reduce time spent stalled"*. Those are properties of the dynamic schedule.
+  Measured counterexample on this operator: an index-scalarization + prefetch-lead change left
+  scratch, VGPR, LDS, `v_mfma` and `buffer_load` counts **all bit-identical**, was refuted on that
+  basis, and then — when it was accidentally measured anyway — came back favourable on **4 of 4
+  paired reps at the large size (−0.39% to −1.61%)**, three to four times that guard's calibrated
+  noise floor. The static screen was not wrong about the ISA; it was answering a different question
+  than the one asked.
+  So: use the screen to **order** the queue and to catch compile-illegality for free, never as the
+  sole grounds to close a scheduling-class direction. Recording "ISA unchanged" is useful; recording
+  "ISA unchanged, therefore no effect" is a claim the instrument cannot support. If a scheduling
+  hypothesis survives compile, it needs wall clock.
 
 ## Priority
 

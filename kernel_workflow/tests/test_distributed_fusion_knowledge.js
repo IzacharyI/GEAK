@@ -192,6 +192,47 @@ const postmortem = [
 ];
 for (const [re, what] of postmortem) ok(re.test(doc), what);
 
+// 5b. Both of these were added because a planning role misapplied the doctrine above to close a
+//     direction on evidence that could not support the conclusion. The prose is the fix; these
+//     assertions are what stop the prose from being edited back out.
+console.log('\n# decision-test guards');
+
+// A small inter-kernel gap says the HOST issued the launches back-to-back. It says nothing about
+// whether the GPU sat waiting. Rejecting a fusion on the gap inverts Lever 3.
+ok(
+  /small inter-kernel gap is NOT grounds to reject/i.test(doc),
+  'the launch-count rule is explicitly stated to run in both directions',
+);
+ok(/12\.4 µs/.test(doc), 'the misapplication keeps the gap number that was wrongly used');
+ok(
+  /evidence about the host, not about whether the GPU is idle waiting/.test(doc),
+  'the gap is characterised as host-side evidence',
+);
+ok(
+  /no-payload control[\s\S]{0,600}exposed wait/.test(doc),
+  'the replacement decision test names the no-payload control AND the exposed wait',
+);
+
+// A screen that cannot observe the dynamic schedule cannot refute a claim about it.
+ok(
+  /static-ISA screen is a screen for RESOURCE hypotheses only/i.test(doc),
+  'the static-ISA screen declares its scope',
+);
+ok(
+  /cannot refute a latency-hiding/i.test(doc),
+  'the screen is explicitly barred from refuting scheduling-class directions',
+);
+// NB: match across a hard wrap — this file is wrapped at 100 cols and a plain-space regex here has
+// silently broken once already when a paragraph was re-flowed.
+ok(
+  /4 of 4\s+paired reps/.test(doc),
+  'the counterexample keeps its paired-rep evidence',
+);
+ok(
+  /never as the\s+sole grounds to close a scheduling-class direction/.test(doc),
+  'the permitted use (ordering, compile-legality) is separated from the barred use',
+);
+
 // The outturn table is calibration data: without it "2-5% is a good outcome" is an unfalsifiable
 // claim rather than a measured band.
 ok(/\+4\.71%/.test(doc), 'outturn keeps the measured best-case fusion gain');
