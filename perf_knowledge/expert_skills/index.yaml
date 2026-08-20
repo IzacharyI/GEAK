@@ -53,6 +53,31 @@ skills:
     e2e_delta_min_pct: 1.0
     parity: required
   validation_status: validated
+- id: megamoe_ep_persistent_fusion
+  file: skills/megamoe_ep_persistent_fusion/skill.md
+  scope: kernel
+  match:
+    operator: moe_dispatch_combine
+    arch_class:
+    - '*'
+    gens:
+    - gfx950
+    dtypes:
+    - fp8_e4m3_fnuz
+    - bf16
+    regimes:
+    - prefill
+    - decode
+    from_backend: ''
+    to_backend: flydsl
+    profile_signature:
+      op_name_regex: mega_moe|dispatch_combine|p2p_scatter
+      min_pct_gpu: 20.0
+  expects:
+    isolated_speedup_min: 1.01
+    e2e_delta_min_pct: 1.0
+    parity: required
+  validation_status: draft
 - id: mla_tilelang_to_triton
   file: skills/mla_tilelang_to_triton/skill.md
   scope: kernel
