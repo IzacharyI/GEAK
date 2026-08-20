@@ -38,6 +38,20 @@ const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/
 
 const KERNEL_PATH_ORIG = A.kernel_path;
 const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
+// POSITIVE CONTROL — a known-good change with an ALREADY-MEASURED effect, run once during Benchmark
+// before any direction budget is spent. The null arm calibrates the NOISE floor; this calibrates the
+// DETECTION floor, and nothing else in the workflow does. Without it a 1.000x report is
+// unfalsifiable: "we found nothing" and "we cannot see anything" produce byte-identical output.
+// This is not hypothetical — a run reported 1.000x on a tree where a +4.71% win was on the table.
+//   {name, how, expected_pct_lo, expected_pct_hi, guard?, abort_on_fail?}
+// `how` is prose the benchmark engineer executes (usually "flip env X, everything else identical").
+// expected_pct_* bound the ALREADY-KNOWN delta; measuring outside that band means the harness is
+// lying, so by default the run ABORTS rather than spending directions on an instrument that cannot
+// read them. Set abort_on_fail:false to downgrade to a warning (use only when deliberately
+// re-calibrating the expected band itself).
+const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
+  ? A.positive_control : null;
+const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
 // Minimum verified geomean improvement over the cumulative best for a round winner to be COMMITTED
 // into the canonical workspace (default 2%). Kept as a knob rather than a hard-coded constant so the
 // gate is tunable per run (e.g. raise it on a noisy box, lower it to bank small compounding wins).
@@ -288,6 +302,13 @@ const ANALYZE_SCHEMA = obj({
   // instead of re-navigating the whole base. Empty string / [] / null when no card applies.
   kk_operator: { type: ['string', 'null'] }, kk_language: { type: ['string', 'null'] },
   kk_refs: { type: 'array', items: { type: 'string' } },
+  // PRIOR ART IN-TREE: directions that are ALREADY IMPLEMENTED somewhere reachable (a sibling branch,
+  // a worktree, an env-gated opt-in path in this very file) — even if not enabled in the tree under
+  // optimization. Measuring an existing switch costs one A/B; re-deriving it costs a round and
+  // usually fails. A run once optimized a tree from which ~1000 lines of already-written, already-
+  // measured (+4.71%) fusion were absent, never noticed, and reported 1.000x.
+  //   [{direction, implemented_at, how_to_enable, measured_effect, in_baseline}]
+  prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
 }, ['kernel_type', 'roadmap_summary']);
 
 const BENCH_SCHEMA = obj({
@@ -301,6 +322,11 @@ const BENCH_SCHEMA = obj({
   workload_aligned: { type: 'boolean' },
   baseline_weighted_total_ms: { type: 'number' },
   weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
+  // Result of args.positive_control, when one was supplied. `measured_pct` is the delta the harness
+  // actually recovered for a change whose effect is already known; `passed` is whether it landed in
+  // the expected band. This is the run's evidence that its own measurement loop can SEE a real win.
+  //   {ran, measured_pct, expected_lo, expected_hi, passed, reps, null_arm_pct, note}
+  positive_control: { type: 'object', additionalProperties: true },
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
 
@@ -365,6 +391,13 @@ const VERIFY_SCHEMA = obj({
   per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
   graph_safe: { type: 'string' },
   liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
+  // How the number above was actually obtained. `reps` = interleaved A,B,A,B pairs (NOT total runs);
+  // `null_arm_pct` = the delta measured by an arm doing byte-identical work, i.e. this run's own
+  // noise floor. A claimed win smaller than |null_arm_pct| is unreadable no matter how it was
+  // computed. Absent/low values do not void the result — they downgrade it to PROVISIONAL and are
+  // surfaced in the log and report, because "1 rep, no null arm" has already produced a -0.44%
+  // "win" that sat inside a 1.45% per-case spread.
+  reps: { type: 'number' }, null_arm_pct: { type: 'number' },
 }, ['status', 'verified_geomean']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -633,6 +666,23 @@ const analysis = await agentT(
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
 log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 
+// Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
+// of engineering — and one that exists but is MISSING from the tree under optimization is a silent
+// ceiling on everything this run can achieve. Neither is visible unless it is printed here.
+const PRIOR_ART = (analysis && Array.isArray(analysis.prior_art)) ? analysis.prior_art : [];
+for (const pa of PRIOR_ART) {
+  const where = pa.implemented_at || '?';
+  const eff = pa.measured_effect ? ` (measured ${pa.measured_effect})` : '';
+  if (pa.in_baseline === false) {
+    log(`PRIOR ART NOT IN BASELINE: "${pa.direction}" is already implemented at ${where}${eff} but ` +
+        `is ABSENT from the tree being optimized. Port or measure it before re-deriving it; if the ` +
+        `intent was to optimize the tree that HAS it, this run is pointed at the wrong target.`);
+  } else {
+    log(`PRIOR ART: "${pa.direction}" already implemented at ${where}${eff}; ` +
+        `enable via ${pa.how_to_enable || '?'}. Measure it, do not re-derive it.`);
+  }
+}
+
 // perf_knowledge pointers resolved by the TechLead in analyze (REFERENCE ONLY; threaded to the
 // planner + engineers so they read focused op/language cards instead of the whole base). Empty when
 // no operator card applies (e.g. point-cloud HIP ops) or KERNEL_KNOWLEDGE_DIR is unset → no change.
@@ -651,12 +701,38 @@ const bench = await agentT(
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
+    ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
   }),
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA });
 if (!bench || !bench.baseline_per_case) throw new Error('Benchmark setup failed: no baseline recorded');
 const BASELINE_PER_CASE = bench.baseline_per_case;
 const BASELINE_GEOMEAN_MS = bench.baseline_geomean_ms;
 log(`Benchmark done. ${bench.num_test_cases || BASELINE_PER_CASE.length} cases, baseline geomean ${BASELINE_GEOMEAN_MS} ms, reliable=${bench.reliable}`);
+
+// Positive-control gate. Runs BEFORE any direction budget is spent, because the thing it can prove
+// false — "this harness can detect a real win" — invalidates every measurement taken after it.
+if (POSITIVE_CONTROL) {
+  const pc = bench.positive_control || {};
+  const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
+  const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
+  const got = Number(pc.measured_pct);
+  const inBand = Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi)
+    && got >= lo && got <= hi;
+  const ok = pc.ran !== false && inBand;
+  log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
+      `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
+      `expected ${lo}..${hi}% -> ${ok ? 'PASS' : 'FAIL'}` +
+      (Number.isFinite(pc.null_arm_pct) ? ` (null arm ${pc.null_arm_pct.toFixed(2)}%)` : ''));
+  if (!ok) {
+    const why = `Positive control FAILED: a change with a known effect of ${lo}..${hi}% measured ` +
+      `${Number.isFinite(got) ? got.toFixed(2) + '%' : 'nothing (control did not run)'}. ` +
+      `The measurement loop cannot resolve a win of the size this run is looking for, so every ` +
+      `speedup it reports — including 1.000x — is uninterpretable. Fix the harness, not the kernel. ` +
+      `Note from benchmark engineer: ${pc.note || '(none)'}`;
+    if (PC_ABORT) throw new Error(why);
+    log(`WARNING: ${why}`);
+  }
+}
 
 // ===========================================================================
 // PHASE: Baseline profile (Profile Engineer)
@@ -821,6 +897,26 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   const clean = results.filter(Boolean);
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
     r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0);
+
+  // Flag wins whose provenance cannot support them. This does NOT reject the result — a real win
+  // measured sloppily is still probably a win, and silently discarding it would repeat the mistake
+  // this check exists to catch. It marks the result PROVISIONAL so the number travels with the
+  // conditions it was taken under, all the way into the report.
+  for (const r of verified) {
+    const claimPct = (primSpeedup(r.ver) - 1) * 100;
+    const reps = Number(r.ver.reps);
+    const nullArm = Number(r.ver.null_arm_pct);
+    const reasons = [];
+    if (!Number.isFinite(reps) || reps < 5) reasons.push(`reps=${Number.isFinite(reps) ? reps : 'unreported'} (<5)`);
+    if (!Number.isFinite(nullArm)) reasons.push('no null arm');
+    else if (claimPct <= Math.abs(nullArm)) reasons.push(`claim ${claimPct.toFixed(2)}% <= null arm ${Math.abs(nullArm).toFixed(2)}%`);
+    if (reasons.length) {
+      r.provisional = reasons.join('; ');
+      log(`PROVISIONAL ${r.d.id}: +${claimPct.toFixed(2)}% claimed but ${r.provisional}. ` +
+          `Carried forward, but it must be re-measured with >=5 interleaved reps and a null arm ` +
+          `before it is reported as a result.`);
+    }
+  }
 
   // --- (d) Build candidate list; integrate if >=2 verified --------------
   // `geomean` here is the PRIMARY metric used for sorting/gating/cumulative: the time-weighted

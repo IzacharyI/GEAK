@@ -120,6 +120,28 @@ analysis below exactly as before.)
      sub-1% delta is unreadable.
    - Say this explicitly in each direction's `strategy` — engineers do not infer it.
 
+4d. **Search for PRIOR ART before you plan anything — inside the tree AND beside it.** Directions
+   you are about to spend a round deriving may already be written, and possibly already measured.
+   Look for: env-gated or config-gated opt-in paths in the kernel itself (`os.environ.get(...)`
+   predicates around an alternate implementation), sibling checkouts and worktrees next to
+   `WORKSPACE`, other branches of the same repo, and any measurement tables in the repo's own
+   handoff/status/knowledge docs. Report each hit in `prior_art`, and set `in_baseline` to whether
+   it is present in the tree you were given.
+
+   Two very different situations come out of this, and both are silent failures otherwise:
+   - **Implemented and present, just off.** Then the direction costs **one A/B**, not a round of
+     engineering. Plan it as a measurement.
+   - **Implemented but ABSENT from your tree.** Then it is a ceiling on everything this run can
+     achieve, and the run may simply be pointed at the wrong target. Say so in `roadmap_summary`
+     rather than quietly re-deriving it. This is not hypothetical: a run was handed a tree from
+     which ~1000 lines of already-written, already-measured (**+4.71%** on the large-uniform guard)
+     fusion were missing. Nobody noticed, the direction was closed on separate bad reasoning, and
+     the run reported **1.000x** — a true statement about a tree nobody meant to optimize.
+
+   Prior art is also the best available **positive control**: a change with a known effect is how the
+   run proves its own harness can detect a win at all. If you find one, name it in
+   `roadmap_summary` as a control candidate.
+
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
 6. Write `EVAL_DIR/roadmap.md`: kernel summary, bottleneck hypothesis, a multi-round strategy sketch
@@ -140,9 +162,17 @@ Return JSON:
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",
-  "kk_refs": ["<existing card paths under KERNEL_KNOWLEDGE_DIR>"]
+  "kk_refs": ["<existing card paths under KERNEL_KNOWLEDGE_DIR>"],
+  "prior_art": [
+    {"direction": "<what it does>", "implemented_at": "<path / branch / env-gated block>",
+     "how_to_enable": "<env var, flag, or 'port from X'>",
+     "measured_effect": "<known number + where it is recorded, or ''>",
+     "in_baseline": true}
+  ]
 }
 ```
+`prior_art` is `[]` when you genuinely found none — an empty array means you looked, an omitted field
+means you did not.
 
 ---
 
@@ -349,6 +379,13 @@ table, `BASELINE_TIMING`, and `BASELINE_GEOMEAN_MS`.
      when workload-aligned) + geomean + arithmetic + the time-weighted speedup.
    - **Key optimizations applied** (what + impact).
    - **What didn't work** (dead-ends from the ledger).
+   - **Measurement confidence** — required, and required even (especially) when the final speedup is
+     1.000x. State: the positive control's result if one ran (`measured_pct` vs its expected band),
+     the noise floor this run actually observed, every result carried as PROVISIONAL and why, and any
+     `prior_art` found with `in_baseline: false`. A **1.000x with no positive control is not a
+     finding** — it is an untested instrument, and the report must say so in those words rather than
+     presenting the zero as a result. If prior art was absent from the tree, say plainly that the run
+     could not have reached it, so nobody reads the zero as "this direction is exhausted".
 
 Return JSON:
 ```json

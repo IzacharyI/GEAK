@@ -99,7 +99,20 @@ absolute per-case latencies. The script trusts only your numbers.
   "variance_note": "e.g. run-to-run within 3%",
   "graph_safe": "pass|fail|n/a (only when REQUIRE_GRAPH_CAPTURE was set; omit otherwise)",
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
+  "reps": 5,
+  "null_arm_pct": 0.0,
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```
 Be skeptical and exact. Your number becomes the official round result.
+
+**`reps` and `null_arm_pct` are how your number defends itself.** `reps` is the count of interleaved
+A,B pairs behind the median you are reporting — not total process launches. `null_arm_pct` is the
+delta measured by an arm doing **byte-identical work** to the baseline, interleaved the same way:
+this run's own noise floor, measured rather than assumed.
+
+Report them honestly even when they are bad. Under-repped wins are **not discarded** — they are
+carried forward and marked PROVISIONAL, so an under-measured real win survives while an unreadable
+one stops being quoted as fact. Omitting the fields does not make a result look stronger; it makes it
+provisional too. A single-rep A/B on this workflow once produced a "−0.44% win" sitting inside a
+1.45% per-case spread, which is the failure these two numbers exist to make visible.

@@ -172,6 +172,32 @@ effect, in either direction — a real win reads as a regression as often as not
   must print which path it took, once per process; the BENCHMARK entry must capture that line; and
   the METRIC section must state that a result without the marker is **void, not zero**. Do not accept
   a proxy field (variant name, config string) — those read plausible on both paths.
+### 5b. Run the POSITIVE CONTROL — only when `POSITIVE_CONTROL` is in your inputs
+The 3-run reliability check above tells you the baseline is *stable*. It does not tell you the
+harness can *see* anything. Those are different properties and only one of them is currently
+measured: a harness that returns the same number no matter what you do is maximally "reliable".
+
+`POSITIVE_CONTROL` names a change whose effect is **already known from a prior measurement**, so the
+answer is not in question — only your instrument is. Run it exactly as `how` describes, changing
+nothing else, on the guard named in `guard` (or the whole suite if none):
+
+- Use the **same interleaving discipline** the COMMANDMENT requires of real candidates: A,B,A,B,
+  **≥5 pairs**, paired delta, rank-max on multi-rank.
+- Include a **null arm** (byte-identical work, e.g. the flag set to its no-op value) in the same
+  interleave. Report its delta as `null_arm_pct`. The control is only interpretable next to it.
+- Report the **median paired delta** as `measured_pct`, signed so that **positive = faster**.
+
+Then compare against `expected_pct_lo..expected_pct_hi` and report `passed`. Do not adjust the
+expected band to fit what you measured, and do not quietly retry until it passes — if it fails,
+report the failure with everything you observed in `note`. **The orchestrator aborts the run on a
+failed control**, and that is the correct outcome: every subsequent number, including a final
+1.000x, would otherwise be uninterpretable. A run has already reported 1.000x on a tree where a
+known +4.71% was available; nothing in the workflow could distinguish "found nothing" from "cannot
+see anything", and this step exists to make that distinction.
+
+If the control cannot be run at all (path missing, lease unobtainable), return
+`{"ran": false, "note": "<why>"}` — an honest failure, not an omitted field.
+
 Save `EVAL_DIR/baseline_timing.json` (the `count`/`dims`/`dtypes`/`weight_source` fields appear only
 when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·latency_i`):
 ```json
@@ -204,9 +230,12 @@ when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·
   "weights_provenance": "trace|caller|regime_prior|mixed",
   "num_test_cases": 0,
   "reliable": true,
+  "positive_control": {"ran": true, "measured_pct": 0.0, "expected_lo": 0.0, "expected_hi": 0.0,
+                       "passed": true, "reps": 5, "null_arm_pct": 0.0, "note": "<what you saw>"},
   "notes": "anything downstream agents must know (incl. any naive-baseline / regime_prior caveats)"
 }
 ```
+Omit `positive_control` entirely when no `POSITIVE_CONTROL` input was given.
 When `workload_aligned` is true, `baseline_per_case[].count` is the coefficient the time-weighted
 metric uses, and `weight = count·latency_ms` is the case's time share. On an unweighted run omit the
 workload fields entirely (output is identical to before).
