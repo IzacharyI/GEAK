@@ -165,6 +165,13 @@ effect, in either direction — a real win reads as a regression as often as not
 - **Multi-rank harnesses: record RANK-MAX, not rank-mean.** A collective is gated by its slowest
   rank, so rank-mean can improve while the operator gets slower. If the harness prints both, the
   COMMANDMENT's METRIC is the rank-max; note in `notes` that rank-mean is diagnostic only.
+- **If the candidate path is OPT-IN (env var, config predicate, build flag), the COMMANDMENT must
+  require a PATH MARKER from the same run.** An opt-in fast path that fails its predicate falls back
+  silently and produces a plausible, wrong number that reads as "the optimization didn't help" rather
+  than as an error. A full closeout has been filed against the wrong path this way. So: the candidate
+  must print which path it took, once per process; the BENCHMARK entry must capture that line; and
+  the METRIC section must state that a result without the marker is **void, not zero**. Do not accept
+  a proxy field (variant name, config string) — those read plausible on both paths.
 Save `EVAL_DIR/baseline_timing.json` (the `count`/`dims`/`dtypes`/`weight_source` fields appear only
 when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·latency_i`):
 ```json

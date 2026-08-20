@@ -151,6 +151,56 @@ const antipatterns = [
 ];
 for (const [re, what] of antipatterns) ok(re.test(doc), `anti-pattern keeps its measurement: ${what}`);
 
+// 5. Lessons from the completed fusion (2026-08-21). Each of these cost a wrong number or a wasted
+//    milestone to learn, and each is the kind of thing a fresh round re-derives the hard way.
+console.log('\n# post-mortem doctrine');
+const postmortem = [
+  [/launch count is not an objective/i, 'launch count is explicitly rejected as a target'],
+  [
+    /who is the natural producer of this data/i,
+    'operator-boundary check before fusing a phase in',
+  ],
+  [
+    /state\s+the specific mechanism you are copying/i,
+    'reference-design citations must name the mechanism, not "it is one kernel"',
+  ],
+  [
+    /same tree with only the fusion flag toggled/i,
+    'fusion attribution uses a same-tree flag toggle, not the frozen baseline',
+  ],
+  [
+    /deletes the instrument that measured it/i,
+    'fusing a phase deletes its instrument; a 0 reading means removal',
+  ],
+  [
+    /aggregation unit/i,
+    'in-kernel timers must declare their aggregation unit',
+  ],
+  [
+    /exceeding the kernel's own wall time is an aggregation error/i,
+    'the wait-vs-kernel-duration self-check is stated',
+  ],
+  [
+    /falls back silently|fails its predicate falls back/i,
+    'silently-falling-back opt-in paths are called out',
+  ],
+  [/refuse to report a number without that marker|void, not zero/i, 'path marker is required'],
+  [
+    /residency-side/i,
+    'the overlap proof ceiling names the instrument that would close it',
+  ],
+];
+for (const [re, what] of postmortem) ok(re.test(doc), what);
+
+// The outturn table is calibration data: without it "2-5% is a good outcome" is an unfalsifiable
+// claim rather than a measured band.
+ok(/\+4\.71%/.test(doc), 'outturn keeps the measured best-case fusion gain');
+ok(/−0\.76|-0\.76/.test(doc), 'outturn keeps the one rep that went negative');
+
+// The path-marker gate has to be enforced by the role, not just described in knowledge.
+ok(/PATH MARKER/.test(bench), 'benchmark_engineer enforces the path marker for opt-in candidates');
+ok(/void, not zero/.test(bench), 'a missing marker voids the result rather than scoring it');
+
 ok(
   /Priority/.test(doc) && /no-payload control/.test(doc),
   'file ends with an actionable priority ordering',

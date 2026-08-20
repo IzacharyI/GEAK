@@ -95,7 +95,31 @@ max-of-N is worst.
 
 **Rule: fusion pays when it removes a *wait*, not when it merely removes a *launch*.** Launch is
 ~5–15 µs; if that is all you are removing and the phase must then be joined in-kernel, expect to
-lose. Fuse such a phase only for launch/DAG completeness, land it **default-off**, and say so.
+lose.
+
+**Corollary — launch count is not an objective, so do not adopt it as one.** The pass above was
+pursued to reach "exactly one launch per rank", which sounded like the definition of full fusion. It
+is not, for three independent reasons, and the project later withdrew the milestone outright rather
+than repair it:
+
+1. **The measurement said no from the start.** The pass was 0.64% of e2e; the join it created cost
+   more than the launch it removed. Nothing about that ratio was going to improve.
+2. **Check the operator boundary before fusing across it.** That pass was an activation *cast*, which
+   in a real serving graph belongs in the epilogue of whatever produced the activation — producer
+   quantizes what it just wrote. Pulling it into the consumer megakernel competes with the better
+   placement and forces the consumer to ingest unquantized input, defeating any pre-quantized fast
+   path the operator already offers. **Ask "who is the natural producer of this data?" before
+   fusing a phase in; if the answer is a different operator, the phase is not yours to fuse.**
+3. **The reference architecture does not do it either.** "Fuse it like <fast library X>" was read as
+   "one launch for everything". Fast GEMM libraries of this class consume pre-quantized inputs with
+   their scales and ship the cast as a separate helper; collective dispatch/combine likewise live
+   outside. What they maximize is occupancy and pipelining *inside* the main body, not the number of
+   launches in the surrounding graph. **If you are citing a reference design as justification, state
+   the specific mechanism you are copying. "It's one kernel" is usually not what the reference did.**
+
+If you build such a fusion anyway, keep it in-tree **default-off as a labelled control experiment**,
+not as an unfinished feature — the negative result is the deliverable, and leaving it filed as
+"almost done" causes the next person to spend effort finishing something that should not ship.
 
 ## Lever 4 — Straggler-gating has a variance signature; use it to diagnose
 
@@ -212,6 +236,13 @@ property (a few hot experts inside one rank). A detector comparing rows received
 `tokens × topk` never fires, because the rank-level totals are balanced. Use a statistic at the
 granularity the imbalance lives at — e.g. `max_expert_tiles` versus `rows / tile_m / experts_per_rank`.
 
+**E — Pursuing "one launch" as the definition of full fusion.** See Lever 3's corollary. The
+milestone was built, was correct, reached exactly one launch, measured slower on all four guards, and
+was withdrawn as a goal rather than repaired. Cost: the fusion work itself, plus a planned follow-up
+to convert its ingress join into per-item readiness that was only ever needed to rescue the wrong
+target. **Before adopting a structural target, ask what it is worth in the profile.** If the phase in
+question is under ~1% of e2e, the target is bookkeeping, not performance.
+
 ## Measurement discipline (this domain breaks the default assumptions)
 
 - **Interleave the arms in ONE script.** Batch-to-batch drift measured up to **4%** at small sizes —
@@ -231,6 +262,44 @@ granularity the imbalance lives at — e.g. `max_expert_tiles` versus `rows / ti
 - **Name the denominator.** Compare against the frozen upstream baseline under an identical
   route/iteration command, never against a different library.
 
+- **Two denominators, two different questions — run both.** "How much faster than upstream" and "how
+  much did the fusion buy" are not the same number and the gap can be 7×. Measured on one operator:
+
+  | guard | vs frozen upstream | fusion alone (same tree, flag off/on) |
+  |---|---|---|
+  | large uniform | −4.92% | +4.71% |
+  | large skew | −2.08% | +2.09% |
+  | small skew | **−10.96%** | **+1.54%** |
+
+  The small-skew column is the warning: 9 of those 11 points came from unrelated improvements already
+  on the branch (write-through payload stores, a payload-chunk tuning), not from fusion. Attribute a
+  fusion win by running the **same tree with only the fusion flag toggled**, A,B,A,B. Comparing the
+  fused build against a frozen baseline credits fusion with every other change on the branch.
+
+- **Fusing a phase deletes the instrument that measured it.** A peer-wait timer living in the
+  standalone kernel reads a flat `0.0` once that kernel is no longer called — which looks exactly
+  like "the wait went to zero" and is really "nothing was measured". Before quoting an improvement in
+  a wait/occupancy/bandwidth counter after a fusion, **prove the instrumented code path still
+  executes.** Budget an in-kernel replacement instrument as part of the fusion, not as follow-up.
+
+- **State the aggregation unit of an in-kernel timer before reading its output.** Two bugs, both
+  producing confident wrong numbers, neither a timing bug:
+  - *Mean vs total.* A per-item readiness scheme waits many short times where a barrier waited once
+    for long. Reporting the per-wait **mean** made the fusion look worse for free. The comparable
+    statistic to a barrier timer is the **per-launch total**. Publish both.
+  - *Per-block vs per-wave slots.* One accumulator per block sums waves that wait **concurrently**,
+    turning parallel time into serial time. It reported 8470 µs of wait inside a 5.4 ms kernel.
+    **Any in-kernel wait exceeding the kernel's own wall time is an aggregation error** — that
+    impossibility is the cheapest available self-check, so compute the ratio every time.
+
+- **An opt-in fast path that falls back silently will be measured in its slow form.** A megakernel
+  gated on `ENV == "1"` **and** a config predicate silently took the scattered path when either
+  failed, and a full closeout was filed against the wrong path — it does not look like a bug, it
+  looks like "the optimization didn't help". Make the kernel **announce which path it took**, once
+  per process, and make the harness **refuse to report a number without that marker from the same
+  run**. Do not use an unrelated field (a variant name, a config string) as a proxy for "fusion is
+  on"; it will read plausible on both paths.
+
 ## Priority
 
 1. **Run the no-payload control** and the DAG. No exposed wait ⇒ no fusion win available; stop.
@@ -238,7 +307,8 @@ granularity the imbalance lives at — e.g. `max_expert_tiles` versus `rows / ti
 3. **Attack the largest exposed wait first** with per-item readiness (Lever 2) — usually the cross-rank
    barrier, and usually most of the available gain.
 4. **Then the intra-rank producer→consumer edge**, agent scope, which is cheaper to publish.
-5. **Fuse launch-only phases last** (Lever 3), expecting to lose; land default-off if so.
+5. **Do not fuse launch-only phases at all** (Lever 3) unless something other than launch count pays
+   for it. If you build one to settle the question, land it default-off and labelled as a control.
 6. Levers 5–9 are **prerequisites, not options** — get scope, fence cost, residency, acyclicity and
    counter-reset right, or the above will hang rather than run slowly.
 
@@ -246,3 +316,33 @@ Honest ceiling: perfectly hiding the *entire* worst-case combine wait was 13.46%
 no-payload delta is not removable (a correct implementation still sends the data). Real gains are a
 fraction of these. A cumulative **2–5%** rank-max improvement from a full fusion of a
 well-tuned distributed operator is a good outcome — size the effort accordingly.
+
+**Outturn, for calibration.** Fusing dispatch + GEMM1 + the GEMM1→GEMM2 edge + GEMM2 + P2P publish +
+combine into one persistent kernel (three launches → one, with the ingress cast deliberately left
+outside) delivered, fusion-alone and paired:
+
+| guard | fusion gain | per-pair range |
+|---|---|---|
+| small uniform | +1.49% | +1.24 .. +1.79% |
+| small skew | +1.54% | **−0.76** .. +3.70% |
+| large uniform | **+4.71%** | +3.55 .. +4.93% |
+| large skew | +2.09% | +1.48 .. +3.13% |
+
+Inside the predicted 2–5% band, and the *shape* is the useful part: the gain tracks how much
+cross-rank wait there is to absorb. Large-uniform wins most; small batches sit near the noise floor
+(one of three small-skew reps went negative — at that size the fixed costs fusion removes are the
+same order as batch drift). Skew wins less than uniform **not because the fusion is untuned but
+because its bottleneck is elsewhere** — the hot-expert tail, where in-kernel wait ran 27× higher on
+the slowest rank than the fastest. Fusion cannot fix a producer-side imbalance; that needs the
+producer's tile→block mapping changed so a token's contributions arrive progressively. Diagnose which
+regime you are in (Lever 4's spread, plus the per-rank wait distribution) before spending more effort
+on the fusion itself.
+
+**Overlap claims have a proof ceiling you should know before promising one.** Once the operator is a
+single kernel there are no boundaries left for a kernel-granularity trace to show overlap across, and
+a wait timer shows that a wave *waited*, not that the CU executed something else meanwhile. Structural
+evidence (kernel count in the trace, per-item readiness replacing a barrier) plus a bounded in-kernel
+wait (measured: 8.6%–23% of kernel time) supports overlap but does not demonstrate it. A direct claim
+needs a **residency-side** instrument — executing-wave sampling across the timed window, or an ATT
+pass correlating wait regions against issued VALU. Plan for that instrument up front, or state the
+overlap result as partial and say what is missing.
