@@ -249,7 +249,20 @@ baseline latencies recorded at benchmark setup).
    git apply "$EVAL_DIR/final_patch.diff"
    ```
    Otherwise leave the original untouched.
-8. Write `EVAL_DIR/director_validation.json` with the full result.
+8. **Sweep leaked GPU leases — this must be your VERY LAST action, after every one of your own GPU
+   commands has exited** (the sweep matches on `EVAL_DIR`, and your own validation lease lives under
+   `EVAL_DIR`, so running it earlier would target yourself):
+   ```bash
+   bash "$SKILL_DIR/scripts/sweep_orphan_leases.sh" --kill --eval-dir "$EVAL_DIR"
+   ```
+   An engineer that backgrounded a lease job (`nohup … gpu_lock.sh … &`) leaves a process the
+   orchestrator has no handle on. The run finishes, the report is filed, and hours later that job
+   acquires the GPU group and runs with nobody reading its output. This has happened, and the
+   orphan's measurement contradicted the filed report. Record what the sweep found in
+   `orphan_leases_swept` — if it found any, ALSO say so in `arbitration_note`, because it means a
+   direction in this run produced a measurement that is NOT in the report and the numbers you just
+   validated may have been collected while an unrelated job was contending for the same GPUs.
+9. Write `EVAL_DIR/director_validation.json` with the full result.
 
 Return JSON:
 ```json
@@ -263,6 +276,7 @@ Return JSON:
   "correctness": "pass|fail",
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0}],
   "applied_to_original": "true|false",
+  "orphan_leases_swept": 0,
   "arbitration_note": "accept reason, or what to re-task if flagged",
   "final_patch": "<EVAL_DIR>/final_patch.diff"
 }

@@ -400,6 +400,9 @@ const VALIDATE_SCHEMA = obj({
   tech_lead_reported_speedup_geomean: { type: 'number' },
   validation_status: { type: 'string' }, correctness: { type: 'string' },
   per_case: perCase, applied_to_original: { type: 'string' },
+  // Count of GPU-lease jobs still alive for this EVAL_DIR when validation finished. Non-zero means
+  // some direction backgrounded a lease and produced a measurement that is NOT in the report.
+  orphan_leases_swept: { type: 'number' },
   arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
 }, ['director_verified_speedup_geomean', 'validation_status']);
 
@@ -981,6 +984,15 @@ const finalGeomean = validation ? validation.director_verified_speedup_geomean :
 const finalWeighted = validation && validation.director_verified_speedup_weighted != null
   ? validation.director_verified_speedup_weighted : null;
 const finalPrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
+// A leaked lease is not a cosmetic problem: the orphan runs unread AFTER the report is filed, and
+// while it runs it contends with whatever measured the numbers we just accepted. Surface it in the
+// completion line so it is not buried in the validation JSON.
+if (validation && validation.orphan_leases_swept > 0) {
+  log(`WARNING: ${validation.orphan_leases_swept} orphaned GPU lease(s) were still alive at closeout ` +
+      `and have been killed. Some direction backgrounded a lease job — its measurement is NOT in ` +
+      `the report, and it may have contended with the validated numbers.`);
+}
+
 log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
     `${HAS_WORKLOAD && Number.isFinite(finalGeomean) ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
     ` (status ${validation ? validation.validation_status : '?'}). Results in ${EVAL_DIR}`);

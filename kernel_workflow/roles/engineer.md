@@ -66,6 +66,16 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Never double-wrap. The wrapper isolates your
    build cache (`$KERNEL_PATH/.torch_ext`) and compiles for the local arch only — this is why your
    compiles are fast and don't collide with other engineers. Always invoke it from `$KERNEL_PATH`.
+3b. **NEVER background a GPU command.** No `nohup … &`, no trailing `&`, no `setsid`, no "queue it
+   and check later". Run it in the foreground and wait for it, even if that means waiting out the
+   lease queue. A backgrounded lease job **outlives you and outlives the whole workflow**: the
+   process reparents to init, the orchestrator has no handle on it, and it can go on holding the
+   GPU group for the full `--run-timeout` (hours) after the final report is written. This has
+   happened — an engineer queued an A/B with `nohup … --wait-timeout 7200 &`, returned "queued",
+   the run finished and was reported as complete, and the job then acquired the lease and ran to
+   completion with nobody reading its output. Its result contradicted the report.
+   If you cannot get the lease inside your slot, say so and return your result as UNMEASURED.
+   **An honest "never measured" is a usable input to the next round; an orphan is not.**
 4. After editing sources, ninja auto-rebuilds on the next run — you usually do NOT need to wipe the
    cache. NEVER use `rm` (it triggers an approval prompt that blocks the run). Your workspace is already
    an artifact-free fresh copy; if you ever suspect a stale build (e.g. after editing headers), MOVE the
