@@ -199,6 +199,50 @@ if (CAPABILITY_EVAL) {
       `known_reference_paths=${KNOWN_REFERENCE_PATHS.length ? KNOWN_REFERENCE_PATHS.join(' ') : '(none given — provenance check DISABLED)'}`);
 }
 
+// REFERENCE CONTAINMENT. Withholding the location does not make the tree unreachable. Engineers run
+// with a shell in a workspace that sits inside the project tree; one `ls ..` or one repo-wide grep
+// walks straight into a sibling reference checkout, and both waves of this run did exactly that —
+// wave 1 filed an 8-of-11-files byte-identical patch, and wave 2 repeated it at 11 of 12, differing
+// only in the default of one env lookup. Both times the doctrine was present and correctly worded.
+// Prose cannot fence off a directory that is one relative path away, so this is checked instead of
+// asked for: under capability_eval a reference tree must live OUTSIDE the ancestor that contains the
+// task, the workflow and the run artifacts. Move it (`git worktree move` if it is a worktree) rather
+// than deleting the mention — a stale path in an old report is harmless once it resolves to nothing.
+if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
+  // Normalized by hand: workflow scripts run without Node's `path`/`fs`, so require() would throw
+  // here at runtime and turn a safety check into a crash.
+  const abs = (p) => {
+    const out = [];
+    for (const seg of String(p).split('/')) {
+      if (!seg || seg === '.') continue;
+      if (seg === '..') out.pop(); else out.push(seg);
+    }
+    return '/' + out.join('/');
+  };
+  const parts = [KERNEL_PATH_ORIG, EXP_ROOT, WORKFLOW_DIR].filter(Boolean).map(abs);
+  let ancestor = parts.length ? parts[0] : '';
+  for (const p of parts.slice(1)) {                       // longest common directory prefix
+    const a = ancestor.split('/'), b = p.split('/');
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    ancestor = a.slice(0, i).join('/') || '/';
+  }
+  const inside = KNOWN_REFERENCE_PATHS.filter(
+    (p) => ancestor && (abs(p) === ancestor || abs(p).startsWith(ancestor + '/')));
+  if (inside.length) {
+    throw new Error(
+      `REFERENCE NOT CONTAINED: capability_eval is on, but ${inside.length} reference tree(s) sit ` +
+      `inside the run's own tree (${ancestor}): ${inside.join(' ')}. An engineer reaches these by ` +
+      `walking up one directory, so the run would measure a copy and report it as a derivation — ` +
+      `that has already happened twice here. Move each tree outside ${ancestor} (for a git worktree: ` +
+      `git worktree move <old> <new>) and pass the new path in known_reference_paths, so verify can ` +
+      `still compare against it. Set capability_eval=false if you WANT the reference ported.`);
+  }
+  log(`REFERENCE CONTAINMENT ok: ${KNOWN_REFERENCE_PATHS.length} reference tree(s) resolve outside ` +
+      `the run tree ${ancestor}. NOTE this checks paths only — a reference that is also reachable as ` +
+      `a branch/commit in a repository the run can read (JIT cache, sibling clone) is still copyable, ` +
+      `and only verify's byte-identity check stands between that and a counted win.`);
+}
+
 // ---- Profile-analysis skill (OPTIONAL, pluggable; mirrors e2e_workflow's analysis_skill — see
 // knowledge/analysis_skills/INDEX.md). After profile_engineer classifies the bottleneck, a separate
 // analysis_engineer may run ONE analysis skill to enrich it with operator-specific structure (e.g. MoE
