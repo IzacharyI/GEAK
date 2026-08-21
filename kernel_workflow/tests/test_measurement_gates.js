@@ -162,6 +162,19 @@ if (gateSrc) {
      'a clean pass is not flagged as an overshoot');
 }
 
+// A per-case noise floor that only lives in an insight is decoration. The aggregate is where an
+// unreadable number turns into a claim, so the rule has to bind at aggregation time.
+console.log('\n# unresolved cases must not be aggregated at face value');
+ok(/CONTRIBUTES 1\.000 TO THE HEADLINE/.test(lead),
+   'a case inside its own same-arm spread folds in as 1.000, not as its point estimate');
+ok(/UNRESOLVED \(delta, n, wins\/n, spread\)/.test(lead),
+   'the table prints the evidence that made the case unresolved, not just the verdict');
+ok(/same-arm spread/.test(lead) && /sign test/.test(lead),
+   'both readability tests are named: magnitude vs spread AND the paired sign test');
+// Without the incident the rule reads as pedantry and gets skipped under budget pressure.
+ok(/1\.01769x/.test(lead) && /-4\.14%/.test(lead) && /1\.0021x/.test(lead),
+   'the 1.56pp inflation incident keeps its three numbers in the role file');
+
 // The caveat has to reach the report, or "passed with a known upward bias" degrades to "passed".
 console.log('\n# an overshooting pass carries its caveat forward');
 ok(/let PC_OVERSHOOT = ''/.test(wf), 'the overshoot caveat is captured in a variable');

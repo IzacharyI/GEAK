@@ -425,6 +425,18 @@ table, `BASELINE_TIMING`, and `BASELINE_GEOMEAN_MS`.
      the bottleneck shift. This is the "round 1 optimized a, b, c — what were the results, what after merging; round 2 …" narrative.
    - **Final per-test-case table** (baseline ms / optimized ms / speedup; + `count` & weight-share
      when workload-aligned) + geomean + arithmetic + the time-weighted speedup.
+   - **A CASE THAT DID NOT CLEAR ITS OWN NOISE FLOOR CONTRIBUTES 1.000 TO THE HEADLINE.** Before you
+     aggregate, take each case's measured **same-arm spread** (the run's own repeated-base and
+     repeated-candidate variation at that case — the A/B driver reports it per guard) and the paired
+     **sign test**. A case whose |delta| is inside its same-arm spread, or whose sign test is not
+     lopsided, is **UNRESOLVED**: print it in the table as `UNRESOLVED (delta, n, wins/n, spread)`
+     and fold it in as **1.000**, never as its point estimate. Say in the Summary how many of the
+     cases resolved. Aggregating unresolved cases at face value is not a rounding difference — on
+     2026-08-21 a tech lead reported **1.01769x** built partly on a `+2.07%` case whose own round-1
+     insight had already established a `4.98%` same-arm spread at that case; independent validation
+     re-measured the same case at **-4.14%** and the run's true headline was **1.0021x**. The
+     inflation was 1.56pp and every bit of it came from cases the run had itself declared unreadable.
+     The verifier will catch this and flag the run; the point is not to produce the number.
    - **Key optimizations applied** (what + impact).
    - **What didn't work** (dead-ends from the ledger).
    - **Measurement confidence** — required, and required even (especially) when the final speedup is
