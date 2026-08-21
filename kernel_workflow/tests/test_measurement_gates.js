@@ -175,6 +175,24 @@ ok(/same-arm spread/.test(lead) && /sign test/.test(lead),
 ok(/1\.01769x/.test(lead) && /-4\.14%/.test(lead) && /1\.0021x/.test(lead),
    'the 1.56pp inflation incident keeps its three numbers in the role file');
 
+// A measurement that exists on disk but not in the return value is still a measurement. The workflow
+// cannot read files, so it has to ASK — and the recovery must be recovery, not a silent re-run.
+console.log('\n# an unreturned baseline is recovered from disk, not thrown away');
+ok(/label: 'benchmark_recover'/.test(wf), 'a recovery agent runs before the phase aborts');
+ok(/no baseline recorded, and none recoverable from EVAL_DIR/.test(wf),
+   'the abort still exists — recovery narrows the failure, it does not remove it');
+ok(/Do NOT run any GPU command and do/.test(wf) && /a fresh measurement here is a/.test(wf),
+   'the recovery agent is forbidden from re-measuring, which would hide the cost of the failure');
+ok(/claim_complete:true IS the positive/.test(wf),
+   'a completed positive control on disk is reused rather than re-run — it is the phase\'s costliest step');
+ok(/70 min of an 8-card lease/.test(wf),
+   'the incident keeps its cost in the source, which is the argument for the extra agent');
+// The role side: persist first, then do the expensive interruptible things.
+ok(/PERSIST THE BASELINE THE MOMENT IT EXISTS/.test(bench),
+   'the engineer writes the baseline before the control and correctness, not after');
+ok(/READ THEM AND REUSE THEM/.test(bench),
+   'an interrupted attempt\'s artifacts are inputs to the retry, not litter');
+
 // The caveat has to reach the report, or "passed with a known upward bias" degrades to "passed".
 console.log('\n# an overshooting pass carries its caveat forward');
 ok(/let PC_OVERSHOOT = ''/.test(wf), 'the overshoot caveat is captured in a variable');

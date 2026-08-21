@@ -172,6 +172,22 @@ effect, in either direction — a real win reads as a regression as often as not
   must print which path it took, once per process; the BENCHMARK entry must capture that line; and
   the METRIC section must state that a result without the marker is **void, not zero**. Do not accept
   a proxy field (variant name, config string) — those read plausible on both paths.
+**PERSIST THE BASELINE THE MOMENT IT EXISTS — before the control, before correctness, before
+anything else touches a GPU.** `EVAL_DIR/baseline_timing.json` and `EVAL_DIR/COMMANDMENT.md` are the
+only outputs of this phase the rest of the run cannot proceed without, and they are free to write.
+Everything after them is expensive and interruptible: on 2026-08-21 a benchmark engineer measured
+base + null on all four guards (40 runs) and a 6-pair positive control (36 runs, ~70 min), then was
+interrupted during the correctness step **before returning**. Every number was on disk in
+`setup_ab_*.json`; none of it was in `baseline_per_case`, so the workflow threw
+`no baseline recorded` and the whole hour was unreachable. Write the file, then continue.
+
+**If EVAL_DIR already holds `baseline_timing.json` or `setup_ab_*.json` from an interrupted attempt,
+READ THEM AND REUSE THEM.** Re-measuring a baseline that is already on disk is not caution, it is an
+hour of lease spent to reproduce a number you already have. Reuse specifically: base-arm medians per
+guard, and any `setup_ab_control*.json` with `claim_complete: true` — that is a finished positive
+control and re-running it is the single most expensive redundant act available to you. Say in `notes`
+which files you reused and which measurements are fresh.
+
 ### 5b. Run the POSITIVE CONTROL — only when `POSITIVE_CONTROL` is in your inputs
 The 3-run reliability check above tells you the baseline is *stable*. It does not tell you the
 harness can *see* anything. Those are different properties and only one of them is currently

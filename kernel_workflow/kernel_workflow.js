@@ -912,16 +912,44 @@ const bench = await agentT(
     ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
   }),
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA });
-if (!bench || !bench.baseline_per_case) throw new Error('Benchmark setup failed: no baseline recorded');
-const BASELINE_PER_CASE = bench.baseline_per_case;
-const BASELINE_GEOMEAN_MS = bench.baseline_geomean_ms;
-log(`Benchmark done. ${bench.num_test_cases || BASELINE_PER_CASE.length} cases, baseline geomean ${BASELINE_GEOMEAN_MS} ms, reliable=${bench.reliable}`);
+// A bench agent that dies without returning has usually NOT failed to measure — it has failed to
+// report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
+// EVAL_DIR is invisible here and used to abort the run outright. On 2026-08-21 that discarded 40
+// baseline runs plus a COMPLETE 6-pair positive control (~70 min of an 8-card lease) because the
+// agent was interrupted mid-correctness, after every number was already written to setup_ab_*.json.
+// So before throwing, spend one cheap agent asking whether the measurements exist on disk. It may
+// only RECOVER — re-measuring here would silently double the phase's cost and hide the failure.
+let benchR = bench;
+if (!benchR || !benchR.baseline_per_case) {
+  log('Benchmark setup returned nothing. Attempting RECOVERY from EVAL_DIR before aborting — an ' +
+      'agent that died mid-phase usually left its measurements on disk.');
+  benchR = await agentT(
+    roleAgent('benchmark_engineer', 'recover',
+      'The previous benchmark_engineer for this EVAL_DIR did not return. RECOVER ONLY: read ' +
+      `${EVAL_DIR} — baseline_timing.json, COMMANDMENT.md, setup_ab_*.json, ab_logs/ — and ` +
+      'reconstruct the return JSON from what is already there. Do NOT run any GPU command and do ' +
+      'NOT take a lease: this step exists to avoid re-measuring, so a fresh measurement here is a ' +
+      'failure, not a fallback. Write baseline_timing.json / COMMANDMENT.md if measurements exist ' +
+      'but the file does not. A setup_ab_control*.json with claim_complete:true IS the positive ' +
+      'control result — report its measured median and null arm rather than re-running it. If the ' +
+      'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes.',
+      { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
+        ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
+    { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA });
+  if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
+    throw new Error('Benchmark setup failed: no baseline recorded, and none recoverable from EVAL_DIR');
+  }
+  log(`Benchmark RECOVERED from disk: ${benchR.baseline_per_case.length} cases. ${benchR.notes || ''}`);
+}
+const BASELINE_PER_CASE = benchR.baseline_per_case;
+const BASELINE_GEOMEAN_MS = benchR.baseline_geomean_ms;
+log(`Benchmark done. ${benchR.num_test_cases || BASELINE_PER_CASE.length} cases, baseline geomean ${BASELINE_GEOMEAN_MS} ms, reliable=${benchR.reliable}`);
 
 // Positive-control gate. Runs BEFORE any direction budget is spent, because the thing it can prove
 // false — "this harness can detect a real win" — invalidates every measurement taken after it.
 let PC_OVERSHOOT = '';   // set when the control passed but read HIGH; travels into the report
 if (POSITIVE_CONTROL) {
-  const pc = bench.positive_control || {};
+  const pc = benchR.positive_control || {};
   const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
   const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
   const got = Number(pc.measured_pct);
