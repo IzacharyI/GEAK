@@ -208,6 +208,9 @@ if (CAPABILITY_EVAL) {
 // asked for: under capability_eval a reference tree must live OUTSIDE the ancestor that contains the
 // task, the workflow and the run artifacts. Move it (`git worktree move` if it is a worktree) rather
 // than deleting the mention — a stale path in an old report is harmless once it resolves to nothing.
+//
+// Set by this block and consumed by the post-Setup enforcement gate, which sweeps the same ancestor.
+let RUN_TREE_ANCESTOR = '';
 if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
   // Normalized by hand: workflow scripts run without Node's `path`/`fs`, so require() would throw
   // here at runtime and turn a safety check into a crash.
@@ -226,6 +229,7 @@ if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
     let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
     ancestor = a.slice(0, i).join('/') || '/';
   }
+  RUN_TREE_ANCESTOR = ancestor;
   const inside = KNOWN_REFERENCE_PATHS.filter(
     (p) => ancestor && (abs(p) === ancestor || abs(p).startsWith(ancestor + '/')));
   if (inside.length) {
@@ -339,6 +343,15 @@ const perCase = {
   },
 };
 const obj = (props, required) => ({ type: 'object', properties: props, required: required || [], additionalProperties: true });
+
+// Verdict vocabulary is three-valued on purpose. `skipped` exists so that "the scanner could not run"
+// can never be reported as `clean` — that collapse is the exact failure this whole subsystem exists
+// to prevent, and a two-valued schema would force the agent to lie.
+const CONTAINMENT_GATE_SCHEMA = obj({
+  verdict: { type: 'string', enum: ['clean', 'leak', 'skipped'] },
+  findings: { type: 'array', items: { type: 'string' } },
+  note: { type: 'string' },
+}, ['verdict']);
 
 const SETUP_SCHEMA = obj({
   eval_dir: { type: 'string' }, workspace: { type: 'string' }, baseline_dir: { type: 'string' },
@@ -663,6 +676,41 @@ const CANONICAL = setup.workspace;       // canonical current-best workspace (ad
 const KERNEL_NAME = setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
 log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
+
+// CONTAINMENT ENFORCEMENT — the startup check above is a path filter and it missed the two leaks that
+// actually happened. Both were CONTENT: a control workspace holding the applied reference patch left
+// inside the tree, and a knowledge card that opened with the reference branch and commit. Neither is
+// a known_reference_path, so neither could ever have failed the startup check. This gate runs the two
+// scanners that do see them, and it runs AFTER Setup because Setup is what materialises the eval dir,
+// the baseline copy and the inherited assets — sweeping before them scans an empty tree and passes.
+// It is an agent because workflow scripts have no fs/child_process: the check has to be executed by
+// something with a shell, and one cheap agent beats a comment asking a human to remember.
+if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR) {
+  const gate = await agentT(
+    `Run two containment scanners and report their exit codes verbatim. Do not fix anything, do not ` +
+    `read any file they flag, do not summarise the flagged content — reporting the paths is the whole job.\n\n` +
+    `1. bash ${WORKFLOW_DIR}/scripts/reference_leak_sweep.sh --tree ${RUN_TREE_ANCESTOR}\n` +
+    `2. bash ${WORKFLOW_DIR}/scripts/skill_address_scan.sh --skills-dir ${EXPERT_SKILLS_DIR || '(skip: expert skills off)'} ` +
+    `--scan-root ${RUN_TREE_ANCESTOR}\n\n` +
+    `If a script is missing or its --skills-dir is empty, record that step as "skipped" with the reason ` +
+    `and do NOT call it clean. "The scanner did not run" and "the scanner found nothing" are different ` +
+    `results and this run has already been damaged twice by conflating them.`,
+    { phase: 'Setup', label: 'containment gate', schema: CONTAINMENT_GATE_SCHEMA });
+  if (!gate) {
+    log('CONTAINMENT GATE: the gate agent returned nothing. Treating as UNKNOWN, not clean — the run ' +
+        'continues, but any capability claim from it is unsupported until the scanners are run by hand.');
+  } else if (gate.verdict === 'leak') {
+    throw new Error(
+      `CONTAINMENT GATE FAILED: a copy of the answer is reachable inside ${RUN_TREE_ANCESTOR}.\n` +
+      `${(gate.findings || []).join('\n')}\n` +
+      `The run is stopped before any budget is spent, because a candidate derived here cannot be ` +
+      `distinguished from a candidate copied here. Move the offending artifact outside the tree (mv, ` +
+      `not rm, so it stays available to verify) and relaunch. Set capability_eval=false if the port ` +
+      `is what you actually want.`);
+  } else {
+    log(`CONTAINMENT GATE ${gate.verdict}: ${gate.note || ''}`);
+  }
+}
 
 async function runProfileAnalysis(profileSummary, round, label) {
   if (!ANALYSIS_SKILL_ON || !profileSummary) return null;

@@ -92,7 +92,10 @@ for e in $EXTS; do
   if [[ $first -eq 1 ]]; then find_args+=(-name "*.$e"); first=0; else find_args+=(-o -name "*.$e"); fi
 done
 
-hits=$(find "$TREE" -type f \( "${find_args[@]}" \) -not -path '*/__pycache__/*' -print0 2>/dev/null \
+# The scanner and its marker list quote markers by construction; a checker flagging itself trains the
+# reader to skim the output, which is how a real hit gets missed.
+hits=$(find "$TREE" -type f \( "${find_args[@]}" \) -not -path '*/__pycache__/*' \
+         -not -name 'reference_leak_sweep.sh' -not -name 'reference_leak_markers.txt' -print0 2>/dev/null \
        | xargs -0 -r grep -lF "$pattern" 2>/dev/null | sort -u)
 
 # --allow entries are trees the run is SUPPOSED to be able to read (the frozen baseline, the reference

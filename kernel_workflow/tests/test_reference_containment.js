@@ -133,6 +133,60 @@ ok(/did not need to be/.test(bench),
    'it states the engineer needed no reference disclosure — the leak did the work');
 ok(/`mv`, not `rm`/.test(bench), 'cleanup avoids rm, which prompts and blocks background runs');
 
+// --- 7. the gate that actually RUNS the scanners --------------------------
+// Sections 5 and 6 assert the scanners exist and the doctrine is written down. Both were true of the
+// startup path check too, and it still missed every real leak. What closed the loop is that the
+// scanners are now executed by the run itself, after Setup, with the power to abort.
+console.log('\n# the post-Setup containment gate');
+ok(/CONTAINMENT GATE FAILED/.test(wf), 'the gate has a distinct, greppable failure name');
+ok(/throw new Error\(\s*\n?\s*`CONTAINMENT GATE FAILED/.test(wf),
+   'a leak found after Setup ABORTS — the startup check aborts, so this must too');
+const iGate = wf.indexOf('CONTAINMENT GATE FAILED');
+ok(iGate > wf.indexOf("log(`Setup done"),
+   'the gate runs AFTER Setup — before Setup the eval dir does not exist and the sweep passes vacuously');
+ok(iGate > 0 && iGate < wf.indexOf('while (dispatched < BUDGET'),
+   'the gate runs BEFORE the optimize loop spends budget');
+ok(/reference_leak_sweep\.sh --tree/.test(wf) && /skill_address_scan\.sh --skills-dir/.test(wf),
+   'the gate invokes both scanners, not just the one that existed first');
+ok(/'clean', 'leak', 'skipped'/.test(wf),
+   'the verdict is three-valued: "could not run" must not be expressible as "found nothing"');
+ok(/returned nothing[\s\S]{0,200}UNKNOWN, not clean/.test(wf),
+   'a dead gate agent degrades to UNKNOWN — a silent pass would restore the exact hole');
+// Wrap-tolerant: the sentence spans two `+`-joined literals (same reason as the section-4 note).
+ok(/do not\s*`? ?\+?\s*`?\s*read any file they flag/.test(wf),
+   'the gate agent is told not to read what it finds — the checker must not become the next leak');
+
+// --- 8. the address scanner tests RESOLVABILITY, not citation -------------
+// A hex-token blacklist would fire on every honest Sources line and get switched off inside a week.
+console.log('\n# the skill-card address scanner');
+const addr = read('scripts/skill_address_scan.sh');
+ok(/cat-file -t/.test(addr),
+   'addresses are tested by resolving them in a real repo, not by matching hex');
+ok(/citation, not a door|resolves nowhere passes/.test(addr),
+   'the source states why citation alone is not a finding');
+ok(/AITER_JIT_DIR/.test(addr),
+   'the repo GEAK_TASK points every engineer at is included in the search set');
+ok(/refs\/remotes\//.test(addr),
+   'remote-tracking refs are checked too — deleting the local branch left refs/remotes/yz/mega live');
+ok(/PASS by absence, not by checking/.test(addr),
+   'zero reachable repos is reported as an untested pass, not a clean one');
+// Matched on the tail only: the sentence is split across two `echo` lines in the script.
+ok(/be address-free and still be a full specification/.test(addr),
+   'the clean path admits the scanner does not measure how much the card gives away');
+// The bug this caught in its own first hour: `for pat in $INCLUDES` globs *.md against the cwd, so
+// the include list silently became the cwd's markdown files and the scan reported clean by scanning
+// nothing. A checker that fails open is worse than no checker, so the fix is pinned by a test.
+ok(/read -r -a inc_pats/.test(addr) && /would GLOB/.test(addr),
+   'the include list is split without globbing, and the reason is recorded');
+ok(/resolve each DISTINCT token once|one git call per unique address/.test(addr),
+   'tokens are deduped before resolution — the naive loop timed out at two minutes on one tree');
+// 7-digit cycle counts in ATT dumps resolve as abbreviated commits in a 555 MB repo. Dropping
+// all-digit tokens costs ~1.5% of real SHAs; the script has to say so rather than filter quietly.
+ok(/tok ~ \/\^\[0-9\]\+\$\/\) next/.test(addr) && /1\.5% of the time/.test(addr),
+   'all-digit tokens are dropped, with the miss rate stated');
+ok(/not a tree audit/.test(addr),
+   'the header scopes the scanner to injected knowledge and points elsewhere for tree-level leaks');
+
 console.log(
   failures === 0
     ? '\nPASS: a reference inside the run tree stops the run; a relocated one does not.'

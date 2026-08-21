@@ -1,7 +1,7 @@
 # Reference-only markers for reference_leak_sweep.sh.
 #
 # Every line is an identifier that (a) the M2.5 reference implementation introduces
-# (git diff 8775229e0..494c25a7e over aiter/), (b) the frozen baseline tree never contains, and
+# (git diff 8775229e0..<candidate HEAD> over aiter/), (b) the frozen baseline tree never contains, and
 # (c) is not mentioned anywhere the run is legitimately allowed to read -- not GEAK_TASK.md, not
 # handoff.md, not the state ledger, not knowledge/distributed_fusion.md. So a hit is reference-derived
 # bytes, not a word an engineer could have arrived at from the material they were given.
@@ -13,6 +13,13 @@
 #
 # Bare English words from comments (Deadlock, Together, Announce, ...) are excluded for the same
 # reason: they are not evidence.
+#
+# Also excluded, added 2026-08-21 after they fired on honest work: analysis_no_p2p_payload and
+# _analysis_combine_wait_ticks. Both are Step-2 INSTRUMENTATION names -- the no-payload control's env
+# flag and the combine-wait cycle counter. They entered the marker list because the derive ran against
+# an instrumented reference build, but GEAK's own multi_rank_analysis/derive_*.py scripts read those
+# runs and must name the counters. A tool that flags its own evidence pipeline is a tool that gets
+# muted, and the design of the fusion cannot be recovered from a counter name.
 #
 # Regenerate after the reference moves:
 #   reference_leak_sweep.sh --derive /root/geak_reference/AITER-candidate <frozen baseline tree>
@@ -47,7 +54,6 @@ _TOKRDY_DEBUG
 _TOKRDY_NOEPOCH
 _WAIT_STATS_WAVE_STRIDE
 __fusedcomb_b
-_analysis_combine_wait_ticks
 _analysis_wait_block_num
 _analysis_wait_timing
 _c_maybe_load
@@ -95,7 +101,6 @@ _wait_tok_ready
 _wait_tok_ready_timed
 addr_s2_done
 addr_tok_ready
-analysis_no_p2p_payload
 analysis_wait_timing
 arg_mtile_ctr
 arg_p2p_tok_ready

@@ -84,8 +84,7 @@ kernel can hide it under compute from other tokens.
 
 ## Procedure
 
-Reference implementation: `AITER` branch `geak/megamoe-v2-candidate`, HEAD `494c25a7e`. The fused
-path is **opt-in behind `AITER_MEGAMOE_FUSE_ALL=1`** (`mega_moe_v2.py:433`) with the scattered path
+Build the fused path **opt-in behind `AITER_MEGAMOE_FUSE_ALL=1`** (`mega_moe_v2.py:433`) with the scattered path
 retained, so it is measurable as a one-flag A/B rather than as a rebuild. Build it that way from the
 start — the flag is what makes every number below reproducible, and it doubles as the run's
 positive control.
@@ -108,9 +107,10 @@ positive control.
    (97.5% of a CU) → 1 WG/CU; Stage2 needs `66560 B`. They cannot co-reside. Assign disjoint CTA
    sets to GEMM1 and GEMM2 roles via the existing arrival-ticket mechanism
    (`mega_moe_stage1.py:210-225`), each with its own footprint, sized to the 256-CU budget.
-5. **Fold combine in as a third work queue** rather than a phase — see `0866ae595`. Lifting the
-   Stage-3 reduction into a per-work-item emitter (`331e0cf9b`) is the prerequisite.
-6. **Print a path marker once per process** (`7b394e9ea`). An opt-in fast path that silently fails
+5. **Fold combine in as a third work queue** rather than a phase. Lifting the Stage-3 reduction into
+   a per-work-item emitter is the prerequisite, and is worth ~2.2pp on its own — the megakernel with
+   combine still a separate launch is only ~+2.5-3.0pp of the total.
+6. **Print a path marker once per process.** An opt-in fast path that silently fails
    its predicate produces a plausible wrong number that reads as "fusion didn't help". A result
    without the marker is void, not zero.
 
@@ -152,8 +152,8 @@ Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive cont
   in the upstream producer's epilogue (a `--prequant` path already exists). "DeepGEMM-like" does not
   mean one launch — DeepGEMM consumes pre-quantized FP8 and ships the cast separately, maximising
   occupancy inside the GEMM body rather than minimising surrounding launch count. The terminal form
-  here is **two launches: quant, then one megakernel.** The code stays in-tree default-off
-  (`db840be68`) as a control experiment.
+  here is **two launches: quant, then one megakernel.** The code is kept default-off as a control
+  experiment rather than deleted.
 - **Do not try to reach 2 WG/CU on Stage1 by shrinking LDS.** The `cs_size*4 = 131072 B` f32
   CShuffle slab dominates `lds_pool_bytes`, and the configuration is additionally pinned at the
   **256-VGPR** ceiling. Static ISA screening closed this: the target `<81920 B` is not reachable
@@ -173,9 +173,13 @@ Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive cont
 - Isolated fusion A/B logs: `artifacts/logs/step3_fusion_isolated/{mega,scattered}_{512,8192}_{uniform,rank-mixed-skew}_p{1,2,3}.log`
 - Step-2 bottleneck evidence (kernel DAG showing zero overlap, instrumented combine peer-wait,
   no-payload control, ATT waitcnt/barrier shares, LDS residency): `artifacts/analysis/live_20260814_*`
-- Implementation: AITER branch `geak/megamoe-v2-candidate` — `a47a0a10c` (parity on all guards),
-  `331e0cf9b` (per-work-item combine emitter), `0866ae595` (combine as third work queue),
-  `db840be68` (quant ingress, retired), `7b394e9ea` (path marker), `494c25a7e` (arrival-wait timer).
+- Implementation history: **deliberately not cited here by branch or commit.** This card is injected
+  into capability-evaluation runs, where an engineer is asked to derive the megakernel; a commit
+  address turns that question into a fetch. Two waves already filed candidates 8-of-11 and 11-of-12
+  files byte-identical to a reachable copy, and this card named six commits at the time. The history
+  is archived outside every run tree and the address is recorded in the project's private ledger
+  (handoff, "reference containment"), not in engineer-readable knowledge. Everything needed to
+  rebuild it is the mechanism above; `scripts/reference_leak_sweep.sh` enforces that this stays true.
 - Reusable in-kernel machinery: `mega_moe_stage1.py:210-225` (arrival-ticket roles), `:230-240` +
   `:266-279` (ABA-safe epoch/parity), `dispatch.py:576-597` + `:204-219` (tile-ready counters),
   `communication_ops_utils.py:49-154` (system release/acquire).
