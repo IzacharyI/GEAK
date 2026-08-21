@@ -117,6 +117,25 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 7. **Submit**.
 
 ## Outputs
+
+**WRITE `worker_result.json` FIRST AND REWRITE IT AFTER EVERY UNIT OF EVIDENCE — do not save it for
+the end.** You can be killed. The round clock SIGTERMs a direction mid-run, a lease expires, a harness
+hangs; none of that is rare and none of it is your fault. What *is* your fault is that the round then
+records `status: none, claimed: 0, notes: ""` for work that was finished, because the only copy of the
+result lived in your context. On 2026-08-21 an engineer ran a 15-rung hardware bisection that
+bracketed a megakernel's illegal-access fault to two source lines, was SIGTERM'd before writing its
+result, and scored **zero**; the evidence survived only because a later agent went digging in its raw
+logs. The same wave lost a full benchmark phase the same way. So:
+
+- Write the file with `status: partial` and whatever you know **before your first long-running
+  command**, not after it.
+- Rewrite it after **each** rung / arm / A-B pair / compile screen — every time you learn something,
+  not every time you finish something.
+- A killed direction that left a current `worker_result.json` is a **partial result**. A killed
+  direction that left nothing is a **zero**, and the difference is entirely in when you wrote the file.
+- Say in `notes` which steps completed and which were cut off. "Rung b3 inconclusive: SIGTERM, not a
+  fault" is a finding the next round can act on; silence is not.
+
 `OUTPUT_DIR/worker_result.json`:
 ```json
 {

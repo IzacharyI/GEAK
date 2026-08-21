@@ -193,6 +193,20 @@ ok(/PERSIST THE BASELINE THE MOMENT IT EXISTS/.test(bench),
 ok(/READ THEM AND REUSE THEM/.test(bench),
    'an interrupted attempt\'s artifacts are inputs to the retry, not litter');
 
+
+// Same failure class as the unreturned baseline, one level down: a direction that measured and then
+// died before writing its result is recorded as a zero. Both happened in the same wave.
+console.log('\n# a killed engineer must leave a partial result, not a silence');
+const eng = read('roles/engineer.md');
+ok(/REWRITE IT AFTER EVERY UNIT OF EVIDENCE/.test(eng),
+   'the result file is refreshed per rung/arm, not written once at the end');
+ok(/before your first long-running\s*\n?command/.test(eng),
+   'the first write happens before the first thing that can kill the agent');
+ok(/15-rung hardware bisection/.test(eng) && /scored \*\*zero\*\*/.test(eng),
+   'the incident keeps its cost: a completed bisection recorded as no result');
+ok(/is a \*\*zero\*\*, and the difference is entirely in when you wrote the file/.test(eng),
+   'the rule states the consequence in the ledger, not just the practice');
+
 // The caveat has to reach the report, or "passed with a known upward bias" degrades to "passed".
 console.log('\n# an overshooting pass carries its caveat forward');
 ok(/let PC_OVERSHOOT = ''/.test(wf), 'the overshoot caveat is captured in a variable');
