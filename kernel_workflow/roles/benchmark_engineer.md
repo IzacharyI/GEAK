@@ -238,6 +238,14 @@ So, when a `POSITIVE_CONTROL` names a patch:
   is not, however deeply nested or oddly named.
 - **Move it aside when the control finishes** (`mv`, not `rm` — deletion prompts and blocks background
   runs). Do not leave it for "reproducibility": the patch itself is the reproducible artifact.
+- **"Aside" means out of `/tmp` too, not renamed inside it.** `/tmp` is outside the run tree, which is
+  why it is the right place to *build* the control — and it is also a directory every agent greps, so
+  it is the wrong place to *leave* it. On 2026-08-21 a wave moved its finished control workspace to
+  `/tmp/geak_control_retired_<ts>/ctrl_ws/` and the very next wave's analyze agent found the reference
+  implementation there and filed it, correctly, as `FOUND EXISTING IMPLEMENTATION`. The doctrine held
+  that time because the agent reported instead of reading; do not spend that twice. Retire the
+  workspace to a path no role is ever pointed at — a quarantine directory outside the project root and
+  outside `/tmp` — and name that path in `note`.
 - Say in `note` where it was and that it is gone. A control workspace whose location is unstated is
   indistinguishable from one still sitting in the tree.
 

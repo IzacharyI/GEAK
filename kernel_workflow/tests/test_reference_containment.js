@@ -149,6 +149,15 @@ ok(/11 of 12 files were\s*\n?byte-identical/.test(bench),
 ok(/did not need to be/.test(bench),
    'it states the engineer needed no reference disclosure — the leak did the work');
 ok(/`mv`, not `rm`/.test(bench), 'cleanup avoids rm, which prompts and blocks background runs');
+// /tmp is the right place to BUILD the control and the wrong place to LEAVE it: it is outside the run
+// tree (so no path check or tree sweep covers it) and it is a directory every agent greps. A wave that
+// renamed its finished control workspace inside /tmp was found by the next wave's analyze agent.
+ok(/out of `\/tmp` too, not renamed inside it/.test(bench),
+   'retirement moves the control workspace out of /tmp, not to another name within it');
+ok(/FOUND EXISTING IMPLEMENTATION/.test(bench) && /do not spend that twice/.test(bench),
+   'the incident is recorded: doctrine caught it once, which is not a reason to re-create it');
+ok(/outside the project root and\s*\n?\s*outside `\/tmp`/.test(bench),
+   'the retirement target is specified, not left as "aside"');
 
 // --- 7. the gate that actually RUNS the scanners --------------------------
 // Sections 5 and 6 assert the scanners exist and the doctrine is written down. Both were true of the
