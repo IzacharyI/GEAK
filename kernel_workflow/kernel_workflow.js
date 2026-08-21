@@ -820,23 +820,69 @@ log(`Benchmark done. ${bench.num_test_cases || BASELINE_PER_CASE.length} cases, 
 
 // Positive-control gate. Runs BEFORE any direction budget is spent, because the thing it can prove
 // false — "this harness can detect a real win" — invalidates every measurement taken after it.
+let PC_OVERSHOOT = '';   // set when the control passed but read HIGH; travels into the report
 if (POSITIVE_CONTROL) {
   const pc = bench.positive_control || {};
   const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
   const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
   const got = Number(pc.measured_pct);
-  const inBand = Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi)
-    && got >= lo && got <= hi;
-  const ok = pc.ran !== false && inBand;
+  // The two bounds are NOT symmetric, because they fail for opposite reasons.
+  //
+  //   below `lo`  -> the instrument CANNOT SEE the effect. This is the failure the gate was built
+  //                  for: it makes every later number, 1.000x included, uninterpretable. HARD ABORT.
+  //   above `hi`  -> the instrument saw the effect and read it BIGGER than recorded. That is a scale
+  //                  concern, not a blindness one, and a run that can over-read a 4.7% win can still
+  //                  resolve a 1.5% one. Treat as PASS WITH OVERSHOOT and carry the caveat forward.
+  //   absurd/wrong sign -> the instrument is measuring something else entirely. HARD ABORT.
+  //
+  // This distinction was learned the expensive way. A control reproduced a known +4.71% effect at
+  // +5.13%, 5/5 pairs favourable, every pair in [4.26, 6.01], against a +0.38% null arm inside the
+  // guard's 0.66% noise threshold — i.e. it demonstrated exactly the sensitivity the step exists to
+  // demonstrate — and a symmetric band killed the whole run over 0.20pp. The old `hi` had been set
+  // to max-observed + 0.2pp from three same-week measurements (4.57/4.71/4.73), which is a
+  // reproduction interval, not a sanity bound. A fourth measurement on a different day landing
+  // 0.4pp out is ordinary; a band that tight was measuring the weather.
+  //
+  // `implausible_pct` is the real ceiling: beyond it the harness is not reading the change at all.
+  const ABSURD = Number.isFinite(Number(POSITIVE_CONTROL.implausible_pct))
+    ? Number(POSITIVE_CONTROL.implausible_pct) : (Number.isFinite(hi) ? 2 * hi : NaN);
+  const nullArm = Number(pc.null_arm_pct);
+  // An overshoot is only benign if the null arm is quiet. If the byte-identical arm is ALSO reading
+  // high, the interleave is drifting and the overshoot is the drift, not the effect.
+  const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= lo / 2;
+  const ran = pc.ran !== false && Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
+  const tooSmall = ran && got < lo;                       // includes wrong sign: -4.71 < 3.55
+  const absurd = ran && Number.isFinite(ABSURD) && got > ABSURD;
+  const overshoot = ran && got > hi && !absurd;
+  const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
   log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
       `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
-      `expected ${lo}..${hi}% -> ${ok ? 'PASS' : 'FAIL'}` +
-      (Number.isFinite(pc.null_arm_pct) ? ` (null arm ${pc.null_arm_pct.toFixed(2)}%)` : ''));
+      `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '%' : '?'}) ` +
+      `-> ${ok ? (overshoot ? 'PASS (OVERSHOOT)' : 'PASS') : 'FAIL'}` +
+      (Number.isFinite(nullArm) ? ` (null arm ${nullArm.toFixed(2)}%)` : ' (null arm UNREPORTED)'));
+  if (ok && overshoot) {
+    // Not a failure, but it must not vanish either: it is a standing caveat on every number the run
+    // goes on to report, and the report has to say so.
+    PC_OVERSHOOT = `the positive control read ${got.toFixed(2)}% for a change recorded at ` +
+      `${lo}..${hi}%, with a ${nullArm.toFixed(2)}% null arm. The harness resolves the known effect ` +
+      `with the right sign and clean separation, so it is sensitive enough to trust; but it reads ` +
+      `HIGH by roughly ${(got - hi).toFixed(2)}pp at this effect size, so treat every speedup below ` +
+      `as possibly carrying the same upward scale bias.`;
+    log(`POSITIVE CONTROL OVERSHOOT: ${PC_OVERSHOOT}`);
+  }
   if (!ok) {
     const why = `Positive control FAILED: a change with a known effect of ${lo}..${hi}% measured ` +
       `${Number.isFinite(got) ? got.toFixed(2) + '%' : 'nothing (control did not run)'}. ` +
-      `The measurement loop cannot resolve a win of the size this run is looking for, so every ` +
-      `speedup it reports — including 1.000x — is uninterpretable. Fix the harness, not the kernel. ` +
+      (absurd
+        ? `That is beyond the ${ABSURD.toFixed(2)}% plausibility ceiling — at that size the harness ` +
+          `is not measuring this change, it is measuring something else (wrong arm, wrong guard, ` +
+          `wrong binary). `
+        : overshoot
+          ? `It overshot the expected ceiling AND the null arm is ` +
+            `${Number.isFinite(nullArm) ? Math.abs(nullArm).toFixed(2) + '%, too large relative to the ' + lo + '% effect' : 'UNREPORTED'}, ` +
+            `so the excess cannot be told apart from interleave drift. `
+          : `The measurement loop cannot resolve a win of the size this run is looking for, so every ` +
+            `speedup it reports — including 1.000x — is uninterpretable. Fix the harness, not the kernel. `) +
       `Note from benchmark engineer: ${pc.note || '(none)'}`;
     if (PC_ABORT) throw new Error(why);
     log(`WARNING: ${why}`);
@@ -1218,6 +1264,9 @@ const report = await agentT(
     // The report's provenance paragraph must cite this, not recollection. UNRECORDED means the
     // report may not assert anything about what is or is not in the baseline.
     PRIOR_ART_SWEEP: PRIOR_ART_RECORDED ? JSON.stringify(PRIOR_ART) : 'UNRECORDED',
+    // A control that passed but read HIGH is a standing caveat on every number below it. It is
+    // supplied here so the Measurement-confidence section states it instead of quietly dropping it.
+    ...(PC_OVERSHOOT ? { POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT } : {}),
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 

@@ -187,6 +187,18 @@ nothing else, on the guard named in `guard` (or the whole suite if none):
   interleave. Report its delta as `null_arm_pct`. The control is only interpretable next to it.
 - Report the **median paired delta** as `measured_pct`, signed so that **positive = faster**.
 
+**The two bounds mean different things, and the orchestrator treats them differently — so report
+what you saw and let it decide.** Reading *below* `expected_pct_lo` means your instrument cannot see
+the effect; that is the failure this whole step exists to catch and it aborts the run. Reading
+*above* `expected_pct_hi` means it saw the effect and read it big: a scale concern, not blindness,
+and it is tolerated as a pass-with-caveat provided your null arm is quiet (roughly under half
+`expected_pct_lo`). Beyond `implausible_pct` (default twice the ceiling) it aborts again, because at
+that size the harness is not measuring this change at all. So: if you overshoot, **do not retry and
+do not widen the band** — report the number, the pair-by-pair spread, and the null arm, and say so in
+`note`. A band is set from a handful of same-week measurements and is a reproduction interval, not a
+law of nature; a real reproduction 0.2pp over the ceiling with 5/5 favourable pairs is a working
+instrument, and it once cost a whole run because the gate was symmetric.
+
 Then compare against `expected_pct_lo..expected_pct_hi` and report `passed`. Do not adjust the
 expected band to fit what you measured, and do not quietly retry until it passes — if it fails,
 report the failure with everything you observed in `note`. **The orchestrator aborts the run on a

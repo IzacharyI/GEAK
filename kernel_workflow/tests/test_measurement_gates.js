@@ -110,33 +110,66 @@ ok(/required even \(especially\) when the final speedup is\s+1\.000x/.test(lead)
 // hand-copied duplicate of the logic drifts and then tests itself.
 console.log('\n# gate arithmetic (extracted from source, not re-implemented)');
 const gateSrc = wf.match(
-  /const inBand = ([\s\S]*?);\n\s*const ok = pc\.ran !== false && inBand;/,
+  /const ABSURD = ([\s\S]*?)\n  const ok = ran && !tooSmall && !absurd && \(!overshoot \|\| nullQuiet\);/,
 );
-ok(!!gateSrc, 'the in-band expression can be located in kernel_workflow.js');
+ok(!!gateSrc, 'the decision expression can be located in kernel_workflow.js');
 if (gateSrc) {
   const decide = new Function('pc', 'POSITIVE_CONTROL', `
     const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
     const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
     const got = Number(pc.measured_pct);
-    const inBand = ${gateSrc[1]};
-    return pc.ran !== false && inBand;
+    const ABSURD = ${gateSrc[1]}
+    const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
+    return { ok, overshoot };
   `);
   const band = { expected_pct_lo: 3.55, expected_pct_hi: 4.93 };  // the real +4.71% guard
+  const quiet = 0.38;   // the null arm actually observed alongside the +5.13% reading
   const cases = [
-    [{ ran: true, measured_pct: 4.71 }, true, 'the known +4.71% passes'],
-    [{ ran: true, measured_pct: 3.55 }, true, 'the lower bound is inclusive'],
-    [{ ran: true, measured_pct: 4.93 }, true, 'the upper bound is inclusive'],
-    [{ ran: true, measured_pct: 0.4 }, false, 'a harness that sees almost nothing fails'],
-    [{ ran: true, measured_pct: -4.71 }, false, 'the right magnitude with the WRONG SIGN fails'],
-    [{ ran: true, measured_pct: 40.0 }, false, 'an implausibly large delta fails too (band, not floor)'],
+    [{ ran: true, measured_pct: 4.71, null_arm_pct: quiet }, true, 'the known +4.71% passes'],
+    [{ ran: true, measured_pct: 3.55, null_arm_pct: quiet }, true, 'the lower bound is inclusive'],
+    [{ ran: true, measured_pct: 4.93, null_arm_pct: quiet }, true, 'the upper bound is inclusive'],
+    // The incident: a real reproduction 0.20pp over the ceiling with a quiet null arm. The whole
+    // point of the asymmetry is that this must NOT kill the run.
+    [{ ran: true, measured_pct: 5.13, null_arm_pct: quiet }, true,
+     'a 0.20pp overshoot with a quiet null arm PASSES (the incident that motivated the split)'],
+    [{ ran: true, measured_pct: 5.13, null_arm_pct: 2.9 }, false,
+     'the same overshoot with a LOUD null arm fails — that excess is drift, not sensitivity'],
+    [{ ran: true, measured_pct: 5.13 }, false,
+     'an overshoot with an UNREPORTED null arm fails: nothing rules out drift'],
+    [{ ran: true, measured_pct: 0.4, null_arm_pct: quiet }, false,
+     'a harness that sees almost nothing still fails — the lower bound is untouched'],
+    [{ ran: true, measured_pct: -4.71, null_arm_pct: quiet }, false,
+     'the right magnitude with the WRONG SIGN fails'],
+    [{ ran: true, measured_pct: 40.0, null_arm_pct: quiet }, false,
+     'an absurd delta still fails: past 2x the ceiling it is not this change being measured'],
+    [{ ran: true, measured_pct: 9.86, null_arm_pct: quiet }, true,
+     'exactly at the plausibility ceiling is still a pass (absurd is strictly above)'],
     [{ ran: false }, false, 'a control that did not run fails'],
     [{ ran: true }, false, 'a missing measurement is not silently a pass'],
     [{ ran: true, measured_pct: 'n/a' }, false, 'an unparseable measurement is not a pass'],
     [{ ran: true, measured_pct: NaN }, false, 'NaN is not a pass'],
     [{}, false, 'an empty result object is not a pass'],
   ];
-  for (const [pc, want, msg] of cases) ok(decide(pc, band) === want, msg);
+  for (const [pc, want, msg] of cases) ok(decide(pc, band).ok === want, msg);
+  // An explicit ceiling overrides the 2*hi default.
+  ok(decide({ ran: true, measured_pct: 6.0, null_arm_pct: quiet },
+            { ...band, implausible_pct: 5.5 }).ok === false,
+     'an explicit implausible_pct overrides the 2x default');
+  // A pass that overshot must be DISTINGUISHABLE from a clean pass, or the caveat cannot travel.
+  ok(decide({ ran: true, measured_pct: 5.13, null_arm_pct: quiet }, band).overshoot === true,
+     'an overshooting pass is flagged as such, so the report can carry the scale caveat');
+  ok(decide({ ran: true, measured_pct: 4.71, null_arm_pct: quiet }, band).overshoot === false,
+     'a clean pass is not flagged as an overshoot');
 }
+
+// The caveat has to reach the report, or "passed with a known upward bias" degrades to "passed".
+console.log('\n# an overshooting pass carries its caveat forward');
+ok(/let PC_OVERSHOOT = ''/.test(wf), 'the overshoot caveat is captured in a variable');
+ok(/POSITIVE CONTROL OVERSHOOT/.test(wf), 'it is logged distinctly from a clean pass');
+ok(/POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT/.test(wf),
+   'it is threaded into the report phase');
+ok(/reads \\nHIGH by roughly|reads `? ?HIGH by roughly|HIGH by roughly/.test(wf),
+   'the caveat quantifies the bias rather than just noting it');
 
 console.log(
   failures === 0
