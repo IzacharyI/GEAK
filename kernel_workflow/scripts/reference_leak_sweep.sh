@@ -77,7 +77,37 @@ TREE="$(cd "$TREE" && pwd)"
 mapfile -t MARKERS < <(grep -vE '^\s*(#|$)' "$MARKER_FILE")
 [[ ${#MARKERS[@]} -gt 0 ]] || { echo "marker file is empty: $MARKER_FILE" >&2; exit 2; }
 
-pattern="$(printf '%s\n' "${MARKERS[@]}")"
+# MARKERS ARE IDENTIFIERS, SO THEY MATCH AS IDENTIFIERS -- not as substrings.
+#
+# --derive harvests whole `\b`-delimited tokens, so `self._out_cache_modifier` enters the list as the
+# bare tail `_out_cache_modifier`. Under plain -F that marker also fires on `g1_out_cache_modifier`,
+# which is a DIFFERENT name. That is not hypothetical: on 2026-08-21 it flagged r2_d2's independently
+# authored megakernel, whose only overlap with the reference was the forced coinage of an
+# `out_cache_modifier=` kwarg alongside the baseline's existing `b_cache_modifier`. Four tool calls to
+# establish a non-finding is how a checker earns the reputation that gets it switched off.
+#
+# So each marker must be preceded and followed by a non-identifier character. A marker appearing as the
+# tail or head of a longer identifier IS a different identifier and is not evidence of copied bytes.
+#
+# ONE alternation, not `-f patternfile`: GNU grep's -P accepts only a single pattern, and with the
+# error swallowed it matches NOTHING and the sweep reports clean in a quarter of a second. That fail-
+# open cost one debugging round here and is the same shape as the glob bug in skill_address_scan.sh --
+# hence the self-test below, which refuses to run the sweep if the engine cannot catch a known marker.
+pattern="(?<![A-Za-z0-9_])(?:$(printf '%s|' "${MARKERS[@]}" | sed 's/|$//'))(?![A-Za-z0-9_])"
+
+# SELF-TEST: a checker that silently matches nothing is worse than no checker, because it converts
+# "unchecked" into a green line in a report. Prove the engine fires on a synthetic marker occurrence
+# and does NOT fire on the same marker embedded in a longer identifier, before trusting a clean result.
+probe="${MARKERS[0]}"
+if ! printf ' %s \n' "$probe" | grep -q -P "$pattern" 2>/dev/null; then
+  echo "reference_leak_sweep: grep -P cannot evaluate the marker pattern on this system; the sweep" >&2
+  echo "  would report clean by matching nothing. Refusing to run." >&2
+  exit 2
+fi
+if printf 'zz%szz\n' "$probe" | grep -q -P "$pattern" 2>/dev/null; then
+  echo "reference_leak_sweep: identifier boundaries are not being enforced. Refusing to run." >&2
+  exit 2
+fi
 
 # SCOPE: files a leak can be COPIED OUT OF -- source, patches, bundles. Not measurement JSON, not
 # reports, not __pycache__. This distinction is load-bearing and was learned by running the sweep
@@ -96,7 +126,7 @@ done
 # reader to skim the output, which is how a real hit gets missed.
 hits=$(find "$TREE" -type f \( "${find_args[@]}" \) -not -path '*/__pycache__/*' \
          -not -name 'reference_leak_sweep.sh' -not -name 'reference_leak_markers.txt' -print0 2>/dev/null \
-       | xargs -0 -r grep -lF "$pattern" 2>/dev/null | sort -u)
+       | xargs -0 -r grep -l -P "$pattern" 2>/dev/null | sort -u)
 
 # --allow entries are trees the run is SUPPOSED to be able to read (the frozen baseline, the reference
 # itself if it is somehow inside, an isolated control workspace). Everything else is a leak.
@@ -123,5 +153,13 @@ echo "REFERENCE LEAK: ${#leaks[@]} file(s) inside $TREE carry reference-only mar
 echo "Each of these is a copy of the answer that an engineer reaches with one grep. Move them outside"
 echo "the tree (a stale path in an old report is harmless once it resolves to nothing), or --allow them"
 echo "if the run is genuinely supposed to read them."
-printf '  %s\n' "${leaks[@]}"
+# NAME THE MARKER, NOT JUST THE FILE. The post-Setup containment gate in kernel_workflow.js orders its
+# agent to report the paths and NOT to open them -- so a bare path list gives the reader nothing to
+# judge with, and the only way to tell a real copy from a coincidental name is to do the thing the gate
+# forbids. Printing which identifiers matched keeps the triage inside the scanner's own output.
+for f in "${leaks[@]}"; do
+  echo "  $f"
+  grep -o -P "$pattern" "$f" 2>/dev/null | sort | uniq -c | sort -rn | head -12 |
+    while read -r n m; do echo "      ${n}x  $m"; done
+done
 exit 1

@@ -117,6 +117,23 @@ ok(/cannot see a reference reachable as a branch/.test(sweep),
 // Excluding the flags the task itself names is what keeps the sweep from firing on honest work.
 ok(/AITER_MEGAMOE_FUSE_ALL/.test(markers) && /Deliberately EXCLUDED/.test(markers),
    'markers the run is legitimately told about are excluded, with the reason recorded');
+// A marker is an identifier, so it must match as one. `_out_cache_modifier` (harvested as the tail of
+// the reference's `self._out_cache_modifier`) fired under -F on an independently authored
+// `g1_out_cache_modifier` and cost four tool calls to clear. False positives are how a checker gets
+// switched off, so the boundary rule is pinned here.
+ok(/\(\?<!\[A-Za-z0-9_\]\)/.test(sweep) && /\(\?!\[A-Za-z0-9_\]\)/.test(sweep),
+   'markers are matched at identifier boundaries, not as substrings');
+ok(/tail or head of a longer identifier IS a different identifier/.test(sweep),
+   'the source states why substring matching is wrong, not just that it changed');
+// Both of this subsystem's fail-open bugs (the glob in skill_address_scan.sh, `-P -f` here) reported
+// clean by scanning nothing. A self-test is the only thing that distinguishes that from a real pass.
+ok(/Refusing to run/.test(sweep) && /matching nothing/.test(sweep),
+   'the sweep proves its own engine fires before trusting a clean result');
+ok(/only supports? a single pattern|accepts only a single pattern/.test(sweep),
+   'the -P single-pattern constraint is recorded where the next author will hit it');
+// The gate agent is forbidden from opening what it flags, so the path alone is not triageable.
+ok(/grep -o -P "\$pattern" "\$f"/.test(sweep) && /NAME THE MARKER, NOT JUST THE FILE/.test(sweep),
+   'a leak report names the matched identifiers, so triage needs no one to read the file');
 const markerLines = markers.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
 ok(markerLines.length > 50, `the marker list is populated (${markerLines.length} markers)`);
 ok(markerLines.every((l) => l.includes('_')),
