@@ -119,6 +119,24 @@ analysis below exactly as before.)
      than queueing one lease per arm. The null arm is what tells you the noise floor; without it a
      sub-1% delta is unreadable.
    - Say this explicitly in each direction's `strategy` — engineers do not infer it.
+   - **Budget the lease in minutes before you plan it, and require COVERAGE-FIRST guard ordering.**
+     Multiply arms × guards × pairs by the measured per-run wall clock and compare it to the lease
+     window; if the product exceeds the window, cut pairs or arms *now*, not at the kill. A run that
+     measures one guard to full precision before touching the next scores **zero** when it is killed
+     at 90%, because guard order alone decides which half of the table exists. Instruct engineers to
+     make one pass over **all** guards at low pairs, write a complete claim, then add pairs in a
+     second pass that merges into the same JSON — so every kill point leaves a usable claim.
+     Observed: two consecutive rounds each measured a real +5% win on half the guards and scored
+     1.000x, one landing the 8192 pair and one the 512 pair, from a plan that was 135% of its window
+     before the first run started.
+   - **A claim is only integrable if it is COMPLETE.** An engineer that emits no `claimed` number, or
+     emits `claim_complete:false`, cannot be verified and therefore cannot win — no matter how good
+     the numbers in its log are. Tell engineers this in `strategy`: a partial claim is worth less
+     than a smaller complete one.
+   - **Background lease jobs must not outlive their engineer.** Backgrounded `run_lease.sh`/torchrun
+     trees get reparented to init and keep holding the pool after the round ends, silently starving
+     every later round. Require engineers to wait on their own jobs; a pgid-based sweep does not
+     catch a reparented child.
 
 4d. **Search for PRIOR ART before you plan anything — inside the tree AND beside it.** Directions
    you are about to spend a round deriving may already be written, and possibly already measured.

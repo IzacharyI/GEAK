@@ -132,3 +132,26 @@ carried forward and marked PROVISIONAL, so an under-measured real win survives w
 one stops being quoted as fact. Omitting the fields does not make a result look stronger; it makes it
 provisional too. A single-rep A/B on this workflow once produced a "−0.44% win" sitting inside a
 1.45% per-case spread, which is the failure these two numbers exist to make visible.
+
+**Decide readability with a sign test on the paired reps plus a null median near zero — NOT by
+comparing the median to the largest null excursion.** "Is the claim bigger than the worst thing the
+null arm ever did?" is a sound eyeball screen at 2-3 pairs and the wrong estimator by 10. It ignores
+pairing, throws away every rep except the extreme one, and gets *stricter* as you add reps, because
+more null samples mean a larger maximum excursion. So it punishes exactly the measurement that
+deserves the most trust. Concretely, on this workflow a guard read **+3.21% median with 12/12
+favourable paired reps** while the null arm on the *same* interleave read **−0.32% median with 6/12
+favourable**, and it was stamped UNRESOLVED because the threshold was the max null excursion (4.83%).
+12/12 one-sided is p = 2⁻¹² ≈ 1/4096. That was a true positive thrown away by its own acceptance rule.
+
+Use instead, on the paired per-rep deltas (same interleave slot, candidate minus base):
+- **Sign test**: k favourable out of n pairs, one-sided p = `2^-n * Σ_{i=k..n} C(n,i)`. Call it
+  readable at p ≤ 0.05 (n≥5 with all favourable, 8/9, 9/11, 11/14 …).
+- **Null median ≈ 0**: the null arm's own median must be small relative to the claim, and you must
+  subtract it — the null is the *zero point*, not an assumption of 1.000. If the null median is a
+  large fraction of the claim, the guard is unreadable regardless of the sign test; report the guard,
+  say so, and do not fold it into a headline.
+- Keep the median magnitude and the per-pair spread in `notes` either way. A significant sign test on
+  a tiny effect is still a tiny effect.
+An ordering artifact makes this concrete: on two guards the byte-identical null arm read consistently
+*slower* than base (geomean 0.9968 / 0.9946) purely because it ran third in the interleave. Rotate arm
+order across reps when you can; when you cannot, read the null as the zero point.
