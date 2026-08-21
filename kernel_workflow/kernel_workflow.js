@@ -703,7 +703,21 @@ log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 // Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
 // of engineering — and one that exists but is MISSING from the tree under optimization is a silent
 // ceiling on everything this run can achieve. Neither is visible unless it is printed here.
-const PRIOR_ART = (analysis && Array.isArray(analysis.prior_art)) ? analysis.prior_art : [];
+// An OMITTED key and an EMPTY array are different findings and must not collapse into each other.
+// `[]` means the sweep ran and found nothing; absent means nothing is known either way — and a
+// report is then free to assert "all prior art was in_baseline: true" with no record behind it.
+// That happened: a run whose analysis.json had no prior_art key at all filed a report claiming the
+// fused path existed in the baseline as an env-gated opt-in. It did not. Nobody could check,
+// because there was nothing to check against.
+const PRIOR_ART_RECORDED = !!(analysis && Array.isArray(analysis.prior_art));
+const PRIOR_ART = PRIOR_ART_RECORDED ? analysis.prior_art : [];
+if (!PRIOR_ART_RECORDED) {
+  log(`PRIOR ART UNRECORDED: analysis.json has no "prior_art" key, so the step-4d sweep is not on ` +
+      `the record — this is NOT the same as finding none. Every later statement about what does or ` +
+      `does not exist in the baseline is UNSOURCED and must be read as such.`);
+} else if (PRIOR_ART.length === 0) {
+  log(`PRIOR ART: none — the sweep ran and reported an empty result.`);
+}
 for (const pa of PRIOR_ART) {
   const where = pa.implemented_at || '?';
   const eff = pa.measured_effect ? ` (measured ${pa.measured_effect})` : '';
@@ -721,6 +735,13 @@ for (const pa of PRIOR_ART) {
   } else {
     log(`PRIOR ART: "${pa.direction}" already implemented at ${where}${eff}; ` +
         `enable via ${pa.how_to_enable || '?'}. Measure it, do not re-derive it.`);
+  }
+  // `in_baseline` decides whether a direction is one A/B or a whole round, and under capability_eval
+  // it decides whether the answer key is inside the tree. An unevidenced boolean is a guess wearing
+  // a schema field.
+  if (pa.in_baseline != null && !pa.evidence) {
+    log(`PRIOR ART UNEVIDENCED: "${pa.direction}" asserts in_baseline=${pa.in_baseline} with no ` +
+        `"evidence" field naming the check that established it. Treat the flag as unverified.`);
   }
 }
 
@@ -1148,6 +1169,9 @@ const report = await agentT(
     HISTORY: history, FINAL_WINNER: finalWinner, BASELINE_PER_CASE,
     BASELINE_GEOMEAN_MS, CUMULATIVE_SPEEDUP: cumulative,
     PROFILE_SUMMARY: profileSummary,
+    // The report's provenance paragraph must cite this, not recollection. UNRECORDED means the
+    // report may not assert anything about what is or is not in the baseline.
+    PRIOR_ART_SWEEP: PRIOR_ART_RECORDED ? JSON.stringify(PRIOR_ART) : 'UNRECORDED',
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 

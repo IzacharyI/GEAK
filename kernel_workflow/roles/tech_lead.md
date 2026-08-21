@@ -204,12 +204,23 @@ Return JSON:
     {"direction": "<what it does>", "implemented_at": "<path / branch / env-gated block>",
      "how_to_enable": "<env var, flag, or 'port from X'>",
      "measured_effect": "<known number + where it is recorded, or ''>",
-     "in_baseline": true}
+     "in_baseline": true,
+     "evidence": "<the concrete check that settled in_baseline: the ls/grep you ran and what it returned>"}
   ]
 }
 ```
-`prior_art` is `[]` when you genuinely found none — an empty array means you looked, an omitted field
-means you did not.
+**`prior_art` is a REQUIRED key, and `[]` is a real answer that is not the same as omitting it.**
+`[]` means the 4d sweep ran and found nothing; an absent key means nothing is known either way, and
+everything downstream then treats your provenance statements as unsourced. Emit the key even when
+the sweep is empty. Emit it as **structured JSON here** — a paragraph in `roadmap.md` is not a
+substitute, because nothing downstream can read prose: the orchestrator's prior-art log keys off this
+array, and a finding that only exists in the roadmap fires nothing and is quoted by no one.
+
+**`evidence` is what makes `in_baseline` mean anything.** Write the check, not the conclusion:
+`"ls aiter/ops/flydsl/kernels/mega_moe/ → no mega_moe_fused_s2c.py; grep -r AITER_MEGAMOE_FUSE_ALL → 0 hits"`.
+`in_baseline` decides whether a direction costs one A/B or a whole round, and under `CAPABILITY_EVAL`
+it decides whether the answer key sits inside the tree the engineers can read. An unevidenced boolean
+is a guess wearing a schema field, and the orchestrator will log it as one.
 
 ---
 
@@ -423,6 +434,16 @@ table, `BASELINE_TIMING`, and `BASELINE_GEOMEAN_MS`.
      finding** — it is an untested instrument, and the report must say so in those words rather than
      presenting the zero as a result. If prior art was absent from the tree, say plainly that the run
      could not have reached it, so nobody reads the zero as "this direction is exhausted".
+
+     **Every prior-art statement in this section must quote `PRIOR_ART_SWEEP`, which is handed to you
+     verbatim from `analysis.json`. Do not write one from memory.** If `PRIOR_ART_SWEEP` is
+     `UNRECORDED`, the sweep is not on the record, and the only admissible sentence is that it is not
+     on the record — you may NOT assert that prior art was or was not in the baseline. For each entry
+     you do cite, quote its `evidence` string. A report once stated *"all prior art identified in
+     analyze was `in_baseline: true` … this run was pointed at the right tree"* when `analysis.json`
+     had no `prior_art` key at all and the baseline provably lacked the file; the sentence read as a
+     verified provenance clearance and was pure recollection. It concealed that 8 of the winning
+     candidate's 11 files had been copied in from outside the tree.
 
 Return JSON:
 ```json

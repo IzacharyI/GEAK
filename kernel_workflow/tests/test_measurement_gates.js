@@ -73,7 +73,9 @@ ok(/Search for PRIOR ART before you plan anything/i.test(lead),
 // silently before when a paragraph was re-flowed.
 ok(/~1000 lines of already-written, already-measured/.test(lead),
    'the tech_lead rule carries the incident that motivated it');
-ok(/an empty array means you looked, an omitted field\s+means you did not/.test(lead),
+// Wording tightened after the key was omitted outright and the distinction had to be enforced in
+// code as well as prose — see tests/test_prior_art_provenance.js.
+ok(/`\[\]` is a real answer that is not the same as omitting it/.test(lead),
    'the [] vs omitted distinction is spelled out so "no prior art" is a claim, not a silence');
 
 // --- 3. result provenance --------------------------------------------------
