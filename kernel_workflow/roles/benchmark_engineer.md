@@ -207,6 +207,23 @@ failed control**, and that is the correct outcome: every subsequent number, incl
 known +4.71% was available; nothing in the workflow could distinguish "found nothing" from "cannot
 see anything", and this step exists to make that distinction.
 
+**WHERE the control workspace lives is a correctness property of the whole run, not housekeeping.**
+A positive control is usually a *patch that already contains the answer*, applied to a real tree. That
+applied tree is the most copyable object in the entire run, and it is created by you, on purpose,
+every time. On this project it was written to `<run tree>/artifacts/control_ws_<pid>/`, never removed,
+and sat there for **5.5 hours as a sibling of the eval-dir root** — one directory above the path every
+engineer is handed by name. An engineer later filed a candidate whose 11 of 12 files were
+byte-identical to it. The engineer had been told nothing about any reference and did not need to be.
+
+So, when a `POSITIVE_CONTROL` names a patch:
+- Build the control workspace **outside the run tree** — outside the common ancestor of the task dir,
+  `EVAL_DIR` and the workflow dir. `/tmp/<something unique>` is fine; anywhere under the project root
+  is not, however deeply nested or oddly named.
+- **Move it aside when the control finishes** (`mv`, not `rm` — deletion prompts and blocks background
+  runs). Do not leave it for "reproducibility": the patch itself is the reproducible artifact.
+- Say in `note` where it was and that it is gone. A control workspace whose location is unstated is
+  indistinguishable from one still sitting in the tree.
+
 If the control cannot be run at all (path missing, lease unobtainable), return
 `{"ran": false, "note": "<why>"}` — an honest failure, not an omitted field.
 

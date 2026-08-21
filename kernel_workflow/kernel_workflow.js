@@ -238,9 +238,16 @@ if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
       `still compare against it. Set capability_eval=false if you WANT the reference ported.`);
   }
   log(`REFERENCE CONTAINMENT ok: ${KNOWN_REFERENCE_PATHS.length} reference tree(s) resolve outside ` +
-      `the run tree ${ancestor}. NOTE this checks paths only — a reference that is also reachable as ` +
-      `a branch/commit in a repository the run can read (JIT cache, sibling clone) is still copyable, ` +
-      `and only verify's byte-identity check stands between that and a counted win.`);
+      `the run tree ${ancestor}. NOTE this checks CONFIGURED PATHS ONLY, and that is a small fraction ` +
+      `of the exposure. Sweeping this tree for reference-only markers afterwards found the answer in ` +
+      `five more places, none of them a known_reference_path: the positive control's own applied ` +
+      `workspace left behind under artifacts/, a previous wave's output tree, the SIBLING EVAL DIRS ` +
+      `inside exp_root (one directory up from the dir every engineer is handed by name), the durable ` +
+      `patches in state_dir, and a git bundle of the candidate branch. Run ` +
+      `scripts/reference_leak_sweep.sh --tree ${ancestor} before trusting capability_eval, and note ` +
+      `it still cannot see a reference reachable as a branch in another repository the run can read ` +
+      `(JIT cache, sibling clone) — only verify's byte-identity check stands between that and a ` +
+      `counted win.`);
 }
 
 // ---- Profile-analysis skill (OPTIONAL, pluggable; mirrors e2e_workflow's analysis_skill — see

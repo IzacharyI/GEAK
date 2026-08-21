@@ -1,0 +1,161 @@
+# Reference-only markers for reference_leak_sweep.sh.
+#
+# Every line is an identifier that (a) the M2.5 reference implementation introduces
+# (git diff 8775229e0..494c25a7e over aiter/), (b) the frozen baseline tree never contains, and
+# (c) is not mentioned anywhere the run is legitimately allowed to read -- not GEAK_TASK.md, not
+# handoff.md, not the state ledger, not knowledge/distributed_fusion.md. So a hit is reference-derived
+# bytes, not a word an engineer could have arrived at from the material they were given.
+#
+# Deliberately EXCLUDED even though the reference introduces them: AITER_MEGAMOE_FUSE_ALL,
+# AITER_MEGAMOE_FUSE_COMBINE, AITER_MEGAMOE_FUSE_QUANT, path=MEGA and friends. The task string and the
+# positive control name those flags on purpose, so an engineer's own honest candidate will contain
+# them; flagging them would make the sweep fire on legitimate work and get switched off.
+#
+# Bare English words from comments (Deadlock, Together, Announce, ...) are excluded for the same
+# reason: they are not evidence.
+#
+# Regenerate after the reference moves:
+#   reference_leak_sweep.sh --derive /root/geak_reference/AITER-candidate <frozen baseline tree>
+# then re-apply the two filters above by hand. A stale list silently under-reports.
+AITER_MEGAMOE_FUSE_COMB_BN
+AITER_MEGAMOE_FUSE_G2_SKEW_DEN
+AITER_MEGAMOE_FUSE_G2_SKEW_NUM
+AITER_MEGAMOE_S1_SBM
+AITER_MEGAMOE_S1_TILEN
+AITER_MEGAMOE_S1_WAVES
+AITER_MEGAMOE_S2_BM
+AITER_MEGAMOE_TOKRDY_DEBUG
+AITER_MEGAMOE_TOKRDY_NOEPOCH
+COMB_BLOCKS
+FUSED_S2C_WORKSPACE_I32
+_CombineTransportSpec
+_EPOCH_CTR_OFF
+_FUSED_BLOCK_THREADS
+_FUSED_LAUNCH_CACHE
+_FUSED_WARPS_PER_BLOCK
+_G1_OUT_WT
+_MEMREALTIME_HZ
+_P2P_CACHE_NT
+_P2P_CACHE_WT
+_S2_ACK_SLOT
+_S2_DONE_SHARDS
+_S2_GO_SLOT
+_S2_RESET_SLOTS
+_SHARD_BASE
+_SHARD_REM
+_TOKRDY_DEBUG
+_TOKRDY_NOEPOCH
+_WAIT_STATS_WAVE_STRIDE
+__fusedcomb_b
+_analysis_combine_wait_ticks
+_analysis_wait_block_num
+_analysis_wait_timing
+_c_maybe_load
+_c_rdy_rsrc
+_combine_transport_spec
+_emit_barrier_and_reduce
+_emit_item
+_emit_stage2_body
+_fused_all_kwargs
+_fused_comb_ctr
+_fused_comb_mtile_ctr
+_fused_comb_wait_stats
+_fused_mtile_ctr
+_fused_s2c_ws
+_fx_analysis_combine_wait_ticks
+_fx_fused_comb_ctr
+_fx_fused_comb_mtile_ctr
+_fx_fused_comb_wait_stats
+_fx_fused_mtile_ctr
+_fx_fused_s2c_ws
+_fx_p2p_tok_ready
+_g2_bal_den
+_g2_bal_num
+_g2_cu_num
+_g2_metiles
+_g2_tile_of
+_group_done_slots
+_key_analysis_wait_timing
+_make_raw_buffer_from_addr
+_max_tiles
+_one_slab_bytes
+_out_cache_modifier
+_p2p_tok_ready
+_path_announced
+_q_in_rsrc
+_q_out_rsrc
+_q_sc_rsrc
+_quant_scratch
+_r_p2p_ready
+_r_p2p_tok_ready
+_run_fused_s2c
+_s3_consts
+_tok_ready_target
+_wait_tok_ready
+_wait_tok_ready_timed
+addr_s2_done
+addr_tok_ready
+analysis_no_p2p_payload
+analysis_wait_timing
+arg_mtile_ctr
+arg_p2p_tok_ready
+c_mtile_ctr
+c_p2p_ready
+c_tok_ready
+c_wait_stats
+closes_tile
+comb_active
+combine_data_type
+combine_hidden_elem_size
+combine_max_recv
+combine_wait_stats_read
+combine_wait_stats_reset
+compile_mega_moe_fused_s2c
+derive_stage2_emit_constants
+fused_combine
+fused_combine_args
+fused_diag_nopub
+fused_g2_chunk
+fused_g2_pref
+fused_g2_skew
+fused_quant_args
+fused_s2_nw8
+fused_s2c_combine_context
+fused_s2c_output
+g2_ctr_i64
+get_analysis_wait_timing
+get_fused_s2c_launch
+i32_s2_maxmb
+lds_ready_off
+make_stage2_body_emitter
+n_tiles_i32
+nominal_warp_num
+p2p_cache_mod
+p2p_write_through
+per_token_ready
+per_wait_mean_us
+per_wave_total_us
+ready_base
+reset_analysis_wait_timing
+run_mega_moe_fused_s2c
+s2_lds_bytes
+s2_metiles
+s2_sweights
+s2_total_blocks
+set_analysis_wait_timing
+shard_target
+shared_storage
+shmem_tok_ready
+tok_ready_addr
+tok_ready_epoch
+tok_ready_expected
+total_g2_claims
+total_g2_pairs
+total_m_blocks2
+total_waits
+ts_waitcnt
+unit_scratch
+wait_finished
+wait_started
+wait_stats
+wait_stats_addr
