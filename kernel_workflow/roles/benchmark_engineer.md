@@ -186,6 +186,23 @@ nothing else, on the guard named in `guard` (or the whole suite if none):
 - Include a **null arm** (byte-identical work, e.g. the flag set to its no-op value) in the same
   interleave. Report its delta as `null_arm_pct`. The control is only interpretable next to it.
 - Report the **median paired delta** as `measured_pct`, signed so that **positive = faster**.
+- **The null arm is per-guard, and it needs the same ≥5 pairs the control does — on every guard a
+  candidate will later be judged on, not only on the control's guard.** A null arm measured at n=3 on
+  one guard tells you nothing about the others, and the guards do not behave alike. Measured on this
+  harness 2026-08-21, byte-identical arms, same interleave, same session:
+
+  | guard | null pairs | null median | wins |
+  |---|---|---|---|
+  | 8192 uniform | 7 | **+0.07%** | 4/7 |
+  | 8192 skew | 3 | +0.99% | 2/3 |
+  | 512 uniform | 3 | +1.44% | 2/3 |
+  | 512 skew | 3 | **−1.70%** | **0/3** |
+
+  512-skew's null is not noise around zero: it is 0/3 in one direction at 1.7%, i.e. a systematic
+  ordering or drift bias as large as most of the wins anyone reports at that guard. A candidate
+  claiming +2% there, judged against a control validated only at 8192-uniform, is inside its own
+  measurement's bias and is **unreadable, not positive**. Deepen the null on a guard before quoting a
+  number from it, and if the null stays that loud, say the guard cannot currently resolve the claim.
 
 **The two bounds mean different things, and the orchestrator treats them differently — so report
 what you saw and let it decide.** Reading *below* `expected_pct_lo` means your instrument cannot see
