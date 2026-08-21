@@ -83,7 +83,9 @@ ok(/warns instead of aborting/.test(wf),
 // --- 4. the provenance gate ------------------------------------------------
 console.log('\n# provenance gate');
 ok(/status:"plagiarized"/.test(verify), 'verify_engineer can return plagiarized');
-ok(/"status": "verified\|correctness_failed\|apply_failed\|regression\|harness_modified\|plagiarized"/.test(verify),
+// Matched loosely on purpose: the enum is open to further statuses (`inactive` was added by
+// tests/test_activation_gate.js), and pinning the whole string made an unrelated addition fail here.
+ok(/"status": "verified\|correctness_failed\|apply_failed\|regression\|harness_modified\|plagiarized/.test(verify),
    'both new statuses are in the return schema');
 ok(/report the measured numbers anyway/.test(verify),
    'a rejected patch still reports its numbers (the direction may be real and re-derivable)');

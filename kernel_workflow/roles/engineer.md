@@ -96,6 +96,21 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    `speedup_weighted = Σ_i weight_i / Σ_i (weight_i / speedup_i)` using each case's `weight` from
    `baseline_per_case` — that is the PRIMARY number you optimize toward; the geomean is secondary.
 5. **Save patch** when geomean > 1.0: `cd $KERNEL_PATH && git diff > $OUTPUT_DIR/best_patch.diff`.
+5b. **Your patch must be ON by default.** Ship it so that applying the diff and running the
+   benchmark, with no environment variable set and no config edited, exercises your new code. Do not
+   hide it behind an opt-in flag "for safety" — the person who measures it is not you, does not know
+   the flag exists, and will not set it. A gated-off patch benchmarks byte-identical to the baseline
+   and reads **1.000x**, which is the same reading as "the idea was worthless". Your direction is then
+   dropped as tried-and-failed when it was never tried at all. This has already happened on this
+   workflow: a round returned 1.000x on a fast path that never executed once.
+   If you genuinely need a switch (a fallback path you want A/B-able, a risky mode), you may keep
+   one, but then you MUST fill in `activation` with the exact switch name, the exact value, and a
+   **path marker** — something an independent party can observe to prove your code ran. A marker is
+   cheap and concrete: a one-line `stderr` print at first entry, a counter the harness can read, a
+   distinct kernel name visible in the profile. "It should be on" is not a marker.
+   Whichever mode you choose, verify will try to observe the marker. If it cannot, your result is
+   discarded as VOID rather than recorded as a negative — you lose the direction either way, so
+   declare it accurately.
 6. **Iterate** a few variations (params/tiling/unroll/specialization), keeping the best. Obey
    self-monitoring: switch approach after ~8 stalled steps, force-submit after ~12, stop tuning when
    3 benchmarks are within 1%.
@@ -115,6 +130,13 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0, "weight": 0.0}],
   "status": "success|partial|failed",
   "patch_file": "best_patch.diff",
+  "activation": {
+    "mode": "default_on|switch",
+    "switch_name": "only if mode=switch — the exact env var / config key",
+    "switch_value": "only if mode=switch — the exact value that enables the fast path",
+    "path_marker": "the observable that proves your code ran (exact string / counter / kernel name)",
+    "marker_how": "the exact command that surfaces it, e.g. 'run the bench with X=1 2>&1 | grep FUSED'"
+  },
   "strategies_tried": ["..."],
   "notes": "what worked / what didn't — written for the TechLead's insight log"
 }

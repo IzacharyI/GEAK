@@ -79,6 +79,26 @@ absolute per-case latencies. The script trusts only your numbers.
      synchronization code at all; say so in `notes`.
    A timeout here is a FAILURE, never a skip. Budget for it: this gate is why a `distributed`
    direction costs more to verify than a normal one.
+4d. **ACTIVATION — prove the patched code actually ran.** Input `ACTIVATION` is the engineer's own
+   declaration, verbatim JSON, or the literal string `UNDECLARED`. Do this BEFORE trusting any number
+   in step 4, because a patch whose fast path never executes measures byte-identical to the baseline
+   and reports **1.000x** — which is indistinguishable, from the outside, from an idea that did not
+   work. One is a void experiment and the other is a result, and the round treats them completely
+   differently. On this workflow a round has already been spent on an unexercised patch.
+   - `mode: "default_on"` → run the benchmark exactly as the COMMANDMENT says, no extra env. Still
+     confirm the marker if one was given.
+   - `mode: "switch"` → set `switch_name=switch_value` for the CANDIDATE arm only, and leave it unset
+     for the base arm. Setting it for both is the same bug in a different place.
+   - `UNDECLARED` → do not assume default-ON. Establish activation yourself: the cheapest reliable
+     check is a temporary one-line marker at the entry of the changed function, or `git diff --stat`
+     plus a profile/log observation showing the changed path in the run. If you cannot establish it
+     within a few minutes, that is `activation_confirmed:"unknown"`.
+   - **Observe the marker.** Run `marker_how` (or your own equivalent) and paste the actual command
+     and the actual output into `activation_evidence`. A restatement of the engineer's claim is not
+     evidence. An empty grep is `no`.
+   - **Not confirmed → `status:"inactive"`, `activation_confirmed:"no"|"unknown"`, and report the
+     measured numbers anyway** so the direction can be re-run cleanly. Do NOT report it as
+     `regression` and do NOT report it as a 1.000x null: both file a void experiment as a finding.
 5. Reject if a patch modified the harness/COMMANDMENT/files outside the workspace, or the benchmark
    shows a regression (the PRIMARY metric ≤ 1.0). Report it as `status:"regression"` with the numbers anyway.
    **A harness edit is its own rejection, independent of the speedup.** Diff the patch's file list
@@ -106,7 +126,7 @@ absolute per-case latencies. The script trusts only your numbers.
 ## Return JSON
 ```json
 {
-  "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized",
+  "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized|inactive",
   "correctness": "pass|fail",
   "verified_geomean": 0.0,
   "verified_arithmetic": 0.0,
@@ -117,6 +137,8 @@ absolute per-case latencies. The script trusts only your numbers.
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
   "reps": 5,
   "null_arm_pct": 0.0,
+  "activation_confirmed": "yes|no|unknown",
+  "activation_evidence": "the command you ran and the marker output it printed",
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```

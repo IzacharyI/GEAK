@@ -404,6 +404,16 @@ const ENG_SCHEMA = obj({
   speedup_weighted: { type: 'number' },
   per_case: perCase, status: { type: 'string' }, patch_file: { type: 'string' },
   strategies_tried: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
+  // How the new code is TURNED ON, and how an independent party can prove it ran. A patch whose
+  // fast path is gated behind an env var that nobody sets benchmarks as byte-identical to the
+  // baseline and reads 1.000x — indistinguishable from "the idea did not work", which is the one
+  // reading that stops the round. That has already happened here. `mode` is `default_on` (the
+  // required default: the patch changes behavior with no switch at all) or `switch`, which REQUIRES
+  // `switch_name`/`switch_value` and a `path_marker` verify can grep for.
+  activation: obj({
+    mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
+    path_marker: { type: 'string' }, marker_how: { type: 'string' },
+  }, []),
 }, ['status', 'speedup_geomean']);
 
 const VERIFY_SCHEMA = obj({
@@ -420,6 +430,12 @@ const VERIFY_SCHEMA = obj({
   // surfaced in the log and report, because "1 rep, no null arm" has already produced a -0.44%
   // "win" that sat inside a 1.45% per-case spread.
   reps: { type: 'number' }, null_arm_pct: { type: 'number' },
+  // Did the patched code path actually EXECUTE during the measured run? `yes` requires the
+  // path_marker to have been observed; `no` means the arm labelled "candidate" ran baseline code,
+  // which makes the whole comparison void rather than negative. `unknown` is treated as `no` — an
+  // unproven activation is exactly the state that produced a 1.000x on an unexercised patch.
+  activation_confirmed: { type: 'string' },  // yes|no|unknown
+  activation_evidence: { type: 'string' },   // the command + the marker output that proves it
 }, ['status', 'verified_geomean']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -979,6 +995,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           // Verify applies specialty-specific gates (see verify_engineer.md step 4c: a
           // `distributed` patch can be numerically correct and still deadlock).
           ...(d.specialty ? { SPECIALTY: d.specialty } : {}),
+          // What the engineer says turns its code ON, verbatim. If it declared nothing, verify is
+          // told so explicitly rather than being left to assume default-ON — the assumption is the
+          // bug: an undeclared switch and a genuinely default-ON patch look identical from here.
+          ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
           ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
           ...(REQUIRE_GRAPH_CAPTURE ? { REQUIRE_GRAPH_CAPTURE: '1' } : {}),
           // Verify is the ONLY role that learns where the reference trees are. It needs the
@@ -992,8 +1012,28 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   );
 
   const clean = results.filter(Boolean);
+
+  // --- ACTIVATION: did the candidate's code actually RUN? ----------------
+  // A patch whose fast path is gated behind a switch nobody sets measures byte-identical to the
+  // baseline. The harness then reports 1.000x, the round reads "the idea did not work", and the
+  // direction is dropped — on evidence that was never collected. That is what happened in wave 1's
+  // first round. So an unexercised patch gets its OWN outcome, loudly, and is never allowed to be
+  // filed as a null result. `unknown` counts as `no`: the whole point is that silence here is
+  // indistinguishable from the failure, so silence must not be the cheap answer.
+  for (const r of clean) {
+    if (!r.ver || r.ver.status === 'apply_failed') continue;
+    const act = String(r.ver.activation_confirmed || 'unknown').toLowerCase();
+    if (act === 'yes') continue;
+    r.inactive = act;
+    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    log(`INACTIVE ${r.d.id}: the patched code path was ${act === 'no' ? 'NOT executed' : 'NOT PROVEN to execute'} ` +
+        `during the measured run, so its ${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'result'} ` +
+        `is VOID — not a negative result. Do NOT record this direction as tried-and-failed; it has ` +
+        `not been tried. Evidence: ${r.ver.activation_evidence || '(none supplied)'}`);
+  }
+
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
-    r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0);
+    r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0 && !r.inactive);
 
   // `plagiarized` and `harness_modified` are already excluded by the filter above, but exclusion is
   // invisible — the direction just quietly stops existing, which reads like "it didn't work". Both
@@ -1122,6 +1162,12 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
         analysis_result: reprofileAnalysisResult,
       };
     }
+  } else if (clean.length && clean.every(r => r.inactive)) {
+    // Every direction this round measured code that never ran. That is a harness/activation fault,
+    // not a search-space fault, and charging it to the stopping criterion would end the run on the
+    // strength of experiments that were never performed.
+    log(`Round ${round}: NOT counted toward noImprove — every direction was INACTIVE, so the round ` +
+        `produced no evidence about the kernel at all. Fix activation before spending more budget.`);
   } else {
     noImprove++;
   }
