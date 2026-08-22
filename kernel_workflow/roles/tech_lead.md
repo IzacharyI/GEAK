@@ -431,6 +431,19 @@ them as JSON so the script can thread them into the next `plan_round`:
   (confirmed / partial / dead-end), and a one-line lesson. Re-planning must avoid confirmed
   dead-ends.
 
+**Return only THIS round's insights. The board is merged, not replaced.** The script keeps every
+prior entry, tags each with the round it first appeared in, and hands the whole board to the next
+round — so an earlier finding you do not restate is *not* deleted, and re-listing the whole history
+to protect it only costs context and buries what is new. (It used to be replaced wholesale, which is
+how round 3 came to re-propose a direction round 1 had already disproved.)
+
+Two consequences worth acting on:
+- **Restating an existing insight is a signal, not padding** — it refreshes that entry and makes it
+  survive ageing when the board fills. Restate deliberately, when a round confirms something old.
+- **An insight from a round where every direction was INACTIVE is tagged `FROM-VOID-ROUND`** and
+  stays tagged. Do not distil confident claims about the kernel out of a round that measured code
+  which never executed; the honest insight from such a round is about the harness.
+
 **DEEP-MODE persistence + sharing (do these ONLY if the named input is present; a normal run passes
 none of them, so skip this whole block then):**
 - `STATE_DIR` (+ `CANONICAL`, `CUMULATIVE_SPEEDUP`, `BEST_PER_CASE`): persist this wave's progress so a

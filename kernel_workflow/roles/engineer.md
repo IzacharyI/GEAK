@@ -174,3 +174,10 @@ didn't. (This is your required mini-report.)
 
 If you achieved no speedup (or correctness could not be fixed), still submit with `status` =
 `failed`/`partial`, NO patch_file, and notes explaining why — that is valuable signal for the ledger.
+
+**`ALREADY_TRIED` and `NOT_YET_ACTUALLY_TESTED` (when present) are round history, not advice.**
+`ALREADY_TRIED` lists directions earlier rounds actually measured, with their verified speedup — the
+budget for those is spent, and re-proposing one needs a stated reason why this attempt differs.
+`NOT_YET_ACTUALLY_TESTED` is the opposite: directions whose patch never applied or whose code path
+never executed. Those look like failures in the round log and are not. Treat them as **open**, and if
+you pick one up, prove activation first — that is the whole reason the earlier attempt taught nothing.

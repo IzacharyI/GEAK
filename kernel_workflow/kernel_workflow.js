@@ -1149,6 +1149,93 @@ let noImprove = 0;
 let bestPerCase = BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source}
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
+// The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
+// carry the round it came from and whether that round produced evidence at all.
+let insightBook = [];
+
+// <<REPLAY:memory_merge>>
+// CROSS-ROUND MEMORY. This used to be one line — `history.insights = mem.insights` — and that line
+// was the largest source of context loss in the loop. `update_memory` asks an agent to "distill
+// durable insights"; an agent handed one round's results returns that round's insights, and the
+// assignment threw away everything earlier that it happened not to restate. Round 3's engineers
+// therefore re-proposed round 1's dead directions on a board that no longer remembered them, and
+// the loop paid for the same experiment twice out of a budget counted in leases.
+//
+// So the board is APPEND-AND-AGE, never replaced. Three properties it has to have:
+//
+//   * an insight the summariser stops repeating SURVIVES. Silence from a summariser is not evidence
+//     that a finding expired; it is evidence the summariser was looking at a different round.
+//   * every insight carries its ORIGIN ROUND, and re-stating it cannot launder that away. A claim
+//     distilled from a round where nothing executed is not the same kind of object as one measured
+//     against the baseline, and the two must not become indistinguishable through re-summarisation.
+//   * eviction, when the board is full, is REPORTED. A blackboard that silently drops its oldest
+//     entries reproduces the original bug more slowly.
+function normInsight(s) {
+  return String(s == null ? '' : s)
+    .replace(/^\[r\d+[^\]]*\]\s*/, '')     // strip a provenance tag if the agent echoed one back
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+function mergeInsights(book, incoming, round, roundVoid, max) {
+  const MAX = Number.isFinite(max) ? max : 40;
+  const out = book.map((e) => Object.assign({}, e));
+  const index = new Map(out.map((e, i) => [normInsight(e.text), i]));
+  for (const raw of (Array.isArray(incoming) ? incoming : [])) {
+    const text = String(raw == null ? '' : raw).replace(/^\[r\d+[^\]]*\]\s*/, '').trim();
+    if (!text) continue;
+    const k = normInsight(text);
+    if (index.has(k)) {
+      // Restating an insight refreshes it and is what keeps a still-relevant finding alive under
+      // ageing — but it cannot upgrade a finding that came out of a round with no evidence.
+      const e = out[index.get(k)];
+      e.last_round = round; e.restated = (e.restated || 0) + 1;
+      if (!roundVoid) e.void_round = e.void_round && false;
+      continue;
+    }
+    out.push({ text, first_round: round, last_round: round, restated: 0, void_round: !!roundVoid });
+    index.set(k, out.length - 1);
+  }
+  if (out.length <= MAX) return { book: out, evicted: [] };
+  // Age out by last-seen round, then by how often the finding kept coming back. Ties break toward
+  // the more recent entry.
+  const ranked = out.map((e, i) => ({ e, i })).sort((a, b) =>
+    (b.e.last_round - a.e.last_round) || ((b.e.restated || 0) - (a.e.restated || 0)) || (b.i - a.i));
+  const keep = new Set(ranked.slice(0, MAX).map((x) => x.i));
+  return { book: out.filter((_, i) => keep.has(i)), evicted: out.filter((_, i) => !keep.has(i)) };
+}
+function renderInsights(book) {
+  return book.map((e) => `[r${e.first_round}` +
+    (e.last_round !== e.first_round ? `-r${e.last_round}` : '') +
+    (e.void_round ? ' FROM-VOID-ROUND' : '') + `] ${e.text}`);
+}
+// What has already been tried, derived from the round log rather than from an agent's recollection
+// of it. Engineers were never shown this: they got the insight list, which says what was LEARNED,
+// and nothing that says what was ATTEMPTED. Those differ exactly where it matters — a direction that
+// failed leaves an insight only if someone bothered to write one.
+//
+// A VOID direction is listed separately and in the opposite sense. An inactive patch was never
+// tried, so filing it as a dead end would suppress the one experiment the round still owes.
+function deadEnds(rounds) {
+  const tried = [], untried = [];
+  for (const r of (Array.isArray(rounds) ? rounds : [])) {
+    const titles = new Map((r.directions || []).map((d) => [d.id, d]));
+    for (const res of (r.results || [])) {
+      const d = titles.get(res.id) || {};
+      const label = `r${r.round} "${d.title || res.id}" (${d.specialty || '?'})`;
+      if (res.inactive) {
+        untried.push(`${label}: VOID — the patched path was ${res.inactive === 'no' ? 'not executed' : 'not proven to execute'}. ` +
+          `NOT a dead end: this direction has not actually been tested. Re-run it with activation proven.`);
+      } else if (res.status === 'apply_failed') {
+        untried.push(`${label}: patch did not apply — untested, not disproven.`);
+      } else if (Number.isFinite(res.verified) && res.verified > 0) {
+        tried.push(`${label}: verified ${res.verified.toFixed(3)}x${res.verified < 1.005 ? ' — no gain' : ''}`);
+      } else {
+        tried.push(`${label}: ${res.status || 'no result'}`);
+      }
+    }
+  }
+  return { tried, untried };
+}
+// <</REPLAY:memory_merge>>
 
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
@@ -1156,7 +1243,12 @@ const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileS
 if (setup.resumed && setup.prior_state) {
   const ps = setup.prior_state;
   if (Number.isFinite(ps.cumulative) && ps.cumulative > cumulative) cumulative = ps.cumulative;
-  if (Array.isArray(ps.insights)) history.insights = ps.insights;
+  if (Array.isArray(ps.insights)) {
+    // A resumed wave inherits the previous wave's board as round-0 entries, so continuity across
+    // waves works the same way continuity across rounds does.
+    insightBook = mergeInsights(insightBook, ps.insights, 0, false).book;
+    history.insights = renderInsights(insightBook);
+  }
   if (Array.isArray(ps.ledger)) history.ledger = ps.ledger;
   if (ps.bottleneck_now) history.bottleneck_now = ps.bottleneck_now;
   if (Array.isArray(ps.best_per_case) && ps.best_per_case.length) bestPerCase = ps.best_per_case;
@@ -1249,6 +1341,11 @@ ${cfg({
         profiling_summary: profileSummary ? profileSummary.summary_path : '',
         baseline_per_case: BASELINE_PER_CASE,
         INSIGHTS: history.insights,
+        // What earlier rounds already spent budget on. Without this an engineer sees only what was
+        // learned, never what was attempted, and re-proposes a direction the loop already bought.
+        ...(function () { const de = deadEnds(history.rounds); return {
+          ...(de.tried.length ? { ALREADY_TRIED: de.tried } : {}),
+          ...(de.untried.length ? { NOT_YET_ACTUALLY_TESTED: de.untried } : {}) }; })(),
         KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE,
         KK_REFS: (d.kk_refs && d.kk_refs.length ? d.kk_refs : KK_REFS),
         ...KB_INPUTS,
@@ -1489,6 +1586,10 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     noImprove++;
   }
 
+  // A round in which every direction was INACTIVE produced no evidence about the kernel. Its
+  // distilled insights are tagged accordingly rather than being trusted as measurements.
+  const allInactive = clean.length > 0 && clean.every(r => r.inactive);
+
   // --- update cross-round memory (insight blackboard + hypothesis ledger)
   const mem = await agentT(
     roleAgent('tech_lead', 'update_memory', 'Distill durable insights + update the hypothesis ledger.', {
@@ -1505,7 +1606,17 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     }),
     { phase: 'Optimize', label: `tech_lead:memory r${round}`, schema: MEMORY_SCHEMA });
   if (mem) {
-    if (mem.insights) history.insights = mem.insights;
+    if (mem.insights) {
+      const before = insightBook.length;
+      const merged = mergeInsights(insightBook, mem.insights, round, allInactive, 40);
+      insightBook = merged.book;
+      history.insights = renderInsights(insightBook);
+      const added = insightBook.filter((e) => e.first_round === round).length;
+      log(`Round ${round} memory: ${added} new insight(s), ${before} carried forward, ` +
+          `${insightBook.length} on the board` + (allInactive ? ' (this round produced NO evidence — its entries are tagged FROM-VOID-ROUND)' : ''));
+      // Never silent. A board that drops findings without saying so is the bug this replaced.
+      for (const e of merged.evicted) log(`INSIGHT EVICTED (board full, last seen r${e.last_round}): ${e.text}`);
+    }
     if (mem.ledger) history.ledger = history.ledger.concat(mem.ledger);
     if (mem.bottleneck_now) history.bottleneck_now = mem.bottleneck_now;
     if (mem.suggest_next) history.suggest_next = mem.suggest_next;
@@ -1514,7 +1625,9 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     round,
     directions: directions.map(d => ({ id: d.id, title: d.title, specialty: d.specialty })),
     results: clean.map(r => ({ id: r.d.id, claimed: r.eng ? r.eng.speedup_geomean : 0,
-      verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none') })),
+      verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
+      // Carried so the next round can tell "tried and failed" from "never actually ran".
+      inactive: r.inactive || null })),
     integrate: integrate ? { conclusion: integrate.conclusion, geomean: integrate.best ? integrate.best.geomean : 0 } : null,
     winner: winner ? { source: winner.source, geomean: winner.geomean } : null,
     improved, cumulative,
