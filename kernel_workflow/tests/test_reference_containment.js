@@ -112,8 +112,16 @@ ok(/EXTS:=/.test(sweep),
    'the sweep is scoped to files a leak can be copied out of, not every file that names a counter');
 ok(/373 hits/.test(sweep),
    'the source records why the scope exists — an unscoped sweep is one nobody reads');
-ok(/cannot see a reference reachable as a branch/.test(sweep),
+ok(/NOT covered: unreferenced history, dangling objects/.test(sweep),
    'the clean result states what it does not cover');
+// The ref pass, added 2026-08-22 after the sweep walked the frozen baseline, missed a `mega` branch
+// carrying 140 of 140 markers, and reported clean — and that clean result was relayed to the user.
+ok(/REFERENCE LEAK IN GIT REFS/.test(sweep),
+   'the sweep scans ref tips, not only the working tree — an unchecked-out branch has no files');
+ok(/for-each-ref/.test(sweep) && /rev-parse HEAD/.test(sweep),
+   'refs AND a detached HEAD are enumerated: a detached HEAD is how one would hide it from for-each-ref');
+ok(/reference_leak_sweep\.sh'\)/.test(sweep) || /!\*reference_leak_sweep\.sh/.test(sweep),
+   'the ref pass excludes the scanner itself, or it flags itself in every repo that carries it');
 // Excluding the flags the task itself names is what keeps the sweep from firing on honest work.
 ok(/AITER_MEGAMOE_FUSE_ALL/.test(markers) && /Deliberately EXCLUDED/.test(markers),
    'markers the run is legitimately told about are excluded, with the reason recorded');
@@ -266,6 +274,45 @@ ok(/did not fire on its own probe/.test(addr),
 ok(/Not an exit: the filesystem pass below needs no repository/.test(addr) &&
    !/could resolve against[\s\S]{0,400}\bexit 0\b/.test(addr),
    'zero reachable repos no longer exits early — the git-only version would have skipped the path pass entirely');
+
+// --- 9. the ref pass is RUN, not just grepped for ------------------------
+//
+// Every assertion above this line reads source text, and source text can describe a scanner that
+// does nothing. The failure being guarded here is precisely that shape: the sweep DID run, DID walk
+// the frozen baseline, and DID print "clean" while a branch in that same repo carried the whole
+// answer. So build the offending shape — clean worktree, marker on an unchecked-out branch — and
+// require a non-zero exit. This is the one test in this file that would have caught the incident.
+console.log('\n# the ref pass, executed against a real branch-only leak');
+{
+  const { execFileSync } = require('child_process');
+  const os = require('os');
+  const marker = read('scripts/reference_leak_markers.txt')
+    .split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'))[0];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'refleak-'));
+  const repo = path.join(tmp, 'repo');
+  const sh = (cmd) => execFileSync('bash', ['-c', cmd], { cwd: repo, stdio: 'pipe' });
+  try {
+    fs.mkdirSync(repo);
+    sh('git init -q . && git config user.email t@t && git config user.name t');
+    fs.writeFileSync(path.join(repo, 'k.py'), 'def clean(): pass\n');
+    sh('git add -A && git commit -qm base && git checkout -q -b leakbranch');
+    fs.writeFileSync(path.join(repo, 'k.py'), `def f():\n    x = ${marker}\n`);
+    sh('git add -A && git commit -qm ref && git checkout -q -');
+    ok(!fs.readFileSync(path.join(repo, 'k.py'), 'utf8').includes(marker),
+       'precondition: the working tree is clean, so a file-only sweep has nothing to find');
+    let code = 0;
+    try {
+      execFileSync('bash', [path.join(ROOT, 'scripts/reference_leak_sweep.sh'), '--tree', tmp],
+                   { stdio: 'pipe' });
+    } catch (e) { code = e.status; }
+    ok(code === 1,
+       `a marker reachable only via \`git checkout\` is a LEAK (exit ${code}, want 1)`);
+  } catch (e) {
+    ok(false, `ref-pass execution test could not run: ${e.message}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
 console.log(
   failures === 0

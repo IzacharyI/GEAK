@@ -27,7 +27,11 @@
 # the workflow. Run it before launching, and after any wave that writes into the tree.
 #
 # Usage:
-#   reference_leak_sweep.sh --tree <run tree root> [--allow <path>]... [--markers <file>] [--derive <ref> <base>]
+#   reference_leak_sweep.sh --tree <run tree root> [--allow <path>]... [--repo <path>]...
+#                           [--markers <file>] [--derive <ref> <base>]
+#
+# --repo adds a repository OUTSIDE <tree> whose refs should also be scanned -- the AITER_JIT_DIR
+# checkout, a sibling clone, anything the run can read by configuration rather than by walking.
 #
 # Exit 0 = clean. Exit 1 = leaks found (listed on stdout). Exit 2 = bad invocation.
 #
@@ -39,13 +43,14 @@
 
 set -uo pipefail
 
-TREE=""; MARKER_FILE=""; ALLOW=()
+TREE=""; MARKER_FILE=""; ALLOW=(); EXTRA_REPOS=()
 DERIVE_REF=""; DERIVE_BASE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tree)    TREE="$2"; shift 2 ;;
     --allow)   ALLOW+=("$2"); shift 2 ;;
+    --repo)    EXTRA_REPOS+=("$2/.git"); shift 2 ;;
     --markers) MARKER_FILE="$2"; shift 2 ;;
     --derive)  DERIVE_REF="$2"; DERIVE_BASE="$3"; shift 3 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -142,11 +147,87 @@ while IFS= read -r f; do
   [[ $skip -eq 0 ]] && leaks+=("$f")
 done <<< "$hits"
 
-if [[ ${#leaks[@]} -eq 0 ]]; then
+# --- REFS ------------------------------------------------------------------------------------------
+#
+# A `find`-based sweep greps FILES. A branch that is not checked out has no files, so a repository can
+# carry the entire reference on a second branch and still be walked and pronounced clean. That is not
+# an exotic case; it is the default state of any repo with more than one branch, and on 2026-08-22 it
+# was the actual state of THE FROZEN BASELINE THIS SWEEP WAS POINTED AT. `/sgl-workspace/megamoe/aiter`
+# held a local branch `mega` -- 15 files, +3906 lines, 140 of 140 markers -- one `git checkout` away
+# inside the directory the task text hands to every engineer. The sweep read it and reported clean, and
+# I relayed that clean result to the user. A checker that answers the wrong question confidently is
+# worse than no checker; that is the same failure the -P self-test above exists to prevent.
+#
+# So: enumerate every repository under <tree>, and grep the TREE AT EACH REF, not just the worktree.
+# Refs are deduped by commit SHA -- N branches at one commit is one scan.
+#
+# What this still does not cover, stated so nobody reads a clean line as more than it is: unreferenced
+# history (a marker in an ancestor commit whose content no ref tip carries), dangling objects, and
+# repositories outside <tree> that are reachable some other way (AITER_JIT_DIR, a bundle, a symlink).
+# Pass those with --repo. Beyond that, only verify's byte-identity check covers it.
+gitdirs=()
+while IFS= read -r g; do [[ -n "$g" ]] && gitdirs+=("$g"); done < <(
+  find "$TREE" -name .git -maxdepth 6 -print 2>/dev/null | sort -u)
+for r in "${EXTRA_REPOS[@]:-}"; do [[ -n "$r" ]] && gitdirs+=("$r"); done
+
+ref_leaks=(); ref_skipped=0
+# Same self-exclusion the find pass makes with -not -name: this scanner and its marker list quote
+# markers by construction, and at a ref tip they are ordinary tracked blobs. Without these two
+# exclusions the sweep's first act is to flag itself in every repo that carries it -- which is exactly
+# the "trains the reader to skim" failure the find pass already guards against.
+pathspec=(); for e in $EXTS; do pathspec+=("*.$e"); done
+pathspec+=(':!*reference_leak_sweep.sh' ':!*reference_leak_markers.txt')
+
+for g in "${gitdirs[@]:-}"; do
+  [[ -z "$g" ]] && continue
+  repo="$(dirname "$g")"; [[ -d "$g" ]] || repo="$(dirname "$g")"
+  repo="$(cd "$repo" 2>/dev/null && pwd)" || continue
+  skip=0
+  for a in "${ALLOW[@]:-}"; do
+    [[ -z "$a" ]] && continue
+    a="$(cd "$a" 2>/dev/null && pwd || echo "$a")"
+    [[ "$repo" == "$a" || "$repo" == "$a/"* ]] && { skip=1; break; }
+  done
+  [[ $skip -eq 1 ]] && continue
+
+  # Dedupe by SHA: `%(objectname) %(refname)` over every ref, plus HEAD (a detached HEAD is a ref no
+  # for-each-ref lists, and a detached HEAD at the reference is exactly how one would hide it).
+  declare -A seen_sha=()
+  while read -r sha rname; do
+    [[ -z "$sha" ]] && continue
+    [[ -n "${seen_sha[$sha]:-}" ]] && continue
+    seen_sha[$sha]="$rname"
+  done < <( { git -C "$repo" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null
+              printf '%s HEAD\n' "$(git -C "$repo" rev-parse HEAD 2>/dev/null)"; } )
+
+  n=0
+  for sha in "${!seen_sha[@]}"; do
+    n=$((n+1))
+    if [[ $n -gt ${REF_SCAN_MAX_TREES:-200} ]]; then ref_skipped=$((ref_skipped+1)); break; fi
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && ref_leaks+=("$repo  ${seen_sha[$sha]} (${sha:0:8})  ${line#*:}")
+    done < <(git -C "$repo" grep -I -l -P "$pattern" "$sha" -- "${pathspec[@]}" 2>/dev/null)
+  done
+  unset seen_sha
+done
+
+if [[ ${#ref_leaks[@]} -gt 0 ]]; then
+  echo "REFERENCE LEAK IN GIT REFS: ${#ref_leaks[@]} blob(s) carry reference-only markers at a ref tip."
+  echo "These are invisible to a working-tree grep and reachable with one \`git checkout\`. Remove the"
+  echo "ref (or move the whole .git outside the run tree) before launching."
+  printf '  %s\n' "${ref_leaks[@]}" | sort -u | head -60
+  [[ ${#ref_leaks[@]} -gt 60 ]] && echo "  ... $(( ${#ref_leaks[@]} - 60 )) more"
+fi
+[[ $ref_skipped -gt 0 ]] && echo "NOTE $ref_skipped repo(s) had more unique ref trees than REF_SCAN_MAX_TREES=${REF_SCAN_MAX_TREES:-200}; the remainder were NOT scanned."
+
+if [[ ${#leaks[@]} -eq 0 && ${#ref_leaks[@]} -eq 0 ]]; then
   echo "LEAK SWEEP clean: ${#MARKERS[@]} reference markers, 0 hits inside $TREE outside the allow-list."
-  echo "NOTE this is a CONTENT sweep of one tree. It cannot see a reference reachable as a branch in"
-  echo "another repository the run can read; only verify's byte-identity check covers that."
+  echo "Covered: working-tree files, and the tree at every ref tip of ${#gitdirs[@]} repository(ies)."
+  echo "NOT covered: unreferenced history, dangling objects, and repos outside <tree> not passed with"
+  echo "--repo. Only verify's byte-identity check covers those."
   exit 0
+elif [[ ${#leaks[@]} -eq 0 ]]; then
+  exit 1
 fi
 
 echo "REFERENCE LEAK: ${#leaks[@]} file(s) inside $TREE carry reference-only markers."
