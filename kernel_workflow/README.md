@@ -52,6 +52,29 @@ remaining budget; the TechLead may also stop early (`stop=true`) when further di
 Example (budget=6): round 1 = 3 directions, round 2 = 3; or 4 then 2; or stop after 4.
 
 ## Invocation
+
+### Packaged tasks — start here if one fits
+`tasks/<name>/` holds a task the workflow already knows how to stand up: the task statement, and a
+`launch_args.json` recipe with a positive control that does not presuppose the answer. Both are
+templates; `scripts/bootstrap_task.sh` resolves them against the local machine.
+
+```
+bash scripts/bootstrap_task.sh --check            # is this box even capable of the task?
+bash scripts/bootstrap_task.sh \
+  --baseline /path/to/frozen/baseline-checkout \
+  --out      /path/to/new/workspace
+```
+
+It probes for the hardware and runtime libraries the task needs, refuses to assemble a workspace the
+machine cannot run (exit 2), distinguishes that from "fit, but a co-tenant holds the VRAM right now"
+(exit 3 — assemble and wait), copies the baseline into a workspace an engineer may freely edit, and
+writes a `launch_args.json` with every path resolved. What it deliberately does **not** take is a
+previous run's artifacts: analyses, logs and accumulated patches are the workflow's *output*, and a
+task that needs them as input is a task that has been solved elsewhere and is now being replayed.
+
+Available: `tasks/megamoe_v2_ep8` (MegaMoE V2, 8-rank expert-parallel fusion + compute/comm overlap).
+
+### Direct invocation
 This is a Workflow, run via the `Workflow` tool with `scriptPath` and `args`. **No paths are
 hard-coded in the script** — it is portable to any install location. Set `scriptPath` to wherever
 this folder lives and pass that same folder as `args.workflow_dir`:
@@ -249,6 +272,11 @@ roles/               director, tech_lead, engineer, deep_engineer (deep_explore)
                      verify_engineer, integrator
 knowledge/           optimization_strategies, hip/triton/wrapper, profiling_guide,
                      amd_instinct (multi-card: gfx942/gfx950), self_monitoring, geomean_levers,
-                     distributed_fusion (multi-launch multi-rank -> one persistent kernel)
-scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh
+                     distributed_fusion (multi-launch multi-rank -> one persistent kernel),
+                     jit_arm_isolation (making an env-gated A/B compile to two binaries)
+tasks/               packaged tasks: GEAK_TASK.md + launch_args.json, both templated
+scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh,
+                     bootstrap_task.sh (stand a packaged task up on a new machine),
+                     reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment)
+tests/               node tests/*.js -- run from THIS directory, not from the repo root
 ```

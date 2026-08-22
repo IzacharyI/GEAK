@@ -1,0 +1,32 @@
+{
+  "_comment": "Portable launch recipe for the MegaMoE V2 EP8 task. This is a TEMPLATE: ${...} placeholders are resolved by scripts/bootstrap_task.sh, which writes the concrete file into the workspace it assembles. Nothing here points at a reference implementation, a prior run tree, or an accumulated patch -- the only inputs are a baseline AITER checkout, this workflow, and the machine's runtime libraries. If you are tempted to add a path to a previous wave's artifacts, read knowledge/../roles/benchmark_engineer.md 5b first: the answer-applied workspace IS the leak.",
+
+  "kernel_path": "${WORKSPACE}",
+  "workflow_dir": "${SKILL_DIR}",
+  "exp_root": "${EXP_ROOT}",
+  "state_dir": "${STATE_DIR}",
+
+  "budget": 8,
+  "max_no_improve": 3,
+  "min_improve": 0.01,
+
+  "gpu_ids": "0,1,2,3,4,5,6,7",
+  "gpus_per_job": 8,
+  "_gpu_comment": "This is a collective: the group form of the lease takes all 8 cards as ONE lease. A round's GPU capacity is therefore one direction (roles/tech_lead.md rule 3e), and a single lease is capped by GEAK_GPU_RUN_TIMEOUT -- chunk the plan and re-emit results after every chunk.",
+  "gpu_min_free_gib": 150,
+
+  "use_expert_skills": "true",
+  "capability_eval": "true",
+  "_capability_eval_comment": "Leave this true unless you are running the task for its output rather than to evaluate the loop. With it on, an engineer that discovers a finished implementation must report FOUND EXISTING IMPLEMENTATION instead of copying it, and known_reference_paths is refused rather than read.",
+  "known_reference_paths": "${KNOWN_REFERENCE_PATHS}",
+
+  "positive_control": {
+    "name": "synthetic slowdown: injected fixed cost in the Stage2 tile loop",
+    "how": "This control does NOT require a working optimization -- see roles/benchmark_engineer.md 5b, 'When no known-good change exists'. Build it in a workspace UNDER /tmp, outside the task tree, never where an engineer's path walk reaches. Candidate arm: add a bounded, side-effect-free spin (target ~3-4% of rank-max on the 8192_uniform guard, i.e. roughly 3x that guard's 1.29-1.46% noise floor) to the Stage2 persistent tile loop, gated by an env var. Base arm: the same tree with the var unset. Because these kernels come from a caching JIT, the switch MUST be anchored per knowledge/jit_arm_isolation.md -- read it BEFORE authoring the gate, and record the two distinct disk_keys in activation_evidence. The candidate is the SLOWER arm, so measured_pct is expected NEGATIVE. Run >=5 interleaved pairs on 8192_uniform plus a null arm (candidate vs candidate); report the paired effect as spin_on minus spin_off. Size the spin first with a cheap single-rank calibration, then commit to it -- do not tune it against the gate band. When it finishes, MOVE the control workspace aside (mv, not rm) and say in `note` where it was and that it is gone.",
+    "expected_pct_lo": -5.0,
+    "expected_pct_hi": -2.5,
+    "implausible_pct": 15.0,
+    "guard": "8192_uniform",
+    "abort_on_fail": true
+  }
+}
