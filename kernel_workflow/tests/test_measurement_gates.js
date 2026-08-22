@@ -216,6 +216,26 @@ ok(/POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT/.test(wf),
 ok(/reads \\nHIGH by roughly|reads `? ?HIGH by roughly|HIGH by roughly/.test(wf),
    'the caveat quantifies the bias rather than just noting it');
 
+
+// A marker proves the host path ran. Under a JIT with a disk cache, two arms can print two markers
+// and execute one binary — which reads 1.000 with every existing gate satisfied. This closed an
+// entire optimization axis on a void experiment before it was caught by a retroactive audit.
+console.log('\n# arms must be proved to be DIFFERENT CODE, not just different markers');
+ok(/IT DOES NOT PROVE THE ARMS COMPILED TO DIFFERENT CODE/.test(verify),
+   'the marker/binary distinction is stated where activation is judged');
+ok(/artifact-distinctness proof/.test(verify),
+   'a positive obligation is named, not just a warning');
+ok(/cache keys, IR\/ISA hashes, or binary paths/.test(verify),
+   'the acceptable evidence forms are concrete enough to run');
+ok(/name-normalised/.test(verify),
+   'a symbol rename cannot fake a distinct artifact');
+ok(/Same hash across arms ⇒ `status:"inactive"`/.test(verify),
+   'identical artifacts are a VOID experiment, never a null result');
+ok(/machine-global/.test(verify),
+   'the separate-checkout escape hatch is closed: a global cache root defeats it');
+ok(/2026-08-22 a retroactive audit/.test(verify) && /had to be reopened/.test(verify),
+   'the incident keeps its consequence: a closed axis was reopened');
+
 console.log(
   failures === 0
     ? '\nPASS: detection floor, prior art, and result provenance are all gated and reach the report.'

@@ -96,6 +96,24 @@ absolute per-case latencies. The script trusts only your numbers.
    - **Observe the marker.** Run `marker_how` (or your own equivalent) and paste the actual command
      and the actual output into `activation_evidence`. A restatement of the engineer's claim is not
      evidence. An empty grep is `no`.
+   - **A MARKER PROVES THE HOST PATH RAN. IT DOES NOT PROVE THE ARMS COMPILED TO DIFFERENT CODE.**
+     Under any JIT with a disk cache (FlyDSL, Triton, torch.compile), two arms can print two different
+     markers from Python and then execute **one identical cached binary**, because the switch never
+     entered the cache key. That reads 1.000 for a reason that has nothing to do with the idea, and
+     every gate in this workflow passes it: the patch is real, the marker fires, the null arm behaves.
+     On 2026-08-22 a retroactive audit found exactly this — all-ON, all-OFF *and* the canonical
+     unpatched tree resolved to one `disk_key`, so a previously "well-powered null" that had closed an
+     entire optimization axis was **void**, and the axis had to be reopened. The cache root was
+     machine-global, so building the arms in separate checkouts did not isolate them either.
+     So for any JIT-compiled candidate, `activation_confirmed:"yes"` additionally requires an
+     **artifact-distinctness proof**: the arms' cache keys, IR/ISA hashes, or binary paths, shown to
+     DIFFER between base and candidate — and, where the null arm is supposed to be byte-identical
+     work, shown to MATCH the canonical tree. Cheap forms: dump the compiler cache key per arm; hash
+     the emitted ISA per arm (name-normalised, so a symbol rename alone cannot fake a difference);
+     or compare the resolved cache directory. Paste the hashes into `activation_evidence`.
+     Same hash across arms ⇒ `status:"inactive"`, `activation_confirmed:"no"` — a void experiment,
+     never a null result. A switch that only renames the kernel symbol does not enter the key and
+     does not count.
    - **Not confirmed → `status:"inactive"`, `activation_confirmed:"no"|"unknown"`, and report the
      measured numbers anyway** so the direction can be re-run cleanly. Do NOT report it as
      `regression` and do NOT report it as a 1.000x null: both file a void experiment as a finding.
