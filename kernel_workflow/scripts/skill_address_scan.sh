@@ -31,6 +31,30 @@
 # Repos searched: every .git discoverable under the scan root, plus $AITER_JIT_DIR's repo (GEAK_TASK
 # points every engineer at that one by name), plus anything given with --repo.
 #
+# THE SAME RULE, APPLIED TO FILESYSTEM PATHS
+# ------------------------------------------
+# A git sha is not the only kind of address. `/root/geak_reference/control/m25_fusion_reference.patch`
+# in a card is the same door with a shorter walk, and the git pass cannot see it. So the second pass
+# asks the identical question of every absolute path a card names:
+#
+#     does this path exist, and can this uid read it?
+#
+# Symmetric to the git rule, and for the same reason: a path that names another machine's layout is a
+# citation and passes; one that opens here is an address and fails. Three things are deliberately NOT
+# findings:
+#   * relative paths (`aiter/ops/flydsl/...`) -- they resolve against the engineer's own workspace,
+#     which is the tree the task is asking them to edit. Naming the file to modify is the job.
+#   * system prefixes (/usr, /opt/rocm, ...) -- present on every box, carry nothing.
+#   * a path that EXISTS but this uid cannot read -- reported as CONTAINED, not as a failure.
+#     READ THE CAVEAT: root ignores permission bits, so under uid 0 that branch is unreachable and
+#     `chmod 000` on a quarantine tree contains NOTHING. This was going to be the plan for the
+#     reference trees, and the scanner is where the assumption gets tested rather than assumed:
+#     running as root, the only real containment is to move the tree off the machine or delete it.
+#     The scan says so out loud when it finds an open path while uid 0.
+# Add `--allow-prefix DIR` for a tree the cards may legitimately point into; the workflow's own
+# directory is allowed by default, since a card citing `knowledge/foo.md` by absolute path is citing
+# the workflow, not the answer.
+#
 # SCOPE: a scanner for INJECTED KNOWLEDGE, not a tree audit. Pointed at a whole project it also
 # reports that project's own commits -- correct by its rule, useless as a signal, because the question
 # there is not "does this hash resolve" but "is this a copy of the answer", which reference_leak_sweep.sh
@@ -43,24 +67,29 @@ set -uo pipefail
 SKILLS_DIR=""
 SCAN_ROOT=""
 EXTRA_REPOS=()
+ALLOW_PREFIXES=()
 
 usage() {
   cat >&2 <<'EOF'
 usage: skill_address_scan.sh --skills-dir DIR [--scan-root DIR] [--repo GITDIR]...
+                             [--allow-prefix DIR]...
 
-  --skills-dir  expert_skills directory whose cards get injected into agents
-  --scan-root   tree to auto-discover git repositories in (default: --skills-dir's ancestor)
-  --repo        additional repository to test addresses against (repeatable)
+  --skills-dir    expert_skills directory whose cards get injected into agents
+  --scan-root     tree to auto-discover git repositories in (default: --skills-dir's ancestor)
+  --repo          additional repository to test addresses against (repeatable)
+  --allow-prefix  filesystem tree the cards may legitimately name (repeatable). The workflow's own
+                  directory is always allowed.
 EOF
   exit 2
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skills-dir) SKILLS_DIR="${2:-}"; shift 2 ;;
-    --scan-root)  SCAN_ROOT="${2:-}";  shift 2 ;;
-    --repo)       EXTRA_REPOS+=("${2:-}"); shift 2 ;;
-    -h|--help)    usage ;;
+    --skills-dir)   SKILLS_DIR="${2:-}"; shift 2 ;;
+    --scan-root)    SCAN_ROOT="${2:-}";  shift 2 ;;
+    --repo)         EXTRA_REPOS+=("${2:-}"); shift 2 ;;
+    --allow-prefix) ALLOW_PREFIXES+=("${2:-}"); shift 2 ;;
+    -h|--help)      usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
 done
@@ -86,10 +115,12 @@ while IFS= read -r g; do add_repo "$(dirname "$g")"; done < <(find "$SCAN_ROOT" 
 for r in "${EXTRA_REPOS[@]+"${EXTRA_REPOS[@]}"}"; do add_repo "$r"; done
 
 if [[ ${#repos[@]} -eq 0 ]]; then
-  echo "skill_address_scan: no reachable git repository found under $SCAN_ROOT -- nothing an address"
-  echo "  could resolve against. This is a PASS by absence, not by checking; re-run with --repo if"
-  echo "  the engineer can reach a repository this scan cannot see."
-  exit 0
+  # Not an exit: the filesystem pass below needs no repository, and skipping it here is how the
+  # git-only version of this script would have missed a bare path leak on a machine with no checkout.
+  echo "skill_address_scan: no reachable git repository found under $SCAN_ROOT -- nothing a COMMIT"
+  echo "  address could resolve against. The git pass is a PASS by absence, not by checking; re-run"
+  echo "  with --repo if the engineer can reach a repository this scan cannot see. The filesystem"
+  echo "  pass still runs."
 fi
 
 # ---- collect candidate addresses from the cards --------------------------------------------------
@@ -123,7 +154,7 @@ grep -rnoE '\b[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+\b' "${inc_args[@]}" "$SKILLS_DIR"
 toks=$(mktemp); cut -f1 "$occ" | sort -u >"$toks"
 while IFS= read -r tok; do
   kind=""; where=""
-  for repo in "${repos[@]}"; do
+  for repo in "${repos[@]+"${repos[@]}"}"; do
     if [[ "$(git -C "$repo" cat-file -t "$tok" 2>/dev/null)" == "commit" ]]; then kind="commit"; where="$repo"; break; fi
     if git -C "$repo" rev-parse --verify --quiet "refs/heads/$tok" >/dev/null 2>&1 ||
        git -C "$repo" rev-parse --verify --quiet "refs/remotes/$tok" >/dev/null 2>&1; then kind="ref"; where="$repo"; break; fi
@@ -134,17 +165,79 @@ while IFS= read -r tok; do
   hits=$((hits + 1))
 done <"$toks"
 
-if [[ $hits -gt 0 ]]; then
+# ---- pass 2: filesystem paths ---------------------------------------------------------------------
+# Same rule, different namespace. Absolute paths only -- see the header for why relative ones are the
+# engineer's own workspace and are not findings.
+WF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ALLOW_PREFIXES+=("$WF_DIR")
+# Present on every box; naming one carries no information about this run.
+SYS_PREFIXES=(/usr /bin /sbin /lib /lib64 /etc /proc /sys /dev /run /boot /opt/rocm /opt/conda /opt/venv)
+
+paths=$(mktemp); trap 'rm -f "$occ" "$toks" "$paths"' EXIT
+extract_paths() {  # stdin: grep -rno output; stdout: token<TAB>site
+  awk -F: 'NF>=3 {tok=$NF; site=""; for(i=1;i<NF;i++) site=site (i>1?":":"") $i; print tok "\t" site}'
+}
+PATH_RE='/[A-Za-z0-9._+-]+(/[A-Za-z0-9._+-]+)+'
+grep -rnoE "$PATH_RE" "${inc_args[@]}" "$SKILLS_DIR" 2>/dev/null | sed -E 's/[.,;:)`"'"'"']+$//' |
+  extract_paths >"$paths"
+
+# Fail-open guard. Both of this subsystem's past bugs reported clean by scanning nothing (a glob that
+# ate the includes; a grep flag combination that matched nothing). A regex that silently stops
+# matching would do it a third time, so prove the extractor fires on a string known to contain a path
+# before believing any clean result it produces.
+probe=$(echo "x:1:/opt/rocm/lib/libhsa.so" | extract_paths | cut -f1)
+if [[ "$probe" != "/opt/rocm/lib/libhsa.so" ]]; then
+  echo "skill_address_scan: the filesystem extractor did not fire on its own probe (got '$probe')." >&2
+  echo "  Refusing to report clean: a scan that matches nothing looks exactly like a scan that found" >&2
+  echo "  nothing, and this checker has shipped that bug twice already." >&2
+  exit 2
+fi
+
+path_hits=0
+contained=0
+while IFS= read -r p; do
+  [[ -n "$p" ]] || continue
+  skip=0
+  for a in "${ALLOW_PREFIXES[@]+"${ALLOW_PREFIXES[@]}"}"; do [[ -n "$a" && "$p" == "$a"/* || "$p" == "$a" ]] && { skip=1; break; }; done
+  [[ $skip -eq 1 ]] && continue
+  for s in "${SYS_PREFIXES[@]}"; do [[ "$p" == "$s"/* ]] && { skip=1; break; }; done
+  [[ $skip -eq 1 ]] && continue
+  [[ -e "$p" ]] || continue          # names another machine's layout: a citation, not a door
+  if [[ -d "$p" ]]; then readable=$([[ -r "$p" && -x "$p" ]] && echo yes || echo no)
+  else                   readable=$([[ -r "$p" ]] && echo yes || echo no); fi
+  if [[ "$readable" == "no" ]]; then
+    echo "CONTAINED PATH     $p  (exists, unreadable by uid $(id -u) -- enforcement, not trust)"
+    contained=$((contained + 1))
+    continue
+  fi
+  echo "RESOLVABLE PATH     $p  ($([[ -d "$p" ]] && echo directory || echo file), readable here)"
+  grep -F -- "$p"$'\t' "$paths" | cut -f2 | sort -u | sed 's/^/    at  /'
+  path_hits=$((path_hits + 1))
+done < <(cut -f1 "$paths" | sort -u)
+
+if [[ $hits -gt 0 || $path_hits -gt 0 ]]; then
   echo
-  echo "FAIL: $hits address(es) in $SKILLS_DIR resolve inside a repository this run can read."
+  [[ $hits -gt 0 ]] &&
+    echo "FAIL: $hits git address(es) in $SKILLS_DIR resolve inside a repository this run can read."
+  if [[ $path_hits -gt 0 ]]; then
+    echo "FAIL: $path_hits filesystem path(s) in $SKILLS_DIR open on this machine."
+    [[ "$(id -u)" == "0" ]] &&
+      echo "  (uid 0: permission bits are not containment here. chmod on the target changes nothing;" &&
+      echo "   move it off this machine or delete it.)"
+  fi
   echo "Redact the address, keep the mechanism. A skill is reproducible because it describes what to"
   echo "build, not because it says where the built copy is parked."
   exit 1
 fi
 
-echo "clean: no address in $SKILLS_DIR resolves in any of ${#repos[@]} reachable repo(s)."
-echo "  repos tested: ${repos[*]}"
+echo "clean: no address in $SKILLS_DIR resolves -- ${#repos[@]} reachable repo(s), and no absolute"
+echo "  path outside the allowed prefixes opens here."
+echo "  repos tested: ${repos[*]-(none)}"
+echo "  allowed prefixes: ${ALLOW_PREFIXES[*]}"
+[[ $contained -gt 0 ]] &&
+  echo "  $contained path(s) exist but are unreadable to this uid; they are contained by permissions."
 echo "  NOTE this cannot see a repository the engineer reaches by cloning or fetching during the run,"
-echo "  and it says nothing about how much of the ANSWER the card gives away in prose -- a card can"
-echo "  be address-free and still be a full specification. That judgement stays human."
+echo "  nor a path created after the scan, and it says nothing about how much of the ANSWER the card"
+echo "  gives away in prose -- a card can be address-free and still be a full specification. That"
+echo "  judgement stays human."
 exit 0

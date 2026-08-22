@@ -213,6 +213,60 @@ ok(/tok ~ \/\^\[0-9\]\+\$\/\) next/.test(addr) && /1\.5% of the time/.test(addr)
 ok(/not a tree audit/.test(addr),
    'the header scopes the scanner to injected knowledge and points elsewhere for tree-level leaks');
 
+// --- 8b. the same rule applied to filesystem paths, tested by RUNNING it --
+// A git sha was never the only kind of address. `/root/geak_reference/.../reference.patch` in a card
+// is the same door with a shorter walk, and pass 1 cannot see it. These assertions execute the
+// scanner against a synthetic card, because the failure being guarded is a match that silently
+// stopped happening — which is exactly what a source-grep assertion cannot distinguish from a pass.
+console.log('\n# the scanner resolves filesystem paths, not just git addresses');
+const os = require('os');
+const { execFileSync } = require('child_process');
+const SCAN = path.join(ROOT, 'scripts', 'skill_address_scan.sh');
+const box = fs.mkdtempSync(path.join(os.tmpdir(), 'gk_addr_'));
+process.on('exit', () => { try { fs.rmSync(box, { recursive: true, force: true }); } catch { /* best effort */ } });
+const skills = path.join(box, 'skills');
+fs.mkdirSync(skills, { recursive: true });
+fs.mkdirSync(path.join(box, 'secret'), { recursive: true });
+const answer = path.join(box, 'secret', 'reference.patch');
+fs.writeFileSync(answer, 'the answer\n');
+const card = (body) => { fs.writeFileSync(path.join(skills, 'card.md'), body); };
+const scan = (extra = []) => {
+  try { return { code: 0, out: execFileSync('bash', [SCAN, '--skills-dir', skills, '--scan-root', box, ...extra], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; }
+  catch (e) { return { code: e.status == null ? -1 : e.status, out: `${e.stdout || ''}${e.stderr || ''}` }; }
+};
+
+card(`Reference implementation: ${answer}\n`);
+let s = scan();
+ok(s.code === 1 && /RESOLVABLE PATH/.test(s.out),
+   'a card naming a path that opens on this machine FAILS, the same way a resolvable sha does');
+ok(new RegExp(`at\\s+${skills.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/card\\.md:1`).test(s.out),
+   'the finding names the card and line, so it can be redacted without opening the target');
+
+card('Runtime: /opt/rocm/lib/libhsa.so\nEdit aiter/ops/flydsl/mega_moe_stage2.py\nSee /no/such/tree/here.md\n');
+s = scan();
+ok(s.code === 0, `a card with only system, relative and dead paths is clean (exit ${s.code})`);
+ok(!/\/opt\/rocm/.test(s.out), 'a system prefix is not a finding — every box has it and it carries nothing');
+ok(!/mega_moe_stage2/.test(s.out),
+   'a RELATIVE path is not a finding: it resolves against the engineer\'s own workspace, which is the tree the task asks them to edit');
+ok(!/no\/such\/tree/.test(s.out),
+   'a path that names another machine\'s layout is a citation, not a door — same rule as an unresolvable sha');
+
+card(`Reference implementation: ${answer}\n`);
+ok(scan(['--allow-prefix', path.join(box, 'secret')]).code === 0,
+   '--allow-prefix exempts a tree the cards may legitimately name');
+
+// The scanner is where an assumption about containment gets tested instead of trusted: the plan was
+// to chmod the quarantine roots unreadable, and under uid 0 that does nothing at all.
+ok(/permission bits are not containment/.test(addr) && /move it off this machine or delete it/.test(addr),
+   'running as root, the scan says chmod-based quarantine is inert rather than reporting it as contained');
+// Third time this subsystem would have failed open. The first two (a glob that ate the include list,
+// a grep flag pair that matched nothing) both reported clean by scanning nothing.
+ok(/did not fire on its own probe/.test(addr),
+   'the path extractor proves it still matches before any clean result is believed');
+ok(/Not an exit: the filesystem pass below needs no repository/.test(addr) &&
+   !/could resolve against[\s\S]{0,400}\bexit 0\b/.test(addr),
+   'zero reachable repos no longer exits early — the git-only version would have skipped the path pass entirely');
+
 console.log(
   failures === 0
     ? '\nPASS: a reference inside the run tree stops the run; a relocated one does not.'

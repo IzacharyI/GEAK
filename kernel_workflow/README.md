@@ -297,6 +297,7 @@ tasks/               packaged tasks: GEAK_TASK.md + launch_args.json, both templ
 scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh,
                      bootstrap_task.sh (stand a packaged task up on a new machine),
                      replay_runs.js (re-decide finished runs with today's logic, no GPU),
-                     reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment)
+                     reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment:
+                     git addresses AND filesystem paths that open on this machine)
 tests/               node tests/*.js -- run from THIS directory, not from the repo root
 ```
