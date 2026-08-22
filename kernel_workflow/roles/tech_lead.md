@@ -305,6 +305,26 @@ Rules:
    and most of the geomean sits on it, OR (b) the worst compute-bound case is still ≳3× the floor —
    and budget remains.** Both mean real headroom is left. A truly optimized kernel has both collapsed
    its floor (graph capture where it pays) AND pulled every compute-bound shape near the floor.
+3b. **When the blocker is an opaque RUNTIME failure, the round's first direction must be a READOUT,
+   not a fix.** A crash, hang, wrong-result or illegal access that you cannot yet localize is not a
+   bug to be guessed at — it is a *missing instrument*, and every fix arm you dispatch before the
+   instrument exists is aimed by inference. Inference-aimed arms measure nothing whether they are
+   right or wrong: a wrong one reproduces the failure and a right one is indistinguishable from a
+   wrong one, because you still cannot see the state that decides it. On 2026-08-21 a program spent
+   **three consecutive rounds** on fix arms for one megakernel illegal access. The round that moved
+   it was the one that built an instrument (a compile-time phase ladder, one truncation per run),
+   which converted "Memory access fault, Reason: Unknown, 16/16 ranks" into a two-source-line bracket
+   in under 40 minutes of lease. The round after that built four inferred fixes, proved all four
+   executed, and changed nothing — the readout it *did* print (a bound that was provably correct and
+   7.5× under its clamp) is what falsified the hypothesis, not the fixes.
+   Concretely, a readout direction is worth a full slot when it: caps an unbounded wait and records
+   what it was waiting for instead of hanging; truncates the kernel at N points so the failure's
+   position is bisected rather than argued; or dumps the disputed quantity so the next round argues
+   with a number. Prefer instruments that **do not stop at the first failure** — one that records and
+   continues correlates several symptoms in one lease, which is the resource actually being spent.
+   **A compile screen is not a readout, and compile-clean is not runnability evidence.** Two separate
+   directions in that program were clean on every {shape}×{phase} combination and dead on hardware.
+   Compile screens are free, so use them to *reject*; never let one stand in for a run.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.
