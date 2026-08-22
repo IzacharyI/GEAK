@@ -1054,6 +1054,9 @@ if (POSITIVE_CONTROL) {
   // slowdown is blind to a real speedup. So `expected_pct_lo/hi` may both be negative; the caller
   // states the direction by their sign and this code stops caring which way it points.
   // (See benchmark_engineer.md 5b, "When no known-good change exists".)
+  // <<REPLAY:pc_gate>>  scripts/replay_runs.js lifts everything between these markers verbatim and
+  // re-decides recorded controls with it. Keep the region PURE: it may read only `lo`, `hi`, `got`,
+  // `pc` and `POSITIVE_CONTROL`, and it must not log, throw, or touch anything outside itself.
   const mLo = Math.min(Math.abs(lo), Math.abs(hi));       // smallest effect the loop must resolve
   const mHi = Math.max(Math.abs(lo), Math.abs(hi));
   const wantSign = Math.sign(lo + hi) || 1;               // +1 = control is faster, -1 = slower
@@ -1071,6 +1074,7 @@ if (POSITIVE_CONTROL) {
   const absurd = ran && Number.isFinite(ABSURD) && mGot > ABSURD;
   const overshoot = ran && mGot > mHi && !absurd;
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
+  // <</REPLAY:pc_gate>>
   log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
       `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
       `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '% in magnitude' : '?'}) ` +

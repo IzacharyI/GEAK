@@ -74,6 +74,25 @@ task that needs them as input is a task that has been solved elsewhere and is no
 
 Available: `tasks/megamoe_v2_ep8` (MegaMoE V2, 8-rank expert-parallel fusion + compute/comm overlap).
 
+### Validating a change to the workflow itself
+`scripts/replay_runs.js` re-decides finished runs with today's decision logic, on no GPU:
+
+```
+node scripts/replay_runs.js --runs <exp_root> --snapshot before.txt   # record
+#   ... edit kernel_workflow.js ...
+node scripts/replay_runs.js --runs <exp_root> --check before.txt      # exit 4 = a verdict flipped
+```
+
+It reads the raw per-invocation records in each run's `setup_ab*.json` (arm, guard, rep, rank-max,
+exit code, path markers), recomputes the paired effect under the measurement discipline (within-rep,
+rank-max, VOID arms dropping their whole pair, control arms matched by workspace rather than to the
+run's declared base), and pushes the result through the gate arithmetic **lifted verbatim** from
+`kernel_workflow.js` between its `<<REPLAY:pc_gate>>` markers — so the replay cannot drift from the
+code it replays. It does not replay agent judgement; that layer is recorded, not reproducible.
+
+Use it before committing any change to the gates. A `--check` that stays clean means the change is
+inert or aimed outside the corpus, and it is worth knowing which.
+
 ### Direct invocation
 This is a Workflow, run via the `Workflow` tool with `scriptPath` and `args`. **No paths are
 hard-coded in the script** — it is portable to any install location. Set `scriptPath` to wherever
@@ -277,6 +296,7 @@ knowledge/           optimization_strategies, hip/triton/wrapper, profiling_guid
 tasks/               packaged tasks: GEAK_TASK.md + launch_args.json, both templated
 scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh,
                      bootstrap_task.sh (stand a packaged task up on a new machine),
+                     replay_runs.js (re-decide finished runs with today's logic, no GPU),
                      reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment)
 tests/               node tests/*.js -- run from THIS directory, not from the repo root
 ```
