@@ -188,6 +188,22 @@ guard, and any `setup_ab_control*.json` with `claim_complete: true` — that is 
 control and re-running it is the single most expensive redundant act available to you. Say in `notes`
 which files you reused and which measurements are fresh.
 
+**`setup_ab_*.json` has a required shape, because it outlives the run.** These files are the corpus
+`SKILL_DIR/scripts/replay_runs.js` re-decides finished runs from, on no GPU — which is how a change to
+the gate arithmetic is validated without spending another lease. Every record needs, at minimum:
+
+```json
+{"records": [{"arm": "<name>", "guard": "<guard id>", "env": {"SWITCH": 0},
+              "tree": "<workspace path>", "rc": 0, "e2e_max_ms": 0.0, "e2e_mean_ms": 0.0}],
+ "measured_pct": 0.0, "control_pairs_pct": [0.0], "null_pairs_pct": [0.0], "null_arm_pct": 0.0}
+```
+
+`arm`, `guard` (or `tokens`+`route`), a **rank-max** field and `rc` are load-bearing; `env` and `tree`
+are how the two arms of a pair are identified as a pair, and the arm whose env is all-zero is read as
+the base. Records must be written in the order they ran, because the k-th occurrence of each arm is
+pair k. Nothing checks this at write time — but an artifact the replay cannot parse is an artifact
+that silently contributes nothing to the one instrument that catches a bad gate change.
+
 ### 5b. Run the POSITIVE CONTROL — only when `POSITIVE_CONTROL` is in your inputs
 The 3-run reliability check above tells you the baseline is *stable*. It does not tell you the
 harness can *see* anything. Those are different properties and only one of them is currently
@@ -266,6 +282,32 @@ do not widen the band** — report the number, the pair-by-pair spread, and the 
 law of nature; a real reproduction 0.2pp over the ceiling with 5/5 favourable pairs is a working
 instrument, and it once cost a whole run because the gate was symmetric.
 
+**The same applies underneath, but only for a control you BUILT.** A band around a *recorded* effect
+is a fact, and reading half of it is your instrument's fault. A band around a *synthetic* effect is a
+number you got by aiming a knob at a target and extrapolating — nobody has ever measured it, and the
+run that measures it first is this one. So when your control is one of the three constructions above,
+say so: set `"magnitude": "constructed"` in the `positive_control` object you report. The orchestrator
+then tolerates an under-read down to **half** the target as PASS (UNDERSHOOT), *provided* the effect
+is at least **3x the worst null pair** and **every** control pair agrees in sign. Below half the
+target it still aborts, because that is the signature of an injection that never took effect — arms
+sharing a JIT cache entry, an env var nothing reads, gated code that is not on the hot path.
+
+This is not a loophole and must not be used as one. `magnitude` is a factual claim about where the
+band came from; labelling a recorded effect "constructed" to clear the gate destroys the only
+evidence the run has that any of its numbers mean anything. If you are unsure, leave it unset — the
+default is strict.
+
+It cost a run to learn. On 2026-08-22 an engineer built the injected-spin control, calibrated it on a
+dose ladder (spin 50/200/800 -> +6.8 / +36 / +175%, monotone), extrapolated to spin=25 for ~3.4%, and
+measured **-2.30%**: 6/6 pairs negative, range -1.58..-3.07, null arm -0.04% with a worst pair of
+0.35pp. They then reported the 0.2pp shortfall in plain text rather than retrying or widening it —
+the right call, every time — and the gate aborted the run over a sublinearity in `s_sleep` at small
+spin counts. The instrument was the one part of that experiment that demonstrably worked.
+
+**Report the individual pairs, not only their medians.** The gate reads `control_pairs_pct` and
+`null_pairs_pct` as arrays: sign agreement across pairs, and the *worst* null pair rather than the
+null median, are what separate a small real effect from a small piece of drift. A median hides both.
+
 Then compare against `expected_pct_lo..expected_pct_hi` and report `passed`. Do not adjust the
 expected band to fit what you measured, and do not quietly retry until it passes — if it fails,
 report the failure with everything you observed in `note`. **The orchestrator aborts the run on a
@@ -335,7 +377,10 @@ when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·
   "num_test_cases": 0,
   "reliable": true,
   "positive_control": {"ran": true, "measured_pct": 0.0, "expected_lo": 0.0, "expected_hi": 0.0,
-                       "passed": true, "reps": 5, "null_arm_pct": 0.0, "note": "<what you saw>"},
+                       "passed": true, "reps": 5, "null_arm_pct": 0.0,
+                       "magnitude": "recorded | constructed",
+                       "control_pairs_pct": [0.0], "null_pairs_pct": [0.0],
+                       "note": "<what you saw>"},
   "notes": "anything downstream agents must know (incl. any naive-baseline / regime_prior caveats)"
 }
 ```

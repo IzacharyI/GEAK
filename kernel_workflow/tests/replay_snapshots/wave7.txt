@@ -1,0 +1,73 @@
+replay corpus: team_ws_megamoe_ep8_20260822_190227_851847_3883
+  -- ws_megamoe_ep8/setup_ab_base.json — 24 run(s) of one arm (base) over 4 guard(s) — a baseline, not an A/B; no pair to re-decide.
+  -- ws_megamoe_ep8/setup_ab_base50.json — 24 run(s) of one arm (base) over 4 guard(s) — a baseline, not an A/B; no pair to re-decide.
+
+A/B artifacts
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json
+    arms=[base_i50, ctrl_spin0, ctrl_spin1, ctrl_spin4, ctrl_spin2] guards=[8192_uniform, 512_uniform] runs=13 void=0
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json
+    arms=[ctrl_spin0, ctrl_spin50, ctrl_spin200, ctrl_spin800] guards=[8192_uniform] runs=5 void=0
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_control.json
+    arms=[ctrl_off, ctrl_on] guards=[8192_uniform] runs=12 void=0
+
+gate verdicts (today's arithmetic, recorded data)
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=0.23% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_INSENSITIVE  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=0.23% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=0.23% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=0.28% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_INSENSITIVE  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=0.28% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=0.28% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=0.38% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_INSENSITIVE  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=0.38% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [8192_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=0.38% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin1 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin4 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib.json [512_uniform] ctrl_spin2 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=null% (0 pairs, spread nullpp) null=null% (0, absent) -> NOT_RUN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin50 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=-6.65% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_WRONG_SIGN  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin50 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=-6.65% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_OVERSHOOT_LOUD_NULL  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin50 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=-6.65% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_OVERSHOOT_LOUD_NULL  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin200 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=-36.34% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin200 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=-36.34% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin200 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=-36.34% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin800 vs ctrl_spin0 (same-workspace)
+    band=speedup_3.55..4.93 measured=-174.37% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin800 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=-174.37% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_calib2.json [8192_uniform] ctrl_spin800 vs ctrl_spin0 (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=-174.37% (1 pairs, spread 0pp) null=null% (0, absent) -> FAIL_ABSURD  dropped: rep1:missing-arm
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_control.json [8192_uniform] ctrl_on vs ctrl_off (same-workspace)
+    band=speedup_3.55..4.93 measured=-2.3% (6 pairs, spread 1.49pp) null=-0.04% (5, recorded) -> FAIL_WRONG_SIGN
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_control.json [8192_uniform] ctrl_on vs ctrl_off (same-workspace)
+    band=slowdown_-5.0..-2.5 measured=-2.3% (6 pairs, spread 1.49pp) null=-0.04% (5, recorded) -> FAIL_INSENSITIVE
+  team_ws_megamoe_ep8_20260822_190227_851847_3883/ws_megamoe_ep8/setup_ab_control.json [8192_uniform] ctrl_on vs ctrl_off (same-workspace)
+    band=slowdown_-5.0..-2.5_constructed measured=-2.3% (6 pairs, spread 1.49pp) null=-0.04% (5, recorded) -> PASS_UNDERSHOOT

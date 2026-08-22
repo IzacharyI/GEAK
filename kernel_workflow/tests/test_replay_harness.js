@@ -148,6 +148,108 @@ try {
      'without the markers the harness stops instead of replaying a stale copy of the arithmetic');
 } finally { fs.writeFileSync(WF, orig); }
 
+// ---------------------------------------------------------------- the schema engineers actually write
+// This harness was written against one artifact shape and silently read ZERO runs out of the other,
+// printing `runs=0 void=0` for a corpus holding a complete 6-pair control. A replay that reports
+// nothing to re-decide is indistinguishable from a replay that re-decided nothing, and the second is
+// what a clean --check gets read as. So: the alternative shape must be ingested, and an artifact this
+// script genuinely cannot use must be LOUD.
+console.log('\n# the wave-7 artifact shape is ingested, not silently skipped');
+const alt = path.join(tmp, 'runs2', 'team_y', 'kern');
+fs.mkdirSync(alt, { recursive: true });
+const altRecs = [];
+for (let i = 0; i < 6; i++) {
+  const b = 4.60 * (1 + 0.004 * Math.sin(i));
+  // No `arms` block, no `base`, no `rep`, no `max`: arms are inferred from the records, the base is
+  // the arm whose switch reads zero, and the k-th occurrence of each arm is pair k.
+  altRecs.push({ arm: 'ctrl_off', tokens: 8192, route: 'uniform', guard: '8192_uniform', tree: '/w/ctrl', env: { SPIN: 0 }, rc: 0, e2e_max_ms: b, idx: 2 * i });
+  altRecs.push({ arm: 'ctrl_on', tokens: 8192, route: 'uniform', guard: '8192_uniform', tree: '/w/ctrl', env: { SPIN: 25 }, rc: 0, e2e_max_ms: b * 1.023, idx: 2 * i + 1 });
+}
+fs.writeFileSync(path.join(alt, 'setup_ab_control.json'), JSON.stringify({
+  records: altRecs, measured_pct: -2.3, null_arm_pct: -0.04, null_pairs_pct: [0.2, -0.04, -0.35, 0.23, -0.11],
+}, null, 1));
+const RUNS2 = path.join(tmp, 'runs2');
+let r2 = run(['--runs', RUNS2]);
+ok(r2.code === 0, `the alternative shape replays (${r2.code})`);
+ok(/arms=\[ctrl_off, ctrl_on\]/.test(r2.out),
+   'arms are inferred from the records when the artifact declares no arms block');
+ok(/ctrl_on vs ctrl_off \(same-workspace\)/.test(r2.out),
+   'the base arm is the one whose switch reads ZERO — an env of {SPIN:0} is the switch off, not a second candidate');
+const m2 = r2.out.match(/measured=(-[\d.]+)%\s+\((\d+) pairs/);
+ok(!!m2 && Number(m2[2]) === 6,
+   `all six interleaved pairs are recovered without a rep field (${m2 ? m2[2] : 'none'})`);
+ok(!!m2 && Math.abs(Number(m2[1]) + 2.25) < 0.15,
+   `the injected slowdown is recovered from e2e_max_ms (${m2 ? m2[1] : '?'}%)`);
+ok(/null=-0\.04% \(5, recorded\)/.test(r2.out),
+   'a null arm reported as a summary rather than as records is used AND labelled recorded, not dropped to NaN');
+
+console.log('\n# an artifact that cannot be replayed is loud, and an empty corpus is not a pass');
+const junk = path.join(tmp, 'runs3', 'team_z', 'kern');
+fs.mkdirSync(junk, { recursive: true });
+fs.writeFileSync(path.join(junk, 'setup_ab_weird.json'), JSON.stringify({ measurements: [{ who: 'a', ms: 1 }] }));
+const r3 = run(['--runs', path.join(tmp, 'runs3')]);
+ok(/!! unusable/.test(r3.out) && /not replayable/.test(r3.out),
+   'an artifact with no arm, guard or timing is reported as unusable rather than counted as zero runs');
+ok(/Expected per record/.test(r3.out), 'and it says what shape it wanted, so the artifact can be fixed');
+const snap3 = path.join(tmp, 'snap3.txt');
+ok(run(['--runs', path.join(tmp, 'runs3'), '--snapshot', snap3]).code === 1,
+   'a corpus that yields no gate verdict FAILS a snapshot instead of recording a snapshot of nothing');
+// A single-arm baseline is a legitimate artifact, not a broken one. Flagging it every run is how a
+// reader learns to skim past the `!!` lines, which is how the real one gets missed.
+const solo = path.join(tmp, 'runs4', 'team_w', 'kern');
+fs.mkdirSync(solo, { recursive: true });
+fs.writeFileSync(path.join(solo, 'setup_ab_base.json'), JSON.stringify({
+  records: [{ arm: 'base', guard: 'g1', rc: 0, e2e_max_ms: 4.6 }, { arm: 'base', guard: 'g1', rc: 0, e2e_max_ms: 4.61 }],
+}));
+const r4 = run(['--runs', path.join(tmp, 'runs4')]);
+ok(/-- .*setup_ab_base\.json .* a baseline, not an A\/B/.test(r4.out) && !/!! unusable.*setup_ab_base/.test(r4.out),
+   'a one-arm baseline is reported as a baseline, not as an error');
+
+// ---------------------------------------------------------------- constructed vs recorded controls
+// The branch this section exists for aborted wave 7. A synthetic slowdown aimed at ~3.4% measured
+// 2.30%, 6/6 pairs negative, against a null arm whose worst pair was 0.35pp — and a band written as
+// -5..-2.5 killed the run over 0.2pp of KNOB-SIZING error. Whether that is a harness failure or a
+// sizing miss depends entirely on whether the band was a measurement or a target, so the gate must
+// decide it differently in the two cases, and that difference has to be tested on records rather
+// than asserted in prose.
+console.log('\n# a constructed control may undershoot its target; a recorded one may not');
+function gateOn(pcExtra, bandExtra) {
+  // Drive the LIVE gate through the replay's own lift, so this test cannot drift from the workflow.
+  const src = fs.readFileSync(WF, 'utf8');
+  const mm = src.match(/\/\/ <<REPLAY:pc_gate>>[\s\S]*?\n([\s\S]*?)\n\s*\/\/ <<\/REPLAY:pc_gate>>/);
+  const fn = new Function('pc', 'POSITIVE_CONTROL', `
+    const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
+    const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
+    const got = Number(pc.measured_pct);
+${mm[1]}
+    return { ok, tooSmall, undershoot, resolved, signUnanimous };
+  `);
+  return fn(
+    { ran: true, measured_pct: -2.30, null_arm_pct: -0.04,
+      null_pairs_pct: [0.2, -0.04, -0.35, 0.23, -0.11],
+      control_pairs_pct: [-2.42, -3.07, -2.37, -1.58, -2.23, -2.07], ...pcExtra },
+    { expected_pct_lo: -5.0, expected_pct_hi: -2.5, implausible_pct: 15.0, ...bandExtra });
+}
+ok(gateOn({}, { magnitude: 'constructed' }).ok === true,
+   'wave 7\'s control PASSES when its band is declared a target: -2.30% is ~7x the worst null pair and 6/6 pairs agree');
+ok(gateOn({}, { magnitude: 'constructed' }).undershoot === true,
+   'and it passes as an UNDERSHOOT, so the caveat travels into the report rather than vanishing');
+ok(gateOn({}, {}).ok === false,
+   'the same numbers FAIL under the default: a recorded effect that reads short IS the instrument\'s fault');
+ok(gateOn({}, { magnitude: 'recorded' }).ok === false, 'and `recorded` is the explicit form of that default');
+ok(gateOn({ measured_pct: -0.9, control_pairs_pct: [-0.9, -1.0, -0.8, -0.9, -0.9, -1.0] },
+          { magnitude: 'constructed' }).ok === false,
+   'an injection reading under HALF its target still aborts — that is a switch that never took effect, not a sizing miss');
+ok(gateOn({ control_pairs_pct: [-2.42, 3.07, -2.37, 1.58, -2.23, -2.07] }, { magnitude: 'constructed' }).ok === false,
+   'pairs that disagree in sign abort: a median out of a disagreement is drift, not an effect');
+ok(gateOn({ null_pairs_pct: [1.9, -1.7, 1.8, -1.6, 1.5] }, { magnitude: 'constructed' }).ok === false,
+   'a LOUD null aborts even at the same measured value — the effect must beat the interleave, not the median');
+ok(gateOn({ null_arm_pct: -0.04, null_pairs_pct: undefined }, { magnitude: 'constructed' }).ok === true,
+   'with no per-pair nulls recorded the median is used as a fallback rather than failing the control outright');
+ok(gateOn({ measured_pct: 2.30, control_pairs_pct: [2.4, 3.1, 2.4, 1.6, 2.2, 2.1] },
+          { magnitude: 'constructed' }).ok === false,
+   'the undershoot latitude does NOT extend to the wrong sign: a slowdown that reads as a speedup is a wiring error');
+
 console.log(
   failures === 0
     ? '\nPASS: finished runs can be re-decided, and a gate change is caught without a GPU.'

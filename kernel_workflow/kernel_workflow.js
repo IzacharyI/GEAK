@@ -43,12 +43,20 @@ const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
 // DETECTION floor, and nothing else in the workflow does. Without it a 1.000x report is
 // unfalsifiable: "we found nothing" and "we cannot see anything" produce byte-identical output.
 // This is not hypothetical — a run reported 1.000x on a tree where a +4.71% win was on the table.
-//   {name, how, expected_pct_lo, expected_pct_hi, guard?, abort_on_fail?}
+//   {name, how, expected_pct_lo, expected_pct_hi, magnitude?, guard?, abort_on_fail?}
 // `how` is prose the benchmark engineer executes (usually "flip env X, everything else identical").
 // expected_pct_* bound the ALREADY-KNOWN delta; measuring outside that band means the harness is
 // lying, so by default the run ABORTS rather than spending directions on an instrument that cannot
 // read them. Set abort_on_fail:false to downgrade to a warning (use only when deliberately
 // re-calibrating the expected band itself).
+//
+// `magnitude` says what the band IS: 'recorded' (default) means someone has measured this effect and
+// the numbers are a fact, so reading under `lo` is the instrument's fault and aborts. 'constructed'
+// means the control is a synthetic injection (benchmark_engineer.md 5b) and the band is a TARGET a
+// knob was aimed at, never itself measured — there an under-read within a factor of two is a sizing
+// miss, tolerated as PASS (UNDERSHOOT) if the effect still clears the null spread and every pair
+// agrees in sign. Declare it truthfully: relabelling a recorded effect to clear the gate destroys the
+// only evidence the run has that its own numbers mean anything.
 const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
   ? A.positive_control : null;
 const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
@@ -429,6 +437,9 @@ const BENCH_SCHEMA = obj({
   // actually recovered for a change whose effect is already known; `passed` is whether it landed in
   // the expected band. This is the run's evidence that its own measurement loop can SEE a real win.
   //   {ran, measured_pct, expected_lo, expected_hi, passed, reps, null_arm_pct, note}
+  // `control_pairs_pct` and `null_pairs_pct` — the individual paired deltas, not just their medians —
+  // are read by the gate: sign agreement across pairs and the WORST null pair are what separate a
+  // small real effect from a small piece of drift, and a median hides both.
   positive_control: { type: 'object', additionalProperties: true },
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
@@ -1023,6 +1034,7 @@ log(`Benchmark done. ${benchR.num_test_cases || BASELINE_PER_CASE.length} cases,
 // Positive-control gate. Runs BEFORE any direction budget is spent, because the thing it can prove
 // false — "this harness can detect a real win" — invalidates every measurement taken after it.
 let PC_OVERSHOOT = '';   // set when the control passed but read HIGH; travels into the report
+let PC_UNDERSHOOT = '';  // set when a CONSTRUCTED control passed but read LOW; ditto
 if (POSITIVE_CONTROL) {
   const pc = benchR.positive_control || {};
   const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
@@ -1068,9 +1080,53 @@ if (POSITIVE_CONTROL) {
   // high, the interleave is drifting and the overshoot is the drift, not the effect.
   const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= mLo / 2;
   const ran = pc.ran !== false && Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
+
+  // A CONTROL'S EXPECTED MAGNITUDE IS EITHER A MEASUREMENT OR A GUESS, AND THE TWO CANNOT BE GATED
+  // THE SAME WAY.
+  //
+  // The overshoot rule above already concedes half of this: a band set from three same-week
+  // reproductions is "a reproduction interval, not a sanity bound". The same is true underneath, and
+  // it is MORE true, because the floor is where a band gets set by arithmetic on a workload nobody
+  // has ever run. `magnitude: 'constructed'` marks that case — a synthetic control (benchmark_
+  // engineer.md 5b), where `expected_pct_lo/hi` is a TARGET the engineer aimed a knob at, not an
+  // effect anyone has recorded. A recorded 4.7% win that reads 2.3% is an instrument problem. An
+  // injected cost aimed at 3.4% that lands at 2.3% is a KNOB-SIZING problem, and the instrument that
+  // measured it is the one piece of the experiment that demonstrably worked.
+  //
+  // This was learned on 2026-08-22, wave 7. An engineer with no known-good change available built the
+  // synthetic slowdown the task asks for, calibrated it on a dose ladder (spin 50/200/800 -> +6.8 /
+  // +36 / +175%, monotone), extrapolated linearly to spin=25 for ~3.4%, and measured -2.30%: 6 of 6
+  // pairs negative, range -1.58..-3.07, against a -0.04% null arm whose worst pair was 0.35%. Then
+  // they reported the 0.2pp shortfall in plain text instead of retrying or widening the band — the
+  // exact behaviour this workflow asks for everywhere else — and the gate killed the run for it.
+  // s_sleep is sublinear at small counts; the extrapolation was optimistic. Nothing about that says
+  // the loop cannot see 2.5%. It had just seen 2.30% at ~7x its own null spread.
+  //
+  // So a constructed control that UNDERSHOOTS its target is admissible, but only on evidence that
+  // the reading is an effect and not noise, which is the question the gate actually asks:
+  //   - it must still clear a floor, so an injection that never took effect (wrong binary, JIT cache
+  //     collision -- the failure knowledge/jit_arm_isolation.md exists for) still hard-aborts;
+  //   - it must be RESOLVED: at least RESOLVE_K times the worst null pair, not the null median. A
+  //     median hides the spread, and the spread is what an effect has to beat;
+  //   - every pair must agree in sign. A median can come out of pairs that disagree; a real injected
+  //     cost does not sometimes make the kernel faster.
+  // A recorded control gets none of this latitude: its magnitude is a fact, and reading half of a
+  // fact is the instrument's fault.
+  const constructed = String(POSITIVE_CONTROL.magnitude || 'recorded') === 'constructed';
+  const UNDERSHOOT_FRAC = 0.5;   // below half the target, assume the injection did not take
+  const RESOLVE_K = 3;           // effect must beat the worst null pair by this factor
+  const nullPairs = Array.isArray(pc.null_pairs_pct) ? pc.null_pairs_pct.map(Number).filter(Number.isFinite) : [];
+  const nullWorst = nullPairs.length ? Math.max(...nullPairs.map(Math.abs))
+    : (Number.isFinite(nullArm) ? Math.abs(nullArm) : NaN);
+  const ctrlPairs = Array.isArray(pc.control_pairs_pct) ? pc.control_pairs_pct.map(Number).filter(Number.isFinite) : [];
+  const signUnanimous = ctrlPairs.length >= 3 && ctrlPairs.every((d) => Math.sign(d) === wantSign);
+  const resolved = Number.isFinite(nullWorst) && mGot >= RESOLVE_K * nullWorst;
+  const undershoot = ran && constructed && Math.sign(got) === wantSign &&
+    mGot < mLo && mGot >= mLo * UNDERSHOOT_FRAC && resolved && signUnanimous;
+
   // Wrong sign is an insensitivity failure, not an overshoot: the loop did not see the change it was
   // handed, whatever else it saw.
-  const tooSmall = ran && (Math.sign(got) !== wantSign || mGot < mLo);
+  const tooSmall = ran && (Math.sign(got) !== wantSign || (mGot < mLo && !undershoot));
   const absurd = ran && Number.isFinite(ABSURD) && mGot > ABSURD;
   const overshoot = ran && mGot > mHi && !absurd;
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
@@ -1078,8 +1134,24 @@ if (POSITIVE_CONTROL) {
   log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
       `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
       `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '% in magnitude' : '?'}) ` +
-      `-> ${ok ? (overshoot ? 'PASS (OVERSHOOT)' : 'PASS') : 'FAIL'}` +
+      `-> ${ok ? (overshoot ? 'PASS (OVERSHOOT)' : undershoot ? 'PASS (UNDERSHOOT)' : 'PASS') : 'FAIL'}` +
       (Number.isFinite(nullArm) ? ` (null arm ${nullArm.toFixed(2)}%)` : ' (null arm UNREPORTED)'));
+  if (ok && undershoot) {
+    // Same treatment as an overshoot, opposite direction: the run may proceed, and every number it
+    // reports carries the caveat. A loop that under-reads a known cost by this much may under-read a
+    // real win by the same factor — which matters most at the margin, where a win just inside a
+    // guard's noise floor is the difference between a result and nothing.
+    PC_UNDERSHOOT = `the positive control read ${got.toFixed(2)}% for a CONSTRUCTED effect targeted at ` +
+      `${lo}..${hi}%, with a ${Number.isFinite(nullArm) ? nullArm.toFixed(2) : '?'}% null arm ` +
+      `(worst null pair ${Number.isFinite(nullWorst) ? nullWorst.toFixed(2) : '?'}pp) and ` +
+      `${ctrlPairs.length}/${ctrlPairs.length} pairs agreeing in sign. The effect is ` +
+      `${Number.isFinite(nullWorst) && nullWorst > 0 ? (mGot / nullWorst).toFixed(1) + 'x' : '>>'} the worst ` +
+      `null pair, so the loop resolves it; the shortfall against the target is a sizing miss in the ` +
+      `injected knob, which was never measured before this run. Treat every effect below as possibly ` +
+      `reading LOW by roughly ${(mLo - mGot).toFixed(2)}pp at this size — a marginal win may be real, ` +
+      `and a marginal loss may be worse than it looks.`;
+    log(`POSITIVE CONTROL UNDERSHOOT: ${PC_UNDERSHOOT}`);
+  }
   if (ok && overshoot) {
     // Not a failure, but it must not vanish either: it is a standing caveat on every number the run
     // goes on to report, and the report has to say so.
@@ -1109,6 +1181,32 @@ if (POSITIVE_CONTROL) {
             `The measurement loop cannot resolve an effect of the size this run is looking for, so ` +
             `every number it reports — including 1.000x — is uninterpretable. Fix the harness, not ` +
             `the kernel. `) +
+      // WHICH THING TO FIX. An under-reading control has two possible causes and they call for
+      // opposite work, so the abort must not leave the reader to guess. Say which of the undershoot
+      // conditions was missed, in the reader's own numbers.
+      (tooSmall && Math.sign(got) === wantSign && mGot < mLo
+        ? `This is an UNDER-read, so before touching the harness, establish which of the two it is. ` +
+          (!constructed
+            ? `This control is declared \`magnitude: 'recorded'\`, meaning ${lo}..${hi}% is an effect ` +
+              `someone has actually measured — so reading ${mGot.toFixed(2)}% IS the instrument's fault. ` +
+              `If instead that band was a target you aimed a synthetic knob at and never measured, the ` +
+              `control is \`magnitude: 'constructed'\` and should be declared as such; do NOT relabel a ` +
+              `recorded effect to get past this gate, that falsifies the experiment. `
+            : mGot < mLo * UNDERSHOOT_FRAC
+              ? `It read under half the target (${(mLo * UNDERSHOOT_FRAC).toFixed(2)}%), which is the ` +
+                `signature of an injection that never took effect — arms sharing a JIT cache entry ` +
+                `(knowledge/jit_arm_isolation.md), the env var unread, the gated code not on the hot ` +
+                `path. Verify the two arms have distinct disk_keys before blaming the loop. `
+              : !signUnanimous
+                ? `Its ${ctrlPairs.length} pair(s) do not all agree in sign, so the median is coming out ` +
+                  `of a disagreement rather than an effect — that IS a resolution failure. `
+                : !resolved
+                  ? `It is only ${Number.isFinite(nullWorst) && nullWorst > 0 ? (mGot / nullWorst).toFixed(1) + 'x' : '?'} ` +
+                    `the worst null pair (${Number.isFinite(nullWorst) ? nullWorst.toFixed(2) : '?'}pp), under the ` +
+                    `${RESOLVE_K}x an effect must clear to be told apart from the interleave. Quiet the ` +
+                    `interleave or raise the injected cost. `
+                  : ``)
+        : ``) +
       `Note from benchmark engineer: ${pc.note || '(none)'}`;
     if (PC_ABORT) throw new Error(why);
     log(`WARNING: ${why}`);
@@ -1651,6 +1749,7 @@ const report = await agentT(
     // A control that passed but read HIGH is a standing caveat on every number below it. It is
     // supplied here so the Measurement-confidence section states it instead of quietly dropping it.
     ...(PC_OVERSHOOT ? { POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT } : {}),
+    ...(PC_UNDERSHOOT ? { POSITIVE_CONTROL_UNDERSHOOT: PC_UNDERSHOOT } : {}),
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 
