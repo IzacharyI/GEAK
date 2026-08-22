@@ -351,6 +351,27 @@ Rules:
    have two agents running the same arms into two directories and blocking each other on the same
    lock. Check for live prior-round work before re-dispatching, and if it exists, either wait for it
    or plan around it. Do not kill an agent that has a live parent; that is not the orphan case.
+3e. **LEASE ECONOMICS — when the whole device pool is ONE lease, a round's GPU capacity is one
+   direction, and its unit is the lease, not the round.** This applies whenever the operator is
+   multi-rank and the harness locks every card together (`GPUS_PER_JOB` = the whole pool).
+   - **One GPU direction per round.** Two serialize on the same lock, and the second is killed
+     mid-table when the round ends. This has destroyed a complete four-guard table twice. Extra
+     parallelism in such a round must be *lease-free* work (rule 3c), not a second GPU arm.
+   - **Know the lease cap and plan inside it.** The lock has a hard timeout (`GEAK_GPU_RUN_TIMEOUT`,
+     900 s on this harness ≈ 25 runs at ~33 s each). Instruct the direction to break its plan into
+     sub-cap chunks, append every arm's result into ONE JSON as it goes, and re-emit its claim after
+     every chunk. A plan that only produces a number at the end produces nothing when the lease
+     expires — and it will expire.
+   - **Coverage before depth.** All guards at low reps BEFORE deepening any one. Four guards at 5
+     pairs is a reportable geomean; two at 12 pairs and two unmeasured is not a result, it is a
+     fragment that cannot be compared against the baseline table.
+   - **One instrumented run should answer several questions.** When iteration is lease-bound —
+     especially for a kernel that cannot be compile-screened at all, see `distributed_fusion.md`
+     Lever 10 — prefer one run that records a correlated table over three runs that each settle one
+     hypothesis. Design the instrument to record-and-continue, never halt-on-first-failure.
+   - **Engineers cannot message each other** in this harness. Cross-direction handoff goes through
+     `STATE_DIR`; if direction B needs direction A's artifact, say so in B's prompt and name the path,
+     or B will sit waiting for a message that never arrives.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.

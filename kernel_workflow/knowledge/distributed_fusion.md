@@ -346,8 +346,40 @@ question is under ~1% of e2e, the target is bookkeeping, not performance.
   "ISA unchanged, therefore no effect" is a claim the instrument cannot support. If a scheduling
   hypothesis survives compile, it needs wall clock.
 
+## Lever 10 — Some fused kernels cannot be compile-screened AT ALL. Find out on day one.
+
+The normal cheap loop is "compile it, screen the ISA, only then spend a run". A persistent
+multi-rank kernel often **cannot enter that loop**, because its body calls the communication runtime
+(`shmem`-style symmetric-heap accessors, peer pointer resolution) **at trace/codegen time**, not just
+at run time. Forcing codegen without an initialized heap aborts inside the runtime's own status check.
+There is no partial screen: you get an abort, not a kernel.
+
+Such a kernel is **lease-only**. Every hypothesis about it — including ones that are obviously true —
+costs a full multi-rank run. That single fact dominates the schedule: it is the difference between
+"try five things this afternoon" and "try five things this week", and a plan written as though static
+screening were available will silently blow its budget.
+
+Act on it explicitly:
+
+- **Test it once, at the start**, and record the verdict where the next round can see it. Attempting
+  a static screen every round is a recurring tax on a question already answered.
+- **Say so in the direction's plan.** A lease-only kernel changes what a round should contain: one
+  instrumented run that answers several questions at once beats three runs that each answer one.
+- **Build the instrument to record-and-continue**, never halt-on-first-failure. If the kernel is
+  lease-only, the lease is the scarce resource, and a bisection that stops at the first fault has
+  spent the whole lease to learn one bit.
+- **Compile screens are still valuable for every other kernel**, and they remain a way to *reject*,
+  never a substitute for a run: two directions on this workflow were compile-clean on every
+  {shape}×{phase} combination and dead on hardware.
+
+The inverse is also worth knowing: if the fused kernel *does* compile standalone, you have a cheap
+screen the scattered version never needed, and register/LDS regressions from fusion show up there for
+free.
+
 ## Priority
 
+0. **Establish whether the kernel is compile-screenable** (Lever 10). It sets the cost of every
+   iteration that follows, so it is the first thing to know and the cheapest to find out.
 1. **Run the no-payload control** and the DAG. No exposed wait ⇒ no fusion win available; stop.
 2. **Enumerate the missing readiness edges** (Lever 1). This is static and cheap.
 3. **Attack the largest exposed wait first** with per-item readiness (Lever 2) — usually the cross-rank

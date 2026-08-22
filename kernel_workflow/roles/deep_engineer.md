@@ -45,6 +45,8 @@ Read ALL of these before and during your work, and re-consult as the bottleneck 
   layout, graph capture). Re-read every time you re-profile.
 - `SKILL_DIR/knowledge/hip_optimization.md` / `triton_optimization.md` — per the kernel's language.
 - `SKILL_DIR/knowledge/wrapper_optimization.md` — host/runtime patterns (you own these too).
+- `SKILL_DIR/knowledge/jit_arm_isolation.md` — REQUIRED before authoring any env/config-gated arm on a
+  caching JIT: how to make the two arms actually compile to two binaries, and how to prove they did.
 - `SKILL_DIR/knowledge/distributed_fusion.md` — ONLY when the op issues several serialized launches
   per rank and exchanges data with peers: the persistent-megakernel playbook (missing readiness
   edges, per-item vs whole-phase joins, coherence scope, residency/acyclicity invariants, and the

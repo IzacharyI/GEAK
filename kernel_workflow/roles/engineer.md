@@ -36,6 +36,15 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 
 Always also read `SKILL_DIR/knowledge/self_monitoring.md` and follow its guard signals.
 
+**If your candidate is gated by an env var, a config flag or a module-level constant AND the kernel
+comes from a caching JIT (FlyDSL, Triton, `torch.compile`), read
+`SKILL_DIR/knowledge/jit_arm_isolation.md` BEFORE you author the switch.** Two arms can print two
+different markers and dispatch one identical cached binary, because the switch never entered the
+compile-cache key — the A/B then reads ~1.000 with every gate satisfied, which is a void experiment
+wearing the costume of a null result. The card tells you what enters the key, why separate checkouts
+do not isolate the arms, and the one-line anchor that fixes it. Anchoring at authoring time costs one
+hash; discovering it at verification costs the round.
+
 ## Operator/language SOTA knowledge (REFERENCE ONLY — optional, only if `KK_OPERATOR` is set)
 When `KERNEL_KNOWLEDGE_DIR` is non-empty AND `KK_OPERATOR` is not null/empty, the kernel maps to an
 operator card in the AMD `perf_knowledge/` base. Use it to mine concrete SOTA techniques for THIS
