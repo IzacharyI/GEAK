@@ -236,6 +236,63 @@ ok(/machine-global/.test(verify),
 ok(/2026-08-22 a retroactive audit/.test(verify) && /had to be reopened/.test(verify),
    'the incident keeps its consequence: a closed axis was reopened');
 
+// The rule above was prose in a role file for one wave. Prose is advisory — the pool-availability
+// rule sat in exactly this state and a whole wave walked past it. The script now compares the hashes
+// itself, so a verifier that buries them in `notes` cannot close an axis on one binary.
+console.log('\n# the script compares the artifacts itself, so the rule is not merely advisory');
+ok(/artifact_distinct: \{ type: 'string' \}/.test(wf),
+   'VERIFY_SCHEMA carries a dedicated artifact_distinct field');
+ok(/artifact_hash_base: \{ type: 'string' \}/.test(wf) &&
+   /artifact_hash_candidate: \{ type: 'string' \}/.test(wf),
+   'the two hashes are structured fields the script can compare, not prose in notes');
+ok(/ARTIFACT DISTINCTNESS/.test(wf) && /SAME BINARY/.test(wf),
+   'an unproven comparison and a proven-identical one get distinct log lines');
+// The gate must run after activation, so a patch that never executed is reported as inactive rather
+// than mislabelled as a same-binary void — the two have different remedies.
+const iAct = wf.indexOf('--- ACTIVATION: did the candidate');
+const iArt = wf.indexOf('--- ARTIFACT DISTINCTNESS');
+const iVerifiedFilter = wf.indexOf("const verified = clean.filter(");
+ok(iAct > 0 && iArt > iAct && iVerifiedFilter > iArt,
+   'the artifact gate runs after activation and before the winner filter');
+ok(/is VOID, not a null/.test(wf),
+   'an identical-artifact result is voided rather than filed as a negative finding');
+ok(/`n\/a` \(not a JIT candidate\) and `unknown`/.test(wf),
+   'n/a and unknown stay non-fatal, so the verifier is not pushed into a false "yes"');
+ok(/Report this in the three dedicated fields, not only in prose/.test(verify),
+   'the verifier is told the script reads the fields, not the notes');
+
+// Exercise the actual comparison rather than trusting the text around it. Lifted from source so a
+// flipped condition fails here instead of in a wave.
+console.log('\n# artifact comparison arithmetic (extracted from source)');
+const artSrc = wf.match(
+  /(const ad = String\(r\.ver\.artifact_distinct[\s\S]*?const sameHash = [^\n]*\n)\s*if \(ad !== 'no' && !sameHash\) \{/,
+);
+ok(!!artSrc, 'the artifact decision expression can be located in kernel_workflow.js');
+if (artSrc) {
+  const decideArt = new Function('ver', `
+    const r = { ver };
+    ${artSrc[1]}
+    return { fatal: !(ad !== 'no' && !sameHash), sameHash };
+  `);
+  const cases = [
+    [{ artifact_distinct: 'yes', artifact_hash_base: 'aaa', artifact_hash_candidate: 'bbb' }, false,
+     'differing hashes with a yes verdict survive'],
+    [{ artifact_distinct: 'yes', artifact_hash_base: 'aaa', artifact_hash_candidate: 'aaa' }, true,
+     'IDENTICAL hashes void the result even when the verifier claimed yes — the hashes outrank the verdict'],
+    [{ artifact_distinct: 'no', artifact_hash_base: 'aaa', artifact_hash_candidate: 'bbb' }, true,
+     'an explicit no voids it even without matching hashes'],
+    [{ artifact_distinct: 'n/a' }, false, 'a non-JIT candidate is not penalised'],
+    [{ artifact_distinct: 'unknown' }, false, 'an unrunnable proof warns but does not void'],
+    [{}, false, 'a silent verifier does not void the result — activation already covers silence'],
+    [{ artifact_distinct: 'NO' }, true, 'the verdict comparison is case-insensitive'],
+    [{ artifact_hash_base: '  aaa ', artifact_hash_candidate: 'aaa' }, true,
+     'hashes are trimmed before comparison, so whitespace cannot fake a difference'],
+    [{ artifact_hash_base: '', artifact_hash_candidate: '' }, false,
+     'two EMPTY hashes are not "identical artifacts" — that is a verifier that reported nothing'],
+  ];
+  for (const [ver, wantFatal, msg] of cases) ok(decideArt(ver).fatal === wantFatal, msg);
+}
+
 console.log(
   failures === 0
     ? '\nPASS: detection floor, prior art, and result provenance are all gated and reach the report.'

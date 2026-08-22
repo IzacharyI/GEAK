@@ -517,6 +517,16 @@ const VERIFY_SCHEMA = obj({
   // unproven activation is exactly the state that produced a 1.000x on an unexercised patch.
   activation_confirmed: { type: 'string' },  // yes|no|unknown
   activation_evidence: { type: 'string' },   // the command + the marker output that proves it
+  // A marker proves the HOST path ran. It does not prove the arms compiled to different code. Under
+  // a JIT with a disk cache, two arms can print two different markers and execute one identical
+  // cached binary, because the switch never entered the cache key. So for a JIT-compiled candidate
+  // the verifier reports the arms' cache keys / IR-ISA hashes / binary paths, and the script checks
+  // that they DIFFER. `artifact_distinct` is three-valued: `n/a` is the honest answer for a
+  // non-JIT candidate and must stay available, or the verifier is forced to claim a proof it
+  // could not run.
+  artifact_distinct: { type: 'string' },     // yes|no|n/a|unknown
+  artifact_hash_base: { type: 'string' },
+  artifact_hash_candidate: { type: 'string' },
 }, ['status', 'verified_geomean']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -1273,6 +1283,46 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         `during the measured run, so its ${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'result'} ` +
         `is VOID — not a negative result. Do NOT record this direction as tried-and-failed; it has ` +
         `not been tried. Evidence: ${r.ver.activation_evidence || '(none supplied)'}`);
+  }
+
+  // --- ARTIFACT DISTINCTNESS: were the two arms the same binary? ---------
+  // The activation loop above catches an arm that never ran. This catches the arm that ran and was
+  // byte-identical to the one it was measured against — a strictly harder failure, because every
+  // gate in this workflow passes it: the patch is real, the marker fires, the null arm behaves, and
+  // the number is a clean 1.000. On 2026-08-22 a retroactive audit found a FlyDSL switch that never
+  // entered the compiler's disk-cache key (only the OUTER co_names are walked, and the cache root is
+  // machine-global, so building the arms in separate checkouts did not isolate them either). The
+  // all-ON arm, the all-OFF arm and the canonical unpatched tree all resolved to one disk_key. A
+  // "well-powered null" from that comparison had already closed an entire optimization axis, and the
+  // axis had to be reopened a wave later. Identical artifacts are a VOID experiment, never a null.
+  //
+  // Only equality is fatal. `n/a` (not a JIT candidate) and `unknown` (the proof could not be run)
+  // are reported and left alone: unlike activation, where silence is the cheap answer that hides the
+  // failure, here the fatal state is directly observable and demanding a proof the verifier has no
+  // way to produce would just push it to guess `yes`.
+  for (const r of clean) {
+    if (!r.ver || r.ver.status === 'apply_failed' || r.inactive) continue;
+    const ad = String(r.ver.artifact_distinct || '').toLowerCase();
+    const hb = String(r.ver.artifact_hash_base || '').trim();
+    const hc = String(r.ver.artifact_hash_candidate || '').trim();
+    const sameHash = hb && hc && hb === hc;
+    if (ad !== 'no' && !sameHash) {
+      if (ad === 'unknown' || (!ad && (hb || hc))) {
+        log(`ARTIFACT DISTINCTNESS UNPROVEN ${r.d.id}: base=${hb || '(none)'} candidate=${hc || '(none)'}. ` +
+            `The result stands, but a JIT candidate whose arms were never shown to differ cannot ` +
+            `close an axis — do not record a 1.000 here as a null result.`);
+      }
+      continue;
+    }
+    r.inactive = 'no';
+    r.same_artifact = true;
+    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    log(`SAME BINARY ${r.d.id}: base and candidate resolved to the SAME compiled artifact` +
+        `${sameHash ? ` (${hb})` : ''}, so its ` +
+        `${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'result'} measures ` +
+        `nothing about the idea — it is VOID, not a null. The switch did not enter the compiler's ` +
+        `cache key. Re-run with the switch anchored in the OUTER traced scope before this direction ` +
+        `is called tried.`);
   }
 
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&

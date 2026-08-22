@@ -114,6 +114,13 @@ absolute per-case latencies. The script trusts only your numbers.
      Same hash across arms ⇒ `status:"inactive"`, `activation_confirmed:"no"` — a void experiment,
      never a null result. A switch that only renames the kernel symbol does not enter the key and
      does not count.
+     **Report this in the three dedicated fields, not only in prose:** `artifact_distinct`
+     (`yes|no|n/a|unknown`) plus `artifact_hash_base` and `artifact_hash_candidate`. The script
+     compares those two strings itself and voids the direction when they match, so a hash buried in
+     `notes` does not bind. `n/a` is the correct, expected answer for a candidate that is not
+     JIT-compiled and `unknown` is correct when you could not run the proof — neither is penalised.
+     Do not answer `yes` to avoid a warning; equality is the only thing that voids a result, and a
+     false `yes` is how a one-binary A/B closed an axis it had never measured.
    - **Not confirmed → `status:"inactive"`, `activation_confirmed:"no"|"unknown"`, and report the
      measured numbers anyway** so the direction can be re-run cleanly. Do NOT report it as
      `regression` and do NOT report it as a 1.000x null: both file a void experiment as a finding.
@@ -157,6 +164,9 @@ absolute per-case latencies. The script trusts only your numbers.
   "null_arm_pct": 0.0,
   "activation_confirmed": "yes|no|unknown",
   "activation_evidence": "the command you ran and the marker output it printed",
+  "artifact_distinct": "yes|no|n/a|unknown  — n/a for a non-JIT candidate; unknown if you could not run the proof",
+  "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
+  "artifact_hash_candidate": "the same quantity for the candidate arm",
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```
