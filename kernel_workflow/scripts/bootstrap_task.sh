@@ -176,6 +176,35 @@ subst "$TASK_DIR/GEAK_TASK.md" > "$OUT/GEAK_TASK.md"
 subst "$TASK_DIR/launch_args.json" > "$PARENT/launch_args.json"
 mkdir -p "$EXP_ROOT" "$STATE_DIR"
 
+# INLINE THE TASK TEXT INTO THE LAUNCH ARGS, because nothing else carries it.
+#
+# GEAK_TASK.md lands in the workspace, and the workspace is tar-copied into EVAL_DIR/workspace and
+# EVAL_DIR/baseline. That felt like enough. It is not: `kernel_workflow.js` sources the task from
+# `args.task` and from nowhere else (`const TASK = A.task || ''`), and neither the script nor any
+# role file mentions GEAK_TASK.md by name -- both director.md and tech_lead.md document TASK as
+# "may be empty" and proceed. So a wave launched from a bootstrapped workspace, using the
+# launch_args.json this script emits, ran with TASK='' and never saw the four route guards, the
+# rank-max rule, the relL2 bar, the path-marker requirement, or the run commands. Whether an
+# engineer happened to `cat` a markdown file at the top of the tree was left to luck.
+#
+# Inlining is the fix rather than "tell the roles to read $WORKSPACE/GEAK_TASK.md" because the
+# workflow script cannot touch the filesystem, so a filename in args is a promise only an agent can
+# keep, while text in args is in the prompt by construction. It happens BEFORE the placeholder
+# check below so the emitted file's no-placeholder guarantee covers the task text too.
+python3 - "$PARENT/launch_args.json" "$OUT/GEAK_TASK.md" <<'PY' || die "failed to inline the task text into launch_args.json" 2
+import json, sys
+args_path, task_path = sys.argv[1], sys.argv[2]
+with open(args_path) as f: args = json.load(f)
+with open(task_path) as f: task = f.read()
+if not task.strip(): raise SystemExit("GEAK_TASK.md is empty")
+args["task"] = task
+args["_task_comment"] = (
+    "Inlined verbatim from the workspace's GEAK_TASK.md by scripts/bootstrap_task.sh. "
+    "kernel_workflow.js reads the task from args.task and nowhere else, and no role file names "
+    "GEAK_TASK.md, so a launch_args.json without this field runs the wave with an empty task.")
+with open(args_path, "w") as f: json.dump(args, f, indent=2); f.write("\n")
+PY
+
 # A placeholder that survived substitution is a silent misconfiguration: the run starts, the path
 # does not resolve, and the failure surfaces an hour later as an import error inside a lease.
 if grep -n '\${[A-Z_]*}' "$OUT/GEAK_TASK.md" "$PARENT/launch_args.json"; then

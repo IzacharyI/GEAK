@@ -110,6 +110,17 @@ ok(String(ja.capability_eval) === 'true',
 ok(fs.existsSync(ja.exp_root) && fs.existsSync(ja.state_dir),
    'exp_root and state_dir are created, so round 1 does not fail on a missing directory');
 
+// kernel_workflow.js does `const TASK = A.task || ''` and no role file names GEAK_TASK.md, so the
+// materialised task text reaches the wave through this field or not at all. Asserting the field is
+// non-empty is not enough -- an empty-ish string would pass that and still starve the run -- so
+// compare it against the file it is supposed to carry.
+ok(typeof ja.task === 'string' && ja.task.trim().length > 0,
+   'launch args carry a non-empty task; without it the wave runs with TASK=\'\'');
+ok(ja.task === got,
+   'the inlined task is the materialised GEAK_TASK.md verbatim, placeholders already resolved');
+ok(!/\$\{[A-Z_]+\}/.test(String(ja.task).replace(/unsubstituted `\$\{\.\.\.\}`/g, '')),
+   'the inlined task text is placeholder-free too, not just the paths around it');
+
 console.log('\n# the workspace is a real copy, not a view of the baseline');
 const copied = path.join(ws, 'aiter', 'ops', 'flydsl', 'marker.py');
 ok(fs.existsSync(copied) && !fs.lstatSync(copied).isSymbolicLink(),
