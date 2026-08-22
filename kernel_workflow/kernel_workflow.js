@@ -52,6 +52,11 @@ const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
 const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
   ? A.positive_control : null;
 const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
+// Per-card free-VRAM floor, in GiB, below which the pool counts as OCCUPIED and the round is planned
+// GPU-less. 0 (the default) disables the sample entirely, so nothing changes for runs that do not set
+// it. This is a FLOOR and not a window: on a shared box the correct threshold is well above what one
+// launch needs at t=0, because an arm that starts with just enough dies when the tenant regrows.
+const GPU_MIN_FREE_GIB = Number(A.gpu_min_free_gib || 0);
 // Minimum verified geomean improvement over the cumulative best for a round winner to be COMMITTED
 // into the canonical workspace (default 2%). Kept as a knob rather than a hard-coded constant so the
 // gate is tunable per run (e.g. raise it on a noisy box, lower it to bank small compounding wins).
@@ -350,6 +355,18 @@ const obj = (props, required) => ({ type: 'object', properties: props, required:
 const CONTAINMENT_GATE_SCHEMA = obj({
   verdict: { type: 'string', enum: ['clean', 'leak', 'skipped'] },
   findings: { type: 'array', items: { type: 'string' } },
+  note: { type: 'string' },
+}, ['verdict']);
+
+// The pool sample is three-valued for the same reason the containment verdict is: "we could not read
+// the pool" must not collapse into "the pool is free". A round planned as if the hardware were
+// available, when it is not, spends its entire clock inside flock and returns nothing.
+const POOL_SCHEMA = obj({
+  verdict: { type: 'string', enum: ['free', 'occupied', 'unknown'] },
+  cards_total: { type: 'number' },
+  cards_free: { type: 'number' },
+  min_free_gib: { type: 'number' },
+  foreign_pids: { type: 'array', items: { type: 'string' } },
   note: { type: 'string' },
 }, ['verdict']);
 
@@ -712,6 +729,54 @@ if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// POOL SAMPLE — read the hardware before planning a round that assumes it.
+//
+// tech_lead.md rule 3c tells the lead to sample the pool before budgeting a GPU direction. That rule
+// is prose, and prose is advisory: on 2026-08-22 a whole wave (3 rounds, 20 agents, 1.95M tokens)
+// planned every round as if 8 idle cards were waiting, while an external tenant held ~283 GB on all
+// eight for the wave's entire life. Every lease request sat inside flock, one direction spent 95
+// minutes there, and NOT ONE ARM WAS MEASURED. Nothing in any artifact showed it except sysfs, and
+// the run reported final_speedup:1 as though the ideas had been tried.
+//
+// So the script takes the sample itself and hands the lead a fact rather than an instruction. It does
+// NOT abort: that same wave produced its single most valuable finding (a JIT cache-key defect that
+// voided an earlier closure) entirely without hardware. An occupied pool should redirect a round to
+// lease-free work, not end the run. Sampling per round rather than once is deliberate — the tenant
+// observed here cycles between ~287 GiB and ~25 GiB free inside two minutes.
+async function samplePool(round) {
+  if (!(GPU_MIN_FREE_GIB > 0)) return null;
+  const p = await agentT(
+    `Sample the GPU pool and report what you see. Do NOT acquire a lease, do NOT run any workload, ` +
+    `do NOT try to free anything. Reading is the whole job.\n\n` +
+    `1. Per-card free VRAM: read /sys/class/drm/card*/device/mem_info_vram_{total,used} (or ` +
+    `\`rocm-smi --showmeminfo vram --csv\`) and compute free = total - used in GiB for every card.\n` +
+    `2. Per-card utilisation: /sys/class/drm/card*/device/gpu_busy_percent.\n` +
+    `3. \`rocm-smi --showpids\`. For each KFD PID it lists, check whether that PID exists in your own ` +
+    `/proc. A PID that does NOT is in a FOREIGN NAMESPACE — that is an external tenant, not a stale ` +
+    `lease of ours, and the two have opposite remedies. List those PIDs in foreign_pids.\n\n` +
+    `verdict:"free" only if EVERY card has at least ${GPU_MIN_FREE_GIB} GiB free. If any card is ` +
+    `below that floor, or a foreign tenant holds memory, verdict:"occupied". If you cannot read the ` +
+    `pool at all, verdict:"unknown" — do not report an unreadable pool as free.`,
+    { phase: 'Optimize', label: `pool sample r${round}`, schema: POOL_SCHEMA });
+  if (!p) {
+    log(`POOL SAMPLE r${round}: sampler returned nothing. Treating as UNKNOWN, not free.`);
+    return { verdict: 'unknown', note: 'sampler agent returned nothing' };
+  }
+  const detail = `${p.cards_free != null ? `${p.cards_free}/${p.cards_total} cards free, ` : ''}` +
+    `min ${p.min_free_gib != null ? p.min_free_gib : '?'} GiB vs a ${GPU_MIN_FREE_GIB} GiB floor` +
+    `${(p.foreign_pids || []).length ? `, foreign PIDs ${p.foreign_pids.join(',')}` : ''}`;
+  if (p.verdict === 'free') {
+    log(`POOL SAMPLE r${round}: FREE — ${detail}.`);
+  } else {
+    log(`POOL ${p.verdict.toUpperCase()} r${round}: ${detail}. ${p.note || ''}\n` +
+        `  Plan this round GPU-LESS. A GPU direction dispatched now will spend its clock inside flock ` +
+        `and return nothing; an instrument authored now, with its driver, is a partial the next round ` +
+        `can run in one lease.`);
+  }
+  return p;
+}
+
 async function runProfileAnalysis(profileSummary, round, label) {
   if (!ANALYSIS_SKILL_ON || !profileSummary) return null;
   const result = await agentT(
@@ -1070,8 +1135,13 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
   phase('Optimize');
 
   // --- (a) Plan the round (TechLead) ------------------------------------
+  // Sample the pool FIRST, so the lead plans against the hardware that exists rather than the
+  // hardware the plan assumes. GPU_POOL is omitted entirely when the sample is disabled, which keeps
+  // the prompt byte-identical for runs that never set gpu_min_free_gib.
+  const pool = await samplePool(round);
   const plan = await agentT(
     roleAgent('tech_lead', 'plan_round', 'Decide this round\'s orthogonal directions (or stop).', {
+      ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
       EVAL_DIR, ROUND: round, BUDGET_REMAINING: remaining, CUMULATIVE_SPEEDUP: cumulative,
       BASELINE_GEOMEAN_MS, SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
       CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: history,

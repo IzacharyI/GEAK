@@ -89,6 +89,37 @@ ok(/A direction is not finished when its round ends/.test(lead),
 ok(/live parent; that is not the orphan case/.test(lead),
    'the rule stops short of killing an agent that is still owned');
 
+
+// Rule 3c was prose for one wave, and prose is advisory: a whole wave planned three rounds against
+// hardware an external tenant was holding, and measured nothing. The script now takes the sample
+// itself and hands the lead a fact. These assertions pin the wiring, not just the paragraph.
+console.log('\n# the script takes the pool sample itself, so the rule is not merely advisory');
+const wf = read('kernel_workflow.js');
+ok(/async function samplePool\(round\)/.test(wf),
+   'kernel_workflow.js samples the pool rather than trusting the lead to remember');
+// It must run BEFORE the plan, or it is a postmortem of a round already budgeted.
+const iSample = wf.indexOf('const pool = await samplePool(round)');
+const iPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'");
+ok(iSample > 0 && iPlanCall > iSample,
+   'the sample is taken before plan_round, where the directions are still changeable');
+ok(/\.\.\.\(pool \? \{ GPU_POOL: pool, GPU_MIN_FREE_GIB \} : \{\}\)/.test(wf),
+   'the verdict is threaded into the lead\'s inputs, not just logged');
+// Three-valued for the same reason the containment verdict is.
+ok(/enum: \['free', 'occupied', 'unknown'\]/.test(wf),
+   'the pool verdict is three-valued: unreadable is not free');
+ok(/Treating as UNKNOWN, not free/.test(wf),
+   'a sampler that returns nothing degrades to unknown rather than to a green light');
+// Not an abort. The wave that motivated this produced its best finding with no hardware at all.
+ok(/1\.95M tokens/.test(wf) && /NOT ONE ARM WAS MEASURED/.test(wf),
+   'the incident keeps its cost in the source, which is the argument for the extra agent');
+ok(/An occupied pool should redirect a round to\n\/\/ lease-free work, not end the run/.test(wf),
+   'an occupied pool redirects the round; it does not abort the run');
+// Off by default, so no existing run's prompt changes.
+ok(/if \(!\(GPU_MIN_FREE_GIB > 0\)\) return null;/.test(wf),
+   'the sample is opt-in via gpu_min_free_gib, so runs that never set it are unaffected');
+ok(/`occupied` \*\*or\*\* `unknown`/.test(lead),
+   'the lead is told unknown binds the same way occupied does');
+
 console.log(
   failures === 0
     ? '\nPASS: an opaque runtime blocker buys an instrument before it buys a fix.'

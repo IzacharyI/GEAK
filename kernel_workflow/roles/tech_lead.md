@@ -339,6 +339,13 @@ Rules:
    never going to be free inside its clock. Nothing in any artefact showed it except sysfs.
    Corollary: an unmeasured direction that banks a runnable instrument plus its driver is a *partial*
    worth having; a direction that spends the round waiting is a zero. Plan for the first.
+   **When your inputs carry `GPU_POOL`, the script has already taken this sample for you and its
+   verdict is binding, not advisory.** `GPU_POOL.verdict` is one of `free` / `occupied` / `unknown`,
+   against the per-card floor in `GPU_MIN_FREE_GIB`. On `occupied` **or** `unknown` you plan the round
+   GPU-less — `unknown` means the pool could not be read, which is not the same as free, and treating
+   it as free is the exact collapse this three-valued verdict exists to prevent. Say in `reasoning`
+   which verdict you saw and what lease-free work you planned instead. `GPU_POOL` absent means the
+   sample is switched off for this run; then take it yourself, as above.
 3d. **A direction is not finished when its round ends.** If round N's engineer is still holding or
    queuing for a lease when you plan round N+1, do NOT re-issue its work to a new engineer — you will
    have two agents running the same arms into two directories and blocking each other on the same
