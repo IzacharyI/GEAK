@@ -1045,21 +1045,35 @@ if (POSITIVE_CONTROL) {
   // reproduction interval, not a sanity bound. A fourth measurement on a different day landing
   // 0.4pp out is ordinary; a band that tight was measuring the weather.
   //
-  // `implausible_pct` is the real ceiling: beyond it the harness is not reading the change at all.
+  // Everything below is computed on MAGNITUDE plus an expected SIGN, not on the raw number, so that
+  // a control can be a deliberate SLOWDOWN. A control whose `how` points at a finished optimization
+  // is the convenient case, not the general one: most runs have no known win lying around, and in a
+  // capability evaluation one that does is a hazard, because the control workspace is the answer
+  // applied. The gate's question — "can this loop resolve an effect of the size we are hunting?" —
+  // is answered just as well by an injected known cost, and an instrument blind to a deliberate
+  // slowdown is blind to a real speedup. So `expected_pct_lo/hi` may both be negative; the caller
+  // states the direction by their sign and this code stops caring which way it points.
+  // (See benchmark_engineer.md 5b, "When no known-good change exists".)
+  const mLo = Math.min(Math.abs(lo), Math.abs(hi));       // smallest effect the loop must resolve
+  const mHi = Math.max(Math.abs(lo), Math.abs(hi));
+  const wantSign = Math.sign(lo + hi) || 1;               // +1 = control is faster, -1 = slower
+  const mGot = Math.abs(got);
   const ABSURD = Number.isFinite(Number(POSITIVE_CONTROL.implausible_pct))
-    ? Number(POSITIVE_CONTROL.implausible_pct) : (Number.isFinite(hi) ? 2 * hi : NaN);
+    ? Math.abs(Number(POSITIVE_CONTROL.implausible_pct)) : (Number.isFinite(mHi) ? 2 * mHi : NaN);
   const nullArm = Number(pc.null_arm_pct);
   // An overshoot is only benign if the null arm is quiet. If the byte-identical arm is ALSO reading
   // high, the interleave is drifting and the overshoot is the drift, not the effect.
-  const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= lo / 2;
+  const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= mLo / 2;
   const ran = pc.ran !== false && Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
-  const tooSmall = ran && got < lo;                       // includes wrong sign: -4.71 < 3.55
-  const absurd = ran && Number.isFinite(ABSURD) && got > ABSURD;
-  const overshoot = ran && got > hi && !absurd;
+  // Wrong sign is an insensitivity failure, not an overshoot: the loop did not see the change it was
+  // handed, whatever else it saw.
+  const tooSmall = ran && (Math.sign(got) !== wantSign || mGot < mLo);
+  const absurd = ran && Number.isFinite(ABSURD) && mGot > ABSURD;
+  const overshoot = ran && mGot > mHi && !absurd;
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
   log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
       `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
-      `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '%' : '?'}) ` +
+      `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '% in magnitude' : '?'}) ` +
       `-> ${ok ? (overshoot ? 'PASS (OVERSHOOT)' : 'PASS') : 'FAIL'}` +
       (Number.isFinite(nullArm) ? ` (null arm ${nullArm.toFixed(2)}%)` : ' (null arm UNREPORTED)'));
   if (ok && overshoot) {
@@ -1068,7 +1082,7 @@ if (POSITIVE_CONTROL) {
     PC_OVERSHOOT = `the positive control read ${got.toFixed(2)}% for a change recorded at ` +
       `${lo}..${hi}%, with a ${nullArm.toFixed(2)}% null arm. The harness resolves the known effect ` +
       `with the right sign and clean separation, so it is sensitive enough to trust; but it reads ` +
-      `HIGH by roughly ${(got - hi).toFixed(2)}pp at this effect size, so treat every speedup below ` +
+      `HIGH by roughly ${(mGot - mHi).toFixed(2)}pp at this effect size, so treat every speedup below ` +
       `as possibly carrying the same upward scale bias.`;
     log(`POSITIVE CONTROL OVERSHOOT: ${PC_OVERSHOOT}`);
   }
@@ -1081,10 +1095,16 @@ if (POSITIVE_CONTROL) {
           `wrong binary). `
         : overshoot
           ? `It overshot the expected ceiling AND the null arm is ` +
-            `${Number.isFinite(nullArm) ? Math.abs(nullArm).toFixed(2) + '%, too large relative to the ' + lo + '% effect' : 'UNREPORTED'}, ` +
+            `${Number.isFinite(nullArm) ? Math.abs(nullArm).toFixed(2) + '%, too large relative to the ' + mLo + '% effect' : 'UNREPORTED'}, ` +
             `so the excess cannot be told apart from interleave drift. `
-          : `The measurement loop cannot resolve a win of the size this run is looking for, so every ` +
-            `speedup it reports — including 1.000x — is uninterpretable. Fix the harness, not the kernel. `) +
+          : (Math.sign(got) !== wantSign && Number.isFinite(got)
+              ? `It came back with the WRONG SIGN, so the loop is not tracking the change it was ` +
+                `handed — a wiring error (arms swapped, wrong guard, wrong binary) before it is a ` +
+                `sensitivity one. `
+              : ``) +
+            `The measurement loop cannot resolve an effect of the size this run is looking for, so ` +
+            `every number it reports — including 1.000x — is uninterpretable. Fix the harness, not ` +
+            `the kernel. `) +
       `Note from benchmark engineer: ${pc.note || '(none)'}`;
     if (PC_ABORT) throw new Error(why);
     log(`WARNING: ${why}`);

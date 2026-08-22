@@ -220,6 +220,40 @@ nothing else, on the guard named in `guard` (or the whole suite if none):
   measurement's bias and is **unreadable, not positive**. Deepen the null on a guard before quoting a
   number from it, and if the null stays that loud, say the guard cannot currently resolve the claim.
 
+#### When no known-good change exists: build a SYNTHETIC control
+
+A control whose `how` points at a **finished optimization** is the convenient case, not the general
+one. Most runs do not have a known win lying around — and in a capability evaluation, one that does
+is a hazard: the control workspace *is* the answer, applied, so it leaks harder than a reference
+checkout does. On this workflow a control workspace left inside the run tree was copied verbatim by
+an engineer 5.5 hours later.
+
+So do not treat "no reference patch ⇒ no control". The gate asks one question — **can this
+measurement loop resolve an effect of the size the run is hunting?** — and that does not require the
+effect to be a *good* change. A control only needs a **known sign and a known rough magnitude**.
+Cheapest constructions, in order of preference:
+
+1. **Injected known cost (works everywhere, needs no domain knowledge).** Add a deterministic,
+   sized-to-target amount of work to the hot path — a fixed spin, a redundant pass over a buffer,
+   a duplicated tail iteration — calibrated so it costs roughly the effect size you care about
+   (target ~2–3× the guard's noise floor). The candidate arm is the *slower* one; report
+   `measured_pct` signed so this reads **negative**, and set `expected_pct_lo/hi` negative to match.
+   An instrument that cannot see a deliberate slowdown cannot see a real speedup either.
+2. **Removed known cost.** Delete something the operator genuinely needs but that is safe to skip in
+   a throwaway arm (a bounds check, a zero-fill, one guard rail). Fast, wrong, and *known* to be
+   faster — which is all the gate needs. Never let such an arm escape the control step.
+3. **Knob with a documented direction.** A tuning parameter whose sign is established by the
+   hardware, not by this program's own results — occupancy, tile size, unroll depth. Weakest of the
+   three, because the magnitude is a guess.
+
+Whatever you build, it is subject to every rule above: same interleave, ≥5 pairs, a null arm beside
+it, and — if it is env- or config-gated on a caching JIT — the artifact-distinctness proof from
+`SKILL_DIR/knowledge/jit_arm_isolation.md`. A synthetic control that silently compiled to one binary
+"proves" the harness is blind and aborts the run for the wrong reason.
+
+Say in `note` which construction you used and how you sized it. A synthetic control is not a weaker
+control; it is the one that generalises, and it keeps the answer out of the run tree.
+
 **The two bounds mean different things, and the orchestrator treats them differently — so report
 what you saw and let it decide.** Reading *below* `expected_pct_lo` means your instrument cannot see
 the effect; that is the failure this whole step exists to catch and it aborts the run. Reading

@@ -110,17 +110,18 @@ ok(/required even \(especially\) when the final speedup is\s+1\.000x/.test(lead)
 // hand-copied duplicate of the logic drifts and then tests itself.
 console.log('\n# gate arithmetic (extracted from source, not re-implemented)');
 const gateSrc = wf.match(
-  /const ABSURD = ([\s\S]*?)\n  const ok = ran && !tooSmall && !absurd && \(!overshoot \|\| nullQuiet\);/,
+  /(const mLo = Math\.min[\s\S]*?)\n  const ok = ran && !tooSmall && !absurd && \(!overshoot \|\| nullQuiet\);/,
 );
 ok(!!gateSrc, 'the decision expression can be located in kernel_workflow.js');
+let decide = null;
 if (gateSrc) {
-  const decide = new Function('pc', 'POSITIVE_CONTROL', `
+  decide = new Function('pc', 'POSITIVE_CONTROL', `
     const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
     const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
     const got = Number(pc.measured_pct);
-    const ABSURD = ${gateSrc[1]}
+    ${gateSrc[1]}
     const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
-    return { ok, overshoot };
+    return { ok, overshoot, tooSmall, absurd };
   `);
   const band = { expected_pct_lo: 3.55, expected_pct_hi: 4.93 };  // the real +4.71% guard
   const quiet = 0.38;   // the null arm actually observed alongside the +5.13% reading
@@ -291,6 +292,48 @@ if (artSrc) {
      'two EMPTY hashes are not "identical artifacts" — that is a verifier that reported nothing'],
   ];
   for (const [ver, wantFatal, msg] of cases) ok(decideArt(ver).fatal === wantFatal, msg);
+}
+
+// A positive control that requires a FINISHED OPTIMIZATION does not generalise: most runs have no
+// known win lying around, and in a capability evaluation the one that does is the answer itself,
+// applied — the control workspace leaks harder than a reference checkout. The gate only ever asked
+// whether the loop can resolve an effect of a given size, and a deliberate SLOWDOWN answers that
+// just as well. So the arithmetic works on magnitude plus an expected sign. These cases pin that a
+// negative expectation is a first-class control and that the old positive behaviour is unchanged.
+console.log('\n# the positive control accepts a synthetic slowdown, not only a known win');
+if (decide) {
+  const decidePC = (lo, hi, got, nullPct, implausible) => decide(
+    { ran: true, measured_pct: got, null_arm_pct: nullPct },
+    { expected_pct_lo: lo, expected_pct_hi: hi, implausible_pct: implausible },
+  );
+  const cases = [
+    // lo,   hi,  got,  null, implausible, expect
+    [3.55, 4.93, 4.56, 0.07, undefined, { ok: true },
+     'the classic known-win control still passes exactly as before'],
+    [3.55, 4.93, 1.00, 0.07, undefined, { tooSmall: true },
+     'a known win read far under its floor is still an insensitivity abort'],
+    [3.55, 4.93, -4.71, 0.07, undefined, { tooSmall: true },
+     'wrong sign is insensitivity, not overshoot — the loop did not track the change it was handed'],
+    [3.55, 4.93, 5.13, 0.07, undefined, { ok: true, overshoot: true },
+     'an overshoot beside a quiet null arm passes and carries the caveat'],
+    [3.55, 4.93, 5.13, 3.00, undefined, { ok: false, overshoot: true },
+     'the same overshoot beside a LOUD null arm fails — the excess is drift, not effect'],
+    // The whole point: a deliberate slowdown, which the old positive-only arithmetic called absurd.
+    [-4.0, -2.0, -3.0, 0.07, undefined, { ok: true },
+     'a synthetic slowdown control inside its band PASSES (this is the case that used to abort)'],
+    [-4.0, -2.0, -0.5, 0.07, undefined, { tooSmall: true },
+     'a slowdown the loop barely registers is an insensitivity abort'],
+    [-4.0, -2.0, -12.0, 0.07, undefined, { absurd: true },
+     'a slowdown far beyond the plausibility ceiling is measuring something else'],
+    [-4.0, -2.0, 3.0, 0.07, undefined, { tooSmall: true },
+     'a slowdown control that came back FASTER is a wiring error, caught as wrong sign'],
+    [-4.0, -2.0, -9.0, 0.07, 10, { ok: true, overshoot: true },
+     'implausible_pct is read as a magnitude, so it bounds a negative control too'],
+  ];
+  for (const [lo, hi, got, nul, imp, want, msg] of cases) {
+    const r = decidePC(lo, hi, got, nul, imp);
+    ok(Object.entries(want).every(([k, v]) => r[k] === v), msg);
+  }
 }
 
 console.log(
