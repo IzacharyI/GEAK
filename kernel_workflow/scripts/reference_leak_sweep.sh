@@ -70,6 +70,37 @@ if [[ -n "$DERIVE_REF" ]]; then
   (cd "$DERIVE_REF" && git diff "$base_rev".."$ref_rev" -- . ) \
     | grep '^+' | grep -oE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' | sort -u > "$added"
   grep -rhoE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' "$DERIVE_BASE" 2>/dev/null | sort -u > "$baseline"
+
+  # SUBTRACT THE BASE REPO'S OTHER REFS, NOT ONLY ITS WORKING TREE.
+  #
+  # "Reference-unique" was defined as "added by the reference, minus what the baseline CHECKOUT
+  # contains". That definition is too narrow, and the gap is measurable: on 2026-08-22 the list built
+  # this way carried `combine_data_type`, `fused_combine` and `ready_base`, and a ref-aware sweep of a
+  # plain ROCm/aiter clone found 23 blobs across 14 upstream branches (`wjx/exp_moe_ep`,
+  # `zxe/fused_dispatch_gemm1_gfx1250`, `yanbo/ep_moe`, ...) carrying nothing else. Those names are not
+  # reference-derived; they are what the team already calls these things on adjacent MoE branches. The
+  # reference merely happened to reuse them.
+  #
+  # An over-inclusive marker list is not a safe default. It costs the sweep its readability -- 23 hits
+  # on prior art reads exactly like 23 hits on a copy -- and a scanner whose output must be triaged by
+  # hand is a scanner that gets switched off. So harvest identifiers from every ref tip of the base
+  # repo too, deduped by SHA and bounded, and say on stderr what was and was not covered.
+  refs_scanned=0; refs_total=0
+  declare -A dseen=()
+  while read -r sha _; do
+    [[ -z "$sha" || -n "${dseen[$sha]:-}" ]] && continue
+    dseen[$sha]=1; refs_total=$((refs_total+1))
+  done < <(git -C "$DERIVE_BASE" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null)
+  for sha in "${!dseen[@]}"; do
+    [[ $refs_scanned -ge ${REF_SCAN_MAX_TREES:-2000} ]] && break
+    refs_scanned=$((refs_scanned+1))
+    git -C "$DERIVE_BASE" grep -I -h -oE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' "$sha" 2>/dev/null
+  done | sort -u >> "$baseline"
+  sort -u -o "$baseline" "$baseline"
+  echo "--derive: subtracted the base working tree plus $refs_scanned of $refs_total unique ref trees." >&2
+  [[ $refs_scanned -lt $refs_total ]] && echo "--derive: $((refs_total - refs_scanned)) ref tree(s) NOT harvested (REF_SCAN_MAX_TREES); the list may over-report." >&2
+  [[ $refs_total -eq 0 ]] && echo "--derive: the base repo has no refs, so only its working tree was subtracted. If you stripped its refs for containment, derive the list BEFORE stripping." >&2
+
   comm -23 "$added" "$baseline"
   rm -f "$added" "$baseline"
   exit 0
