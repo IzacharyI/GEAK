@@ -325,6 +325,25 @@ Rules:
    **A compile screen is not a readout, and compile-clean is not runnability evidence.** Two separate
    directions in that program were clean on every {shape}×{phase} combination and dead on hardware.
    Compile screens are free, so use them to *reject*; never let one stand in for a run.
+3c. **SAMPLE THE POOL BEFORE YOU BUDGET A GPU DIRECTION.** On a shared box the hardware is not a
+   given, and a round planned as if it were spends its whole clock inside `flock`. Read
+   `/sys/class/drm/card*/device/gpu_busy_percent` and `mem_info_vram_used` (and `rocm-smi --showpids`,
+   whose KFD PIDs may not exist in your `/proc` at all — that is a foreign namespace, i.e. an
+   external tenant, not a stale lease of yours) *before* writing the directions. If any card is busy
+   or short of the memory floor, the correct plan is **not** "dispatch the GPU direction anyway and
+   hope": it is to plan lease-free work — instruments, static screens, authoring the arm and its
+   driver so a later round can run the whole table in one lease — and to say in `reasoning` that the
+   round was planned GPU-less and why. On 2026-08-22 a wave lost **two consecutive rounds** this way:
+   an external tenant held ~283 GB on all 8 cards, every engineer's lease request sat in `flock`
+   behind a `--require-idle` gate, and one direction spent 95 minutes waiting for hardware that was
+   never going to be free inside its clock. Nothing in any artefact showed it except sysfs.
+   Corollary: an unmeasured direction that banks a runnable instrument plus its driver is a *partial*
+   worth having; a direction that spends the round waiting is a zero. Plan for the first.
+3d. **A direction is not finished when its round ends.** If round N's engineer is still holding or
+   queuing for a lease when you plan round N+1, do NOT re-issue its work to a new engineer — you will
+   have two agents running the same arms into two directories and blocking each other on the same
+   lock. Check for live prior-round work before re-dispatching, and if it exists, either wait for it
+   or plan around it. Do not kill an agent that has a live parent; that is not the orphan case.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.

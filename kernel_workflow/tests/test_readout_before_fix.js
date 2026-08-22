@@ -72,6 +72,23 @@ ok(/use them to \*rejec?t\*|use them to \*reject\*/.test(lead),
 ok(/dead on hardware/.test(lead),
    'the compile-screen claim carries its own counterexample');
 
+
+console.log('\n# a shared box is not a given: plan against the pool you actually have');
+ok(/SAMPLE THE POOL BEFORE YOU BUDGET A GPU DIRECTION/.test(lead),
+   'plan_round checks hardware availability before spending a direction on it');
+ok(/gpu_busy_percent/.test(lead) && /mem_info_vram_used/.test(lead),
+   'the check names the sysfs files, so it is executable rather than aspirational');
+ok(/foreign namespace/.test(lead),
+   'an external tenant is distinguished from a stale lease of our own — the two have opposite fixes');
+ok(/two consecutive rounds/.test(lead) && /95 minutes/.test(lead),
+   'the incident keeps its cost: two rounds lost, one direction 95 minutes inside flock');
+ok(/banks a runnable instrument plus its driver is a \*partial\*/.test(lead),
+   'the GPU-less plan is specified as bankable work, not as "skip the round"');
+ok(/A direction is not finished when its round ends/.test(lead),
+   'a live prior-round engineer is not re-dispatched into a duplicate');
+ok(/live parent; that is not the orphan case/.test(lead),
+   'the rule stops short of killing an agent that is still owned');
+
 console.log(
   failures === 0
     ? '\nPASS: an opaque runtime blocker buys an instrument before it buys a fix.'
