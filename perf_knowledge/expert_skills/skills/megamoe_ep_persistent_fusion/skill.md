@@ -170,9 +170,15 @@ Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive cont
 
 ## Sources
 
-- Isolated fusion A/B logs: `artifacts/logs/step3_fusion_isolated/{mega,scattered}_{512,8192}_{uniform,rank-mixed-skew}_p{1,2,3}.log`
-- Step-2 bottleneck evidence (kernel DAG showing zero overlap, instrumented combine peer-wait,
-  no-payload control, ATT waitcnt/barrier shares, LDS residency): `artifacts/analysis/live_20260814_*`
+- Isolated fusion A/B: 3 interleaved pairs per guard, rank-max `mega_e2e`, path marker verified on all
+  24 runs. The medians and per-pair ranges are the table above — that table **is** the log, digested.
+  The raw logs are **deliberately not cited by path**, for the same reason the commit is not: they are
+  the fused arm's own output, and a run that opens them has confirmed the answer instead of deriving it.
+- Step-2 bottleneck evidence — kernel DAG showing zero overlap, instrumented combine peer-wait,
+  matched no-payload control, ATT waitcnt/barrier shares, LDS residency. **Also not cited by path.**
+  Every number this card relies on is quoted inline above; reproducing the evidence is part of the
+  work, not a prerequisite handed over with it. If your own profile disagrees with a number here,
+  trust your profile and say so — the card is a prior, not an oracle.
 - Implementation history: **deliberately not cited here by branch or commit.** This card is injected
   into capability-evaluation runs, where an engineer is asked to derive the megakernel; a commit
   address turns that question into a fetch. Two waves already filed candidates 8-of-11 and 11-of-12
