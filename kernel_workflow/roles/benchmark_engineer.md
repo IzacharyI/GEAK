@@ -341,6 +341,25 @@ same-day 5-pair sample of that guard had read its worst pair as 1.93% and missed
 completely. On a guard like that, `n=5` is not a measurement, and any claim under roughly 3× the
 *deeply sampled* worst pair is unresolved however clean its own pairs look.
 
+**But deepening the sample makes the ratio test harder, not easier, and that is not a reason to stop
+deepening.** The worst null pair is a *sample maximum*: it can only grow with pair count, so the same
+real effect scores a lower ratio at n=10 than at n=5, and an engineer who notices this will be
+tempted to sample shallowly and call the resulting flattering ratio a floor. That is backwards — the
+shallow number was never the floor, it was an underestimate of it. The way out is not fewer pairs but
+a different statistic: report the **raw per-run readings for both arms**, because two arms whose raw
+readings do not overlap at all are separated in a way no single tail draw can undo. The gate accepts
+that as a second resolution route (complete separation, ≥5 pairs each side; at 10-vs-10 its
+probability under the null is 1.1e-5). Deep sample, judge by separation. Wave 11 re-derived the
+sample-maximum property independently and concluded "operate at 6–8 pairs, never 40"; the first half
+of that is right for a unimodal guard and the second half would have hidden the bimodal tail on the
+512 guards entirely.
+
+One caveat on attributing the excess to the residual, from the same wave: on an operator whose
+end-to-end and per-stage timers are each independently rank-reduced, the residual is a
+*max-of-sums minus sum-of-maxes* quantity and can be negative — that wave measured a median residual
+of −9.6 µs across 68 records. So a residual that is merely *large* proves nothing about the host. What
+does carry weight is a residual that moves *between paired arms* while both kernel timers hold still.
+
 Then compare against `expected_pct_lo..expected_pct_hi` and report `passed`. Do not adjust the
 expected band to fit what you measured, and do not quietly retry until it passes — if it fails,
 report the failure with everything you observed in `note`. **The orchestrator aborts the run on a

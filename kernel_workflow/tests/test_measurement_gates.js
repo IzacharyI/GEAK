@@ -58,6 +58,26 @@ ok(/do not quietly retry until it passes/i.test(bench),
    'the engineer is barred from retrying the control until it passes');
 ok(/positive = faster/.test(bench), 'the sign convention for measured_pct is pinned down');
 
+// The worst null pair is a sample MAXIMUM: it can only grow with pair count, so the same real effect
+// scores worse at n=10 than at n=5. An engineer who spots that has a standing incentive to sample
+// shallowly and call the flattering number a floor -- and wave 11 reached exactly that conclusion
+// ("operate at 6-8 pairs, never 40"), which on a bimodal guard hides the tail that decides the case.
+// The role has to name the incentive and route around it, or the rule teaches undersampling.
+ok(/sample maximum/.test(bench),
+   'the role states that the worst null pair grows with pair count');
+ok(/that is not a reason to stop\s*\n?deepening/.test(bench),
+   'and refuses the undersampling that follows from noticing it');
+ok(/Deep sample, judge by separation/.test(bench),
+   'the way out is named: a statistic that deepening does not penalise');
+ok(/never 40/.test(bench),
+   'the tempting wrong conclusion is quoted, not just contradicted in the abstract');
+// A residual that is merely large is not evidence of a host cost when the timers are independently
+// rank-reduced -- max-of-sums minus sum-of-maxes is signed, and was measured NEGATIVE on this box.
+ok(/max-of-sums minus sum-of-maxes|max-of-sums\*? minus \*?sum-of-maxes/.test(bench),
+   'residual attribution carries the arithmetic that makes a large residual uninformative');
+ok(/moves \*between paired arms\* while both kernel timers hold still/.test(bench),
+   'and states what a residual has to do before it counts as evidence');
+
 // --- 2. prior art ----------------------------------------------------------
 console.log('\n# prior art');
 ok(/prior_art: \{ type: 'array'/.test(wf), 'ANALYZE_SCHEMA carries prior_art');

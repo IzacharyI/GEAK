@@ -420,6 +420,30 @@ Rules:
    - **Engineers cannot message each other** in this harness. Cross-direction handoff goes through
      `STATE_DIR`; if direction B needs direction A's artifact, say so in B's prompt and name the path,
      or B will sit waiting for a message that never arrives.
+   - **A BANKED ARM IS A DEBT, NOT AN ASSET — spend the bank before you add to it.** Rule 3c tells you
+     that a direction which banks a runnable arm plus its driver is a partial worth having, and it is.
+     But banking is locally rational in *every* round, and when the pool is one lease nothing forces
+     the bank to ever be spent. On 2026-08-23 a wave ran three rounds, took three leases, and banked
+     four artifacts: an authored cross-rank combine arm (compile-verified, arm-isolation proved two
+     ways, its race found and closed statically), a bucket-8192 correctness harness, a Stage2 arm
+     table, and a within-process A/B instrument. **Zero of the four were ever measured.** All three
+     leases went instead to fresh local resource-tuning arms, and the run's own final report named the
+     unmeasured combine kill-test as "the strongest unmeasured argument in the ledger". The result was
+     1.000x with a full vault. So: when you allocate the round's single lease, a direction whose arm
+     was **authored and compile-verified in an earlier round outranks a new arm of comparable expected
+     size**, and if you bank a second artifact while the first is still unmeasured, say in `reasoning`
+     which round is going to spend it and why not this one.
+   - **Two falsifications on one axis close the axis.** Do not spend the third lease there. That wave
+     spent lease 2 on Stage1 occupancy (+18% for removing all 48 spills) and lease 3 on Stage2
+     occupancy (−15.7% e2e for doubling occupancy on both binding limiters). The second was a
+     well-run experiment against a hypothesis the first had already answered, and it cost the round
+     that could have measured the banked arm.
+   - **When nothing else separates two candidate directions, the lease goes to the one that tests what
+     the TASK names as its objective, not to the one with the tidier local lever.** A local lever is
+     easier to scope, easier to screen, and produces a cleaner artifact whether it works or not — so
+     it wins every tie-break unless you make this rule explicit. Structural directions are the ones
+     that need the hardware most, because unlike a tile-shape arm they cannot be compile-screened at
+     all.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.

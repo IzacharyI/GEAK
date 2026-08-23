@@ -57,6 +57,32 @@ ok(/must be \*lease-free\* work \(rule 3c\)/.test(lead),
 ok(/Engineers cannot message each other/.test(lead) && /STATE_DIR/.test(lead),
    'the harness has no inter-engineer channel, and the substitute is named');
 
+// The rules above decide HOW MANY GPU directions a round gets. They say nothing about WHICH one gets
+// the slot, and that turned out to be the binding question. Wave 11 obeyed every rule on this page --
+// one lease per round, coverage before depth, chunked reporting, 40/40 invocations OK -- and still
+// finished at 1.000x, because all three of its leases went to fresh local resource-tuning arms while
+// the structural arm the task actually asked for sat authored and unmeasured in the bank. Banking is
+// locally rational in every round; without a rule that forces the bank to be spent, it never is.
+console.log('\n# WHICH direction gets the single lease, not just how many');
+ok(/A BANKED ARM IS A DEBT, NOT AN ASSET/.test(lead),
+   'a banked-but-unmeasured arm is framed as a debt, so it cannot accumulate unnoticed');
+ok(/\*\*Zero of the four were ever measured\.\*\*/.test(lead),
+   'the incident keeps the number that makes it a failure rather than a style note');
+ok(/authored and compile-verified in an earlier round outranks a new arm/.test(lead),
+   'an older banked arm outranks a fresh one of comparable size when the lease is allocated');
+ok(/say in `reasoning`\s*\n?\s*which round is going to spend it/.test(lead),
+   'banking a second artifact while the first is unmeasured has to be justified out loud');
+// Rule 3c actively rewards banking ("a partial worth having"). Without this the two rules conflict
+// and the one that costs nothing this round wins.
+ok(/Rule 3c tells you/.test(lead),
+   'the debt rule names the rule it is in tension with, instead of quietly contradicting it');
+ok(/Two falsifications on one axis close the axis/.test(lead),
+   'a twice-falsified axis does not get a third lease');
+ok(/tests what\s*\n?\s*the TASK names as its objective/.test(lead),
+   'the tie-break favours the task objective over the tidier local lever');
+ok(/cannot be compile-screened at\s*\n?\s*all/.test(lead),
+   'and it says why — a structural arm has no cheap substitute, a tile-shape arm does');
+
 console.log('\n# a kernel that cannot be compile-screened changes the whole schedule');
 ok(/Lever 10 — Some fused kernels cannot be compile-screened AT ALL/.test(fusion),
    'distributed_fusion carries the lease-only kernel class as a lever');
