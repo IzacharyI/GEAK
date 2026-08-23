@@ -1012,6 +1012,37 @@ function taskGraphGate(tg) {
 }
 // <</REPLAY:task_graph_gate>>
 
+// <<REPLAY:claim_boundary>>
+// THE CLAIM BOUNDARY. Three decisions that together answer one question: did a measurement that
+// happened on hardware actually reach the scoring harness?
+//
+// They are lifted out as pure predicates rather than left inline because of what they cost when they
+// were inline. On 2026-08-23 a real, reproducible, bit-identical +20.6% was measured three separate
+// times and entered the harness zero times — once because the engineer's declared patch did not exist
+// (the effect lived only in bench CLI flags), once because the engineer wrote a correct claim to disk
+// and then kept measuring past the round's deadline, so `eng` was null. Neither failure was at the
+// measurement boundary; the instrument worked every time. Both were here.
+//
+// The predicates are deliberately dumb. `needsRecovery` and `recovered` share one definition of
+// "usable" so that recovery can never accept something the caller would have rejected, and `unbacked`
+// requires BOTH that verify could not apply the patch AND that the engineer's own numbers claim a win
+// — an unapplied patch under a null claim is just a null result, and calling it a reporting failure
+// would train readers to ignore the label.
+function claimBoundary(speedupOf) {
+  const usable = (c) => !!c && Array.isArray(c.per_case) && c.per_case.length > 0;
+  return {
+    // Go looking on disk for a claim the engineer never handed back?
+    needsRecovery: (eng) => !usable(eng),
+    // Is what came off disk a claim, or an empty acknowledgement that there was nothing there?
+    recovered: (onDisk) => usable(onDisk),
+    // A win the engineer cannot hand over. Not "tried and lost" — unmeasured, and re-dispatchable.
+    unbacked: (r) => !!r && !!r.ver && r.ver.status === 'apply_failed' && speedupOf(r.eng) > 1.0,
+  };
+}
+// <</REPLAY:claim_boundary>>
+
+const CLAIM = claimBoundary(primSpeedup);
+
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
 let TASK_GRAPH_CAVEAT = '';
 if (REQUIRE_TASK_GRAPH) {
@@ -1611,7 +1642,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
       const { d } = prev;
       let { eng } = prev;
       const patch = `${d.out_dir}/best_patch.diff`;
-      if (!eng || !Array.isArray(eng.per_case) || !eng.per_case.length) {
+      if (CLAIM.needsRecovery(eng)) {
         // Workflow scripts run without `fs` (see the note at the top of this file), so recovery is a
         // cheap agent that reads bytes -- exactly what the Benchmark phase already does. It is told to
         // RECOVER ONLY: no GPU, no lease, no re-measurement. This can surface a claim the engineer
@@ -1627,7 +1658,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
             'per_case: [] and say so in notes.',
             { OUT_DIR: d.out_dir, SKILL_DIR: WORKFLOW_DIR, BASELINE_PER_CASE, COMMANDMENT }),
           { phase: 'Optimize', label: `recover ${d.id}`, schema: ENG_SCHEMA });
-        if (onDisk && Array.isArray(onDisk.per_case) && onDisk.per_case.length) {
+        if (CLAIM.recovered(onDisk)) {
           log(`${d.id}: no usable StructuredOutput, but a claim was on disk — ` +
               `${onDisk.per_case.length} case(s), geomean ${onDisk.speedup_geomean}. RECOVERED. ` +
               'The claim boundary is not allowed to delete a measurement.');
@@ -1673,8 +1704,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // guard, bit-identical), and reading it as "did not work" is what let two later rounds re-derive it
   // from scratch. A measurement that cannot be handed over is a reporting defect. Name it as one.
   for (const r of clean) {
-    if (!r.ver || r.ver.status !== 'apply_failed') continue;
-    if (!(primSpeedup(r.eng) > 1.0)) continue;
+    if (!CLAIM.unbacked(r)) continue;
     r.unbacked = true;
     log(`${r.d.id}: CLAIM NOT BACKED BY A PATCH — the engineer claims ` +
         `${primSpeedup(r.eng).toFixed(4)}x but ${r.patch} does not apply. This is a REPORTING ` +
