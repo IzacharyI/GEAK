@@ -47,28 +47,34 @@ These are FlyDSL kernels (Python-authored, JIT-compiled), not Triton or HIP sour
 
 ## The optimization target
 
-The four stages are **strictly serialized** — measured kernel-level overlap is zero. The
-serialization is structural: two readiness edges are absent from the code, so ordering comes only
-from kernel termination plus an all-rank barrier in combine.
+The four stages are **strictly serialized** — measured kernel-level overlap is zero.
 
-- **GEMM1 → GEMM2**: Stage1 publishes no completion at all; Stage2 contains no wait or fence.
-- **Stage2/P2P → Combine**: `p2p_scatter_epilog` ends at its payload store (SLC cache hint only —
-  not a release, not a fence). Nothing tells the peer the rows landed. Combine instead takes an
-  **all-rank barrier**, which is where rank skew gets exposed: instrumented peer-wait rank-max p95
-  is ~191 µs uniform but **876.6 µs under skew** (fast ranks blocking on hot-expert ranks).
+That is the observation. It is not a diagnosis, and it is deliberately all you are given. *Why*
+they are serialized, which of the orderings between them are required by the data and which are
+artifacts of how the code is written today, at what granularity a consumer could begin, what
+enforces each ordering now, and where the critical path actually runs — **you have to derive.**
+Nobody has written it down for you, and an implementation proposal that is not derived from that
+derivation will not be ranked.
 
-So the work is: publish per-token/per-tile readiness, replace the barrier with fine-grained waits,
-and fuse the stages into one persistent kernel so a consumer starts on data as it is produced.
+The end state the acceptance bar requires is a **two-launch** shape: the `quant` ingress stays its
+own launch, and the remaining three stages become **one persistent kernel per rank** with genuine
+compute/communication overlap. That is the *goal*. The mechanism that gets there is the work.
+
+Start from `SKILL_DIR/knowledge/tile_task_graph.md` — the Analyze phase must emit the tile-level
+dependency graph as an artifact (nodes, edges, edge scope, what enforces each edge today, critical
+path, slack) before any candidate is generated. Then `SKILL_DIR/knowledge/fusion_preconditions.md`,
+which gives you the test each candidate edge has to pass and the cheaper levers you must rule out
+first — including the conditions under which the answer is legitimately "this edge does not pay".
+Then `SKILL_DIR/knowledge/resource_partition.md` for who gets the CUs once anything overlaps.
 
 **Read `SKILL_DIR/knowledge/distributed_fusion.md` before proposing anything.** It carries the
 correctness invariants (acquire fence pairing, residency, reset-free counters, acyclicity), the
-measured anti-patterns, and the measurement discipline for this exact operator. Two things from it
-that bound this task:
+measured anti-patterns, and the measurement discipline for this exact operator. Two things that
+bound this task:
 
-- **Launch count is not the objective.** Do not fuse the `quant` ingress in — it belongs in the
-  producer's epilogue, it measured slower here, and reference fused-GEMM designs ship the cast
-  separately. The target shape is *quant stays separate + the remaining three stages become one
-  megakernel*.
+- **Launch count is not the objective.** Two launches is the acceptance shape, not the goal; a
+  fused kernel that is slower than four launches has failed. If your graph says an edge does not
+  pay, say so and defend it — that is a result, not a non-result.
 - Any fused path you add behind an env var / config predicate **must print a one-line path marker**
   (e.g. `[megamoe] path=MEGA` vs `path=SCATTERED`) once per process. An opt-in path that fails its
   predicate falls back silently and produces a plausible wrong number. A benchmark log without the
@@ -77,7 +83,10 @@ that bound this task:
 ## Hard constraints
 
 1. **Correctness**: `relL2 < 0.10` on BOTH the fixed-slot and compact routing paths. The frozen
-   baseline measures `relL2 = 0.0691` at bs=128.
+   baseline on this box measures `relL2 ≈ 0.060–0.062` at bs=128 (0.0604 fixed-slot / 0.0617
+   compact, re-measured). An older revision of this file claimed `0.0691`; if you read that number
+   anywhere, it is stale. Re-measure the baseline yourself in the same run as the candidate —
+   a correctness bound compared against a number from a different build is not a comparison.
 2. **Liveness**: the operator is captured into a CUDA Graph and replayed. A fused kernel with
    cross-rank waits can deadlock on replay N without failing on replay 1. Stress ≥1000 replays per
    route; a timeout is a FAILURE, never a skip.

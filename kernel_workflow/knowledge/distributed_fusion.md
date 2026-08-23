@@ -10,6 +10,26 @@ removing is not launch latency — it is a **wait**.
 Every number below is measured on a live 8×MI355X (gfx950/CDNA4, 256 CU, 8 XCDs, wave64) EP8 MoE
 workload. Treat them as calibration for the *shape* of each effect, not as portable constants.
 
+**Read these three first; this file assumes them.** They are method cards — how to derive the
+answer — where this file is a lever list for a shape of problem you have already diagnosed:
+
+- `tile_task_graph.md` — building the tile-level dependency DAG (edge rule, edge scope, what
+  enforces each edge today, critical path, slack). **The Analyze phase must emit this as an
+  artifact.** Every lever below is an intervention on some edge of that graph; if you cannot name
+  the edge, you are not ready to pull the lever.
+- `fusion_preconditions.md` — the three-condition test each candidate edge must pass, and the
+  cheaper levers to rule out first. It exists so that "do not fuse" remains a reachable conclusion.
+- `resource_partition.md` — who gets the CUs once anything overlaps, and where the critical path
+  moves next.
+
+**A note on what this file deliberately does not contain.** Earlier revisions carried the specific
+missing edges, per-guard outturns and instrumented latencies from the operator it was written
+against. Those were removed on purpose. A knowledge card that hands over another operator's answer
+does not teach an analysis, it substitutes for one — and a run that reproduces a pre-supplied answer
+proves nothing about whether the workflow could have derived it. What remains is the *method* and
+the *failure modes*, which transfer. Do not re-add measured results for a specific operator here;
+they belong in that operator's run artifacts.
+
 ## When this file applies
 
 All three must hold, or use `geomean_levers.md` instead:
@@ -21,9 +41,11 @@ All three must hold, or use `geomean_levers.md` instead:
   under load skew.
 
 Diagnostic that settles it in one measurement: run a **no-payload control** (same compute, peer
-stores removed). If the stage collapses — measured `2.5205 → 1.5568 ms`, −38.2% on the skewed route
-— the transfer/visibility cost is real and currently *exposed*, i.e. not hidden under compute. That
-gap is your budget. If the control barely moves, there is nothing for fusion to hide; stop here.
+stores removed). If the stage collapses, the transfer/visibility cost is real and currently
+*exposed*, i.e. not hidden under compute, and **that gap is your entire budget** — no overlap scheme
+can recover more than the control recovers. If the control barely moves, there is nothing for fusion
+to hide; stop here and report that. Run this before anything else; it is one measurement and it
+bounds the whole project.
 
 ## Lever 1 — Enumerate the MISSING readiness edges before writing any code
 
@@ -35,9 +57,15 @@ order. You can enumerate every fusion opportunity statically, before touching th
   a cache hint at most — it publishes **nothing**.
 - Grep the consumer for `wait_until` / any acquire. If there is none, the edge does not exist.
 
-Each such (producer, consumer) pair is one missing edge, and each is a candidate. In the reference
-workload there were exactly two: `GEMM1→GEMM2` (intra-rank) and `Stage2/P2P→Combine` (cross-rank).
-Cross-rank readiness came solely from an all-rank barrier.
+Each such (producer, consumer) pair is one missing edge, and each is a candidate. Enumerate them
+yourself for the operator in front of you — the count is usually small, and knowing it exactly is
+the difference between a plan and a guess. Record each one in the `enforced_by` column of the
+tile-level graph (`tile_task_graph.md`): an edge whose only enforcement is `launch_boundary` is a
+missing edge in this sense.
+
+Do not assume the intra-rank edges and the cross-rank edges have the same character. They usually
+do not: one is a visibility question inside a device, the other is a visibility question across an
+interconnect, and they sit at different rows of the edge-scope table. Classify before you plan.
 
 **An edge that does not exist cannot be optimized — it must first be added.** Budget for that: the
 publication itself costs something (Levers 5 and 6 are about making it cheap).
@@ -48,17 +76,14 @@ An all-rank barrier, or any single counter every consumer gates on, forces **eve
 `max` over **all** producers. It is where load skew gets exposed, and it is almost always the largest
 single line item.
 
-Measured, instrumented peer-wait (`s_memrealtime`), 8 ranks × 20 replays:
-
-| route | rank-max p95 peer wait |
-|---|---|
-| uniform | 191 µs |
-| all-remote | 193 µs |
-| **rank-mixed skew** | **876.6 µs** (+685.5 vs uniform) |
-
-Per-rank split on the skewed route: ranks 0–3 waited `124.7 µs` mean, ranks 4–7 waited `651.3 µs`.
-Fast ranks were blocking on hot-expert ranks — a pure serialization cost, not bytes: logical remote
-bytes differed `<0.1%` between routes and skew firmware XGMI traffic was actually *4.3% lower*.
+**Measure it, do not assume it.** Instrument the peer wait itself (an in-kernel cycle counter around
+the wait, rank-max p95 over ≥20 replays) and compare a uniform route against a skewed one. The
+diagnostic you are looking for is a wait that grows sharply under skew while the *bytes* do not:
+if logical remote bytes are within a fraction of a percent across routes and interconnect traffic is
+flat or lower on the slow route, the cost is **serialization, not transfer** — fast ranks blocking
+on slow ones — and it is a scheduling/granularity problem. If instead the bytes moved, you have a
+transfer problem and this lever is the wrong one. That distinction costs one experiment and decides
+the whole direction; skipping it is how projects spend a month optimizing the wrong quantity.
 
 The fix is granularity, not removal: publish **per destination item** (per token, per tile) and have
 each consumer wait only on the items it is about to read, then start its reduction. Fast items
@@ -127,16 +152,17 @@ reason not to. These are different claims and conflating them has already killed
 fusion on the wrong evidence: a planning role measured the total inter-kernel gap at 12.4 µs/iter
 (0.22% of e2e at the large size, 1.42% at the small one) and closed the direction as
 "net-negative before it starts", citing this very file. That reasoning is invalid. The gap is what
-fusion removes **incidentally**; the wait is what it removes **on purpose**. On the same operator the
-gap was 0.22% while the exposed cross-rank wait was a rank-max p95 of 876.6 µs, and the fusion that
-absorbed part of that wait measured **+4.71%** on the large-uniform guard — twenty times the gap it
-also happened to delete.
+fusion removes **incidentally**; the wait is what it removes **on purpose**. On that same operator
+the two quantities differed by orders of magnitude: the inter-kernel gap was a fraction of a percent
+of e2e, while the exposed cross-rank wait was hundreds of microseconds at rank-max p95. Rejecting a
+fusion on the basis of the first number, when the second is the one it targets, is measuring the
+wrong side of the change. Measure both, and say which one your proposal is about.
 
 So the decision test is fixed, and it is not a launch-gap measurement:
 
 - **Run the no-payload control** (Priority item 1). Replace the transferred payload with nothing and
   keep everything else identical. The delta is the exposed communication cost — the ceiling on what
-  overlap can buy. On this operator it was −38.2% of Stage2+combine under skew.
+  overlap can buy. Report it as a percentage of the stages it covers, not in milliseconds.
 - **Then measure the exposed wait directly** — an instrumented peer-wait timer, or the barrier's
   own duration. If a consumer is blocked on a producer for a time that is large relative to the
   target, fusion has something to absorb, *regardless of how small the launch gap is*.
@@ -290,18 +316,13 @@ question is under ~1% of e2e, the target is bookkeeping, not performance.
   route/iteration command, never against a different library.
 
 - **Two denominators, two different questions — run both.** "How much faster than upstream" and "how
-  much did the fusion buy" are not the same number and the gap can be 7×. Measured on one operator:
-
-  | guard | vs frozen upstream | fusion alone (same tree, flag off/on) |
-  |---|---|---|
-  | large uniform | −4.92% | +4.71% |
-  | large skew | −2.08% | +2.09% |
-  | small skew | **−10.96%** | **+1.54%** |
-
-  The small-skew column is the warning: 9 of those 11 points came from unrelated improvements already
-  on the branch (write-through payload stores, a payload-chunk tuning), not from fusion. Attribute a
-  fusion win by running the **same tree with only the fusion flag toggled**, A,B,A,B. Comparing the
-  fused build against a frozen baseline credits fusion with every other change on the branch.
+  much did the fusion buy" are not the same number, and on a branch carrying other work the first
+  can be several times the second. That has happened: on one guard the improvement over the frozen
+  baseline was mostly *unrelated* changes already sitting on the branch, and only a small part of it
+  was the fusion. Reporting the first number as the fusion's result is a real, easy, and common
+  attribution error. Attribute a fusion win by running the
+  **same tree with only the fusion flag toggled**, A,B,A,B. Comparing the fused build against a frozen baseline credits fusion with every
+  other change on the branch — including the ones you would keep if the fusion were reverted.
 
 - **Fusing a phase deletes the instrument that measured it.** A peer-wait timer living in the
   standalone kernel reads a flat `0.0` once that kernel is no longer called — which looks exactly
@@ -395,26 +416,25 @@ no-payload delta is not removable (a correct implementation still sends the data
 fraction of these. A cumulative **2–5%** rank-max improvement from a full fusion of a
 well-tuned distributed operator is a good outcome — size the effort accordingly.
 
-**Outturn, for calibration.** Fusing dispatch + GEMM1 + the GEMM1→GEMM2 edge + GEMM2 + P2P publish +
-combine into one persistent kernel (three launches → one, with the ingress cast deliberately left
-outside) delivered, fusion-alone and paired:
+**What the outturn looks like, in shape rather than in numbers.** Across guards, a distributed
+fusion's gain **tracks how much exposed cross-rank wait there was to absorb, and nothing else.**
+Expect, and check for, all four of these:
 
-| guard | fusion gain | per-pair range |
-|---|---|---|
-| small uniform | +1.49% | +1.24 .. +1.79% |
-| small skew | +1.54% | **−0.76** .. +3.70% |
-| large uniform | **+4.71%** | +3.55 .. +4.93% |
-| large skew | +2.09% | +1.48 .. +3.13% |
-
-Inside the predicted 2–5% band, and the *shape* is the useful part: the gain tracks how much
-cross-rank wait there is to absorb. Large-uniform wins most; small batches sit near the noise floor
-(one of three small-skew reps went negative — at that size the fixed costs fusion removes are the
-same order as batch drift). Skew wins less than uniform **not because the fusion is untuned but
-because its bottleneck is elsewhere** — the hot-expert tail, where in-kernel wait ran 27× higher on
-the slowest rank than the fastest. Fusion cannot fix a producer-side imbalance; that needs the
-producer's tile→block mapping changed so a token's contributions arrive progressively. Diagnose which
-regime you are in (Lever 4's spread, plus the per-rank wait distribution) before spending more effort
-on the fusion itself.
+- Guards with the largest exposed wait gain the most. If your best guard is not your most
+  wait-exposed guard, something other than the fusion is moving the number — go find it.
+- Small batch sizes sit near the noise floor: the fixed costs a fusion removes are the same order as
+  run-to-run drift there, and individual pairs can come back **negative** without the fusion being
+  wrong. Report the per-pair spread, not only the median, or you will over-claim.
+- **A skewed route can gain less than a uniform one even with a perfectly tuned fusion**, because
+  under skew the bottleneck moves to a *producer-side imbalance* — a long tail on the ranks holding
+  the hot work. Fusion overlaps a consumer with a producer; it cannot make an overloaded producer
+  finish sooner. That regime needs the producer's tile→block mapping changed so a destination's
+  contributions arrive progressively, which is a different change with a different risk profile.
+  Diagnose which regime you are in (Lever 4's spread, plus the per-rank wait distribution) **before**
+  spending more effort on the fusion itself.
+- The total stays inside the 2–5% band above. A result far outside it, in either direction, is more
+  likely a measurement or attribution fault than a discovery — check the path marker, check the
+  denominator, check that both arms ran in the same rep.
 
 **Overlap claims have a proof ceiling you should know before promising one.** Once the operator is a
 single kernel there are no boundaries left for a kernel-granularity trace to show overlap across, and

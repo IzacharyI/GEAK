@@ -147,8 +147,15 @@ const antipatterns = [
   [/4\.4535[\s\S]{0,40}4\.4476/, 'grid-stride unroll null result'],
   [/\+2\.33 ms/, 'LDS-reduction dead end'],
   [/\+0\.411 ms/, 'release-fence cost'],
-  [/876\.6 µs/, 'skew peer-wait measurement'],
 ];
+// NOTE (2026-08-23): `876.6 µs` used to be asserted here as an anti-pattern measurement. It was
+// removed from the card, and removing it is the point of the change, not a regression. That number
+// is this operator's *diagnosis* — it appeared verbatim in both the knowledge card and the task
+// roadmap, so a run could recite it without ever having measured anything. The distinction the
+// remaining entries respect: a cost datum about a HARDWARE MECHANISM (what a release fence lowers
+// to, what a claim queue costs per item) transfers to the next operator and is method. A latency
+// measured on THIS operator's edges is its answer. See the "what this file deliberately does not
+// contain" block in the card. The absence assertions below enforce that it stays out.
 for (const [re, what] of antipatterns) ok(re.test(doc), `anti-pattern keeps its measurement: ${what}`);
 
 // 5. Lessons from the completed fusion (2026-08-21). Each of these cost a wrong number or a wasted
@@ -233,10 +240,83 @@ ok(
   'the permitted use (ordering, compile-legality) is separated from the barred use',
 );
 
-// The outturn table is calibration data: without it "2-5% is a good outcome" is an unfalsifiable
-// claim rather than a measured band.
-ok(/\+4\.71%/.test(doc), 'outturn keeps the measured best-case fusion gain');
-ok(/−0\.76|-0\.76/.test(doc), 'outturn keeps the one rep that went negative');
+// ---------------------------------------------------------------------------------------------
+// Answer containment (2026-08-23).
+//
+// This block replaces two assertions that required the outturn TABLE — the per-guard fusion gains
+// this operator actually achieved. Keeping it was defensible while the card was a post-mortem;
+// it is indefensible while the open question is *whether the workflow can derive the fusion
+// unaided*. A candidate that reproduces a result the knowledge card handed it demonstrates
+// retrieval, not derivation, and the wave that produces it cannot be graded.
+//
+// The band ("2-5% is a good outcome") is retained as calibration and asserted below: it bounds
+// effort without naming which edge, which guard, or how much. The line the card now draws:
+//   KEEP  — the shape of the effect, the failure modes, the cost of a hardware mechanism
+//   DROP  — which edges were missing here, what they measured, what the fix scored per guard
+//
+// These are ABSENCE assertions and they are deliberately brittle. If a future edit re-adds one of
+// these numbers "for context", this test fails and the reviewer has to justify it in the open.
+// ---------------------------------------------------------------------------------------------
+const leaked = [
+  [/\+4\.71%/, 'per-guard fusion outturn (large-uniform gain)'],
+  [/876\.6/, "this operator's instrumented skew peer-wait"],
+  [/\b191 µs\b/, "this operator's instrumented uniform peer-wait"],
+  [/124\.7|651\.3/, "this operator's per-rank wait split"],
+  [/2\.5205|1\.5568/, "this operator's no-payload control absolute timings"],
+  [/GEMM1\s*(→|->)\s*GEMM2/, "this operator's named intra-rank readiness edge"],
+  [/p2p_scatter_epilog/, "this operator's named cross-rank publish site"],
+];
+for (const [re, what] of leaked) {
+  ok(!re.test(doc), `card does NOT pre-supply the answer: ${what}`);
+}
+
+// The band survives, because bounding effort is method and does not name the mechanism.
+ok(/\b2[–-]5%/.test(doc), 'the 2-5% expectation band is retained as effort calibration');
+
+// And the removal has to be self-documenting, or the next author re-adds the numbers in good faith.
+ok(
+  /deliberately does not contain/i.test(doc),
+  'the card explains WHY the operator-specific results were removed',
+);
+
+// The method must actually replace what was subtracted -- otherwise this is deletion, not a
+// redesign, and the Analyze phase is left with less than it had.
+console.log('\n# method cards exist and are reachable');
+const METHOD_CARDS = {
+  'tile_task_graph.md': [
+    [/output region overlaps/i, 'states the edge rule'],
+    [/enforced_by|what enforces this edge/i, 'requires the "what enforces this edge today" column'],
+    [/critical path/i, 'requires a critical path'],
+    [/slack/i, 'requires slack'],
+    [/launch_boundary/i, 'names the launch-boundary edge class'],
+  ],
+  'fusion_preconditions.md': [
+    [/single wave|one wave/i, 'carries the one-wave disqualifier'],
+    [/idle hardware/i, 'carries the idle-hardware condition'],
+    [/smaller granularity|partial handover/i, 'carries the partial-handover condition'],
+    [/DOES NOT PAY/, 'makes "does not pay" an emittable verdict'],
+    [/ladder/i, 'requires cheaper levers to be ruled out first'],
+  ],
+  'resource_partition.md': [
+    [/wave[- ]quantization|waves = ceil/i, 'covers the wave-quantization tail'],
+    [/static/i, 'covers static vs dynamic scheduling'],
+    [/critical path/i, 'requires predicting where the critical path moves'],
+  ],
+};
+for (const [file, checks] of Object.entries(METHOD_CARDS)) {
+  let text = '';
+  try { text = read('knowledge', file); } catch { /* reported by the first check */ }
+  ok(text.length > 0, `knowledge/${file} exists`);
+  for (const [re, what] of checks) ok(re.test(text), `knowledge/${file} ${what}`);
+  // A method card that quietly re-imports the answer defeats the whole exercise.
+  ok(!/876\.6|4\.71%|p2p_scatter_epilog/.test(text), `knowledge/${file} carries no operator answer`);
+}
+
+// Reachability: the fusion card must route to them, or an engineer reading only the lever list
+// never learns the graph exists.
+for (const card of Object.keys(METHOD_CARDS)) {
+  ok(doc.includes(card), `distributed_fusion.md points at ${card}`);
+}
 
 // The path-marker gate has to be enforced by the role, not just described in knowledge.
 ok(/PATH MARKER/.test(bench), 'benchmark_engineer enforces the path marker for opt-in candidates');

@@ -206,9 +206,53 @@ Return JSON:
      "measured_effect": "<known number + where it is recorded, or ''>",
      "in_baseline": true,
      "evidence": "<the concrete check that settled in_baseline: the ls/grep you ran and what it returned>"}
-  ]
+  ],
+  "task_graph": {
+    "nodes": [{"id": "s1.tile_e0", "stage": "<stage>", "tile": "<what one node is>",
+               "duration_us": 0.0, "source": "profile|derived|assumed"}],
+    "edges": [{"from": "<id>", "to": "<id>",
+               "scope": "register|lds|l2|hbm|cross_die|cross_rank",
+               "enforced_by": "launch_boundary|barrier|fence_flag|none_needed", "bytes": 0}],
+    "critical_path": ["<id>"], "critical_path_us": 0.0, "measured_e2e_us": 0.0,
+    "zero_slack_nodes": ["<id>"],
+    "false_edges": [{"from": "<id>", "to": "<id>", "why": "regions do not overlap: ..."}],
+    "unknowns": [{"what": "...", "why": "...", "what_would_settle_it": "..."}]
+  }
 }
 ```
+
+**`task_graph` is required when `REQUIRE_TASK_GRAPH` is set** (multi-stage or multi-rank operators);
+omit it for a kernel that has no interesting graph rather than filling in a form. Read
+`SKILL_DIR/knowledge/tile_task_graph.md` before you build it — it carries the edge rule, the scope
+taxonomy, and the normalization steps.
+
+Four things about this artifact that decide whether it is worth anything:
+
+- **Build it at TILE granularity, not kernel granularity.** A kernel is not a node; it is a batch of
+  nodes that happen to share a launch, plus an implicit grid-wide barrier at each end that nobody
+  asked for. A "graph" whose nodes are the kernels can only tell you what the launch order already
+  told you, and it is recognisable from the outside because every one of its edges comes back
+  `enforced_by: "launch_boundary"`. The orchestrator prints that count for exactly this reason.
+- **`enforced_by` is the column that carries the finding.** An edge the *data* requires at `lds` or
+  `l2` scope, but which the *code* enforces with a launch boundary, is over-synchronized by orders
+  of magnitude — and the set of those edges is the opportunity, stated as a number instead of an
+  adjective. If that set is empty, say so plainly: "there is nothing here to unfuse" is a complete
+  and valuable analysis, and it saves the project a wave.
+- **`critical_path_us` vs `measured_e2e_us` bounds every proposal you will make.** The longest path
+  through the graph is the floor for *any* schedule, fused or not. The gap to measured e2e is the
+  entire addressable inefficiency. Any direction you rank that claims more than that gap is
+  arithmetically impossible, and checking this takes one subtraction.
+- **`unknowns` is not a confession, it is data.** An edge whose scope you could not determine is a
+  fact about what is known; a duration you guessed and labelled `"source": "profile"` is a
+  fabrication that will be trusted downstream. Mark assumed durations `assumed`. **A short honest
+  graph outranks a complete invented one**, and if the honest version is mostly unknowns, that is
+  the analysis result — return it and say what measurement would settle each one.
+
+Then rank directions **from** the graph. Before proposing a fusion specifically, apply the
+three-condition test in `SKILL_DIR/knowledge/fusion_preconditions.md` per edge and rule out the
+cheaper levers it lists; a fusion direction that does not carry that test is not ranked. If anything
+will end up overlapping, `SKILL_DIR/knowledge/resource_partition.md` is where the CU-allocation and
+moved-bottleneck questions come from — name where you expect the critical path to move next.
 **`prior_art` is a REQUIRED key, and `[]` is a real answer that is not the same as omitting it.**
 `[]` means the 4d sweep ran and found nothing; an absent key means nothing is known either way, and
 everything downstream then treats your provenance statements as unsourced. Emit the key even when

@@ -420,6 +420,31 @@ const ANALYZE_SCHEMA = obj({
   // measured (+4.71%) fusion were absent, never noticed, and reported 1.000x.
   //   [{direction, implemented_at, how_to_enable, measured_effect, in_baseline}]
   prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  // TILE-LEVEL DEPENDENCY GRAPH. Required when args.require_task_graph is set (see the gate below
+  // the Analyze call); optional otherwise, because a single-op elementwise kernel has no interesting
+  // graph and demanding one would only produce a filled-in form.
+  //
+  // Why this is an ARTIFACT and not prose. An Analyze phase that writes "the stages are serialized,
+  // so fuse them" has restated the launch count, not analysed a dependency. The difference is not
+  // stylistic: only the graph can say which orderings the DATA requires versus which are artifacts
+  // of the current code, what the critical path is (the floor on any schedule — a proposal claiming
+  // more than measured_e2e minus critical_path_us is arithmetically wrong), and which nodes have
+  // slack (optimizing those changes nothing). None of that is answerable at kernel granularity, and
+  // a run that cannot produce the graph has not done the analysis whatever prose it returns.
+  //
+  //   {nodes:      [{id, stage, tile, duration_us, source}],   // source: profile|derived|assumed
+  //    edges:      [{from, to, scope, enforced_by, bytes}],
+  //                //   scope:       register|lds|l2|hbm|cross_die|cross_rank
+  //                //   enforced_by: launch_boundary|barrier|fence_flag|none_needed
+  //    critical_path: [nodeId], critical_path_us, measured_e2e_us,
+  //    zero_slack_nodes: [nodeId], false_edges: [{from,to,why}],
+  //    unknowns:   [{what, why, what_would_settle_it}]}
+  //
+  // `unknowns` is load-bearing and not a confession: an edge whose scope could not be determined is
+  // a FACT, and an estimate presented as a measurement is not. A short honest graph outranks a
+  // complete invented one, and `source: 'assumed'` on every node is itself the finding.
+  // See knowledge/tile_task_graph.md for the derivation method.
+  task_graph: { type: ['object', 'null'], additionalProperties: true },
 }, ['kernel_type', 'roadmap_summary']);
 
 const BENCH_SCHEMA = obj({
@@ -895,11 +920,96 @@ const analysis = await agentT(
     // Authoritative resolved rank count (from gpus_per_job | op_spec.resource | job_gpu_ids).
     // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+    ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
 log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
+
+// ---------------------------------------------------------------------------------------------
+// TASK-GRAPH GATE (args.require_task_graph)
+//
+// Opt-in, and off by default: most kernels have no interesting dependency graph and requiring one
+// everywhere would produce filled-in forms, which are worse than nothing because they look like
+// evidence. Turn it on for multi-stage / multi-rank operators where the whole question is which
+// orderings are real.
+//
+// Why a GATE and not a nudge. The failure this catches is not laziness, it is that the roadmap
+// prose and the roadmap artifact can disagree without anyone noticing: a run can assert "the stages
+// are serialized and must be fused" in `roadmap_summary`, have that assertion accepted by every
+// downstream phase, and never once have enumerated an edge. Asking for the object makes the claim
+// checkable. If the graph cannot be built, THAT is the analysis result and it should be said out
+// loud, not routed around.
+//
+// Deliberately NOT a hard abort. An analysis that returns a partial graph plus honest `unknowns`
+// is more useful than a retry loop that eventually returns a complete-looking invention, and this
+// gate must not create pressure toward the second. It reports; the caveat travels to the report so
+// a reader can discount every downstream ranking accordingly.
+// The decision is a pure function of the returned graph, and it is lifted VERBATIM by
+// tests/test_task_graph_gate.js between these markers — so the test exercises the shipped code
+// rather than a paraphrase of it that can drift. Keep it pure: no log(), no closure over run state.
+// <<REPLAY:task_graph_gate>>
+function taskGraphGate(tg) {
+  const nodes = tg && Array.isArray(tg.nodes) ? tg.nodes.length : 0;
+  const edges = tg && Array.isArray(tg.edges) ? tg.edges.length : 0;
+  if (!tg || (!nodes && !edges)) {
+    return { verdict: 'MISSING', summary: '', caveat:
+      'TASK GRAPH MISSING: this run required a tile-level dependency graph from Analyze and none ' +
+      'was returned. Every direction ranked below is therefore asserted, not derived — there is no ' +
+      'record of which orderings are required by the data and which are artifacts of the current ' +
+      'code, no critical path to bound what any change can win, and no slack to say which nodes ' +
+      'are worth touching. Read the rankings as hypotheses.' };
+  }
+  // A graph with no `launch_boundary` edge is a real and reportable finding (nothing to unfuse);
+  // a graph where EVERY edge is one is almost always a graph built at kernel granularity, where the
+  // column was never really filled in. Both are visible only if the count is printed, so print it.
+  const eArr = Array.isArray(tg.edges) ? tg.edges : [];
+  const launchEdges = eArr.filter((e) => e && e.enforced_by === 'launch_boundary').length;
+  const unknowns = Array.isArray(tg.unknowns) ? tg.unknowns.length : 0;
+  const assumed = (Array.isArray(tg.nodes) ? tg.nodes : [])
+    .filter((n) => n && n.source === 'assumed').length;
+  const cp = Number(tg.critical_path_us);
+  const e2e = Number(tg.measured_e2e_us);
+  const quantified = Number.isFinite(cp) && Number.isFinite(e2e) && e2e > 0;
+  const summary = `Task graph: ${nodes} nodes, ${edges} edges, ${launchEdges} enforced only by a ` +
+    `launch boundary, ${unknowns} declared unknown, ${assumed} node duration(s) assumed. ` +
+    (quantified
+      ? `critical_path=${cp.toFixed(1)}µs vs e2e=${e2e.toFixed(1)}µs ` +
+        `(addressable ceiling ${(100 * (1 - cp / e2e)).toFixed(1)}%)`
+      : 'critical path NOT quantified');
+
+  if (quantified && cp > e2e) {
+    return { verdict: 'INCONSISTENT', summary, caveat:
+      `TASK GRAPH INCONSISTENT: critical_path_us (${cp}) exceeds measured_e2e_us (${e2e}). The ` +
+      'longest path through the graph cannot be longer than the thing it is a path through, so ' +
+      'either a node duration is wrong or an edge is spurious. Do not use this graph\'s headroom ' +
+      'number to size any proposal.' };
+  }
+  // Every edge a launch boundary AND no edge at a narrower scope = the kernel-granularity tell.
+  // Not fatal (a genuinely four-launch operator can look like this), but the whole point of the
+  // artifact is the scope column, and a graph without it cannot distinguish "must be a barrier"
+  // from "happens to be a barrier" — which is the only question the graph was built to answer.
+  const narrow = eArr.filter((e) => e && e.scope && e.scope !== 'cross_rank' && e.scope !== 'hbm').length;
+  if (edges && launchEdges === edges && narrow === 0) {
+    return { verdict: 'KERNEL_GRANULARITY', summary, caveat:
+      `TASK GRAPH IS KERNEL-GRANULAR: all ${edges} edges came back enforced_by=launch_boundary with ` +
+      'no edge at a narrower scope, which is what a graph whose nodes are KERNELS looks like. Such ' +
+      'a graph restates the launch order and cannot separate an ordering the data requires from one ' +
+      'the current code imposes. Treat any fusion direction ranked from it as unsupported.' };
+  }
+  return { verdict: 'OK', summary, caveat: '' };
+}
+// <</REPLAY:task_graph_gate>>
+
+const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
+let TASK_GRAPH_CAVEAT = '';
+if (REQUIRE_TASK_GRAPH) {
+  const g = taskGraphGate(analysis && analysis.task_graph);
+  if (g.summary) log(g.summary);
+  TASK_GRAPH_CAVEAT = g.caveat;
+  if (g.caveat) log(g.caveat);
+}
 
 // Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
 // of engineering — and one that exists but is MISSING from the tree under optimization is a silent
@@ -1750,6 +1860,11 @@ const report = await agentT(
     // supplied here so the Measurement-confidence section states it instead of quietly dropping it.
     ...(PC_OVERSHOOT ? { POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT } : {}),
     ...(PC_UNDERSHOOT ? { POSITIVE_CONTROL_UNDERSHOOT: PC_UNDERSHOOT } : {}),
+    // Travels to the report because the thing it qualifies — whether the directions were derived
+    // or asserted — is invisible in the final number, and by report time nobody re-reads the log.
+    ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
+    ...(REQUIRE_TASK_GRAPH && analysis && analysis.task_graph
+      ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 4000) } : {}),
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 
