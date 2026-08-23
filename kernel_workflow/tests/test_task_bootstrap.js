@@ -67,8 +67,17 @@ ok(pc && Number(pc.expected_pct_lo) < 0 && Number(pc.expected_pct_hi) < 0,
    'the positive control is a synthetic SLOWDOWN — it needs no working optimization to exist');
 ok(/jit_arm_isolation\.md/.test(pc.how),
    'the control tells the engineer to anchor the JIT cache key before authoring its gate');
-ok(/noise floor|1\.29-1\.46/.test(pc.how),
-   'the injected cost is sized against the guard\'s measured noise floor, not guessed');
+// The dose must be sized against the statistic the GATE uses. It used to say "3x the guard's noise
+// floor", which reads as careful and is off by the ratio between a floor and the worst of a handful
+// of pairs -- wave 10 built exactly what it was told to, measured -2.41% with 6/6 sign agreement,
+// and was aborted at 1.3x a 1.881pp worst null pair. Sizing and judging must name the same number.
+ok(/worst pair|WORST PAIR/.test(pc.how) && /null arm FIRST|null FIRST|measure the null first/i.test(pc.how),
+   'the injected cost is sized against the worst NULL PAIR, and the null is measured first');
+ok(!/roughly 3x that guard's [\d.]+-[\d.]+% noise floor/.test(pc.how),
+   'the old floor-based sizing rule is gone -- it guaranteed a correctly-built control would fail');
+ok(Math.abs(Number(pc.expected_pct_lo)) > Math.abs(Number(pc.expected_pct_hi)) &&
+   Math.abs(Number(pc.expected_pct_hi)) >= 3.0,
+   'the band is wide enough that 4x a realistic worst null pair lands inside it');
 
 console.log('\n# it refuses what it cannot assemble, with the remedy named');
 let r = run(['--no-probe', '--baseline', path.join(tmp, 'nope'), '--out', path.join(tmp, 'x1')]);

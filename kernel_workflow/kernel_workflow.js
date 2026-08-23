@@ -1625,7 +1625,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     // The Benchmark phase has done this since wave 1 (see the RECOVERY block above); the Optimize
     // phase did not, and on 2026-08-23 that asymmetry cost a wave its only result. Three rounds
     // produced the SAME physical win -- payload_chunk_rows gated at the 512 bucket, +20.6% rank-max,
-    // 3/3 pairs, ~10x the guard's noise floor, rel-L2 0.0 against the default, i.e. bit-identical --
+    // 3/3 pairs, rel-L2 0.0 against the default, i.e. bit-identical (the ratio-to-null it was first
+    // reported at, ~10x, came from a 5-pair null that missed that guard's bimodal tail; deeper
+    // sampling the next day put the worst null pair at 9.30pp, so the ratio is the open question --
+    // the point here is that the win was never SCORED, which is a different failure entirely) --
     // and it was scored ZERO all three times, never for a measurement failure and always at the claim
     // boundary. The decisive one: the engineer wrote a complete worker_result.json to disk at 08:05
     // (populated per_case, speedup_geomean 1.0594, a best_patch.diff that `git apply --check` accepts)

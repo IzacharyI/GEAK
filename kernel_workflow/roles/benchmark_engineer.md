@@ -251,10 +251,24 @@ Cheapest constructions, in order of preference:
 
 1. **Injected known cost (works everywhere, needs no domain knowledge).** Add a deterministic,
    sized-to-target amount of work to the hot path — a fixed spin, a redundant pass over a buffer,
-   a duplicated tail iteration — calibrated so it costs roughly the effect size you care about
-   (target ~2–3× the guard's noise floor). The candidate arm is the *slower* one; report
-   `measured_pct` signed so this reads **negative**, and set `expected_pct_lo/hi` negative to match.
-   An instrument that cannot see a deliberate slowdown cannot see a real speedup either.
+   a duplicated tail iteration. The candidate arm is the *slower* one; report `measured_pct` signed
+   so this reads **negative**, and set `expected_pct_lo/hi` negative to match. An instrument that
+   cannot see a deliberate slowdown cannot see a real speedup either.
+
+   **Measure the null arm BEFORE you size the dose, and size against the worst null pair.** The gate
+   does not test your effect against the guard's *noise floor*; it tests it against **3× the worst
+   pair in your own null arm** (see below), and the worst pair of a handful runs 1.5–2× the floor
+   routinely — more if the guard is fat-tailed. Size off the floor and you will build a control that
+   is correct, monotone, sign-unanimous, and rejected. So: run the null first, take
+   `max(abs(null_pairs))`, and aim the injection at **≥4×** that, which leaves headroom for the
+   sublinearity every real knob has at small doses. This ordering costs one extra lease and is the
+   difference between a control that passes and a run that dies at the gate for arithmetic reasons.
+
+   It cost wave 10 (2026-08-23) exactly that. The task text asked for "~3–4%, roughly 3× that guard's
+   1.29–1.46% noise floor"; the engineer built it, hit −2.41% with 6/6 sign agreement and a monotone
+   dose ladder, and the worst null pair came in at 1.881pp. 2.41 / 1.881 = 1.3×. The instrument was
+   fine, the dose was sized per the instructions, and the instructions were sized against the wrong
+   statistic.
 2. **Removed known cost.** Delete something the operator genuinely needs but that is safe to skip in
    a throwaway arm (a bounds check, a zero-fill, one guard rail). Fast, wrong, and *known* to be
    faster — which is all the gate needs. Never let such an arm escape the control step.
@@ -307,6 +321,25 @@ spin counts. The instrument was the one part of that experiment that demonstrabl
 **Report the individual pairs, not only their medians.** The gate reads `control_pairs_pct` and
 `null_pairs_pct` as arrays: sign agreement across pairs, and the *worst* null pair rather than the
 null median, are what separate a small real effect from a small piece of drift. A median hides both.
+
+**A null arm is not automatically unimodal, and five pairs will not tell you.** Some guards sit in
+one of two discrete states from run to run rather than scattering around a centre. When that
+happens the null looks quiet until the run that lands in the slow state, and the worst pair jumps
+by a factor of five — so `n=5` gives you a floor that depends entirely on whether you happened to
+sample the tail. Before trusting a small guard's null, run the *same tree against itself* ~10 times
+and look at the raw per-run numbers, not the pair deltas: a bimodal guard shows a visible cluster
+plus a few readings sitting well above it, often reproducing to three or four digits, which random
+drift does not do. Where the excess sits matters too — subtract the per-stage timers from the
+end-to-end number, and if the gap is in the residual rather than in any kernel, the slow state is
+host- or launch-side and no kernel change will move it.
+
+Measured on this box, 2026-08-23, 10 self-vs-self runs per guard on the unmodified tree:
+`8192_uniform` was unimodal, worst pair 1.09%; `512_uniform` worst pair 6.21%; `512_rank-mixed-skew`
+worst pair 9.30%, with 2 of 10 runs sitting ~7–8% above the cluster and the excess landing entirely
+in the residual (end-to-end minus stage1 minus stage2_combine), not in either kernel timer. A
+same-day 5-pair sample of that guard had read its worst pair as 1.93% and missed the tail
+completely. On a guard like that, `n=5` is not a measurement, and any claim under roughly 3× the
+*deeply sampled* worst pair is unresolved however clean its own pairs look.
 
 Then compare against `expected_pct_lo..expected_pct_hi` and report `passed`. Do not adjust the
 expected band to fit what you measured, and do not quietly retry until it passes — if it fails,
