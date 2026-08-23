@@ -43,7 +43,12 @@
 
 set -uo pipefail
 
-TREE=""; MARKER_FILE=""; ALLOW=(); EXTRA_REPOS=()
+# MARKER_FILE is NOT cleared here. It used to be, which silently disabled the documented environment
+# override: the `:=` default below only fires on an unset-or-empty value, so wiping it first meant an
+# exported MARKER_FILE was always discarded and the default always won. Caught 2026-08-23 while testing
+# that the sweep fails closed on a missing list -- it did not fail at all, because the bad path had
+# been thrown away and the good default restored. `--markers` was the only override that ever worked.
+TREE=""; ALLOW=(); EXTRA_REPOS=()
 DERIVE_REF=""; DERIVE_BASE=""; GIVEN=()
 
 while [[ $# -gt 0 ]]; do
@@ -59,7 +64,31 @@ while [[ $# -gt 0 ]]; do
 done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-: "${MARKER_FILE:=$HERE/reference_leak_markers.txt}"
+
+# THE MARKER LIST DOES NOT LIVE IN SKILL_DIR, AND MUST NOT BE MOVED BACK.
+#
+# It is a list of the reference implementation's own symbol names -- `_publish_tok_ready`,
+# `_S2_EPOCH_SLOT`, `mega_moe_fused_s2c`. Under SKILL_DIR it sat one `ls scripts/` away from every
+# engineer the workflow runs, which makes the leak detector into a leak: an engineer who reads it is
+# handed the design as a vocabulary list, and no amount of "do not read this" in a header survives
+# curiosity. Distance is the only thing that contains it (uid 0 makes chmod inert; see handoff
+# §14z-35). So it lives outside the walk path and the sweep reaches for it by absolute path.
+#
+# Naming the path here is safe in a way that shipping the file is not: the sweep must name what it
+# reads, and a path an engineer cannot open tells them a list exists -- not what is on it.
+#
+# Fails CLOSED. If the file is absent the sweep exits 2 rather than scanning with an empty list, so a
+# lost marker file is a loud abort and never a clean-looking zero-hit run.
+: "${MARKER_FILE:=/root/geak_verify/reference_leak_markers.txt}"
+# Unconditional: a copy under scripts/ is the leak whether or not the verify-only path also exists.
+# Gating this on "$MARKER_FILE is missing" would have made the common case -- someone restores the old
+# file while the new one is still in place -- pass silently, which is the exact failure being guarded.
+if [[ -f "$HERE/reference_leak_markers.txt" ]]; then
+  echo "reference_leak_sweep: refusing to use $HERE/reference_leak_markers.txt -- the marker list is" >&2
+  echo "verify-only and must not sit inside SKILL_DIR where engineers can read it. Move it to" >&2
+  echo "$MARKER_FILE (or set MARKER_FILE) and delete the copy under scripts/." >&2
+  exit 2
+fi
 
 # --- derive mode: regenerate the marker list -------------------------------------------------------
 if [[ -n "$DERIVE_REF" ]]; then

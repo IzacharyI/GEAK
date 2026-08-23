@@ -106,7 +106,16 @@ ok(/reference_leak_sweep\.sh/.test(wf), 'the log points at the content sweep tha
 // --- 5. the content sweep exists and is honest about its scope ------------
 console.log('\n# the content sweep');
 const sweep = read('scripts/reference_leak_sweep.sh');
-const markers = read('scripts/reference_leak_markers.txt');
+// The marker list moved OUT of SKILL_DIR on 2026-08-23: it names the reference's own symbols, and
+// under scripts/ it sat one `ls` away from every engineer the workflow runs, which turns the leak
+// detector into a leak. The test follows it rather than pinning it back, and asserts below that no
+// copy has reappeared inside SKILL_DIR.
+const MARKER_PATH = process.env.MARKER_FILE || '/root/geak_verify/reference_leak_markers.txt';
+const markers = fs.readFileSync(MARKER_PATH, 'utf8');
+ok(!fs.existsSync(path.join(ROOT, 'scripts', 'reference_leak_markers.txt')),
+   'the marker list is NOT inside SKILL_DIR, where engineers can read the reference vocabulary');
+ok(/refusing to use/.test(sweep),
+   'the sweep refuses to run against a SKILL_DIR copy rather than silently preferring it');
 ok(/--derive/.test(sweep), 'the marker list can be regenerated from the two trees, not hand-maintained');
 ok(/EXTS:=/.test(sweep),
    'the sweep is scoped to files a leak can be copied out of, not every file that names a counter');
@@ -321,7 +330,7 @@ console.log('\n# the ref pass, executed against a real branch-only leak');
 {
   const { execFileSync } = require('child_process');
   const os = require('os');
-  const marker = read('scripts/reference_leak_markers.txt')
+  const marker = fs.readFileSync(MARKER_PATH, 'utf8')
     .split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'))[0];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'refleak-'));
   const repo = path.join(tmp, 'repo');
