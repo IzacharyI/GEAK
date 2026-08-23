@@ -1077,7 +1077,22 @@ if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
     const base = p.replace(/\/+$/, '').split('/').pop();
     return [p.replace(/\/+$/, ''), ...(base && base.length > 6 ? [base] : [])];
   });
-  for (const f of ['roadmap.md', 'codebase_context.md', 'analysis.json']) {
+  // THIS CHECK WAS DEAD CODE, AND ITS DEATH WAS SILENT.
+  //
+  // `fs` is never defined in this file -- workflow scripts run without Node's fs/path, which the note
+  // at the top of this file says in as many words. So `fs.readFileSync` below threw ReferenceError on
+  // every iteration, the `catch { continue }` swallowed it, and the loop did nothing. It has never run.
+  // The cost is on the record: wave 7's analysis.json shipped four reference paths and was found by a
+  // human running grep, not by this. A guard that cannot fail is worse than no guard, because the
+  // absence of a warning gets read as a clean result. Say so, once, loudly, and route to the tool that
+  // actually walks the tree -- do not leave a reader thinking this ran.
+  if (typeof fs === 'undefined') {
+    log('CONTAINMENT CHECK INERT: the in-workflow reference-path scan of EVAL_DIR cannot run — ' +
+        'workflow scripts have no fs. This is not a clean result, it is no result. Run ' +
+        'scripts/reference_leak_sweep.sh --tree <run tree> and scripts/skill_address_scan.sh ' +
+        'out of band; only those actually read the tree.');
+  }
+  for (const f of (typeof fs === 'undefined' ? [] : ['roadmap.md', 'codebase_context.md', 'analysis.json'])) {
     let txt = '';
     try { txt = fs.readFileSync(`${EVAL_DIR}/${f}`, 'utf8'); } catch { continue; }
     // analysis.json legitimately carries locations in prior_art[].implemented_at (that field is for
@@ -1574,9 +1589,53 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     ).then((eng) => ({ d, eng }));
     },
 
-    (prev) => {
-      const { d, eng } = prev;
+    // RECOVER AN ENGINEER'S CLAIM FROM DISK BEFORE DROPPING IT.
+    //
+    // The Benchmark phase has done this since wave 1 (see the RECOVERY block above); the Optimize
+    // phase did not, and on 2026-08-23 that asymmetry cost a wave its only result. Three rounds
+    // produced the SAME physical win -- payload_chunk_rows gated at the 512 bucket, +20.6% rank-max,
+    // 3/3 pairs, ~10x the guard's noise floor, rel-L2 0.0 against the default, i.e. bit-identical --
+    // and it was scored ZERO all three times, never for a measurement failure and always at the claim
+    // boundary. The decisive one: the engineer wrote a complete worker_result.json to disk at 08:05
+    // (populated per_case, speedup_geomean 1.0594, a best_patch.diff that `git apply --check` accepts)
+    // and then KEPT MEASURING until 08:12, so the round closed with no StructuredOutput and `eng` was
+    // null. The result existed, on disk, in the right shape, at the right path, and the harness stepped
+    // over it.
+    //
+    // Telling engineers "emit the claim last" is the right instruction and it is now in the role file,
+    // but an instruction is not a mechanism: the failure mode is an agent running out of time, and an
+    // agent that runs out of time cannot be relied on to have followed the instruction about what to do
+    // before running out of time. So read the file. No agent, no GPU, no re-measurement -- this is a
+    // parse of bytes the engineer already produced, and it can only recover a claim, never invent one.
+    async (prev) => {
+      const { d } = prev;
+      let { eng } = prev;
       const patch = `${d.out_dir}/best_patch.diff`;
+      if (!eng || !Array.isArray(eng.per_case) || !eng.per_case.length) {
+        // Workflow scripts run without `fs` (see the note at the top of this file), so recovery is a
+        // cheap agent that reads bytes -- exactly what the Benchmark phase already does. It is told to
+        // RECOVER ONLY: no GPU, no lease, no re-measurement. This can surface a claim the engineer
+        // already produced; it cannot manufacture one.
+        const onDisk = await agentT(
+          roleAgent('optimize_engineer', 'recover',
+            `The engineer for ${d.out_dir} did not return a usable claim. RECOVER ONLY: read ` +
+            `${d.out_dir}/worker_result.json (and, only if that is absent or truncated, the ab_driver ` +
+            'JSON and logs beside it) and return the claim it already contains. Do NOT run any GPU ' +
+            'command, do NOT take a lease, do NOT re-measure and do NOT improve the result: a fresh ' +
+            'measurement here is a failure, not a fallback. Report per_case EXACTLY as recorded, ' +
+            'including guards the engineer marked UNRESOLVED. If no claim is on disk, return ' +
+            'per_case: [] and say so in notes.',
+            { OUT_DIR: d.out_dir, SKILL_DIR: WORKFLOW_DIR, BASELINE_PER_CASE, COMMANDMENT }),
+          { phase: 'Optimize', label: `recover ${d.id}`, schema: ENG_SCHEMA });
+        if (onDisk && Array.isArray(onDisk.per_case) && onDisk.per_case.length) {
+          log(`${d.id}: no usable StructuredOutput, but a claim was on disk — ` +
+              `${onDisk.per_case.length} case(s), geomean ${onDisk.speedup_geomean}. RECOVERED. ` +
+              'The claim boundary is not allowed to delete a measurement.');
+          eng = onDisk;
+        } else {
+          log(`${d.id}: no StructuredOutput and nothing recoverable from ${d.out_dir}.`);
+        }
+      }
       if (!eng || eng.status === 'failed' || !(primSpeedup(eng) > 1.0)) {
         return { d, eng, ver: null };
       }
@@ -1604,6 +1663,25 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   );
 
   const clean = results.filter(Boolean);
+
+  // --- UNBACKED CLAIM: the engineer measured a win it cannot hand over ----
+  // The other half of the 2026-08-23 claim-boundary loss. An engineer returned a well-formed claim
+  // whose declared patch did not exist on disk, because the effect lived only in bench CLI flags and
+  // no patch had ever been written. Verify reports that as `apply_failed`, and `apply_failed` then
+  // flows into the round exactly like a candidate that was tried and lost. It is not the same thing,
+  // and the difference is expensive: that direction had produced the run's ONLY win (+20.6% at one
+  // guard, bit-identical), and reading it as "did not work" is what let two later rounds re-derive it
+  // from scratch. A measurement that cannot be handed over is a reporting defect. Name it as one.
+  for (const r of clean) {
+    if (!r.ver || r.ver.status !== 'apply_failed') continue;
+    if (!(primSpeedup(r.eng) > 1.0)) continue;
+    r.unbacked = true;
+    log(`${r.d.id}: CLAIM NOT BACKED BY A PATCH — the engineer claims ` +
+        `${primSpeedup(r.eng).toFixed(4)}x but ${r.patch} does not apply. This is a REPORTING ` +
+        'failure, not a null result: if the effect was real it came from flags or an unsaved edit ' +
+        'and has been lost. Do NOT record this direction as "tried, did not work" — record it as ' +
+        'unmeasured, and re-dispatch it with the patch written first.');
+  }
 
   // --- ACTIVATION: did the candidate's code actually RUN? ----------------
   // A patch whose fast path is gated behind a switch nobody sets measures byte-identical to the
