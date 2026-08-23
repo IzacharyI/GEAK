@@ -261,7 +261,11 @@ substitute, because nothing downstream can read prose: the orchestrator's prior-
 array, and a finding that only exists in the roadmap fires nothing and is quoted by no one.
 
 **`evidence` is what makes `in_baseline` mean anything.** Write the check, not the conclusion:
-`"ls aiter/ops/flydsl/kernels/mega_moe/ → no mega_moe_fused_s2c.py; grep -r AITER_MEGAMOE_FUSE_ALL → 0 hits"`.
+`"ls <op source dir> → the module the direction would live in is absent; grep -r <the opt-in env var>
+→ 0 hits"`. Write it with the ACTUAL names you checked — but note the example above is deliberately
+generic, because a role file is read by every run: an example that names a real absent module and a
+real env var hands the next engineer a filename and a switch to search for, which is a leak dressed
+as documentation. Do not paste this run's specifics back into this file.
 `in_baseline` decides whether a direction costs one A/B or a whole round, and under `CAPABILITY_EVAL`
 it decides whether the answer key sits inside the tree the engineers can read. An unevidenced boolean
 is a guess wearing a schema field, and the orchestrator will log it as one.

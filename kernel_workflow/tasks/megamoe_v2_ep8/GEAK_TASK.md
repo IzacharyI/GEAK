@@ -83,10 +83,13 @@ bound this task:
 ## Hard constraints
 
 1. **Correctness**: `relL2 < 0.10` on BOTH the fixed-slot and compact routing paths. The frozen
-   baseline on this box measures `relL2 ≈ 0.060–0.062` at bs=128 (0.0604 fixed-slot / 0.0617
-   compact, re-measured). An older revision of this file claimed `0.0691`; if you read that number
-   anywhere, it is stale. Re-measure the baseline yourself in the same run as the candidate —
-   a correctness bound compared against a number from a different build is not a comparison.
+   baseline's own `relL2` is **not a constant** — it is recomputed on freshly drawn inputs each run
+   and has been observed anywhere in `0.053 .. 0.069` across both routing paths on this box, with
+   `path=compact` (bs=512) usually reading lower than `path=fixed` (bs=128). Earlier revisions of
+   this file quoted a single figure (`0.0691`); treat any such number as stale, and do not use one
+   as a regression target. **Measure the baseline in the same run as the candidate** and compare
+   those two. A candidate's `relL2` that lands inside the range above is indistinguishable from the
+   baseline; the bound that matters is the hard `< 0.10`.
 2. **Liveness**: the operator is captured into a CUDA Graph and replayed. A fused kernel with
    cross-rank waits can deadlock on replay N without failing on replay 1. Stress ≥1000 replays per
    route; a timeout is a FAILURE, never a skip.
