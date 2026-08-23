@@ -79,8 +79,17 @@ console.log('\n# a usable graph');
   ok(/2 nodes, 1 edges/.test(g.summary), 'summary counts nodes and edges');
   ok(/1 enforced only by a launch boundary/.test(g.summary),
      'summary reports the launch-boundary edge count -- the size of the opportunity');
-  ok(/addressable ceiling 40\.0%/.test(g.summary),
-     'summary converts critical_path vs e2e into the ceiling any proposal must fit under');
+  ok(/dependence explains 60\.0% of e2e/.test(g.summary),
+     'summary reports what share of e2e the dependence chain explains');
+  ok(/40\.0% is resource-bound work plus bubbles/.test(g.summary),
+     'the residual is attributed to resources+bubbles, not offered as recoverable headroom');
+  // Regression guard for a real miscalibration. The gate used to print the residual as "addressable
+  // ceiling", which is false whenever the operator is throughput-bound: on 2026-08-23 a run returned
+  // cp=130µs / e2e=4580.8µs and had to add a prose note explaining that ~97% of the gap was arithmetic
+  // no reordering can delete. A headline number the graph must argue against is worse than none,
+  // because the number is what travels into the report.
+  ok(!/addressable ceiling/.test(g.summary),
+     'the residual is NOT labelled an addressable ceiling');
 }
 {
   const g = taskGraphGate(G({ critical_path_us: undefined, measured_e2e_us: undefined }));

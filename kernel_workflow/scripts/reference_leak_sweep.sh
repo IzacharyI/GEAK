@@ -28,7 +28,7 @@
 #
 # Usage:
 #   reference_leak_sweep.sh --tree <run tree root> [--allow <path>]... [--repo <path>]...
-#                           [--markers <file>] [--derive <ref> <base>]
+#                           [--markers <file>] [--derive <ref> <base>] [--given <path>]...
 #
 # --repo adds a repository OUTSIDE <tree> whose refs should also be scanned -- the AITER_JIT_DIR
 # checkout, a sibling clone, anything the run can read by configuration rather than by walking.
@@ -44,7 +44,7 @@
 set -uo pipefail
 
 TREE=""; MARKER_FILE=""; ALLOW=(); EXTRA_REPOS=()
-DERIVE_REF=""; DERIVE_BASE=""
+DERIVE_REF=""; DERIVE_BASE=""; GIVEN=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --repo)    EXTRA_REPOS+=("$2/.git"); shift 2 ;;
     --markers) MARKER_FILE="$2"; shift 2 ;;
     --derive)  DERIVE_REF="$2"; DERIVE_BASE="$3"; shift 3 ;;
+    --given)   GIVEN+=("$2"); shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -91,15 +92,47 @@ if [[ -n "$DERIVE_REF" ]]; then
     [[ -z "$sha" || -n "${dseen[$sha]:-}" ]] && continue
     dseen[$sha]=1; refs_total=$((refs_total+1))
   done < <(git -C "$DERIVE_BASE" for-each-ref --format='%(objectname) %(refname)' 2>/dev/null)
+  # NOT `for ... done | sort -u >> "$baseline"`. A loop on the left of a pipe runs in a SUBSHELL, so
+  # every refs_scanned increment is discarded when it exits and the counter reads 0 no matter how many
+  # trees were harvested. That misfires the "NOT harvested / the list may over-report" warning below on
+  # a run that in fact harvested everything -- and that warning is the operator's only signal that the
+  # subtraction was incomplete, so a version of it that cries wolf is worse than none. Redirect per
+  # iteration instead and keep the loop in this shell.
   for sha in "${!dseen[@]}"; do
     [[ $refs_scanned -ge ${REF_SCAN_MAX_TREES:-2000} ]] && break
     refs_scanned=$((refs_scanned+1))
-    git -C "$DERIVE_BASE" grep -I -h -oE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' "$sha" 2>/dev/null
-  done | sort -u >> "$baseline"
+    git -C "$DERIVE_BASE" grep -I -h -oE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' "$sha" 2>/dev/null >> "$baseline"
+  done
   sort -u -o "$baseline" "$baseline"
   echo "--derive: subtracted the base working tree plus $refs_scanned of $refs_total unique ref trees." >&2
   [[ $refs_scanned -lt $refs_total ]] && echo "--derive: $((refs_total - refs_scanned)) ref tree(s) NOT harvested (REF_SCAN_MAX_TREES); the list may over-report." >&2
   [[ $refs_total -eq 0 ]] && echo "--derive: the base repo has no refs, so only its working tree was subtracted. If you stripped its refs for containment, derive the list BEFORE stripping." >&2
+
+  # SUBTRACT WHAT THE RUN IS LEGITIMATELY GIVEN (--given <path>, repeatable).
+  #
+  # A marker only means something if an engineer could not have arrived at it honestly. The task text
+  # names the opt-in flags on purpose and tells engineers to print `path=MEGA` vs `path=SCATTERED`; the
+  # method cards name mechanisms. Every one of those tokens is also "added by the reference and absent
+  # from the baseline", so the raw derive proposes them as markers -- and a list containing SCATTERED
+  # fires on every honest candidate the wave produces. That is how a scanner earns the reputation that
+  # gets it switched off.
+  #
+  # Until now the marker file's own header carried this as a manual instruction ("then re-apply the two
+  # filters above by hand"). A hand-applied filter is one a tired operator skips, and skipping it fails
+  # OPEN in the loud direction. So pass the material the run can read and let the tool do the
+  # subtraction: --given <task dir> --given <knowledge dir> --given <roles dir>.
+  if [[ ${#GIVEN[@]} -gt 0 ]]; then
+    given_n=0
+    for g in "${GIVEN[@]}"; do
+      [[ -e "$g" ]] || { echo "--given: no such path, ignored: $g" >&2; continue; }
+      given_n=$((given_n+1))
+      grep -rhoE '\b[A-Za-z_][A-Za-z0-9_]{7,}\b' "$g" 2>/dev/null >> "$baseline"
+    done
+    sort -u -o "$baseline" "$baseline"
+    echo "--derive: also subtracted identifiers appearing in $given_n path(s) the run is given." >&2
+  else
+    echo "--derive: no --given paths. Tokens the task text and knowledge cards name on purpose (the opt-in flags, path=SCATTERED, ...) will be proposed as markers and must be removed by hand before installing." >&2
+  fi
 
   comm -23 "$added" "$baseline"
   rm -f "$added" "$baseline"

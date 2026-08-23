@@ -975,8 +975,18 @@ function taskGraphGate(tg) {
   const summary = `Task graph: ${nodes} nodes, ${edges} edges, ${launchEdges} enforced only by a ` +
     `launch boundary, ${unknowns} declared unknown, ${assumed} node duration(s) assumed. ` +
     (quantified
+      // NOT "addressable ceiling". 1 - cp/e2e is the share of e2e that the DEPENDENCE CHAIN does not
+      // explain, and calling that a ceiling on gains is wrong in the common case: on a throughput-bound
+      // operator the critical path is short precisely because the binding floor is arithmetic, not
+      // ordering, and no amount of overlap deletes arithmetic. The 2026-08-23 run made this concrete --
+      // it reported cp=130µs against e2e=4580.8µs and then had to spend a prose note correcting the
+      // implication, because ~97% of that gap was ~6.5 TFLOP of GEMM per rank. A gate that has to be
+      // talked out of its own headline number is miscalibrated; say what the quantity IS and let the
+      // graph's bubble set carry the claim about what is actually recoverable.
       ? `critical_path=${cp.toFixed(1)}µs vs e2e=${e2e.toFixed(1)}µs ` +
-        `(addressable ceiling ${(100 * (1 - cp / e2e)).toFixed(1)}%)`
+        `(dependence explains ${(100 * (cp / e2e)).toFixed(1)}% of e2e; the remaining ` +
+        `${(100 * (1 - cp / e2e)).toFixed(1)}% is resource-bound work plus bubbles, and only the ` +
+        'bubble set is addressable by reordering)'
       : 'critical path NOT quantified');
 
   if (quantified && cp > e2e) {
