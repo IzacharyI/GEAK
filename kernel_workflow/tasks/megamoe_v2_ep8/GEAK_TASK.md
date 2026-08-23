@@ -167,12 +167,22 @@ evidence of straggler gating, but it does not tell you WHICH rank or why.
 
 ## Measurement discipline (this operator specifically)
 
-Batch-to-batch drift on the small guards is ~4%, which is larger than the whole available gain.
-Two arms timed minutes apart will disagree by more than the effect, **in either direction** — a real
-win reads as a regression as often as not. Therefore:
+Batch-to-batch drift on the small guards is larger than the whole available gain, and on the 512
+guards it is not even drift. Measured 2026-08-23, unmodified tree against itself, 10 runs per guard:
+`8192_uniform` is unimodal with a worst pair of 1.09%; `512_uniform` worst pair 6.21%; `512_rank-
+mixed-skew` worst pair 9.30%, with 2 of 10 runs sitting ~7-8% above an otherwise tight cluster. That
+slow state is **bimodal, not noisy** — repeat readings land on the same value to four digits — and
+the excess sits in the residual (end-to-end minus stage1 minus stage2_combine), i.e. host- or
+launch-side, invisible to both kernel timers. A 5-pair sample of `512_skew` the day before had read
+its worst pair as 1.93% and missed the tail entirely. Therefore:
 
-- Run baseline and candidate **alternately** (A,B,A,B,A,B — at least 3 pairs per guard) and report
-  the **per-pair** delta plus the median. Never compare two independently collected medians.
+- Run baseline and candidate **alternately** (A,B,A,B,A,B) and report the **per-pair** delta plus the
+  median. Never compare two independently collected medians. **At least 3 pairs on the 8192 guards
+  and at least 10 on the 512 guards** — fewer than 10 there does not sample the slow state.
+- Report the raw per-run readings for the 512 guards, not only the pair deltas. Two arms whose raw
+  readings do not overlap at all are separated in a way no single tail draw can undo, and that is a
+  stronger result than a ratio: complete separation of 10 vs 10 has probability 1.1e-5 under the
+  null. A ratio against a fat-tailed worst pair understates a real effect badly.
 - Report the per-rep spread alongside the median.
 - The speedup denominator is this frozen tree, run under the identical command. Nothing else.
 - A latency win with no measured change in overlap is **suspicious, not accepted** — find the
