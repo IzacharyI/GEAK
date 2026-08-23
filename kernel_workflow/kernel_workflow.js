@@ -1286,7 +1286,42 @@ if (POSITIVE_CONTROL) {
     : (Number.isFinite(nullArm) ? Math.abs(nullArm) : NaN);
   const ctrlPairs = Array.isArray(pc.control_pairs_pct) ? pc.control_pairs_pct.map(Number).filter(Number.isFinite) : [];
   const signUnanimous = ctrlPairs.length >= 3 && ctrlPairs.every((d) => Math.sign(d) === wantSign);
-  const resolved = Number.isFinite(nullWorst) && mGot >= RESOLVE_K * nullWorst;
+  const resolvedByScale = Number.isFinite(nullWorst) && mGot >= RESOLVE_K * nullWorst;
+
+  // RESOLUTION ON A NULL THAT IS NOT UNIMODAL.
+  //
+  // `RESOLVE_K x the worst null pair` is the right test when the null scatters around a centre: the
+  // worst of a handful of pairs is then a fair stand-in for the spread. It is the WRONG test when
+  // the null is a mixture. Some guards sit in one of two discrete states run to run, and one
+  // excursion into the slow state -- an additive host-side cost that lands on whichever arm happens
+  // to draw it -- sets `nullWorst` by itself. The rule then asks the effect to beat three times a
+  // single draw from the tail of a distribution it is not competing with, and a large, perfectly
+  // clean effect fails.
+  //
+  // Measured on 2026-08-23: the 512_rank-mixed-skew guard, same tree against itself, 10 pairs. Nine
+  // pairs inside 3pp, one at 9.02pp. A candidate measured over the same 10 interleaved reps read
+  // +17.34% median, 10/10 pairs positive, range +14.30..+18.65 -- and 17.34/9.02 = 1.9x, a FAIL.
+  // Yet the two arms' raw readings did not overlap at all (base 0.8364..0.8832 ms, candidate
+  // 0.7014..0.7537 ms). The one slow-state excursion that did land, landed on the candidate arm and
+  // made the effect look SMALLER. There is no reading of that data in which the effect is drift.
+  //
+  // So add a second, distribution-free way to be resolved: the effect pairs and the null pairs, by
+  // magnitude, do not overlap. Under the null hypothesis that all n+m pairs are draws from one
+  // distribution, the chance of the two groups separating completely is 2/C(n+m, n) -- 7.9e-3 at
+  // 5-vs-5, 1.1e-5 at 10-vs-10. That is a rank test, so a single fat-tailed draw cannot break it,
+  // and it needs nothing the engineer is not already required to report.
+  //
+  // This is deliberately NOT "sign unanimity is enough". The A/B driver measured a ~0.6% ordering
+  // bias on this operator -- the arm that runs second reads slow -- and a bias like that produces
+  // unanimous signs with no effect at all. Separation is immune to it in a way unanimity is not:
+  // a 0.6pp bias cannot lift every effect pair above every null pair when the null itself spans
+  // several pp. Both routes still have to clear `mLo * UNDERSHOOT_FRAC`, so an injection that never
+  // took effect is caught either way.
+  const absCtrl = ctrlPairs.map(Math.abs);
+  const absNull = nullPairs.map(Math.abs);
+  const resolvedBySeparation = absCtrl.length >= 5 && absNull.length >= 5 &&
+    Math.min(...absCtrl) > Math.max(...absNull);
+  const resolved = resolvedByScale || resolvedBySeparation;
   const undershoot = ran && constructed && Math.sign(got) === wantSign &&
     mGot < mLo && mGot >= mLo * UNDERSHOOT_FRAC && resolved && signUnanimous;
 
@@ -1369,8 +1404,15 @@ if (POSITIVE_CONTROL) {
                 : !resolved
                   ? `It is only ${Number.isFinite(nullWorst) && nullWorst > 0 ? (mGot / nullWorst).toFixed(1) + 'x' : '?'} ` +
                     `the worst null pair (${Number.isFinite(nullWorst) ? nullWorst.toFixed(2) : '?'}pp), under the ` +
-                    `${RESOLVE_K}x an effect must clear to be told apart from the interleave. Quiet the ` +
-                    `interleave or raise the injected cost. `
+                    `${RESOLVE_K}x an effect must clear to be told apart from the interleave, and its ` +
+                    `pairs do not separate from the null's either ` +
+                    `(smallest control pair ${absCtrl.length ? Math.min(...absCtrl).toFixed(2) : '?'}pp ` +
+                    `vs largest null pair ${absNull.length ? Math.max(...absNull).toFixed(2) : '?'}pp` +
+                    `${absCtrl.length >= 5 && absNull.length >= 5 ? '' : '; separation needs >=5 pairs on BOTH arms'}), ` +
+                    `so neither route to resolution is open. Quiet the interleave or raise the injected ` +
+                    `cost. If the null is fat-tailed rather than noisy -- a few readings well above an ` +
+                    `otherwise tight cluster -- collect more null pairs and check whether the two arms ` +
+                    `separate; that route does not care about the tail. `
                   : ``)
         : ``) +
       `Note from benchmark engineer: ${pc.note || '(none)'}`;
