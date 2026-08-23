@@ -144,8 +144,43 @@ ok(/grep -o -P "\$pattern" "\$f"/.test(sweep) && /NAME THE MARKER, NOT JUST THE 
    'a leak report names the matched identifiers, so triage needs no one to read the file');
 const markerLines = markers.split('\n').filter((l) => l.trim() && !l.startsWith('#'));
 ok(markerLines.length > 50, `the marker list is populated (${markerLines.length} markers)`);
-ok(markerLines.every((l) => l.includes('_')),
-   'no bare English words: every marker is an identifier, so a hit is evidence');
+// THE RULE IS "not an English word", and `includes('_')` was only ever a proxy for it. The proxy is
+// wrong in one direction that matters: CamelCase names (FusedSharedStorage, WorkgroupOneAs) are
+// identifiers with no underscore, and they are among the strongest evidence in the list because nobody
+// coins them by accident. Use the real rule, the same one scripts/reference_leak_sweep.sh applies when
+// it derives: a token with no underscore, no digit AND no internal capital is a word, not a name. That
+// still rejects Deadlock / Lockstep / Megakernel / Publishing, which is the whole point.
+const isWord = (t) => /^[A-Z]?[a-z]+$/.test(t);
+const wordy = markerLines.filter(isWord);
+ok(wordy.length === 0,
+   `no bare English words: every marker is an identifier, so a hit is evidence${
+     wordy.length ? ` (offenders: ${wordy.join(', ')})` : ''}`);
+
+// A MARKER THE RUN IS HANDED IS NOT A MARKER. This is the SCATTERED failure, and it is worth a
+// standing assertion rather than a one-time cleanup: GEAK_TASK.md instructs engineers to print
+// `path=SCATTERED`, the reference also contains it, so a mechanical derive proposes it — and a list
+// containing it fires on every honest candidate the wave produces. A scanner whose output must be
+// hand-triaged is a scanner that gets switched off, so this fails OPEN in the loud direction, which is
+// the expensive one. The sweep's --given flag prevents it at derive time; this catches a marker added
+// by hand, or one that became given later because someone edited the task text.
+const givenText = ['tasks', 'knowledge', 'roles'].map((d) => {
+  const p = path.join(ROOT, d);
+  const out = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) walk(f);
+      else if (/\.(md|json|txt)$/.test(e.name)) out.push(fs.readFileSync(f, 'utf8'));
+    }
+  };
+  if (fs.existsSync(p)) walk(p);
+  return out.join('\n');
+}).join('\n');
+const given = new Set(givenText.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || []);
+const collide = markerLines.filter((m) => given.has(m));
+ok(collide.length === 0,
+   `no marker appears in material the run is given${
+     collide.length ? ` -- these would fire on honest work: ${collide.join(', ')}` : ''}`);
 
 // --- 6. the control workspace, which is where the real leak came from -----
 console.log('\n# the positive control must not leave the answer in the tree');
