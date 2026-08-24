@@ -751,6 +751,32 @@ const VERIFY_SCHEMA = obj({
   // which is the maximally-combinable answer. Reporting it explicitly makes "no files" a claim
   // somebody made rather than a default nobody noticed.
   touched_files: { type: 'array', items: { type: 'string' } },
+  // OVERLAP. See knowledge/overlap_instrument.md. Declared rather than left to prose because the
+  // acceptance question "genuine overlap, not serialization disguised by kernel boundaries" cannot
+  // be answered by any of the instruments that exist before fusion: once the stages are one kernel
+  // there is one trace record, and both stage timers can RISE while the operator gets faster. The
+  // doctrine "a latency win with no measured change in overlap is suspicious" has been in the task
+  // text for several waves with nothing behind it, so the honest answer was always "not measured"
+  // and the rule never bit.
+  //
+  // `measured` is three-valued and the three are not interchangeable: `no` means a meter was built
+  // and reports no overlap (a finding), `unknown` means it could not be measured (a hole). Collapse
+  // them and a fused kernel that was never instrumented reads exactly like one that was checked.
+  overlap: obj({
+    measured: { type: 'string', enum: ['yes', 'no', 'unknown'] },
+    fraction: { type: 'number' },        // wall-clock, >=2 distinct roles active
+    cu_fraction: { type: 'number' },     // CU-weighted; wall-clock alone is manufacturable
+    method: { type: 'string' },
+    // The meter's own controls. `scattered_reading` is the negative control — the unfused path,
+    // whose true overlap is known to be zero. A meter that reads high there is broken and voids
+    // everything after it. `forced_reading` is the positive control, because a meter that reads 0
+    // on both is dead, not conservative, and the two are indistinguishable without it.
+    scattered_reading: { type: 'number' },
+    forced_reading: { type: 'number' },
+    clock_skew_ns: { type: 'number' },   // s_memrealtime coherence across XCDs — assumed at your peril
+    meter_overhead_pct: { type: 'number' },
+    note: { type: 'string' },
+  }, ['measured']),
 }, ['status', 'verified_geomean', 'touched_files']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -1481,6 +1507,10 @@ function claimBoundary(speedupOf) {
 const CLAIM = claimBoundary(primSpeedup);
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
+// Overlap caveats, accumulated across rounds. They travel to the report for the same reason the
+// task-graph caveat does: the thing they qualify — whether a fused win was ever shown to BE an
+// overlap win — is invisible in the final number, and by report time nobody re-reads the log.
+const OVERLAP_CAVEATS = [];
 let TASK_GRAPH_CAVEAT = '';
 let PIPE_TABLE_CAVEAT = '';
 if (REQUIRE_TASK_GRAPH) {
@@ -2101,6 +2131,190 @@ function shelfEligible(shelf, absorbedByRound, k) {
 }
 // <</REPLAY:candidate_shelf>>
 
+// <<REPLAY:overlap_gate>>
+// IS THE OVERLAP CLAIM BACKED BY AN INSTRUMENT? See knowledge/overlap_instrument.md.
+//
+// The acceptance bar asks for genuine compute/communication overlap rather than serialization
+// disguised by kernel boundaries. Nothing that exists before fusion can answer that: four launches
+// give four trace records and the intervals settle it for free, but ONE fused kernel gives one
+// record, and the per-stage timers move the wrong way (a stage allowed to start early charges its
+// own waiting to itself, so both can rise while the operator gets faster).
+//
+// So the fused shape destroys every instrument that would have judged it, and a faster fused kernel
+// is evidence of *something* — removed launch overhead, L2 residency across a boundary, a grid the
+// scheduler can pack better — of which overlap is only one candidate. This gate exists so that
+// "nobody measured it" cannot arrive looking like "measured and fine".
+//
+// It NEVER fails a candidate. A real latency win with an unmeasured overlap claim is a good result
+// with a named hole; downgrading it to a failure would teach the loop to stop reporting the hole.
+const OVERLAP_SCATTERED_MAX = 0.05;  // the unfused path's true overlap is 0; 5% is instrument slop.
+function overlapVerdict(ver, opts) {
+  const o = (ver && ver.overlap) || {};
+  const won = Number((opts && opts.geomean) || 0) > 1.0;
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
+  const frac = num(o.fraction), scat = num(o.scattered_reading), forced = num(o.forced_reading);
+  const m = o.measured === 'yes' || o.measured === 'no' ? o.measured : 'unknown';
+
+  // The negative control first, because it invalidates everything downstream. A meter that finds
+  // overlap on the four-launch path is measuring its own artefacts.
+  if (m !== 'unknown' && scat != null && scat > OVERLAP_SCATTERED_MAX) {
+    return { state: 'meter_broken', caveat:
+      `The overlap meter reads ${(scat * 100).toFixed(1)}% on the SCATTERED path, whose true overlap ` +
+      `is zero by construction (four launches, disjoint intervals). The meter is measuring its own ` +
+      `artefacts, so its ${frac != null ? `${(frac * 100).toFixed(1)}% ` : ''}reading on the fused ` +
+      `path carries no information. Overlap is UNMEASURED for this candidate.` };
+  }
+  // A meter that has never read a known non-zero is indistinguishable from a dead one.
+  if (m !== 'unknown' && scat == null) {
+    return { state: 'meter_unvalidated', caveat:
+      `Overlap was reported as "${m}" but the meter's negative control is missing: nobody ran it ` +
+      `against the unfused path, where the answer is known to be zero. An uncontrolled meter reading ` +
+      `is not evidence — the same rule the workflow applies to a benchmark with no positive control.` };
+  }
+  if (m === 'no' && forced == null) {
+    return { state: 'meter_unvalidated', caveat:
+      `The meter reports NO overlap and has never read a known non-zero (no forced-concurrency ` +
+      `control). A dead meter and a correct "there is no overlap here" produce the same output, and ` +
+      `this run cannot tell them apart. Treat the negative finding as unconfirmed.` };
+  }
+  if (m === 'unknown') {
+    return { state: 'unmeasured', caveat: won
+      ? `This candidate improves latency but overlap was NOT measured` +
+        `${o.note ? ` (${String(o.note).slice(0, 200)})` : ''}. In the fused shape latency cannot ` +
+        `distinguish overlap from removed launch overhead or better L2 residency, so this result ` +
+        `must not be reported as demonstrating overlap. Name the collection experiment that is missing.`
+      : `Overlap was not measured for this candidate; no overlap claim may be made from it either way.` };
+  }
+  // Measured, controlled. What is left is whether the number and the latency agree.
+  if (m === 'yes' && frac != null && frac > 0.05 && !won) {
+    return { state: 'contention', caveat:
+      `The meter reports ${(frac * 100).toFixed(1)}% overlap but the operator did not get faster. ` +
+      `Concurrency without a latency win is CONTENTION — two roles co-resident and competing for the ` +
+      `same CUs, issue slots or LDS. That is a finding about the partition, not a partial success.` };
+  }
+  if (m === 'yes' && (frac == null || frac <= 0.05) && won) {
+    return { state: 'win_without_overlap', caveat:
+      `A latency win with essentially no measured overlap (${frac == null ? 'fraction unreported' : `${(frac * 100).toFixed(1)}%`}). ` +
+      `The win is probably real but it is NOT an overlap result — look for the mechanism (launch ` +
+      `overhead, L2 residency, grid shape) and attribute it, or the next round will build on the ` +
+      `wrong cause.` };
+  }
+  if (m === 'no') {
+    return { state: 'measured_none', caveat:
+      `The meter was built, controlled, and reports no overlap. That is a result about this edge, ` +
+      `not a missing measurement.` };
+  }
+  return { state: 'measured', caveat: '' };
+}
+// <</REPLAY:overlap_gate>>
+
+// <<REPLAY:bimodal_split>>
+// THE 512 GUARDS ARE NOT NOISY, THEY ARE BIMODAL — and the escape hatch the doctrine prescribes for
+// them does not work on them.
+//
+// Measured on this box, unmodified tree against itself, 10 runs per guard: `8192_uniform` unimodal,
+// worst pair 1.09%; `512_uniform` worst pair 6.21%; `512_rank-mixed-skew` worst pair 9.30% with 2 of
+// 10 runs sitting ~7-8% above an otherwise tight cluster. Those high runs reproduce to four digits,
+// which drift does not do. So the guard occupies one of two discrete states per run, and the excess
+// (~0.07-0.10 ms, 9-13% of a 512-token iteration) is additive.
+//
+// The standing rule is "deep sample, judge by SEPARATION" — two arms whose raw readings do not
+// overlap at all are separated in a way no tail draw can undo (10-vs-10, p=1.1e-5 under the null).
+// That rule is right, and on a bimodal guard it is UNREACHABLE: both arms draw slow runs, the ranges
+// interleave, and separation never happens however deep you sample. The escape hatch is unavailable
+// on precisely the two guards it was written for, which is why they have been demoted to "regression
+// guards only" for several waves while the effect being hunted (5-6% by Analyze's own envelope) sits
+// underneath a 9.30% worst pair.
+//
+// The way out is not more runs, it is conditioning on the state. Classify each reading, then compare
+// like with like, and report the state occupancy separately instead of averaging over it.
+//
+// TWO RULES KEEP THIS FROM BECOMING A KNOB THAT MANUFACTURES WINS:
+//  1. Classification is ARM-BLIND. The split is computed on the POOLED readings with no knowledge of
+//     which arm each came from. A per-arm threshold is a free parameter and would let an engineer
+//     choose the boundary that flatters the candidate.
+//  2. Refusing to classify stays available and is not a failure. If the pooled readings show no
+//     clean gap, this is not a bimodal guard today and the analysis falls back to all pairs. A
+//     classifier that always finds two clusters would find them in pure noise.
+const BIMODAL_MIN_GAP_PCT = 3.0;  // a gap smaller than this is a spread, not two states.
+function modeSplit(readings, minGapPct) {
+  const gapMin = Number.isFinite(minGapPct) ? minGapPct : BIMODAL_MIN_GAP_PCT;
+  const v = readings.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  if (v.length < 6) return { classified: false, reason: `only ${v.length} readings; need >=6 to see a gap` };
+  // The widest relative gap between consecutive sorted readings. Anything else (k-means, a fixed
+  // threshold) needs a parameter that is not in the data.
+  let at = -1, best = 0;
+  for (let i = 0; i < v.length - 1; i++) {
+    const g = v[i] > 0 ? ((v[i + 1] - v[i]) / v[i]) * 100 : 0;
+    if (g > best) { best = g; at = i; }
+  }
+  if (best < gapMin) {
+    return { classified: false, reason: `widest gap ${best.toFixed(2)}% < ${gapMin}% — one state, not two`,
+             gap_pct: best };
+  }
+  const cut = (v[at] + v[at + 1]) / 2;
+  // The slow state must be the minority, or "slow" is just the operating point and the few fast
+  // readings are the anomaly. Naming the wrong cluster inverts every conclusion below it.
+  const nSlow = v.length - at - 1;
+  if (nSlow > v.length / 2) {
+    return { classified: false, reason: `the upper cluster holds ${nSlow}/${v.length} readings — that is ` +
+             `the operating point, not a tail`, gap_pct: best };
+  }
+  return { classified: true, cut, gap_pct: best, n_fast: at + 1, n_slow: nSlow };
+}
+
+// `pairs` = [{base, cand}, ...] collected interleaved. Returns the mode-aware paired analysis.
+function pairedModeAware(pairs, minGapPct) {
+  const ok = pairs.filter((p) => Number.isFinite(Number(p.base)) && Number.isFinite(Number(p.cand)));
+  const split = modeSplit([...ok.map((p) => p.base), ...ok.map((p) => p.cand)], minGapPct);
+  const pct = (p) => ((Number(p.base) - Number(p.cand)) / Number(p.base)) * 100;  // >0 = candidate faster
+  const all = ok.map(pct);
+  const signTest = (xs) => {
+    if (!xs.length) return { n: 0, agree: 0, p: null };
+    const pos = xs.filter((x) => x > 0).length, neg = xs.filter((x) => x < 0).length;
+    const agree = Math.max(pos, neg);
+    // Two-sided sign test at unanimity is what the existing doctrine leans on; report it for any
+    // level of agreement so a 9-of-10 is not silently rounded to unanimous.
+    return { n: xs.length, agree, p: agree === xs.length ? Math.pow(2, -xs.length + 1) : null };
+  };
+  const med = (xs) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : null);
+
+  if (!split.classified) {
+    return { conditioned: false, reason: split.reason, gap_pct: split.gap_pct,
+             all: { deltas: all, median: med(all), ...signTest(all) } };
+  }
+  const isSlow = (x) => Number(x) > split.cut;
+  const fast = ok.filter((p) => !isSlow(p.base) && !isSlow(p.cand));
+  const mixed = ok.filter((p) => isSlow(p.base) !== isSlow(p.cand));
+  const bothSlow = ok.filter((p) => isSlow(p.base) && isSlow(p.cand));
+  const fastD = fast.map(pct);
+  // Occupancy is NOT a nuisance to be divided out. If the candidate lands in the slow state less
+  // often than the baseline does, that IS an effect, and on a guard where the slow state costs
+  // 9-13% of the iteration it can be the largest effect present. Discarding the slow runs and
+  // reporting only the fast-mode delta would throw away a real win as if it were noise.
+  const occ = (rows, pick) => {
+    const n = rows.length; const k = rows.filter((p) => isSlow(pick(p))).length;
+    return { n, slow: k, pct: n ? (k / n) * 100 : null };
+  };
+  return {
+    conditioned: true, cut: split.cut, gap_pct: split.gap_pct,
+    fast: { deltas: fastD, median: med(fastD), ...signTest(fastD) },
+    all: { deltas: all, median: med(all), ...signTest(all) },
+    dropped: { mixed_mode_pairs: mixed.length, both_slow_pairs: bothSlow.length },
+    occupancy: { base: occ(ok, (p) => p.base), cand: occ(ok, (p) => p.cand) },
+  };
+}
+
+// How many pairs to collect so that enough of them land with BOTH arms in the fast state. At the
+// measured ~20% slow rate a pair is usable with probability 0.8^2 = 0.64, so asking for 10 fast
+// pairs means collecting ~16 — which is why "10 pairs" as written has been quietly delivering ~6.
+function pairsNeeded(wantFastPairs, slowRatePct) {
+  const s = Math.min(0.9, Math.max(0, (Number(slowRatePct) || 0) / 100));
+  const usable = (1 - s) * (1 - s);
+  return usable <= 0 ? null : Math.ceil(wantFastPairs / usable);
+}
+// <</REPLAY:bimodal_split>>
+
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
 // director) and does not re-explore dead directions. No-op on a fresh run (prior_state undefined).
@@ -2489,6 +2703,16 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           `Carried forward, but it must be re-measured with >=5 interleaved reps and a null arm ` +
           `before it is reported as a result.`);
     }
+    // Overlap. Judged for every verified direction, not only the ones that claim fusion: a
+    // direction's own account of what it did is exactly the thing that must not decide whether the
+    // evidence is checked. Never rejects — see overlapVerdict.
+    const ov = overlapVerdict(r.ver, { geomean: primSpeedup(r.ver) });
+    r.overlap_state = ov.state;
+    if (ov.caveat) {
+      r.overlap_caveat = ov.caveat;
+      log(`OVERLAP ${ov.state.toUpperCase()} ${r.d.id}: ${ov.caveat}`);
+      if (ov.state !== 'measured_none') OVERLAP_CAVEATS.push(`${r.d.id} [${ov.state}]: ${ov.caveat}`);
+    }
   }
 
   // --- (d) Build candidate list; integrate if >=2 verified --------------
@@ -2766,6 +2990,7 @@ const report = await agentT(
     // shelves and never hits is a reason to lower K or drop the mechanism — but only if somebody
     // can see it happened.
     ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
+    ...(OVERLAP_CAVEATS.length ? { OVERLAP_CAVEATS } : {}),
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
     ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
     // Recomputed against the FINAL dispatch record, not the round-0 one: the question the report

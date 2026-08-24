@@ -390,6 +390,37 @@ sample-maximum property independently and concluded "operate at 6–8 pairs, nev
 of that is right for a unimodal guard and the second half would have hidden the bimodal tail on the
 512 guards entirely.
 
+**And on a bimodal guard the separation route does not work either — condition on the state instead.**
+Separation asks that the two arms' raw readings not overlap at all. When a guard occupies one of two
+discrete states, *both* arms draw slow runs, the ranges interleave, and separation never happens
+however deep you sample. So the escape hatch is unavailable on exactly the two guards it was written
+for, which is how `512_uniform` and `512_rank-mixed-skew` ended up demoted to regression-only while
+the effects being hunted there sit underneath a 9.30% worst pair. The fix is not more runs:
+
+1. **Classify the readings, arm-blind.** Pool every reading from both arms, sort them, and take the
+   widest relative gap between consecutive values. A gap under ~3% is a spread, not two states —
+   then say so and analyse all pairs as usual. Pooling matters: a per-arm threshold is a free
+   parameter, and choosing it after seeing the deltas is choosing your own result.
+2. **Primary statistic = the paired delta over pairs where BOTH arms are fast.** Like with like.
+   Report `n_fast` and the sign agreement across those pairs (unanimity at n=10 is p≈0.002,
+   two-sided), never a ratio of medians.
+3. **Report state occupancy per arm as a result in its own right.** How often each arm landed in the
+   slow state is *not* a nuisance to divide out. The slow state costs 9–13% of a 512-token
+   iteration, so a candidate that enters it less often has a larger effect than anything the
+   fast-mode delta will show. Dropping those runs and reporting only the fast-mode number throws a
+   real win away as though it were noise. If occupancy shifts, that is the headline.
+4. **Size the collection for the fast pairs, not the total.** At the measured ~20% slow rate a pair
+   is usable with probability 0.8² = 0.64, so "10 pairs" as written has been delivering about six.
+   Collect ⌈10/0.64⌉ ≈ **16 pairs** on the 512 guards when you need 10 usable ones.
+5. **Say how many you dropped and why.** Mixed-mode pairs (one arm slow, one fast) and both-slow
+   pairs are excluded from the fast statistic; report both counts. A conditioned analysis that does
+   not disclose its exclusions is indistinguishable from a cherry-picked one.
+
+Refusing to classify is a legitimate outcome and must stay available — a classifier that always
+finds two clusters will find them in pure noise. If the pooled gap is too small, or the upper
+cluster holds more than half the readings (in which case *it* is the operating point and you have
+named the wrong cluster), fall back to the all-pairs analysis and say that is what you did.
+
 One caveat on attributing the excess to the residual, from the same wave: on an operator whose
 end-to-end and per-stage timers are each independently rank-reduced, the residual is a
 *max-of-sums minus sum-of-maxes* quantity and can be negative — that wave measured a median residual

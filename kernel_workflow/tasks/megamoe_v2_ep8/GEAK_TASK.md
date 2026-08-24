@@ -183,10 +183,19 @@ worst pair as 1.93% and missed the tail entirely. Therefore:
 - Run baseline and candidate **alternately** (A,B,A,B,A,B) and report the **per-pair** delta plus the
   median. Never compare two independently collected medians. **At least 3 pairs on the 8192 guards
   and at least 10 on the 512 guards** — fewer than 10 there does not sample the slow state.
-- Report the raw per-run readings for the 512 guards, not only the pair deltas. Two arms whose raw
-  readings do not overlap at all are separated in a way no single tail draw can undo, and that is a
-  stronger result than a ratio: complete separation of 10 vs 10 has probability 1.1e-5 under the
-  null. A ratio against a fat-tailed worst pair understates a real effect badly.
+- Report the raw per-run readings for the 512 guards, not only the pair deltas. A ratio against a
+  fat-tailed worst pair understates a real effect badly — but **do not reach for complete separation
+  of the two arms here.** That is the right escape hatch on a unimodal guard and it is unreachable on
+  a bimodal one: both arms draw slow runs, the ranges interleave, and no amount of extra sampling
+  separates them. Condition on the state instead. Pool the readings from both arms *arm-blind*, split
+  at the widest relative gap (a gap under ~3% means one state, so say so and analyse all pairs), then
+  make the primary statistic the paired delta over pairs where **both** arms are fast, with `n_fast`
+  and the sign agreement reported. Report how often each arm landed in the slow state as a result in
+  its own right — the slow state costs 9-13% of a 512-token iteration, so a candidate that enters it
+  less often has a bigger effect than the fast-mode delta will ever show, and dividing that out
+  throws away the win. Disclose the mixed-mode and both-slow pairs you dropped.
+- Size the 512 collection for the *usable* pairs. At the measured ~20% slow rate a pair survives with
+  probability 0.64, so "10 pairs" has been yielding about six: collect **16** when you need 10.
 - Report the per-rep spread alongside the median.
 - The speedup denominator is this frozen tree, run under the identical command. Nothing else.
 - **`stage1` and `stage2_combine` stop being comparable the moment anything overlaps, and they move
@@ -200,4 +209,11 @@ worst pair as 1.93% and missed the tail entirely. Therefore:
   never as an objective, and never sum them. This also changes the residual's meaning — see above —
   so re-derive it rather than carrying an interpretation across the fusion.
 - A latency win with no measured change in overlap is **suspicious, not accepted** — find the
-  mechanism or discard the result.
+  mechanism or discard the result. That sentence was unenforceable for several waves because there
+  was no instrument behind it: once the stages fuse there is one kernel record and latency is
+  precisely the quantity that cannot tell overlap from removed launch overhead. **Read
+  `SKILL_DIR/knowledge/overlap_instrument.md` before claiming overlap either way** — it says what to
+  build, the two controls that decide whether the reading may be believed (the scattered path must
+  read ~0 or the meter is void; forced concurrency must read high or the meter is dead), and the
+  traps that have already produced plausible wrong numbers. `measured: "unknown"` is a first-class
+  answer there; a synthesised fraction is not.

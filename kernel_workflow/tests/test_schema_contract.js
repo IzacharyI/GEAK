@@ -90,6 +90,14 @@ const ARTIFACT_ROOTS = {
   // waves through SETUP_SCHEMA.prior_state.shelf. Deciding whether a patch still applies off a
   // field nobody was required to return is exactly the failure this file exists to catch.
   candidate_shelf: ['c', 'e'],
+  // `ver` is the verification result and `o` is its `overlap` sub-object, whose whole point is that
+  // a renamed or dropped field must not read as "measured and fine". This is the field group most
+  // at risk of drifting: the meter does not exist yet, so the schema is the only thing pinning the
+  // names the engineer will be asked to fill in.
+  overlap_gate: ['ver', 'o'],
+  // bimodal_split is deliberately absent. It reads nothing off an agent artifact — its inputs are
+  // raw latency readings the benchmark collected, passed in as plain numbers. Listing it here would
+  // require inventing schema fields for `p.base`/`p.cand` and would check the script against itself.
 };
 console.log('\n# 1. every property a gate reads off an agent artifact is declared in a schema');
 for (const [g, roots] of Object.entries(ARTIFACT_ROOTS)) {

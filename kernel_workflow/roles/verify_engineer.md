@@ -168,6 +168,31 @@ absolute per-case latencies. The script trusts only your numbers.
    Σ (weight_i / speedup_i)` using each case's `weight` — this is the PRIMARY number; regression is
    judged on it, not the geomean.**
 
+7. **Overlap, whenever the candidate fuses two or more stages into one kernel.** Read
+   `SKILL_DIR/knowledge/overlap_instrument.md` first — it exists because the fused shape blinds every
+   instrument that would judge it. A single kernel produces a single trace record, and the per-stage
+   timers can both *rise* while the operator gets faster, so **a fused kernel that is faster is not
+   evidence of overlap.** Fusion also removes launch overhead and keeps data in L2; those are wins and
+   none of them is overlap.
+
+   Report the `overlap` block. `measured` is required and has three values that must not collapse:
+   `"yes"` (the meter ran and found overlap), `"no"` (the meter ran and found none — a real,
+   reportable finding), `"unknown"` (you could not measure). Guessing a plausible `fraction` to avoid
+   writing `unknown` is the exact failure this block exists to prevent.
+
+   Two readings decide whether anyone may believe the third: `scattered_reading`, the meter run
+   against the unfused four-launch path where the true answer is known to be ~0 — **above ~0.05 there
+   and the meter is broken and every number after it is void** — and `forced_reading`, the meter run
+   against deliberately constructed concurrency, because a meter that reads 0 on both is dead, not
+   conservative. A `fraction` with neither control beside it is an untested instrument, and it is
+   graded as one. Report `clock_skew_ns` and `meter_overhead_pct` too, and quote latency only from
+   meter-off runs.
+
+   Where this lands: overlap up with `mega_e2e` rank-max flat or worse is **contention**, not partial
+   success, and must be reported as the finding it is. A latency win with no overlap is a fine result
+   with a named hole in it; the hole is written down, not papered over. Omit the block entirely only
+   when the candidate fuses nothing.
+
 ## Return JSON
 ```json
 {
@@ -188,6 +213,14 @@ absolute per-case latencies. The script trusts only your numbers.
   "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
   "artifact_hash_candidate": "the same quantity for the candidate arm",
   "touched_files": ["aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py", "..."],
+  "overlap": {
+    "measured": "yes|no|unknown",
+    "fraction": 0.0, "cu_fraction": 0.0,
+    "method": "in-kernel s_memrealtime per-workgroup phase log | rocprofv3 kernel trace | ...",
+    "scattered_reading": 0.0, "forced_reading": 0.0,
+    "clock_skew_ns": 0, "meter_overhead_pct": 0.0,
+    "note": "what could not be measured and why"
+  },
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```
