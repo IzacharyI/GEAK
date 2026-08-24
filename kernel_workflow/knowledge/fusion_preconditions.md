@@ -37,6 +37,51 @@ per edge (`tile_task_graph.md`) *before* proposing the change. If the window is 
 Evaluate all three **per edge**, not for the operator as a whole. It is normal for one edge in a
 chain to satisfy all three and the rest to fail condition 3.
 
+### Condition 1 is cheaper to check than the others, and it fails more often than you expect
+
+Do it first, statically, from the source — it costs minutes and needs no GPU. **Look at the first
+operation the consumer performs on the producer's output.** If it is a reduction over an axis the
+producer partitions across, there is no partial handover, and no barrier design, event scheme, or
+scheduler can create one. The recurring shapes: a normalization or softmax whose statistic spans the
+full hidden vector; a dot product over the full contraction dimension; any accumulation over
+`reduction_col` before the value is final. In each case the *last* contributing tile is what the
+consumer needs, so "partial" readiness is worth nothing.
+
+How often this bites, from a published profile of an open-source megakernel implementation of a
+1B-parameter decode layer: of six consecutive operator pairs, **exactly one** admitted a partial
+start (QKV → partial-attention, where attention for one KV head needs only that head's Q/K/V
+blocks), and the measured overlap there covered **28% of the producer's duration**. Every other pair
+was a hard full-grid wait for a structural reason of the kind above, and the implementation's own
+barriers correctly said so. Do not assume your operator is denser in exploitable edges than that
+one; find out, per edge, before the fusion is designed around an overlap that cannot exist.
+
+### Attribute the win, or you will not know whether you needed the fusion
+
+A fused form changes at least three things at once: launch count, kernel-boundary synchronization,
+and cross-operator overlap. Reporting one end-to-end number does not tell you which of them paid,
+and the standing critique of this whole technique — a fair one — is that published results routinely
+omit that breakdown. This matters practically and not just rhetorically: if the win is mostly
+launch-stall removal, the same win is available from graph capture and a dependent-launch mechanism
+at a fraction of the complexity and none of the maintenance cost, and the megakernel was the wrong
+build.
+
+The ladder in the next section doubles as the instrument. Run the rungs as an ablation and report
+the increment each one bought:
+
+```
+baseline (kernel-by-kernel)             T0
++ adjacent-kernel fusion                T1     -> boundary + intermediate-traffic removal
++ graph capture                         T2     -> host launch cost
++ concurrent independent branches       T3     -> DAG structure  (usually the largest single step)
++ dependent-launch / partial handover   T4     -> fine-grained overlap
+fused persistent kernel                 T5     -> whatever is left, minus the framework cost
+```
+
+`T4 → T5` is what the megakernel is actually worth. Report it separately, and report **what fraction
+of each producer was actually overlapped** (producer duration covered by a consumer that started
+early ÷ producer duration) rather than the word "overlap". That fraction is the honest form of an
+overlap claim and the only one that distinguishes real pipelining from serialization rearranged.
+
 ## The cheaper-lever ladder
 
 Fusion is the most expensive lever in the drawer — in engineering time, in verification risk, in
@@ -88,6 +133,24 @@ into 81 ordinary kernels under graph capture — 983 µs fused, 1169 µs capture
 **1010 µs captured + dependent launch**. The cheap mechanism recovered ~83% of what the kernel
 boundaries cost; the persistent form led by **~2.7%**.
 
+Three further results from the same literature, all pointing the same way — the sophisticated
+mechanism is not free and is not universally better:
+
+- **On-GPU dynamic scheduling loses to static scheduling on regular dense work**, measured at
+  **0.82–0.89×** — i.e. materially *slower than the baseline* — while the same scheduler wins on
+  data-dependent routed work. Dynamic scheduling is a treatment for load imbalance, and applied to a
+  workload that does not have imbalance it is pure overhead plus queue contention. Pick the
+  scheduler from the workload's variance, not from its sophistication (`resource_partition.md`).
+- **Compiler-generated tiles inside a fused kernel routinely lose to a tuned library kernel** for
+  the same GEMM. A published system attributes several of its own losing configurations to exactly
+  this. Fusing a GEMM means giving up whatever the vendor library was doing for it, and that
+  regression is charged against the fusion's gain, not waived.
+- The technique's benefit **decays as the regime becomes compute-bound**. It is strongest where
+  per-operator work is small relative to fixed cost — low batch, decode, latency-bound — and shrinks
+  as batch grows and the bubbles it removes become a smaller fraction of a longer kernel. If your
+  guard set spans both regimes, expect the answer to differ between them, and do not generalize a
+  small-shape win.
+
 The honest summary of the public evidence: **fusion of adjacent kernels + concurrent independent
 branches + a dependent-launch mechanism typically reaches 90–95% of an ideal megakernel.** A
 megakernel proposal is therefore a proposal to spend most of the project's risk budget on the last
@@ -128,7 +191,10 @@ insufficient. A proposal that skips the ladder is not ranked.
 
 Distilled from public analyses arguing *against* the megakernel-by-default position, including
 measured launch/bubble costs under graph capture, the dependent-launch-vs-persistence ablations
-above, and an independent replication of a published megakernel result. Retained here specifically
+above, an independent replication of a published megakernel result, an independent profile of an
+open-source megakernel decode implementation that found only one of six operator pairs admitted a
+partial start, and published systems' own reported losing configurations (dynamic scheduling on
+dense work, compiler-emitted tiles against a tuned library). Retained here specifically
 because the rest of this knowledge tree argues the other way and an Analyze phase needs both. All
 numbers are other people's, on other hardware, quoted as order-of-magnitude calibration.
 **Measure yours.**

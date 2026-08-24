@@ -141,6 +141,16 @@ The COMMANDMENT MUST contain, with concrete commands (not placeholders):
     geomean as a secondary diagnostic. List each case's `weight` and `weight_source` so every
     downstream agent computes the SAME number. State that this primary number is what the round winner
     gate and the final result use. If the baseline is the flagged naive fallback, say so here.
+- **If the harness reports per-stage / per-kernel sub-timers, `METRIC` must say they are diagnostic
+  and are never summed.** Sub-timers are only additive while the stages are serialized. Any change
+  that makes two stages run concurrently — fusion, streams, a dependent-launch mechanism — makes each
+  stage charge its own waiting to itself and makes them contend, so **the sub-timers inflate while
+  the operator gets faster**. A published instance: summed kernel time 62.4 → 102.9 µs across the
+  same change in which the execution span fell 61.6 → 37.0 µs. If `METRIC` leaves this unstated,
+  a correct optimization gets reported as a regression by an engineer reading the obvious number.
+  The comparable quantity is always the **end-to-end span** the guards are written against. Keep the
+  sub-timers — a sub-timer that rises while e2e falls is positive evidence that overlap happened —
+  and say in `PARSE` which is which.
 - `MODIFIABLE FILES` and the rules (never modify harness/COMMANDMENT/files outside the workspace;
   always run correctness before benchmark; always invoke via gpu_lock from the workspace; benchmark
   output is the source of truth).

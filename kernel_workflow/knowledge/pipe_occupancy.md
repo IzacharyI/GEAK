@@ -28,7 +28,23 @@ is cheap relative to a wave; the rest of this card is how to take it.
 
 ## The measurement
 
-Do not estimate this. Two collections, both cheap relative to a wave:
+Do not estimate this. Three collections, all cheap relative to a wave.
+
+**0. The counter-free first pass: an active-CU upper bound from a trace you already have.** Before
+touching a profiler, take the kernel trace you collected for timing, and for each kernel read its
+**grid size in blocks** and its **duration**. At any instant a kernel can have at most
+`min(grid_blocks × blocks_per_CU, CUs)` CUs doing its work; average that over the timeline weighted
+by duration. This is an *optimistic upper bound* — it assumes every resident block is issuing every
+cycle — which is exactly what makes it useful: **a low upper bound is conclusive.** A published
+example: eleven kernels on a 148-SM part gave a duration-weighted bound of 64.65/148 = **43.7%**,
+before a single counter was read, and that one number said the operator's problem was that most of
+the machine was idle rather than that any kernel was slow.
+
+The characteristic pattern to look for is a handful of kernels with tiny grids — 12, 16, 32 blocks
+on a device holding hundreds — sitting on the critical path. Each of them pins the whole device to
+its own grid size for its whole duration, and no amount of tuning *inside* such a kernel can raise
+that; only letting other work run beside it can. Report the bound per stage and the weighted mean.
+It costs one pass over a trace and it frequently reframes the analysis before you spend a lease.
 
 **1. Per-pipe utilization, from hardware counters.** On AMD, `rocprofv3 --pmc`:
 
@@ -110,6 +126,65 @@ weight loads can be issued during GEMM1's MFMA shadow" are different claims with
 implementations and different falsifications, and only the second one is worth a lease when the gap
 is zero.
 
+### The dependency is on the first READ, not on the task
+
+This is the reframing that turns the list above into a recipe. A consumer task B that depends on
+producer A is usually modelled as "B waits for A". That is too coarse. What actually depends on A is
+**B's first load of A's output** — and in a real GEMM-shaped task that load is preceded by a
+substantial amount of work that touches nothing A produces:
+
+- reading B's own task descriptor / instruction,
+- constructing scheduler and barrier state, initialising the stage barriers,
+- building descriptors for the async-copy engine,
+- **loading B's weights and scales** — the largest item, and pure memory traffic.
+
+All of it is dependency-free, and in the multi-launch shape all of it is stuck behind the barrier.
+So the fused form is not "B starts earlier"; it is **B's prologue runs during A**, and only B's
+activation load waits.
+
+The implementation shape that makes this real is a **split loader**: give the input operand and the
+weight operand *different* loader warps with different wait conditions. The activation loader
+(`ALoader`) waits on the readiness signal for A's tile; the weight loader (`WLoader`) does not wait
+at all, and runs ahead filling the pipeline up to `kNumStages` deep. Both then meet at the
+per-stage full barrier that the MMA loop already waits on, so the main loop is unchanged and the
+correctness argument is unchanged — the activation half still cannot outrun its dependency. The
+same trick applies to a paged shared-memory scheme: release a page as soon as its stage is consumed
+and the *next* instruction's weight load can start into it immediately, so weights are always
+loading.
+
+Two things to check before proposing it. First, **the weights must actually be dependency-free** —
+trace the pointer to a constructor-set or module-resident tensor; one written by a previous stage is
+not. Second, running ahead costs registers and shared memory per stage in flight, which is the same
+budget occupancy wants; that trade is the subject of the previous section, and it is normally the
+right way to spend it.
+
+### Charge the framework, then subtract it
+
+A persistent/fused kernel has a **fixed cost that exists even with no work in it**: the resident
+blocks, the instruction/queue machinery, the page and barrier bookkeeping. Measure it directly by
+running the framework with an empty instruction stream — one published implementation measured
+**4.671 µs** out of a 44.272 µs run, i.e. more than 10% of the fused time was scaffolding. Report
+the fused number **both ways** (raw, and minus framework), because the two support different claims:
+the raw number is what the operator costs, the net number is what the *scheduling idea* is worth,
+and quoting only the second one is the standard way this technique gets oversold.
+
+That fixed cost is also the reason a fused kernel can lose to the multi-launch form on small shapes
+while winning on large ones — it is amortized, so it is a per-guard effect, not a global one.
+
+### The cost of one resource shape for every op
+
+A fused kernel's resident blocks have **one** register allocation, one block size, one shared-memory
+budget, and every op it swallows must live inside them. That is a real cost and it is the substance
+of the standing counter-argument to megakernels (stated as far back as 2013, and independently in
+the graph-processing literature: differing register demands per op mean fusing *everything* is not
+optimal, and some ops are better left outside). Concretely: an MMA op that needs paired blocks
+constrains how blocks can be handed out to everything else; a top-k or reduction op that wants 1024
+threads runs at a fraction of its natural width inside a resident block sized 384 for the GEMM.
+
+So when you fuse, name the op with the *worst* fit and price it. If the answer is that one op loses
+more than the fusion gains, the correct design is a fused kernel that does not contain that op —
+which is a legitimate and defensible outcome, not a failure to finish the job.
+
 ## Pricing a direction against the table
 
 Every GPU direction should carry, before it is ranked:
@@ -158,7 +233,12 @@ Emit alongside the task graph, not instead of it:
 
 ## Provenance
 
-Distilled from a GPU optimization program that spent four waves on occupancy, launch-count and
+The active-CU bound, the split-loader/prologue recipe, the empty-framework cost and the
+one-resource-shape argument are from public megakernel implementation write-ups and from the
+long-standing counter-literature on fusing everything into one kernel; their numbers are other
+people's, on other hardware, quoted for the *shape* of the effect.
+
+The rest is distilled from a GPU optimization program that spent four waves on occupancy, launch-count and
 communication-overlap directions before collecting a single hardware counter, and then found that
 the counters had foreclosed all three before any of them was bought. What the counters said is
 deliberately **not** reproduced here: this is a method card, and a card that ships one operator's

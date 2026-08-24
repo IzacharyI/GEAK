@@ -221,6 +221,37 @@ this recovered most of an 8.4 µs residual and removed the fence entirely.
 Same trade the GEMM epilogue already makes for its activations — check whether your codebase has an
 `out_cache_modifier`-style hook before adding a fence.
 
+## Lever 6b — A wait the compiler is allowed to move is not a wait
+
+Once producer and consumer live in the same kernel, the acquire side stops being a runtime property
+and becomes a **compiler** property, and this failure passes every functional test you will think to
+run. The reported case: a consumer's input pointer was declared `const __restrict__`. Both
+qualifiers are promises — *nothing writes through another pointer, the value does not change* — and
+they are false here, because the whole point is that a peer block writes that buffer. The compiler
+took them at face value and hoisted the load **above the readiness spin**. The kernel then read
+whatever was in the buffer from the previous iteration. On a warm graph replay the previous
+iteration's data is usually *nearly right*, so the error is small, shape-correct, and passes a
+tolerance check.
+
+Three consequences worth adopting wholesale:
+
+- **Do not put `const`/`__restrict__` (or a language's equivalent aliasing promise) on any pointer
+  whose contents are produced inside the same kernel by another block.** The qualifier is a lie the
+  moment the buffer becomes cross-block state. This is the single highest-yield thing to grep for
+  after a fusion.
+- **Verify the ordering in the emitted ISA, not in the source.** Find the readiness spin and confirm
+  the dependent loads are *after* it, and that the appropriate `s_waitcnt`/acquire sits between. A
+  source-level wait that the scheduler sank past is invisible at every level above the disassembly.
+- **Test it with poisoned inputs, not with real ones.** Fill the producer's output buffer with a
+  value that cannot be correct (NaN, a sentinel, the wrong iteration's data) *before* launch, and
+  run the same graph repeatedly. A hoisted load reads the poison on replay 1 and then hides forever
+  behind plausible stale data. Real inputs are exactly the inputs that cannot detect this.
+
+Generalize the rule: **anything that tells the compiler a value is invariant defeats a
+synchronization built on that value changing.** Ordering added at the source level must be re-proved
+at the machine level after every fusion, because fusion is precisely the transformation that puts
+the two sides within the optimizer's reach for the first time.
+
 ## Lever 7 — Residency is a correctness invariant, not a tuning knob
 
 In a persistent kernel, roles are assigned by **arrival ticket** (`ticket = atomic_add(counter)`;
@@ -339,6 +370,21 @@ question is under ~1% of e2e, the target is bookkeeping, not performance.
     turning parallel time into serial time. It reported 8470 µs of wait inside a 5.4 ms kernel.
     **Any in-kernel wait exceeding the kernel's own wall time is an aggregation error** — that
     impossibility is the cheapest available self-check, so compute the ratio every time.
+
+- **Once anything overlaps, the SUM of per-stage timers stops being a cost and becomes an
+  artifact — and it moves the WRONG WAY.** This is the single easiest way to read a successful
+  overlap as a regression, and it needs no bug to happen. A consumer stage that is allowed to enter
+  early charges its own *waiting* to itself, and stages running concurrently contend for the same
+  units, so every individual stage gets slower on paper while the operator gets faster. One
+  published measurement of exactly this: summed kernel time rose 62.4 → 102.9 µs across the same
+  transformation in which the end-to-end execution span fell 61.6 → 37.0 µs. Both numbers are real;
+  only one of them is the operator's latency.
+  **The comparable quantity across a fusion is the span** — first stage start to last stage end,
+  or equivalently the graph's critical path — never `Σ stage_i`. If your harness reports per-stage
+  timers (most do, and they are the natural thing to watch), say explicitly in the report that they
+  are diagnostic under overlap and non-comparable to their pre-fusion values. Keep them: a stage
+  timer that inflates while the span shrinks is *positive evidence that overlap happened*, and it is
+  often the cheapest such evidence you have. Just never add them up.
 
 - **An opt-in fast path that falls back silently will be measured in its slow form.** A megakernel
   gated on `ENV == "1"` **and** a config predicate silently took the scattered path when either

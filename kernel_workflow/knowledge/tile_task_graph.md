@@ -27,6 +27,16 @@ Pick the tile as the unit the *producer already writes atomically* — the block
 tile. If a stage's output tile is consumed in a different tiling than it was produced in, that
 mismatch is itself a finding: it is the reason the edge is currently a full barrier.
 
+**Partition by tile, not by whatever semantic group the operator names.** Operators come with a
+natural-looking unit that is *not* the tile — an expert, a sequence, a head, a bucket, a segment —
+and it is tempting to make that the scheduling unit because the code is already organized that way.
+Resist it. A semantic group has data-dependent size, so partitioning the schedule by group inherits
+the group's imbalance directly: the largest group becomes the tail, and no amount of overlap fixes a
+unit that is intrinsically uneven. A tile has a fixed shape by construction. Where the two disagree,
+the group boundary belongs in the *indexing*, and the tile stays the scheduling unit. This is a
+recurring result rather than a subtlety — several independent systems converged on it after first
+shipping the group-partitioned version.
+
 ## The edge rule
 
 There is an edge from task A to task B **iff A's output region overlaps B's input region.** That is
@@ -83,6 +93,38 @@ For every edge, one of:
 The count of `launch_boundary` edges whose true scope (previous section) is *narrower* than
 grid-wide is the size of the opportunity. Report that number. If it is small, say so — that is a
 legitimate and valuable Analyze result, and it is one that will save the project a wave.
+
+## How many events does an edge need — the pairing decision
+
+An edge in the graph is realized at runtime as a **counter**: the event lowers to an ordinary
+integer in memory, the producer does an atomic decrement (or increment) when its tile is done, and
+the consumer spin-waits until the counter hits its target. That is the whole mechanism; there is
+nothing exotic underneath, which is why the interesting decision is not *how* to signal but **how
+many counters to allocate for one producer/consumer pair.** Four strategies, in increasing
+precision and increasing cost:
+
+| strategy | one counter per | consumer waits for | when it is right |
+|---|---|---|---|
+| `whole` | producer stage | all producer tiles | tilings unrelated, or the consumer's first op is a full reduction |
+| `tile` | producer tile | the one tile it reads | tilings identical, 1:1 |
+| `tile_cover` | consumer tile | every producer tile intersecting its input region | tilings differ; the general case |
+| `tile_reduce` | consumer tile | the N producers accumulating into it | producer writes are a partial-sum fan-in |
+
+Two rules that follow, and both are load-bearing:
+
+- **`whole` is the correct default for any pair you have not analyzed.** It is exactly the barrier
+  the multi-launch form already has, so it is never a regression, and it lets you fuse an operator
+  incrementally — convert the edges you have proven, leave the rest at `whole`, and the kernel is
+  correct at every step. A fused kernel that must have all its edges refined before it runs at all
+  is a fused kernel you cannot bisect.
+- **Counters are not free and the count is the cost.** `tile_cover` on a pair with fine tiling on
+  both sides can allocate thousands of counters and issue an atomic per producer tile per consumer;
+  price that against the window from `fusion_preconditions.md` before choosing it. Refining an edge
+  whose window is 3 µs into 2000 counters is a measurable loss with a correct-looking design.
+
+Record the chosen strategy per edge in the artifact. It is the field that most directly determines
+whether the implementation matches the analysis, and the one most likely to silently drift back to
+`whole` during debugging.
 
 ## Critical path and slack
 
@@ -142,7 +184,8 @@ An Analyze phase that has done this work can emit it. One that has not, cannot. 
 
 - `nodes[]`: `{id, stage, tile, duration_us, source}` — `source` says where the duration came from
   (profile trace / derived / assumed; an assumed duration is a declared unknown, not a fact).
-- `edges[]`: `{from, to, scope, enforced_by, bytes}` using the two vocabularies above.
+- `edges[]`: `{from, to, scope, enforced_by, bytes, pairing}` using the three vocabularies above
+  (`pairing` ∈ `whole | tile | tile_cover | tile_reduce`, with the counter count it implies).
 - `critical_path[]`: node ids in order, plus `critical_path_us` and the measured end-to-end for
   comparison.
 - `slack_us` per node, or at minimum the set of zero-slack nodes.
@@ -158,7 +201,8 @@ fusion specifically, because the graph being serial today is not by itself an ar
 
 Distilled from public literature on megakernel/task-graph compilation (Mirage Persistent Kernel's
 tGraph construction, event fusion, normalization and BFS linearization; EventTensor's event-as-tensor
-lowering and its data-dependent event update / task triggering; published measurements of
-hierarchical sync cost on multi-die GPUs). The numbers in this file are other people's, cited as
+lowering and its data-dependent event update / task triggering; the event-pairing strategies and the
+partition-by-tile-not-by-group result from published megakernel implementations and their
+follow-ons; published measurements of hierarchical sync cost on multi-die GPUs). The numbers in this file are other people's, cited as
 order-of-magnitude calibration for the *shape* of an effect. **Measure your own before you rely on
 one.**

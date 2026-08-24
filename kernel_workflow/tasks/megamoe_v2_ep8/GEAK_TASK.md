@@ -189,5 +189,15 @@ worst pair as 1.93% and missed the tail entirely. Therefore:
   null. A ratio against a fat-tailed worst pair understates a real effect badly.
 - Report the per-rep spread alongside the median.
 - The speedup denominator is this frozen tree, run under the identical command. Nothing else.
+- **`stage1` and `stage2_combine` stop being comparable the moment anything overlaps, and they move
+  the wrong way.** They are separate rank-reduced timers over stages that are serialized today. Once
+  a stage is allowed to start early it charges its own waiting to itself, and concurrent stages
+  contend, so **both stage timers can rise while the operator gets faster** — a successful overlap
+  reads as a per-stage regression under a naive comparison, and `stage1 + stage2_combine` is not a
+  cost at all once they run together. The number that stays comparable across this change is
+  `mega_e2e` rank-max, which is what the guards are written against; keep the stage timers as
+  *evidence of overlap* (a stage timer that inflates while `mega_e2e` falls is a positive signal),
+  never as an objective, and never sum them. This also changes the residual's meaning — see above —
+  so re-derive it rather than carrying an interpretation across the fusion.
 - A latency win with no measured change in overlap is **suspicious, not accepted** — find the
   mechanism or discard the result.
