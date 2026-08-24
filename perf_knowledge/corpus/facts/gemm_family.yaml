@@ -8,7 +8,7 @@ provenance:
   aiter_path: "/sgl-workspace/aiter"
   extractor: "perf_knowledge/corpus/_extract_impl_facts.py"
   operator_family: "gemm"
-  records: 1210
+  records: 1203
   autotune_configs: 0
 
 coverage:
@@ -471,11 +471,11 @@ coverage:
   - language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a4w4.cu"
     lines: 279
-    facts: 16
+    facts: 15
   - language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
     lines: 288
-    facts: 31
+    facts: 27
   - language: "asm"
     file: "csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu"
     lines: 86
@@ -483,7 +483,7 @@ coverage:
   - language: "asm"
     file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
     lines: 360
-    facts: 26
+    facts: 24
 
 missing:
   - language: "triton"
@@ -15866,21 +15866,21 @@ facts:
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a16w16.cu"
-    line: 248
-    match: "gdx = (Ndim + SUBN - 1) / SUBN;"
+    line: 247
+    match: "int gdx = (Ndim + SUBN - 1) / SUBN;"
     captured:
       - "(Ndim + SUBN - 1) / SUBN"
     arch_scope: ""
     evidence:
+      - "245:     args.splitk              = split;"
       - "246:     AiterAsmKernel* impl_ptr = get_or_load_kernel(name, config_map, SUBM, SUBN);"
       - "248:     int gdx = (Ndim + SUBN - 1) / SUBN;"
       - "249:     int gdy = (Mdim + SUBM - 1) / SUBM;"
-      - "250:     int gdz = split;"
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a16w16.cu"
     line: 249
-    match: "gdy = (Mdim + SUBM - 1) / SUBM;"
+    match: "int gdy = (Mdim + SUBM - 1) / SUBM;"
     captured:
       - "(Mdim + SUBM - 1) / SUBM"
     arch_scope: ""
@@ -15892,7 +15892,7 @@ facts:
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a16w16.cu"
     line: 250
-    match: "gdz = split;"
+    match: "int gdz = split;"
     captured:
       - "split"
     arch_scope: ""
@@ -16050,19 +16050,6 @@ facts:
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a4w4.cu"
-    line: 237
-    match: "gdz                  = 1;"
-    captured:
-      - "1"
-    arch_scope: ""
-    evidence:
-      - "235:     int SUBM                 = 0;"
-      - "236:     int SUBN                 = 0;"
-      - "237:     int gdz                  = 1;"
-      - "239:     auto it = config_map->find(kname);"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_gemm_a4w4.cu"
     line: 257
     match: "gdz          = (Kdim + k_per_tg - 1) / k_per_tg;"
     captured:
@@ -16076,12 +16063,13 @@ facts:
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a4w4.cu"
-    line: 266
-    match: "gdx = (Ndim + SUBN - 1) / SUBN;"
+    line: 265
+    match: "int gdx = (Ndim + SUBN - 1) / SUBN;"
     captured:
       - "(Ndim + SUBN - 1) / SUBN"
     arch_scope: ""
     evidence:
+      - "263:     else"
       - "264:         AITER_CHECK(false, __func__, \" not find kernel \" + kname);"
       - "266:     int gdx = (Ndim + SUBN - 1) / SUBN;"
       - "267:     int gdy = (Mdim + SUBM - 1) / SUBM;"
@@ -16089,7 +16077,7 @@ facts:
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a4w4.cu"
     line: 267
-    match: "gdy = (Mdim + SUBM - 1) / SUBM;"
+    match: "int gdy = (Mdim + SUBM - 1) / SUBM;"
     captured:
       - "(Mdim + SUBM - 1) / SUBM"
     arch_scope: ""
@@ -16261,7 +16249,7 @@ facts:
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
     line: 216
-    match: "blockSizeX           = 256"
+    match: "int blockSizeX           = 256;"
     captured:
       - "256"
     arch_scope: ""
@@ -16271,48 +16259,6 @@ facts:
       - "216:     int blockSizeX           = 256;"
       - "217:     if(it != config_map->end())"
       - "218:     {"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
-    line: 213
-    match: "gdx                  = 0;"
-    captured:
-      - "0"
-    arch_scope: ""
-    evidence:
-      - "211:     int SUBN                 = 0;"
-      - "212:     auto it                  = config_map->find(selectedName);"
-      - "213:     int gdx                  = 0;"
-      - "214:     int gdy                  = 0;"
-      - "215:     int gdz                  = 0;"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
-    line: 214
-    match: "gdy                  = 0;"
-    captured:
-      - "0"
-    arch_scope: ""
-    evidence:
-      - "212:     auto it                  = config_map->find(selectedName);"
-      - "213:     int gdx                  = 0;"
-      - "214:     int gdy                  = 0;"
-      - "215:     int gdz                  = 0;"
-      - "216:     int blockSizeX           = 256;"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
-    line: 215
-    match: "gdz                  = 0;"
-    captured:
-      - "0"
-    arch_scope: ""
-    evidence:
-      - "213:     int gdx                  = 0;"
-      - "214:     int gdy                  = 0;"
-      - "215:     int gdz                  = 0;"
-      - "216:     int blockSizeX           = 256;"
-      - "217:     if(it != config_map->end())"
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
@@ -16340,19 +16286,6 @@ facts:
       - "224:         gdx                 = (Ndim / SUBN) * blockSizeX;"
       - "225:         gdy                 = (Mdim % SUBM == 0) ? Mdim / SUBM : Mdim / SUBM + 1;"
       - "226:         gdz                 = 1;"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
-    line: 226
-    match: "gdz                 = 1;"
-    captured:
-      - "1"
-    arch_scope: ""
-    evidence:
-      - "224:         gdx                 = (Ndim / SUBN) * blockSizeX;"
-      - "225:         gdy                 = (Mdim % SUBM == 0) ? Mdim / SUBM : Mdim / SUBM + 1;"
-      - "226:         gdz                 = 1;"
-      - "228:         if(cfg.splitK == 1 && selectedksplit > 0)"
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_gemm_a8w8.cu"
@@ -16649,12 +16582,13 @@ facts:
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu"
-    line: 73
-    match: "gdx = (n + TileN - 1) / TileN;"
+    line: 72
+    match: "int gdx = (n + TileN - 1) / TileN;"
     captured:
       - "(n + TileN - 1) / TileN"
     arch_scope: ""
     evidence:
+      - "70:     static AiterAsmKernel impl_kenrel(\"flatmm_uk_gfx9_f16f8_128x256x128_1x4x1_16x16x32\", \"flatmm_uk_gfx9_f16f8_128x256x128_1x4x1_16x16x32.co\");"
       - "71:     impl_ptr = &impl_kenrel;"
       - "73:     int gdx = (n + TileN - 1) / TileN;"
       - "74:     int gdy = (m + TileM - 1) / TileM;"
@@ -16662,7 +16596,7 @@ facts:
     language: "asm"
     file: "csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu"
     line: 74
-    match: "gdy = (m + TileM - 1) / TileM;"
+    match: "int gdy = (m + TileM - 1) / TileM;"
     captured:
       - "(m + TileM - 1) / TileM"
     arch_scope: ""
@@ -16726,34 +16660,21 @@ facts:
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
-    line: 349
-    match: "blockSizeX = 256"
+    line: 348
+    match: "constexpr int blockSizeX = 256;"
     captured:
       - "256"
     arch_scope: ""
     evidence:
+      - "346:         selectedsplitK);"
       - "347:     size_t arg_size = sizeof(args);"
       - "349:     constexpr int blockSizeX = 256;"
       - "350:     int gdx = (Ndim / cfg.tile_n) * blockSizeX;"
-      - "351:     int gdy = (Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1;"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
-    line: 233
-    match: "gdx=%d, gdy=%d, gdz=%d\\n\", gdx, gdy, gdz);"
-    captured:
-      - "%d, gdy=%d, gdz=%d\\n\", gdx, gdy, gdz)"
-    arch_scope: ""
-    evidence:
-      - "231:     printf(\"Selected Kernel: %s\\n\", selectedKernelName.c_str());"
-      - "232:     printf(\"Matrix dimensions: M=%u, N=%u, K=%u\\n\", args.m, args.n, args.k);"
-      - "233:     printf(\"Grid dimensions: gdx=%d, gdy=%d, gdz=%d\\n\", gdx, gdy, gdz);"
-      - "234:     printf(\"splitK: %d\\n\", selectedsplitK);"
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
     line: 350
-    match: "gdx = (Ndim / cfg.tile_n) * blockSizeX;"
+    match: "int gdx = (Ndim / cfg.tile_n) * blockSizeX;"
     captured:
       - "(Ndim / cfg.tile_n) * blockSizeX"
     arch_scope: ""
@@ -16766,7 +16687,7 @@ facts:
     language: "asm"
     file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
     line: 351
-    match: "gdy = (Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1;"
+    match: "int gdy = (Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1;"
     captured:
       - "(Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1"
     arch_scope: ""
@@ -16776,20 +16697,6 @@ facts:
       - "351:     int gdy = (Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1;"
       - "352:     int gdz = 1;"
       - "353:     gdx = gdx * selectedsplitK;"
-  - category: "asm_launch"
-    language: "asm"
-    file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"
-    line: 352
-    match: "gdz = 1;"
-    captured:
-      - "1"
-    arch_scope: ""
-    evidence:
-      - "350:     int gdx = (Ndim / cfg.tile_n) * blockSizeX;"
-      - "351:     int gdy = (Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1;"
-      - "352:     int gdz = 1;"
-      - "353:     gdx = gdx * selectedsplitK;"
-      - "354:     if (DebugPrint) {"
   - category: "asm_launch"
     language: "asm"
     file: "csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu"

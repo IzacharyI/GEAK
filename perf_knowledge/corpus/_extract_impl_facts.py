@@ -157,8 +157,13 @@ RULES = [
     # the byte layout of its argument block. A FlyDSL author reimplementing one of these has to match
     # all four, and every one of them is written down here rather than in the binary.
     ("asm_object", r"\b(co_name|CO_NAME|hsaco|\w+\.co)\b"),
-    ("asm_launch", r"\bblockSize[XYZ]?\s*=\s*([0-9]+)"),
-    ("asm_launch", r"\bgd[xyz]\s*=\s*(.+?);"),
+    ("asm_launch", r"^\s*(?:\w[\w:<>*&\s]*?\s)?blockSize[XYZ]?\s*=\s*([0-9]+)\s*;"),
+    # Anchored to the start of a statement, and the right-hand side must name something. Both
+    # restrictions come from real misses: unanchored, `gdx=` matched inside a
+    # `printf("gdx=%d, gdy=%d")` format string; and without the letter requirement the `int gdx = 0;`
+    # declarations were reported alongside the real formula, three records of `0` per launcher saying
+    # nothing. A grid formula that mentions no dimension is not a grid formula.
+    ("asm_launch", r"^\s*(?:int\s+)?gd[xyz]\s*=\s*([^;\"]*[A-Za-z_][^;\"]*);"),
     ("asm_launch", r"\bhipModuleLaunchKernel\s*\("),
     ("asm_argblock", r"struct\s+__attribute__\(\(packed\)\)\s+(\w+)"),
     ("asm_tile", r"\bSUB[MNK]\s*=\s*(.+?);"),

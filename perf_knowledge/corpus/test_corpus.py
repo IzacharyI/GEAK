@@ -148,6 +148,26 @@ def test_the_asm_launcher_contract_is_captured(tmp_path):
     assert {"asm_argblock", "asm_launch"} <= cats(got)
 
 
+def test_a_grid_formula_inside_a_format_string_is_not_a_launch_fact(tmp_path):
+    """`printf("gdx=%d, gdy=%d")` is a log line, not a grid. Found in the rendered page, where a
+    fragment of a format string sat in the asm launch table looking like geometry."""
+    got = scan(tmp_path, "asm_gemm_x.cu", """
+        printf("gdx=%d, gdy=%d, gdz=%d\\n", gdx, gdy, gdz);
+        """, language="asm")
+    assert not [g for g in got if g["category"] == "asm_launch"], got
+
+
+def test_a_zero_initialiser_is_not_a_grid_formula(tmp_path):
+    """`int gdx = 0;` states no decision. Three of those per launcher crowded out the real formula."""
+    got = scan(tmp_path, "asm_gemm_x.cu", """
+        int gdx = 0;
+        gdx = (Ndim / SUBN) * blockSizeX;
+        """, language="asm")
+    hits = [g for g in got if g["category"] == "asm_launch"]
+    assert len(hits) == 1, hits
+    assert hits[0]["captured"] == ["(Ndim / SUBN) * blockSizeX"]
+
+
 def test_ck_records_the_named_pipeline_choice_and_not_the_positional_soup(tmp_path):
     got = scan(tmp_path, "g.cuh", """
         using Instance = ck::tensor_operation::device::DeviceGemmMultiD_Xdl_CShuffle_V3

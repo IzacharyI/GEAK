@@ -14,7 +14,7 @@ python3 perf_knowledge/corpus/_render_facts.py --emit
 | aiter_commit | `7a8ff7dd4ae3063ff1a18622a46460125c84370e` |
 | aiter_tree_dirty | `True` |
 | operator_family | `gemm` |
-| records | `1210` |
+| records | `1203` |
 
 ## What this is, and what it is not
 
@@ -39,7 +39,7 @@ decision; it is simply not in the text. See the coverage note below.
 |---|---|---|---|---|---|---|
 | `access_width` | 8 | · | · | · | · | · |
 | `asm_argblock` | · | · | · | · | · | 5 |
-| `asm_launch` | · | · | · | · | · | 23 |
+| `asm_launch` | · | · | · | · | · | 16 |
 | `asm_object` | · | · | · | · | · | 13 |
 | `asm_tile` | · | · | · | · | · | 50 |
 | `async_copy` | 23 | · | · | · | · | · |
@@ -62,7 +62,7 @@ decision; it is simply not in the text. See the coverage note below.
 | `tile_shape` | 7 | · | · | · | · | · |
 | `tunable_param` | · | 459 | · | · | · | · |
 | `waves` | 6 | · | · | · | · | · |
-| **total** | **339** | **616** | **13** | **60** | **90** | **92** |
+| **total** | **339** | **616** | **13** | **60** | **90** | **85** |
 
 The zeros are the interesting part, and they are easy to misread. `scheduling` is dense in
 FlyDSL and empty elsewhere, but Triton kernels are scheduled too — by a compiler pass, and CK
@@ -358,21 +358,21 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `asm_launch` — Workgroup size and grid formula the assembly assumes
 
-**asm** — 23 in 5 file(s)
+**asm** — 16 in 5 file(s)
 
-- `0` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:213`, `csrc/py_itfs_cu/asm_gemm_a8w8.cu:214`, `csrc/py_itfs_cu/asm_gemm_a8w8.cu:215`
-- `1` — `csrc/py_itfs_cu/asm_gemm_a4w4.cu:237`, `csrc/py_itfs_cu/asm_gemm_a8w8.cu:226`, `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:352`
 - `(Mdim + SUBM - 1) / SUBM` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:249`, `csrc/py_itfs_cu/asm_gemm_a4w4.cu:267`
-- `(Ndim + SUBN - 1) / SUBN` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:248`, `csrc/py_itfs_cu/asm_gemm_a4w4.cu:266`
-- `256` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:216`, `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:349`
-- `%d, gdy=%d, gdz=%d\n", gdx, gdy, gdz)` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:233`
+- `(Ndim + SUBN - 1) / SUBN` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:247`, `csrc/py_itfs_cu/asm_gemm_a4w4.cu:265`
+- `256` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:216`, `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:348`
 - `(Kdim + k_per_tg - 1) / k_per_tg` — `csrc/py_itfs_cu/asm_gemm_a4w4.cu:257`
 - `(Mdim % SUBM == 0) ? Mdim / SUBM : Mdim / SUBM + 1` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:225`
 - `(Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:351`
 - `(Ndim / SUBN) * blockSizeX` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:224`
 - `(Ndim / cfg.tile_n) * blockSizeX` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:350`
 - `(m + TileM - 1) / TileM` — `csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu:74`
-- …4 further distinct value(s); see the YAML
+- `(n + TileN - 1) / TileN` — `csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu:72`
+- `gdx * selectedksplit` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:270`
+- `gdx * selectedsplitK` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:353`
+- …1 further distinct value(s); see the YAML
 
 ### `asm_argblock` — Byte layout of the argument block it expects
 
