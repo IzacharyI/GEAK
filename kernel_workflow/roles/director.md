@@ -38,7 +38,9 @@ continued wave build on the cumulative best instead of restarting. Handle it as 
   `KERNEL_PATH_ORIG`. Re-apply `chmod -w` to the oracle files. `git init` + commit this seeded state as
   HEAD (so this wave's patches diff from the cumulative best). Then read `$STATE_DIR/STATE.json` if present
   and return `resumed: true` plus `prior_state` (its `cumulative`, `insights`, `ledger`, `bottleneck_now`,
-  `best_per_case`). Verify the oracle is intact: `reference_io.pt` sha256 must still match `meta.json`'s
+  `best_per_case`, and — if present — `shelf` and `absorbed_files`, copied through VERBATIM: they are the
+  previous wave's verified-but-unmerged candidates and the file sets that decide which of them still
+  apply, and a shelf entry that loses its `patch` or `files` is an offer that can no longer be made). Verify the oracle is intact: `reference_io.pt` sha256 must still match `meta.json`'s
   `reference_io_sha256` (if present) — if it was tampered, fall back to seeding from `KERNEL_PATH_ORIG` and
   set `resumed: false`.
 - **If `STATE_DIR` is set but `$STATE_DIR/best/` is absent** (the FIRST wave): proceed with the normal
@@ -168,7 +170,8 @@ Return JSON:
 (`baseline_frozen`/`baseline_callable` are REQUIRED — the orchestrator aborts the run if `baseline_frozen`
 is false AND `baseline_callable` is empty, to avoid timing the candidate against `kernel_src/`.)
 (DEEP-MODE resume only: also include `"resumed": true` and `"prior_state": {cumulative, insights, ledger,
-bottleneck_now, best_per_case}` when you seeded from `$STATE_DIR/best/`; omit both on a normal/first run.)
+bottleneck_now, best_per_case, shelf, absorbed_files}` when you seeded from `$STATE_DIR/best/`; omit both
+on a normal/first run. `shelf`/`absorbed_files` are pass-through JSON — do not reformat or summarise them.)
 
 ---
 

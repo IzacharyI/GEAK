@@ -142,6 +142,15 @@ absolute per-case latencies. The script trusts only your numbers.
    correctness oracle, or COMMANDMENT reads is out of bounds regardless of what was declared — and
    say in your report that you judged the boundary yourself, so the missing declaration is visible. A patch that edits the instrument
    and the subject in the same diff has no readable result, however good the number looks.
+   **Report that file list as `touched_files`** — the same list you just diffed against
+   `MODIFIABLE_FILES`, one repo-relative path per entry, for every file the patch adds, edits or
+   deletes (`git apply --numstat <patch>` or `git diff --name-only` after applying it). You were
+   already computing it and then discarding it. It is required, and it is required because a
+   *later* round decides whether your patch can be combined with someone else's by intersecting
+   these sets: an empty list does not mean "safe to combine with everything", it means nobody can
+   tell, and a candidate whose footprint is unknown is held back rather than offered. Report it
+   whatever the status is — a `regression` or a `harness_modified` patch still has a footprint, and
+   `harness_modified` is in fact the case where the list matters most.
 
 5b. **Provenance check (only when `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
    rewrites, compare it against the same-named file under each reference path. If any file is
@@ -178,6 +187,7 @@ absolute per-case latencies. The script trusts only your numbers.
   "artifact_distinct": "yes|no|n/a|unknown  — n/a for a non-JIT candidate; unknown if you could not run the proof",
   "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
   "artifact_hash_candidate": "the same quantity for the candidate arm",
+  "touched_files": ["aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py", "..."],
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```

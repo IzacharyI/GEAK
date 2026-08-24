@@ -85,6 +85,11 @@ const ARTIFACT_ROOTS = {
   // PLAN_SCHEMA.
   memory_merge: ['d'],
   claim_boundary: ['eng', 'ver'],               // engineer + verify results
+  // The shelf's rows are built by the script, but the two things it decides on are not: `c` is a
+  // verified candidate (VERIFY_SCHEMA.touched_files) and `e` carries those fields forward across
+  // waves through SETUP_SCHEMA.prior_state.shelf. Deciding whether a patch still applies off a
+  // field nobody was required to return is exactly the failure this file exists to catch.
+  candidate_shelf: ['c', 'e'],
 };
 console.log('\n# 1. every property a gate reads off an agent artifact is declared in a schema');
 for (const [g, roots] of Object.entries(ARTIFACT_ROOTS)) {
@@ -98,7 +103,7 @@ for (const [g, roots] of Object.entries(ARTIFACT_ROOTS)) {
      `${g}: all declared${undeclared.length ? ` — UNDECLARED ${undeclared.join(', ')}` : ''}`);
 }
 
-console.log('\n# 2. the five artifacts that were opaque, and the default each one hid');
+console.log('\n# 2. the artifacts that were opaque, and the default each one hid');
 {
   const opaque = (field) => new RegExp(`${field}: \\{ type: \\[?'object`).test(src)
     || new RegExp(`${field}: \\{ type: 'array', items: \\{ type: 'object', additionalProperties: true \\} \\}`).test(src);
@@ -108,6 +113,11 @@ console.log('\n# 2. the five artifacts that were opaque, and the default each on
     ['resource_timeline', 'a dropped utilization_pct reads as "PIPE TABLE MISSING"'],
     ['candidate_directions', 'a missing gated_on reads as "every rung is unconditional"'],
     ['ledger', 'a row without an id reads as normal ledger growth'],
+    // The sixth, found while wiring the candidate shelf: the script reads patch_file/geomean/
+    // weighted/arithmetic/per_case out of INTEGRATE_SCHEMA.best and none of them were declared.
+    // A missing patch_file makes the commit step apply nothing; a missing geomean scores the
+    // integration at 0 and the merge quietly loses to an individual patch.
+    ['best', 'a missing patch_file commits nothing and a missing geomean scores the merge at 0'],
   ]) ok(!opaque(f), `${f} is no longer an opaque object — ${hid}`);
 }
 

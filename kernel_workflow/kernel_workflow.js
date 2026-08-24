@@ -406,6 +406,20 @@ const SETUP_SCHEMA = obj({
     first_round: { type: 'number' }, last_round: { type: 'number' },
   }, ['id', 'verdict']) },
     bottleneck_now: { type: 'string' }, best_per_case: perCase,
+    // The candidate shelf, declared for the same reason the ledger rows above are: the shelf is
+    // keyed by `id`, aged by `base_round`, and offered or withheld on `files`. An entry missing
+    // `files` is not "touches nothing" — shelfAdd marks it footprint=unknown and it is never
+    // offered, so a dropped field costs an offer rather than producing a bad one.
+    shelf: { type: 'array', items: obj({
+      id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
+      geomean: { type: 'number' }, patch: { type: 'string' },
+      files: { type: 'array', items: { type: 'string' } },
+      footprint: { type: 'string', enum: ['known', 'unknown'] },
+      base_round: { type: 'number' }, shelved_round: { type: 'number' },
+      absorbed: { type: 'boolean' },
+    }, ['id', 'geomean']) },
+    // round -> files CANONICAL took on that round. Keys are round numbers as strings.
+    absorbed_files: { type: 'object' },
   }, []),
 }, ['eval_dir', 'workspace', 'kernel_name']);
 
@@ -727,12 +741,39 @@ const VERIFY_SCHEMA = obj({
   artifact_distinct: { type: 'string' },     // yes|no|n/a|unknown
   artifact_hash_base: { type: 'string' },
   artifact_hash_candidate: { type: 'string' },
-}, ['status', 'verified_geomean']);
+  // The files the patch actually touches. The verifier ALREADY computes this list — step 5 of
+  // roles/verify_engineer.md diffs it against MODIFIABLE_FILES — and then threw it away, which is
+  // the same defect this workflow has now fixed twice: an artifact produced, judged against, and
+  // never handed to the role that needs it. The candidate shelf needs it to decide mechanically
+  // whether a patch from round 2 still applies at round 5.
+  //
+  // REQUIRED, and required for the usual reason: omitted, an empty list reads as "touches nothing",
+  // which is the maximally-combinable answer. Reporting it explicitly makes "no files" a claim
+  // somebody made rather than a default nobody noticed.
+  touched_files: { type: 'array', items: { type: 'string' } },
+}, ['status', 'verified_geomean', 'touched_files']);
 
 const INTEGRATE_SCHEMA = obj({
   attempted: { type: 'boolean' },
   combos_tried: { type: 'array', items: { type: 'object', additionalProperties: true } },
-  best: { type: 'object', additionalProperties: true },
+  // De-opaqued for the same reason the other five were: the script reads `patch_file`, `geomean`,
+  // `weighted`, `arithmetic` and `per_case` out of this object, and under additionalProperties a
+  // renamed or dropped field validated fine and then read as a default — a missing `patch_file`
+  // makes the commit step apply nothing, a missing `geomean` scores the integration at 0 and the
+  // merge silently loses. `touched_files` is the integrated patch's own footprint; when it is
+  // absent the script does NOT assume the integration touched nothing (that would be the
+  // maximally-combinable default again) but falls back to the union of every patch that was on the
+  // table, which over-ages the shelf rather than offering a patch that no longer applies.
+  best: obj({
+    patch_file: { type: 'string' }, geomean: { type: 'number' },
+    weighted: { type: ['number', 'null'] }, arithmetic: { type: 'number' },
+    per_case: perCase, touched_files: { type: 'array', items: { type: 'string' } },
+    // Which PATCHES / SHELF_PATCHES ids this combination actually contains. The role already
+    // emitted this key; it was simply never declared, so a rename would have validated. Reported
+    // for the log and for sizing K — the shelf's aging does NOT depend on it, precisely so that an
+    // omitted list cannot leave a superseded candidate on offer.
+    patches: { type: 'array', items: { type: 'string' } },
+  }, []),
   improved_over_best_individual: { type: 'boolean' },
   conclusion: { type: 'string' }, notes: { type: 'string' },
 }, ['attempted', 'conclusion']);
@@ -1893,6 +1934,24 @@ const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileS
 // The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
 // carry the round it came from and whether that round produced evidence at all.
 let insightBook = [];
+// The candidate shelf: verified non-winners, kept as offers. `absorbedByRound[r]` is the file set
+// CANONICAL took on in round r, which is what ages a shelved patch out. See the candidate_shelf
+// region below.
+let shelf = [];
+let absorbedByRound = {};
+const SHELF_MAX = 24;
+// K, the number of historical candidates offered to the integrator alongside this round's own.
+// DELIBERATELY SMALL, and the reason is cost, not caution: one 8-GPU collective lease per round
+// means every extra offer the integrator takes seriously is verification time that came out of the
+// round's own directions. Start at 2 and size it off the measured hit rate — if shelved candidates
+// are offered for several waves and never successfully combined, that null result is the finding
+// and K should go to 0, not up. Guessing K high converts a cheap experiment into an expensive one
+// before anyone has seen it work once.
+const SHELF_OFFER_K = Number(A.shelf_offer_k) > 0 ? Number(A.shelf_offer_k) : 2;
+// The evidence K gets resized from. See the report dispatch for why it is reported even when it is
+// all zeros.
+const SHELF_STATS = { k: SHELF_OFFER_K, shelved: 0, withheld_unknown_footprint: 0,
+  rounds_offered: 0, offers: 0, hits: 0, hit_ids: [] };
 
 // <<REPLAY:memory_merge>>
 // CROSS-ROUND MEMORY. This used to be one line — `history.insights = mem.insights` — and that line
@@ -1978,6 +2037,70 @@ function deadEnds(rounds) {
 }
 // <</REPLAY:memory_merge>>
 
+// <<REPLAY:candidate_shelf>>
+// THE SHELF — verified candidates that did not win their round, kept as offers instead of as numbers.
+//
+// Before this, a round kept exactly one thing: the winner, committed into CANONICAL. Every other
+// candidate that passed INDEPENDENT verification survived only as `{id, claimed, verified, status}`
+// in the round record — a number, not a patch. So a direction that verified at 1.03x in round 2 and
+// lost to a 1.09x was gone: round 5 could not combine with it, could not build on it, and would
+// cheerfully re-derive it. On this task the budget is 8 rounds of an 8-GPU collective, one lease per
+// round, so re-deriving a finished result is the most expensive mistake on the menu.
+//
+// WHAT MAKES A SHELVED PATCH STILL APPLICABLE is the whole difficulty. A patch is a diff against the
+// CANONICAL that existed when it was cut, and every round that commits a winner moves CANONICAL out
+// from under everything on the shelf. So each entry records the round it was cut against, and
+// eligibility is decided by FILE SETS: if nothing absorbed since then touches a file this patch
+// touches, it still applies and can be offered for combination.
+//
+// That test is mechanical ON PURPOSE. The alternative — asking the agent "does your patch conflict
+// with that one?" — is the failure this workflow keeps rediscovering: a question whose unanswered
+// form has a benign default. Anything derivable from the artifacts is derived, not asked.
+//
+// AN EMPTY FILE SET IS NOT ORTHOGONALITY. A verified candidate reporting no touched files has an
+// UNKNOWN footprint, and unknown must not read as "conflicts with nothing", which is precisely the
+// maximally-combinable answer. Those are held back and named, never silently offered.
+const shelfFile = (s) => String(s == null ? '' : s).replace(/^\.\//, '').replace(/^\/+/, '').trim();
+const shelfFiles = (c) => [...new Set((Array.isArray(c.touched_files) ? c.touched_files : [])
+  .map(shelfFile).filter(Boolean))];
+
+function shelfAdd(shelf, entries, round, max) {
+  const out = shelf.slice();
+  for (const e of entries) {
+    const files = shelfFiles(e);
+    const row = {
+      id: e.id, title: e.title || '', specialty: e.specialty || '',
+      geomean: Number(e.geomean) || 0, patch: e.patch || '', files,
+      // Three-valued on purpose, same reason `artifact_distinct` is: "we could not tell" has to stay
+      // sayable, or the only expressible answer is the one that flatters the candidate.
+      footprint: files.length ? 'known' : 'unknown',
+      base_round: round, shelved_round: round, absorbed: false,
+    };
+    const at = out.findIndex((x) => x.id === e.id);
+    if (at >= 0) out[at] = { ...out[at], ...row }; else out.push(row);
+  }
+  out.sort((a, b) => b.geomean - a.geomean);
+  return { shelf: out.slice(0, max), evicted: out.slice(max) };
+}
+
+// `absorbedByRound` maps round number -> the files CANONICAL took on in that round.
+function shelfEligible(shelf, absorbedByRound, k) {
+  const eligible = [], stale = [], unknown = [];
+  for (const e of shelf) {
+    if (e.absorbed) continue;
+    if (e.footprint !== 'known') { unknown.push(e); continue; }
+    const moved = new Set();
+    for (const r of Object.keys(absorbedByRound || {})) {
+      if (Number(r) > e.base_round) for (const f of absorbedByRound[r]) moved.add(shelfFile(f));
+    }
+    const clash = e.files.filter((f) => moved.has(f));
+    if (clash.length) stale.push({ ...e, clash }); else eligible.push(e);
+  }
+  eligible.sort((a, b) => b.geomean - a.geomean);
+  return { offer: eligible.slice(0, Math.max(0, k)), eligible, stale, unknown };
+}
+// <</REPLAY:candidate_shelf>>
+
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
 // director) and does not re-explore dead directions. No-op on a fresh run (prior_state undefined).
@@ -1993,7 +2116,26 @@ if (setup.resumed && setup.prior_state) {
   if (Array.isArray(ps.ledger)) history.ledger = ps.ledger;
   if (ps.bottleneck_now) history.bottleneck_now = ps.bottleneck_now;
   if (Array.isArray(ps.best_per_case) && ps.best_per_case.length) bestPerCase = ps.best_per_case;
+  // The shelf crosses waves for the same reason the ledger does: a candidate that verified in wave
+  // 12 round 2 is exactly the thing wave 13 should not re-derive. Rounds restart at 1 each wave, so
+  // a carried entry's base_round is rewritten to 0 — older than anything this wave will absorb, and
+  // therefore aged against every absorption rather than none. The absorbed sets come with it, so a
+  // patch the previous wave's winners already invalidated stays invalid instead of being reoffered.
+  if (Array.isArray(ps.shelf)) {
+    shelf = ps.shelf.filter((e) => e && e.id && !e.absorbed)
+      .map((e) => ({ ...e, base_round: 0, files: shelfFiles(e),
+        footprint: shelfFiles(e).length ? 'known' : 'unknown' }));
+  }
+  if (ps.absorbed_files && typeof ps.absorbed_files === 'object') {
+    // Everything the previous wave absorbed, collapsed to round 0.5: after a carried entry's
+    // base_round of 0, before this wave's round 1.
+    const prior = [];
+    for (const k of Object.keys(ps.absorbed_files)) for (const f of (ps.absorbed_files[k] || [])) prior.push(f);
+    if (prior.length) absorbedByRound[0.5] = [...new Set(prior.map(shelfFile))];
+  }
   log(`RESUMED from STATE_DIR: cumulative=${cumulative.toFixed(3)}x, ${history.insights.length} insights, ${history.ledger.length} ledger entries carried forward.`);
+  if (shelf.length) log(`  shelf: ${shelf.length} verified non-winner(s) carried forward, ` +
+    `${shelf.filter((e) => e.footprint === 'known').length} with a known file footprint.`);
 }
 
 while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
@@ -2359,10 +2501,29 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     weighted: r.ver.verified_weighted != null ? r.ver.verified_weighted : null,
     arithmetic: r.ver.verified_arithmetic || r.ver.verified_geomean,
     per_case: r.ver.per_case || [], patch: r.patch,
+    touched_files: Array.isArray(r.ver.touched_files) ? r.ver.touched_files : [],
   }));
 
+  // What the shelf can offer this round, decided before the integrator is dispatched. `stale` and
+  // `unknown` are LOGGED rather than dropped silently: a shelf that offers nothing for five rounds
+  // looks identical to a shelf that was never consulted, and the two want opposite responses.
+  const shelfPick = shelfEligible(shelf, absorbedByRound, SHELF_OFFER_K);
+  if (shelfPick.offer.length) { SHELF_STATS.rounds_offered++; SHELF_STATS.offers += shelfPick.offer.length; }
+  if (shelf.length) {
+    log(`SHELF r${round}: ${shelf.length} shelved, ${shelfPick.eligible.length} still apply, ` +
+        `offering ${shelfPick.offer.length} (K=${SHELF_OFFER_K})` +
+        (shelfPick.offer.length ? `: ${shelfPick.offer.map((e) => `${e.id}@${e.geomean.toFixed(3)}x`).join(', ')}` : '') +
+        (shelfPick.stale.length ? `; ${shelfPick.stale.length} aged out (a later winner touched their files: ` +
+          `${shelfPick.stale.map((e) => `${e.id}[${e.clash.join(',')}]`).join('; ')})` : '') +
+        (shelfPick.unknown.length ? `; ${shelfPick.unknown.length} withheld for UNKNOWN footprint ` +
+          `(${shelfPick.unknown.map((e) => e.id).join(', ')}) — their verify reported no touched_files, ` +
+          `so whether they conflict is unknown, and unknown is not orthogonal` : ''));
+  }
+
   let integrate = null;
-  if (verified.length >= 2) {
+  // One verified direction plus a shelved offer is a real merge opportunity — historically this
+  // round would have skipped the merge phase entirely and the shelved work would age out unused.
+  if (verified.length >= 2 || (verified.length >= 1 && shelfPick.offer.length > 0)) {
     phase('Merge');
     integrate = await agentT(
       roleAgent('integrator', 'integrate', 'Combine this round\'s verified patches into one best implementation.', {
@@ -2372,6 +2533,23 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         PATCHES: verified.map(r => ({ id: r.d.id, specialty: r.d.specialty, title: r.d.title,
           strategy: r.eng ? r.eng.strategy : '', verified_geomean: r.ver.verified_geomean,
           files: r.d.focus_files || [], patch: r.patch })),
+        // Historical candidates that verified in an earlier round, lost, and whose files nothing
+        // absorbed since has touched. They are OFFERS, not obligations: the integrator is expected
+        // to say so when one does not combine, and that answer is what sizes K.
+        SHELF_PATCHES: shelfPick.offer.map((e) => ({
+          id: e.id, title: e.title, specialty: e.specialty, patch: e.patch,
+          files: e.files, verified_geomean_when_cut: e.geomean,
+          cut_against_round: e.base_round, shelved_round: e.shelved_round,
+        })),
+        SHELF_NOTE: shelfPick.offer.length
+          ? 'SHELF_PATCHES come from earlier rounds. Their `verified_geomean_when_cut` was measured ' +
+            'against the CANONICAL of round `cut_against_round`, NOT against the CANONICAL you have ' +
+            'now, so it is a reason to try one, never a number you may carry into your result. The ' +
+            'file sets were checked mechanically: nothing absorbed since each patch was cut touches ' +
+            'a file it touches, so it should still apply. Take one only if you can show it composes; ' +
+            'reporting "offered N, none composed, here is why" is a real answer and is how the size ' +
+            'of this offer gets tuned.'
+          : '',
         INSIGHTS: history.insights,
       }),
       { phase: 'Merge', label: `integrate r${round}`, schema: INTEGRATE_SCHEMA });
@@ -2386,7 +2564,24 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         weighted: integrate.best.weighted != null ? integrate.best.weighted : null,
         arithmetic: integrate.best.arithmetic || integrate.best.geomean,
         per_case: integrate.best.per_case || [], patch: integrate.best.patch_file,
+        // An integration's footprint, if it reported one; otherwise everything that was on the
+        // table. See INTEGRATE_SCHEMA.best — the fallback deliberately over-states.
+        touched_files: Array.isArray(integrate.best.touched_files) && integrate.best.touched_files.length
+          ? integrate.best.touched_files
+          : [...new Set([...candidates.flatMap((c) => c.touched_files || []),
+                         ...shelfPick.offer.flatMap((e) => e.files)])],
+        integrated_from: Array.isArray(integrate.best.patches) ? integrate.best.patches : [],
       });
+      const took = shelfPick.offer.filter((e) => (integrate.best.patches || []).includes(e.id));
+      SHELF_STATS.hits += took.length;
+      SHELF_STATS.hit_ids.push(...took.map((e) => e.id));
+      if (took.length) log(`SHELF HIT r${round}: the integration took ${took.map((e) => e.id).join(', ')} ` +
+        `from the shelf — cross-round combination, not a re-derivation.`);
+      else if (shelfPick.offer.length) log(`SHELF MISS r${round}: ${shelfPick.offer.length} offered, ` +
+        `none reported as included. ${integrate.notes ? `Integrator: ${String(integrate.notes).slice(0, 300)}` : ''}`);
+    } else if (shelfPick.offer.length) {
+      log(`SHELF MISS r${round}: ${shelfPick.offer.length} offered, the integration did not improve ` +
+          `on the best individual, so nothing from the shelf was taken.`);
     }
   }
 
@@ -2450,6 +2645,39 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     noImprove++;
   }
 
+  // --- (e2) Shelve this round's verified non-winners --------------------
+  // Everything that PASSED independent verification and merely lost keeps its patch instead of
+  // collapsing to a number in history.rounds. A 1.03x that lost to a 1.09x is a finished, verified
+  // piece of work; on an 8-round budget with one collective lease per round, re-deriving it later
+  // is the most expensive thing the loop can do.
+  //
+  // The integrated candidate is NOT shelved: it is not an independent direction, it is a
+  // combination of things already on the shelf, and shelving it would offer the same work twice.
+  {
+    const losers = candidates.filter((c) => c !== winner && c.source !== 'integrated' && c.patch);
+    if (losers.length) {
+      const added = shelfAdd(shelf, losers, round, SHELF_MAX);
+      shelf = added.shelf;
+      const noFiles = losers.filter((c) => !(c.touched_files || []).length);
+      SHELF_STATS.shelved += losers.length;
+      SHELF_STATS.withheld_unknown_footprint += noFiles.length;
+      log(`SHELVED r${round}: ${losers.map((c) => `${c.id}@${c.geomean.toFixed(3)}x`).join(', ')} ` +
+          `(${shelf.length}/${SHELF_MAX} on the shelf)` +
+          (noFiles.length ? `. ${noFiles.map((c) => c.id).join(', ')} reported no touched_files, so ` +
+            `their footprint is UNKNOWN and they will never be offered — unknown is not orthogonal.` : '') +
+          (added.evicted.length ? ` Evicted the weakest: ${added.evicted.map((c) => c.id).join(', ')}.` : ''));
+    }
+    // What CANONICAL took on. Recorded only when the winner was actually committed — a winner that
+    // did not clear MIN_IMPROVE changed nothing, so nothing aged.
+    if (improved && winner) {
+      const took = (winner.touched_files || []).map(shelfFile).filter(Boolean);
+      if (took.length) absorbedByRound[round] = [...new Set(took)];
+      else log(`SHELF WARN r${round}: the committed winner ${winner.id} reported no touched_files, so ` +
+        `nothing was recorded as absorbed and shelved patches will NOT be aged against it. Every ` +
+        `offer from here on may be stale in a way this check cannot see.`);
+    }
+  }
+
   // A round in which every direction was INACTIVE produced no evidence about the kernel. Its
   // distilled insights are tagged accordingly rather than being trusted as measurements.
   const allInactive = clean.length > 0 && clean.every(r => r.inactive);
@@ -2473,7 +2701,13 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       // reads; an unreached rung that is not written down here is a rung the next wave re-derives
       // from scratch or never sees. This is the only phase positioned to carry it across waves.
       ROADMAP_LADDER: LADDER, LADDER_DISPATCHED: [...dispatchedRungs],
-      ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase } : {}),
+      ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase,
+        // The shelf travels to the next wave on the same road as the ledger: written into STATE.json
+        // here, read back as setup.prior_state.shelf there. It is passed through as data the role
+        // must copy VERBATIM, not as something to summarise — a shelf entry that loses its `patch`
+        // path or its `files` list is not a smaller shelf entry, it is an offer that can no longer
+        // be made or can no longer be checked for conflict.
+        SHELF: shelf, ABSORBED_FILES: absorbedByRound } : {}),
       ...(SHARED_KB ? { SHARED_KB, TARGET_LANGUAGE } : {}),
     }),
     { phase: 'Optimize', label: `tech_lead:memory r${round}`, schema: MEMORY_SCHEMA });
@@ -2526,6 +2760,12 @@ const report = await agentT(
     ...(PC_UNDERSHOOT ? { POSITIVE_CONTROL_UNDERSHOOT: PC_UNDERSHOOT } : {}),
     // Travels to the report because the thing it qualifies — whether the directions were derived
     // or asserted — is invisible in the final number, and by report time nobody re-reads the log.
+    // What the shelf actually did this wave. Reported unconditionally once anything was shelved,
+    // because "offered 6 across 4 rounds, 0 composed" and "never consulted" are opposite findings
+    // that produce the same silence, and K is supposed to be sized off the first one. A wave that
+    // shelves and never hits is a reason to lower K or drop the mechanism — but only if somebody
+    // can see it happened.
+    ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
     ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
     // Recomputed against the FINAL dispatch record, not the round-0 one: the question the report

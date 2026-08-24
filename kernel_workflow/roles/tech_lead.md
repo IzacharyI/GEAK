@@ -653,9 +653,18 @@ none of them, so skip this whole block then):**
   mv "$TMP" "$STATE_DIR/best"
   ```
   Then write `$STATE_DIR/STATE.json` = `{cumulative: <CUMULATIVE_SPEEDUP>, insights, ledger,
-  bottleneck_now, best_per_case: <BEST_PER_CASE>, last_round: <ROUND>}` (the full carried-forward state).
+  bottleneck_now, best_per_case: <BEST_PER_CASE>, last_round: <ROUND>,
+  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>}` (the full carried-forward state).
   Do this EVERY round (even non-improving) so a kill mid-wave never loses the ledger; only refresh
   `best/` when the cumulative best actually advanced this wave.
+
+  **`SHELF` and `ABSORBED_FILES` are copied VERBATIM — they are data, not something to distil.**
+  The shelf holds verified candidates that lost their round and were kept so a later round can
+  combine with them instead of re-deriving them, and `absorbed_files` is what lets the next wave
+  tell which of them still apply. Summarising a shelf entry destroys it: without `patch` the offer
+  cannot be made, and without `files` it cannot be checked for conflict and is withheld forever.
+  Both fields arrive as JSON; write that JSON out unchanged. If neither input is present, omit both
+  keys rather than inventing empties.
 - `SHARED_KB` (+ `TARGET_LANGUAGE`): APPEND this wave's distilled, EVIDENCE-BACKED findings for your
   backend into the shared blackboard file so the OTHER backends learn from you next wave — each entry:
   technique → measured effect (Xx on which shape class) → your backend → and dead-ends with evidence.
@@ -713,6 +722,16 @@ table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), and `BASELI
      The verifier will catch this and flag the run; the point is not to produce the number.
    - **Key optimizations applied** (what + impact).
    - **What didn't work** (dead-ends from the ledger).
+   - **Cross-round reuse** — only when `SHELF_ACTIVITY` is present. Report its numbers as they are:
+     how many verified non-winners were kept, how many were offered back to a later round's merge,
+     how many were actually taken (`hit_ids`), and how many were withheld because their verify
+     reported no `touched_files` and their footprint was therefore unknown. **`offers > 0, hits = 0`
+     is a real result and must be written down as one** — it says the shelf cost nothing and bought
+     nothing this wave, which is the evidence for shrinking `k` or dropping the mechanism. Do not
+     omit the section because the news is null; a shelf that never helps and a shelf that was never
+     consulted produce the same silence, and they call for opposite decisions. Likewise flag a large
+     `withheld_unknown_footprint`: that is verify_engineer dropping a required field, not a property
+     of the search space.
    - **Measurement confidence** — required, and required even (especially) when the final speedup is
      1.000x. State: the positive control's result if one ran (`measured_pct` vs its expected band),
      the noise floor this run actually observed, every result carried as PROVISIONAL and why, and any
