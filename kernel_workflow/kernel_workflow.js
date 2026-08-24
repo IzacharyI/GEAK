@@ -1062,7 +1062,15 @@ if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR) {
   const gate = await agentT(
     `Run two containment scanners and report their exit codes verbatim. Do not fix anything, do not ` +
     `read any file they flag, do not summarise the flagged content — reporting the paths is the whole job.\n\n` +
-    `1. bash ${WORKFLOW_DIR}/scripts/reference_leak_sweep.sh --tree ${RUN_TREE_ANCESTOR}\n` +
+    // REF_SCAN_MAX_TREES is raised from its default of 200 on purpose. At the default the sweep
+    // prints "NOTE n repo(s) had more unique ref trees than REF_SCAN_MAX_TREES=200; the remainder
+    // were NOT scanned", and its hit count is then a LOWER BOUND rather than a count. A gate whose
+    // clean verdict means "clean in the part I looked at" is the exact shape of the two leaks this
+    // gate exists to catch, both of which were reachable and both of which read as clean at the
+    // time. The full sweep costs roughly five minutes once, before any lease is taken.
+    `1. REF_SCAN_MAX_TREES=100000 bash ${WORKFLOW_DIR}/scripts/reference_leak_sweep.sh --tree ${RUN_TREE_ANCESTOR}\n` +
+    `   If its output still contains a REF_SCAN_MAX_TREES coverage NOTE, the scan is PARTIAL: say so\n` +
+    `   in your note and return verdict UNKNOWN rather than clean, whatever the exit code was.\n` +
     `2. bash ${WORKFLOW_DIR}/scripts/skill_address_scan.sh --skills-dir ${EXPERT_SKILLS_DIR || '(skip: expert skills off)'} ` +
     `--scan-root ${RUN_TREE_ANCESTOR}\n\n` +
     `If a script is missing or its --skills-dir is empty, record that step as "skipped" with the reason ` +
