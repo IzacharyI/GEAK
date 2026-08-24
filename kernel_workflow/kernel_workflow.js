@@ -80,6 +80,47 @@ const DEEP_COST = (() => {
   const v = parseInt(A.deep_cost != null ? A.deep_cost : 2, 10);
   return Number.isFinite(v) && v >= 1 ? v : 2;
 })();
+// WHAT THIS WAVE IS FOR. Two values; the default is the historical behaviour.
+//
+//   'speedup'        (default) — the loop hunts a verified geomean win. Every rule below is unchanged.
+//   'working_kernel'           — the loop hunts ONE artifact that RUNS. Speed is not scored.
+//
+// The second mode exists because the first one cannot deliver a fused megakernel, and the reason is
+// arithmetic rather than judgement. Measured on wave 14: setup spends 57 GPU runs on the baseline and
+// the positive control before a single direction is dispatched (~35 s/run, 33 min, 2.2 leases at the
+// 900 s cap in scripts/gpu_group_lock.sh). A round then gets ONE lease — ~25 runs — split across the
+// round's directions. Four directions is therefore ~6 hardware iterations per direction per round,
+// and three rounds is ~18 for the whole wave. A cross-rank persistent kernel is not debuggable in 18
+// iterations; waves 3 and 4 got one onto hardware, spent their rounds bisecting an illegal access,
+// and the artifact was never picked up again.
+//
+// Three things have to change together, or changing any one of them does nothing:
+//
+//   1. ONE direction per round. Breadth buys nothing here: the directions contend for the same single
+//      8-GPU lease, so N directions is N-way queueing, not N-way throughput. Enforced below, not
+//      requested of the planner — the planner has produced 4-to-8-direction rounds under prose that
+//      already said leases are scarce.
+//   2. MAX_NO_IMPROVE cannot apply. A crash-debug round is non-improving BY CONSTRUCTION, so the
+//      default stop-after-2 kills this mode on round 3 no matter how large the budget is. This is the
+//      one that makes the other two pointless if it is missed.
+//   3. The commit gate cannot be MIN_IMPROVE. Nothing clears "2% faster than cumulative" while it
+//      still crashes, so nothing is committed, so round N+1 starts from the unfused tree and the
+//      carry-over failure that produced waves 3->6 is reproduced exactly. In this mode the round's
+//      candidate is committed on RUNNING — correctness pass, liveness not failing, activation
+//      confirmed — which is the objective itself.
+//
+// What does NOT change: the five acceptance conditions, the leak scan, rank-max, paired reps. This
+// mode sets the objective of one wave; it does not move the bar the wave is eventually judged
+// against. And it deliberately makes the wave's timing numbers WORSE than useless rather than
+// cheaper — see objectiveVerdict.
+const OBJECTIVE = (() => {
+  const v = String(A.objective || 'speedup').trim();
+  if (v !== 'speedup' && v !== 'working_kernel') {
+    throw new Error(`args.objective must be 'speedup' or 'working_kernel', got '${v}'`);
+  }
+  return v;
+})();
+const WORKING_KERNEL = OBJECTIVE === 'working_kernel';
 function resolveGpuRequest(A) {
   const taskResource = (A.op_spec && A.op_spec.resource) || {};
   const parseIds = (name, value) => {
@@ -1504,6 +1545,50 @@ function claimBoundary(speedupOf) {
 }
 // <</REPLAY:claim_boundary>>
 
+// <<REPLAY:objective_gate>>
+// A WAVE THAT SKIPS THE POSITIVE CONTROL MUST NOT SHIP A NUMBER.
+//
+// `objective: 'working_kernel'` is allowed to skip the control, and skipping it is most of what makes
+// the mode affordable — the control batch is 2.2 of the wave's leases (see OBJECTIVE above). The
+// hazard is obvious and has already happened twice in this project's history: a wave collects timings
+// anyway, someone reads one, and it enters a report as a result. The comment on POSITIVE_CONTROL
+// states the reason it cannot be read — without a control, "we found nothing" and "we cannot see
+// anything" produce byte-identical output — and that reason does not weaken just because the wave
+// was not hunting a win.
+//
+// So the trade is stated explicitly rather than left to discipline: this mode does not make timing
+// numbers cheaper, it makes them INADMISSIBLE. Every finite geomean from an uncontrolled wave is
+// VOID, 1.000x included. Voiding 1.000x is not pedantry — an uncontrolled 1.000x is precisely the
+// reading a blind harness emits, and it is the one that has been believed before.
+//
+// A wave that wants a number pays for the control. `pcRan` is the caller's honest answer to "did the
+// positive control actually run in this wave", so a run that keeps the control keeps its scoring.
+function objectiveVerdict(objective, pcRan, geomean) {
+  if (objective !== 'working_kernel') return { state: 'scored', caveat: '' };
+  if (pcRan) return { state: 'scored', caveat: '' };
+  if (!Number.isFinite(Number(geomean))) return { state: 'no_number', caveat: '' };
+  return {
+    state: 'void_no_control',
+    caveat: 'VOID AS A TIMING RESULT: this wave ran with objective=working_kernel and no positive ' +
+      'control, so nothing established that its harness can resolve an effect at all. The reading ' +
+      'is withdrawn rather than reported with a warning, 1.000x included — an uncontrolled 1.000x ' +
+      'is what a blind harness emits. The artifact is still judged on whether it RUNS. To obtain a ' +
+      'timing result, re-measure it in a wave that pays for the control.',
+  };
+}
+// A round's candidate is committed on RUNNING, not on being faster. Deliberately strict on
+// activation for the usual reason: an unexercised patch reads as a clean pass on every other field.
+// `liveness: 'n/a'` is accepted because it is the honest answer for a non-distributed candidate,
+// while 'fail' is a timeout, which this workflow has always counted as a failure and never a skip.
+function runsCleanly(ver) {
+  if (!ver) return false;
+  const s = (v) => String(v == null ? '' : v).toLowerCase();
+  return s(ver.correctness).startsWith('pass') &&
+         s(ver.activation_confirmed) === 'yes' &&
+         ['pass', 'n/a', ''].includes(s(ver.liveness));
+}
+// <</REPLAY:objective_gate>>
+
 const CLAIM = claimBoundary(primSpeedup);
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
@@ -1511,6 +1596,10 @@ const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
 // task-graph caveat does: the thing they qualify — whether a fused win was ever shown to BE an
 // overlap win — is invisible in the final number, and by report time nobody re-reads the log.
 const OVERLAP_CAVEATS = [];
+// Withdrawn timing readings, same rationale: a number that was voided at round 2 is invisible in a
+// report that only prints what survived, and "no number" and "a number we refuse to read" are the
+// two states this project has most often confused.
+const OBJECTIVE_CAVEATS = [];
 let TASK_GRAPH_CAVEAT = '';
 let PIPE_TABLE_CAVEAT = '';
 if (REQUIRE_TASK_GRAPH) {
@@ -1689,6 +1778,10 @@ log(`Benchmark done. ${benchR.num_test_cases || BASELINE_PER_CASE.length} cases,
 // false — "this harness can detect a real win" — invalidates every measurement taken after it.
 let PC_OVERSHOOT = '';   // set when the control passed but read HIGH; travels into the report
 let PC_UNDERSHOOT = '';  // set when a CONSTRUCTED control passed but read LOW; ditto
+// Did a control actually run in THIS wave? Not "was one configured" — a configured control whose
+// switch was absent ran two identical arms. objectiveVerdict reads this to decide whether an
+// uncontrolled wave's timings are admissible at all.
+let PC_RAN = false;
 if (POSITIVE_CONTROL) {
   const pc = benchR.positive_control || {};
   const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
@@ -1830,6 +1923,7 @@ if (POSITIVE_CONTROL) {
   const overshoot = ran && mGot > mHi && !absurd;
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
   // <</REPLAY:pc_gate>>
+  PC_RAN = ran;
   if (switchAbsent) {
     log(`POSITIVE CONTROL SWITCH ABSENT: "${POSITIVE_CONTROL.name || 'unnamed'}" names a knob that ` +
         `is not in the tree it was run against, so both arms executed identical code and the ` +
@@ -2352,7 +2446,11 @@ if (setup.resumed && setup.prior_state) {
     `${shelf.filter((e) => e.footprint === 'known').length} with a known file footprint.`);
 }
 
-while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
+// The no-improve stop is a SPEEDUP stop. Under objective=working_kernel every round before the last
+// one is non-improving by construction, so leaving it armed would end the wave on round 3 with a
+// 15-lease budget untouched — see OBJECTIVE, item 2. The remaining stops are the budget and the
+// TechLead's own decision, both of which still apply.
+while (dispatched < BUDGET && (WORKING_KERNEL || noImprove < MAX_NO_IMPROVE)) {
   round++;
   const remaining = BUDGET - dispatched;
   phase('Optimize');
@@ -2404,6 +2502,16 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
   // and charge DEEP_COST against the budget. Otherwise each specialist direction costs 1.
   const deepDir = directions.find(d => d.specialty === 'deep_explore');
   if (deepDir) directions = [deepDir];
+  // ONE direction per round under objective=working_kernel. Clamped here rather than asked of the
+  // planner: the planner is told leases are scarce in prose today and still plans 4-8 directions,
+  // and a direction that is planned but never gets the lease returns static analysis, which is what
+  // round 1 of wave 14 returned from two of its three engineers.
+  if (WORKING_KERNEL && directions.length > 1) {
+    const dropped = directions.slice(1).map(d => d.id);
+    directions = directions.slice(0, 1);
+    log(`Round ${round}: objective=working_kernel — one direction gets the lease. Kept ${directions[0].id}, ` +
+        `deferred ${dropped.join(', ')}. They are not dead ends; they were not run.`);
+  }
   // Price this round's directions against the pipe table BEFORE the lease is spent. The table was
   // printed once after Analyze; this is the call that makes it load-bearing, because a direction
   // claiming more than its pipe's idle fraction can pay is rejectable by arithmetic alone.
@@ -2713,6 +2821,15 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
       log(`OVERLAP ${ov.state.toUpperCase()} ${r.d.id}: ${ov.caveat}`);
       if (ov.state !== 'measured_none') OVERLAP_CAVEATS.push(`${r.d.id} [${ov.state}]: ${ov.caveat}`);
     }
+    // And the objective. In a controlled wave this is a no-op on every result.
+    const oj = objectiveVerdict(OBJECTIVE, PC_RAN, primSpeedup(r.ver));
+    r.objective_state = oj.state;
+    if (oj.caveat) {
+      r.objective_void = true;
+      r.objective_caveat = oj.caveat;
+      log(`TIMING VOID ${r.d.id}: ${oj.caveat}`);
+      OBJECTIVE_CAVEATS.push(`${r.d.id}: ${oj.caveat}`);
+    }
   }
 
   // --- (d) Build candidate list; integrate if >=2 verified --------------
@@ -2811,7 +2928,23 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
 
   candidates.sort((a, b) => b.geomean - a.geomean);
   const winner = candidates[0] || null;
-  const improved = !!(winner && winner.geomean > cumulative * (1 + MIN_IMPROVE));
+  // Under objective=working_kernel the commit gate is the objective, not the speed. MIN_IMPROVE
+  // would commit nothing — a kernel that still crashes is never 2% faster than cumulative — and a
+  // round that commits nothing hands round N+1 the unfused tree, which is exactly how the only fused
+  // megakernel this project has ever produced (wave 3, 727 lines, on hardware, crashing) came to be
+  // dropped after wave 4 and to no longer exist on disk. Committing on RUNNING is what makes the
+  // debug loop cumulative instead of 15 independent first attempts.
+  const winnerVer = winner ? (verified.find(r => r.d.id === winner.id) || {}).ver : null;
+  const winnerRuns = !!(winner && runsCleanly(winnerVer));
+  const improved = WORKING_KERNEL
+    ? winnerRuns
+    : !!(winner && winner.geomean > cumulative * (1 + MIN_IMPROVE));
+  if (WORKING_KERNEL) {
+    log(`Round ${round}: objective=working_kernel — commit gate is "does it run", not speed. ` +
+        `${winner ? (winnerRuns ? `${winner.id} RUNS (correctness pass, activation confirmed, liveness not failing) ` +
+          `-> committed.` : `${winner.id} does not yet run -> not committed; next round continues from the ` +
+          `current canonical tree.`) : 'no verified candidate this round.'}`);
+  }
 
   // --- (e) Commit the winner into the canonical workspace ---------------
   if (improved) {
@@ -2836,8 +2969,14 @@ check (cd ${CANONICAL} && the COMMANDMENT CORRECTNESS cmd via gpu_lock); only re
 it still passes. (When a clean \`git apply\`/\`--3way\` succeeds, correctness was already verified and a
 re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       { phase: 'Merge', label: `commit r${round}`, schema: COMMIT_SCHEMA });
-    cumulative = winner.geomean;
-    bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
+    // A voided reading must not become the number the next round is measured against. Under
+    // objective=working_kernel with no control there is no admissible speedup, so `cumulative` and
+    // `bestPerCase` stay where they were and only the ARTIFACT advances.
+    const winnerVoid = WORKING_KERNEL && !!(verified.find(r => r.d.id === winner.id) || {}).objective_void;
+    if (!winnerVoid) {
+      cumulative = winner.geomean;
+      bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
+    }
     finalWinner = winner;
     noImprove = 0;
 
@@ -2991,6 +3130,15 @@ const report = await agentT(
     // can see it happened.
     ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
     ...(OVERLAP_CAVEATS.length ? { OVERLAP_CAVEATS } : {}),
+    // Only present on a non-default objective, so a speedup wave's report is byte-identical to
+    // before. On a working_kernel wave it is the first thing a reader needs: the wave's own numbers
+    // are withdrawn, and the deliverable is whether an artifact ran.
+    ...(WORKING_KERNEL ? { OBJECTIVE, OBJECTIVE_NOTE:
+      'This wave was run for a WORKING FUSED ARTIFACT, not for speed. One direction per round, the ' +
+      'commit gate was "does it run", and the no-improve stop was disabled because a debug round is ' +
+      'non-improving by construction. Do NOT read a speedup out of this wave' +
+      (PC_RAN ? '.' : ' — it ran no positive control, so every timing reading in it is void.') } : {}),
+    ...(OBJECTIVE_CAVEATS.length ? { OBJECTIVE_CAVEATS } : {}),
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
     ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
     // Recomputed against the FINAL dispatch record, not the round-0 one: the question the report
