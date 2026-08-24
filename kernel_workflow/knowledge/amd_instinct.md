@@ -4,6 +4,12 @@ This workflow runs on AMD Instinct MI-series accelerators — **CDNA 3** (MI300X
 MI325X, `gfx942`) and **CDNA 4** (MI350X / MI355X, `gfx950`). They differ in CU count, HBM bandwidth,
 peak FLOPS, and — critically for quantized kernels — the **fp8 number format**. Do NOT assume MI300X.
 
+On `gfx950`, read `gfx950_lowering.md` as well before you write or trust any synchronization,
+occupancy, or residency argument. It carries what the emitted ISA does as opposed to what the source
+says — the workgroup barrier does not drain `vmcnt`, the profiler's VGPR count is half the real one,
+an agent-scope release is a cross-die writeback — and each of those reads as the benign answer at
+source level.
+
 ## 0. Detect THIS box first (source of truth > this table)
 Always identify the actual accelerator at the start of analysis/profiling, and prefer the detected
 values + your measured benchmark over any number written here (this table is a dated hint, like all

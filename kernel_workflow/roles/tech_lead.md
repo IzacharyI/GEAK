@@ -637,6 +637,36 @@ Two consequences worth acting on:
   stays tagged. Do not distil confident claims about the kernel out of a round that measured code
   which never executed; the honest insight from such a round is about the harness.
 
+### `knowledge_delta` — the facts that must outlive this wave
+
+`insights` are about the kernel under study, and they are supposed to die with the wave. Some of what
+a round finds is not about the kernel at all: it is about the **card and the toolchain**, it is true
+of every kernel that will ever be built on this box, and letting it die means the next wave spends a
+lease rediscovering it. That has already happened — an engineer with no GPU dumped emitted ISA and
+established four such facts (a workgroup barrier that does not drain `vmcnt`, a profiler VGPR count
+that is half the real one, an agent-scope release that lowers to a cross-die writeback, a residency
+cap already binding before any change), wrote them into a `worker_result`, and nothing carried them
+anywhere.
+
+Return those separately, in `knowledge_delta`. Four conditions, all required:
+
+1. **It is about the hardware, the compiler, or the profiler** — not about this operator's shape,
+   its tiling, or its guards. Set `generalizes: false` if you are not sure; a false negative costs a
+   line in the report, a false positive puts a wrong fact into a card every future wave reads.
+2. **There is an artifact.** `evidence` names it: an ISA dump path, a `sha256`, an instruction count,
+   a measured number. "The engineer reported" is an insight, not a delta.
+3. **`contradicts` says what a reader would otherwise have believed.** A lowering earns a card only
+   when the source-level reading of it says something else — and it is precisely when the wrong
+   reading is the *benign* one that the fact is worth a wave. If nothing was contradicted, this is
+   documentation, not a finding.
+4. **`card` names the file it belongs in** (e.g. `gfx950_lowering.md`, `amd_instinct.md`,
+   `pipe_occupancy.md`). Naming it makes the merge a placement decision instead of a search.
+
+The script does **not** write `knowledge/`. It logs each delta and puts it in the report for a human
+to merge, because an unvalidated claim auto-appended to a card becomes doctrine and every later wave
+inherits it. Emit nothing rather than padding: a round that established no durable hardware fact
+should return an empty list, and most rounds will.
+
 **DEEP-MODE persistence + sharing (do these ONLY if the named input is present; a normal run passes
 none of them, so skip this whole block then):**
 - `STATE_DIR` (+ `CANONICAL`, `CUMULATIVE_SPEEDUP`, `BEST_PER_CASE`): persist this wave's progress so a
@@ -678,6 +708,13 @@ Return JSON:
     {"direction": "r1_d0", "specialty": "...", "expected": 2.0, "actual": 3.4,
      "roadmap_rung": "D2|off_ladder",
      "verdict": "confirmed|partial|unresolved|dead_end", "lesson": "..."}
+  ],
+  "knowledge_delta": [
+    {"fact": "fx.barrier() lowers to s_waitcnt lgkmcnt(0); s_barrier and does NOT drain vmcnt",
+     "card": "gfx950_lowering.md",
+     "evidence": "emitted ISA, COMPILE_ONLY=1, round_1/engineer_1 publish site",
+     "contradicts": "a barrier orders the other waves' epilogue buffer_stores before the flag bump",
+     "generalizes": true}
   ],
   "bottleneck_now": "memory|compute|latency|lds|overhead|...",
   "suggest_next": "one-line steer for next round (or 'consider stopping')"

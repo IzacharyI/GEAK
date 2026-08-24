@@ -860,6 +860,32 @@ const MEMORY_SCHEMA = obj({
     lesson: { type: 'string' },
     first_round: { type: 'number' }, last_round: { type: 'number' },
   }, ['id', 'verdict']) },
+  // DURABLE FACTS ABOUT THE HARDWARE AND TOOLCHAIN, as opposed to insights about this kernel.
+  // The two are different and the workflow had a home for only one of them. An insight ("the 512
+  // guard is bimodal") is about the operator under study and dies with the wave that found it, which
+  // is correct. A lowering ("the workgroup barrier does not drain vmcnt on this target", "the
+  // profiler reports VGPR in units of two") is true of every kernel that will ever be built on this
+  // box, and dying with the wave means the next wave pays a lease to rediscover it. That has already
+  // happened: an engineer read four such facts out of emitted ISA in a round that never got a GPU,
+  // wrote them into a worker_result, and nothing carried them anywhere. `knowledge/` is read-only to
+  // this script by design — an unvalidated claim auto-appended to a card becomes doctrine — so this
+  // field does not write a card. It surfaces the candidates, with their evidence, in the log and in
+  // the report, where a human merges them. The bar is deliberately high; see tech_lead.md.
+  knowledge_delta: { type: 'array', items: obj({
+    fact: { type: 'string' },
+    // Which card it belongs in, so the merge is a placement decision and not a search.
+    card: { type: 'string' },
+    // The artifact that establishes it: an ISA dump path, a counter, a sha256, a measured number.
+    // A fact whose evidence is "the engineer said so" is an insight, not a knowledge delta.
+    evidence: { type: 'string' },
+    // What a reader would have believed WITHOUT this fact. Required, because a lowering only earns
+    // a card when the source-level reading of it says something else — and when the wrong reading
+    // is the benign one, that is the whole reason it costs a wave to find.
+    contradicts: { type: 'string' },
+    // true = holds for any kernel on this target; false = this operator's shape. Only the first
+    // kind is a card edit; the second belongs in the report and nowhere else.
+    generalizes: { type: 'boolean' },
+  }, ['fact', 'evidence', 'generalizes']) },
   bottleneck_now: { type: 'string' }, suggest_next: { type: 'string' },
 }, ['insights']);
 
@@ -1600,6 +1626,9 @@ const OVERLAP_CAVEATS = [];
 // report that only prints what survived, and "no number" and "a number we refuse to read" are the
 // two states this project has most often confused.
 const OBJECTIVE_CAVEATS = [];
+// Hardware/toolchain facts this wave established, for a human to merge into knowledge/. See
+// MEMORY_SCHEMA.knowledge_delta for why this is surfaced rather than written.
+const KNOWLEDGE_DELTA = [];
 let TASK_GRAPH_CAVEAT = '';
 let PIPE_TABLE_CAVEAT = '';
 if (REQUIRE_TASK_GRAPH) {
@@ -3086,6 +3115,18 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       // Never silent. A board that drops findings without saying so is the bug this replaced.
       for (const e of merged.evicted) log(`INSIGHT EVICTED (board full, last seen r${e.last_round}): ${e.text}`);
     }
+    // Logged one line per fact, and logged LOUDLY, because the whole failure being fixed is that
+    // these were written down somewhere nobody read. A delta that does not generalize is kept too
+    // but marked: the report wants it, `knowledge/` does not.
+    if (Array.isArray(mem.knowledge_delta)) {
+      for (const k of mem.knowledge_delta) {
+        if (!k || !k.fact || !k.evidence) continue;
+        KNOWLEDGE_DELTA.push({ round, ...k });
+        log(`KNOWLEDGE DELTA r${round} [${k.generalizes ? `card: ${k.card || 'UNPLACED'}` : 'this operator only'}]: ` +
+            `${k.fact} | evidence: ${k.evidence}` +
+            (k.contradicts ? ` | would otherwise have been read as: ${k.contradicts}` : ''));
+      }
+    }
     if (mem.ledger) history.ledger = history.ledger.concat(mem.ledger);
     if (mem.bottleneck_now) history.bottleneck_now = mem.bottleneck_now;
     if (mem.suggest_next) history.suggest_next = mem.suggest_next;
@@ -3139,6 +3180,16 @@ const report = await agentT(
       'non-improving by construction. Do NOT read a speedup out of this wave' +
       (PC_RAN ? '.' : ' — it ran no positive control, so every timing reading in it is void.') } : {}),
     ...(OBJECTIVE_CAVEATS.length ? { OBJECTIVE_CAVEATS } : {}),
+    // The report is the only artifact a human reliably reads, so it is where the durable facts have
+    // to surface. Its section must separate the ones that generalize (a card edit is owed) from the
+    // ones that do not, and must carry the evidence with each — a fact quoted without the ISA dump
+    // or sha that established it is not mergeable and will be rediscovered anyway.
+    ...(KNOWLEDGE_DELTA.length ? { KNOWLEDGE_DELTA, KNOWLEDGE_DELTA_NOTE:
+      'Facts this wave established about the HARDWARE/TOOLCHAIN, not about this kernel. Give them ' +
+      'their own section titled "Knowledge deltas — merge into knowledge/". List the generalizing ' +
+      'ones first with their target card and their evidence verbatim; list the operator-specific ' +
+      'ones under a separate heading and say plainly that they are not card material. This workflow ' +
+      'does not edit knowledge/ itself.' } : {}),
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
     ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
     // Recomputed against the FINAL dispatch record, not the round-0 one: the question the report
