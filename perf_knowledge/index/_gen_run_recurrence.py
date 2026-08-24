@@ -52,9 +52,22 @@ import kb
 # The sinks whose gate is a kernel-level A/B. Both learned trees are read: e2e cards carry
 # throughput evidence for the same axes, and an axis measured at both levels is a stronger prior
 # than one measured at either. Which tree a card came from is kept and printed per row.
+#
+# `language_gated` is whether that tree's WRITE PATH enforces `language:` on a new card — a property
+# of the tree, recorded here because the digest reports on the field. The kernel tree is written
+# through `kb.py propose`, whose lint refuses a new card without a language, and `kernel_lane.js`
+# supplies it from `detect_language.py` reading the produced source. The e2e tree is hand-maintained
+# markdown: no lint gate, no detection step, so its cards keep arriving without one. Saying "cards
+# written from here on carry a language" across both trees was false for a sixth of the corpus, and
+# false in the direction that reads as a promise.
+#
+# Named rather than a bare tuple because `("kernel", path, True)` does not say what the True is, and
+# a reader of the four unpack sites should not have to come back here to find out.
+Tree = collections.namedtuple("Tree", "name root language_gated")
+
 CARD_TREES = (
-    ("kernel", os.path.join(ROOT, "kernel_workflow", "knowledge", "learned")),
-    ("e2e", os.path.join(ROOT, "e2e_workflow", "knowledge", "learned")),
+    Tree("kernel", os.path.join(ROOT, "kernel_workflow", "knowledge", "learned"), True),
+    Tree("e2e", os.path.join(ROOT, "e2e_workflow", "knowledge", "learned"), False),
 )
 
 # Publish threshold, counted in DISTINCT KERNELS, never in cards. One 20-kernel campaign distils into
@@ -177,11 +190,11 @@ def scope_vocabulary(cards):
 
 def load_cards():
     out = []
-    for tree, root in CARD_TREES:
-        if not os.path.isdir(root):
+    for t in CARD_TREES:
+        if not os.path.isdir(t.root):
             continue
-        for c in kb.all_cards(type("KB", (), {"root": root})()):
-            c["tree"] = tree
+        for c in kb.all_cards(type("KB", (), {"root": t.root})()):
+            c["tree"] = t.name
             out.append(c)
     return out
 
@@ -272,7 +285,8 @@ def card_link(c):
     all pointed one level short. `test_run_recurrence.py` resolves every link on disk now, because
     a broken audit trail is worse than a missing one — it looks checkable and is not.
     """
-    root = os.path.relpath(dict(CARD_TREES).get(c["tree"], ""), HERE)
+    roots = {t.name: t.root for t in CARD_TREES}
+    root = os.path.relpath(roots.get(c["tree"], ""), HERE)
     return f"[{c['name']}]({root}/{c['name']}.md)"
 
 
@@ -313,17 +327,30 @@ PROSE = {
         "is every e2e card. Anything else here wants a line in `CLASS_TO_OPERATOR`."
     ),
     "language_intro": (
-        "The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed "
-        "by the card `language:` field, which is required on new cards and deliberately NOT "
-        "backfilled onto older ones — a guessed language is worse than an absent one, and every "
-        "card here predates the field."
+        "The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed by "
+        "the card `language:` field, which is deliberately NOT backfilled onto older cards — a guessed "
+        "language is worse than an absent one. Which write paths require it is not uniform; the "
+        "breakdown below says which."
     ),
     "language_empty": (
         "**Empty, and not because nothing was measured:** 0 of {n} active cards carry a `language:` "
-        "field. Cards written from here on do (`kb.py` refuses a new proposal without one, and the "
-        "lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced "
-        "source rather than echoing the request). This section fills itself as those land; nothing "
-        "here needs editing."
+        "field. It fills from one side only, so which side matters:\n"
+        "\n"
+        "{per_tree}\n"
+        "\n"
+        "So this lane will populate for {enforced} cards as they land, and will stay silent for "
+        "{unenforced} ones until that write path gains the same gate. Read a future entry here as "
+        "evidence from {enforced} specifically — not as the whole corpus having been language-tagged."
+    ),
+    "language_tree_enforced": (
+        "- **{tree}** ({n} cards today): `language:` is required. `kb.py propose` refuses a new card "
+        "without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading "
+        "the produced source rather than echoing the request."
+    ),
+    "language_tree_open": (
+        "- **{tree}** ({n} cards today): `language:` is **not** required — these cards are "
+        "hand-maintained markdown with no lint gate and no detection step on the write path, so they "
+        "will keep arriving without one. A real gap, named here rather than averaged away."
     ),
     "arch_intro": (
         "Axes whose verdict differs across `gfx` targets — the rows worth carrying into "
@@ -374,9 +401,9 @@ def render(rows, cards, unroutable):
     # nothing" and "e2e cards predate the header schema" — only one of those is true.
     per_tree = ", ".join(
         "{}={} ({} with keywords)".format(
-            t, sum(1 for c in cards if c["tree"] == t),
-            sum(1 for c in cards if c["tree"] == t and c["meta"].get("keywords")))
-        for t, _ in CARD_TREES)
+            t.name, sum(1 for c in cards if c["tree"] == t.name),
+            sum(1 for c in cards if c["tree"] == t.name and c["meta"].get("keywords")))
+        for t in CARD_TREES)
 
     L = ["---", "title: Run recurrence — base rates distilled from the learned card trees",
          "kind: reference", "generated_by: index/_gen_run_recurrence.py", "---", "",
@@ -436,7 +463,16 @@ def render(rows, cards, unroutable):
             axes = sorted(r["label"] for r in published.values() if lang in r["languages"])
             L.append(f"| `{lang}` | {n} | {', '.join(f'`{a}`' for a in axes) or '—'} |")
     else:
-        L.append(PROSE["language_empty"].format(n=len(cards)))
+        by_tree = collections.Counter(c["tree"] for c in cards)
+        lines, enforced, unenforced = [], [], []
+        for t in CARD_TREES:
+            key = "language_tree_enforced" if t.language_gated else "language_tree_open"
+            lines.append(PROSE[key].format(tree=t.name, n=by_tree.get(t.name, 0)))
+            (enforced if t.language_gated else unenforced).append(f"`{t.name}`")
+        L.append(PROSE["language_empty"].format(
+            n=len(cards), per_tree="\n".join(lines),
+            enforced=" and ".join(enforced) or "no",
+            unenforced=" and ".join(unenforced) or "no"))
     L.append("")
 
     # ---- architecture lane -----------------------------------------------------------------------

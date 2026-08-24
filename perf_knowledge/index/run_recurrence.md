@@ -100,9 +100,14 @@ Kernel classes with cards but no operator id, left unfiled rather than filed pla
 
 ## By authoring language
 
-The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed by the card `language:` field, which is required on new cards and deliberately NOT backfilled onto older ones — a guessed language is worse than an absent one, and every card here predates the field.
+The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed by the card `language:` field, which is deliberately NOT backfilled onto older cards — a guessed language is worse than an absent one. Which write paths require it is not uniform; the breakdown below says which.
 
-**Empty, and not because nothing was measured:** 0 of 158 active cards carry a `language:` field. Cards written from here on do (`kb.py` refuses a new proposal without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced source rather than echoing the request). This section fills itself as those land; nothing here needs editing.
+**Empty, and not because nothing was measured:** 0 of 158 active cards carry a `language:` field. It fills from one side only, so which side matters:
+
+- **kernel** (135 cards today): `language:` is required. `kb.py propose` refuses a new card without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced source rather than echoing the request.
+- **e2e** (23 cards today): `language:` is **not** required — these cards are hand-maintained markdown with no lint gate and no detection step on the write path, so they will keep arriving without one. A real gap, named here rather than averaged away.
+
+So this lane will populate for `kernel` cards as they land, and will stay silent for `e2e` ones until that write path gains the same gate. Read a future entry here as evidence from `kernel` specifically — not as the whole corpus having been language-tagged.
 
 ## By architecture
 

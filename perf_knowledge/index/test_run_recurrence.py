@@ -63,7 +63,7 @@ def tree(tmp_path, monkeypatch):
     """A learned/ tree the test owns. The real trees are neither read nor written."""
     root = tmp_path / "learned"
     root.mkdir()
-    monkeypatch.setattr(G, "CARD_TREES", (("kernel", str(root)),))
+    monkeypatch.setattr(G, "CARD_TREES", (G.Tree("kernel", str(root), True),))
 
     def make(name, keywords, kernels, kernel_class="dense_gemm", type="lever",
              platforms="gfx950"):
@@ -302,6 +302,33 @@ def test_the_language_lane_explains_an_empty_result(tree):
     assert "Empty, and not because nothing was measured" in out
 
 
+def test_the_language_lane_says_which_trees_actually_enforce_the_field(tree, monkeypatch, tmp_path):
+    """An ungated tree must be named as ungated, not folded into a corpus-wide promise.
+
+    The empty-lane prose used to read "cards written from here on carry a language" over both trees.
+    Only the kernel tree's write path enforces it — `kb.py propose` lints it and the lane fills it
+    from `detect_language.py` — while e2e cards are hand-maintained markdown with no gate. So the
+    sentence was false for a sixth of the corpus, in the direction a reader takes as a promise: they
+    would read a future FlyDSL row as "the corpus is language-tagged" and act on a sixth of it being
+    silently untagged. Both trees must be visible with their real status.
+    """
+    open_root = tmp_path / "open"
+    open_root.mkdir()
+    monkeypatch.setattr(G, "CARD_TREES", (
+        G.Tree("gated", G.CARD_TREES[0].root, True),
+        G.Tree("ungated", str(open_root), False),
+    ))
+    tree("c1", ["some-axis"], ["_k1"])
+    rows, cards = rows_for()
+    out = G.render(rows, cards, {})
+
+    lane = out.split("## By authoring language")[1].split("##")[0]
+    assert "**gated**" in lane and "**ungated**" in lane, "both trees must appear by name"
+    assert "is **not** required" in lane, "the ungated tree's status must be stated, not implied"
+    # The retired blanket claim must not come back in any tree's absence.
+    assert "Cards written from here on do" not in out
+
+
 def test_the_architecture_lane_needs_two_platforms(tree):
     for i in range(3):
         tree(f"c{i}", ["cache-policy"], [f"_k{i}"], platforms="gfx950")
@@ -379,7 +406,7 @@ def test_cards_without_a_discovery_header_contribute_no_axes_but_are_counted():
     """The e2e tree predates the header. Silently skipping it would misreport the corpus size; using
     it would invent axes it never named."""
     cards = G.load_cards()
-    by_tree = {t: [c for c in cards if c["tree"] == t] for t, _ in G.CARD_TREES}
+    by_tree = {t.name: [c for c in cards if c["tree"] == t.name] for t in G.CARD_TREES}
     if not by_tree.get("e2e"):
         pytest.skip("no e2e tree in this checkout")
     assert all(not c["meta"].get("keywords") for c in by_tree["e2e"])

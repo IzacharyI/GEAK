@@ -2,6 +2,10 @@
 
 > **Generated file.** Rebuild with `python3 languages/flydsl/_gen_version_map.py` (see the
 > script docstring for the `--root` arguments). Do not hand-edit the tables.
+>
+> **Unlike the other generated files here, no CI gate can hold this one current** — rebuilding
+> needs four FlyDSL versions installed side by side, which no CI image has. Treat the version
+> list below as the scope of what was compared, and re-run locally when a new version lands.
 
 A recipe carries a **logic** half (tiling, what to fuse, what goes to LDS, layout, which MFMA)
 and an **API** half (which module to call). The logic half is bound to the architecture and

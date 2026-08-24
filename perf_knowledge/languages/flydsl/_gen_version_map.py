@@ -318,6 +318,15 @@ def render(trees, roots, idx, scanned, scan_dirs, installed, notes):
     A("")
     A("> **Generated file.** Rebuild with `python3 languages/flydsl/_gen_version_map.py` (see the")
     A("> script docstring for the `--root` arguments). Do not hand-edit the tables.")
+    A(">")
+    # Sibling generated artifacts (corpus/gemm_family.md, index/run_recurrence.md) DO have a --check
+    # gate in CI, so a reader who has seen those will assume this one is held current too. It cannot
+    # be: regenerating needs four FlyDSL versions installed side by side, and three of those trees
+    # were unpacked wheels that no longer exist. Better to say so here than to let the reader infer a
+    # gate that does not exist.
+    A("> **Unlike the other generated files here, no CI gate can hold this one current** — rebuilding")
+    A("> needs four FlyDSL versions installed side by side, which no CI image has. Treat the version")
+    A("> list below as the scope of what was compared, and re-run locally when a new version lands.")
     A("")
     A("A recipe carries a **logic** half (tiling, what to fuse, what goes to LDS, layout, which MFMA)")
     A("and an **API** half (which module to call). The logic half is bound to the architecture and")
