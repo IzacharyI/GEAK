@@ -31,8 +31,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 WF = os.path.dirname(HERE)
 ROOT = os.path.dirname(WF)
-ROLES = os.path.join(WF, "roles")
 PK = os.path.join(ROOT, "perf_knowledge")
+
+# BOTH role trees. The e2e side is not decoration here: `_gen_run_recurrence.py` aggregates the e2e
+# learned cards along with the kernel ones, so an e2e run that never reads the digest is contributing
+# to a prior it cannot spend. A first version of this file scanned only kernel_workflow/roles and
+# reported the loop closed while that asymmetry was live — the guard had a blind spot in exactly the
+# place the bug was.
+ROLE_DIRS = [os.path.join(ROOT, "kernel_workflow", "roles"),
+             os.path.join(ROOT, "e2e_workflow", "roles")]
 
 # path in perf_knowledge -> why a role has to name it. The reason is not decoration: it is what makes
 # a future removal a decision rather than an accident.
@@ -50,14 +57,18 @@ MUST_BE_READ = {
         "at an API instead of looking it up, which is the specific failure it was built to remove.",
 }
 
-# Segments a prompt legitimately cannot fill in (the op and language are per-run).
-PLACEHOLDER = re.compile(r"<[^>]+>|\{[^}]*\}")
+# Segments a prompt legitimately cannot fill in: the op and language are per-run, and `optimization/*`
+# names a directory's worth of files on purpose.
+PLACEHOLDER = re.compile(r"<[^>]+>|\{[^}]*\}|\*")
 
 
 def role_files():
     out = []
-    for base, _, names in os.walk(ROLES):
-        out += [os.path.join(base, n) for n in sorted(names) if n.endswith(".md")]
+    for roles in ROLE_DIRS:
+        if not os.path.isdir(roles):
+            continue
+        for base, _, names in os.walk(roles):
+            out += [os.path.join(base, n) for n in sorted(names) if n.endswith(".md")]
     return sorted(out)
 
 
@@ -72,16 +83,53 @@ def expand_braces(path):
     return out
 
 
+SEG = r"[A-Za-z0-9_/{},.<>*-]+"
+
+# The spellings the two role trees actually use for the same base. kernel_workflow interpolates the
+# variable it is handed; e2e prompts write the path out, sometimes repo-relative. Matching only the
+# first form is why the e2e references were invisible to an earlier version of this check.
+REF_PATTERNS = (
+    re.compile(rf"KERNEL_KNOWLEDGE_DIR/({SEG})"),
+    re.compile(rf"(?:GEAK/)?perf_knowledge/({SEG})"),
+)
+
+
+def base_relative_pattern():
+    """Bare `index/foo.md` inside a role file, anchored on the real top-level dirs of the base.
+
+    Needed because a nested bullet list states the base once in the parent and leaves the children
+    relative — `system_architect.md` names `index/capability_index.yaml` and `index/run_recurrence.md`
+    that way, and the prefixed patterns above see neither. Anchoring on `os.listdir(PK)` rather than a
+    hardcoded list keeps it from drifting as the base grows, and keeps it tight enough that an English
+    sentence containing the word "index" is not mistaken for a path.
+    """
+    tops = sorted(d for d in os.listdir(PK) if os.path.isdir(os.path.join(PK, d)))
+    # Must END like a path — an extension, a trailing slash, a glob, or a placeholder. Without that,
+    # prose collides with the vocabulary: "a stale index/mask from a prior call" and "the
+    # reference/synth that raised" both parse as paths under `index/` and `reference/`, and both were
+    # reported as broken references on the first run of this pattern. `/` here means "or".
+    return re.compile(rf"(?<![\w/])((?:{'|'.join(map(re.escape, tops))})/{SEG}"
+                      r"(?:\.[A-Za-z0-9]{1,5}|/|\*|>))")
+
+
 def referenced_paths():
-    """Every path a role prompt names under the knowledge base, with the role that names it."""
+    """Every path a role prompt names under the knowledge base, with the role that names it.
+
+    "Names" is as far as a path check can go: it cannot tell an instruction to read a file from a
+    mention of one, so `update_experience.md` counts as naming `run_recurrence.md` even though what it
+    says is "do not regenerate this by hand". That is a known limit, not a hole — the failure this
+    guards is an artifact NO prompt mentions at all, and telling instruction from mention would need a
+    reader of English rather than of paths.
+    """
+    patterns = (*REF_PATTERNS, base_relative_pattern())
     hits = {}
-    pat = re.compile(r"KERNEL_KNOWLEDGE_DIR/([A-Za-z0-9_/{},.<>*-]+)")
     for f in role_files():
         with open(f, encoding="utf-8") as fh:
             body = fh.read()
-        for raw in pat.findall(body):
-            for p in expand_braces(raw.rstrip(".,;:)")):
-                hits.setdefault(p, set()).add(os.path.basename(f))
+        for pat in patterns:
+            for raw in pat.findall(body):
+                for p in expand_braces(raw.rstrip(".,;:)`")):
+                    hits.setdefault(p, set()).add(os.path.basename(f))
     return hits
 
 
