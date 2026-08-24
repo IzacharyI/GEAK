@@ -392,7 +392,19 @@ const SETUP_SCHEMA = obj({
   resumed: { type: 'boolean' },
   prior_state: obj({
     cumulative: { type: 'number' }, insights: { type: 'array', items: { type: 'string' } },
-    ledger: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
+  // out of `roadmap_rung`. A row missing `id` merges as a new row every round; a row missing
+  // `verdict` is treated by the next plan_round as untried. Both read as normal ledger growth.
+  ledger: { type: 'array', items: obj({
+    id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
+    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by
+    // result". `unresolved` is what keeps a rung re-openable instead of closing everything above it.
+    verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
+    roadmap_rung: { type: ['string', 'null'] },
+    expected: { type: 'number' }, actual: { type: 'number' },
+    lesson: { type: 'string' },
+    first_round: { type: 'number' }, last_round: { type: 'number' },
+  }, ['id', 'verdict']) },
     bottleneck_now: { type: 'string' }, best_per_case: perCase,
   }, []),
 }, ['eval_dir', 'workspace', 'kernel_name']);
@@ -422,7 +434,20 @@ const ANALYZE_SCHEMA = obj({
   // acceptance-shape fusion, was never proposed because its gate was written against D2. The
   // ladder was right and it was structurally an orphan. Prose cannot be checked against what was
   // dispatched. A list of ids can. See roadmapLadderGate.
-  candidate_directions: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  //
+  // So they are DECLARED, not just described. Left opaque, a ladder that omits `gated_on` validates
+  // and every rung then looks unconditional — the gate finds no unmet prerequisite and reports OK
+  // on exactly the run whose ordering was lost. `gated_on: []` is a real answer and must be given,
+  // not inferred from absence.
+  candidate_directions: { type: 'array', items: obj({
+    id: { type: 'string' },              // short, stable, quotable: D0, D1, ...
+    title: { type: 'string' },
+    rationale: { type: 'string' },
+    expected_speedup: { type: 'number' },
+    gated_on: { type: 'array', items: { type: 'string' } },
+    mandatory_arms: { type: 'array', items: { type: 'string' } },
+    is_positive_control: { type: 'boolean' },
+  }, ['id', 'title', 'gated_on']) },
   // perf_knowledge resolution (REFERENCE ONLY): the operator/language this kernel maps to in the
   // AMD perf_knowledge base, plus the most relevant card paths, so engineers read focused context
   // instead of re-navigating the whole base. Empty string / [] / null when no card applies.
@@ -459,7 +484,35 @@ const ANALYZE_SCHEMA = obj({
   // a FACT, and an estimate presented as a measurement is not. A short honest graph outranks a
   // complete invented one, and `source: 'assumed'` on every node is itself the finding.
   // See knowledge/tile_task_graph.md for the derivation method.
-  task_graph: { type: ['object', 'null'], additionalProperties: true },
+  //
+  // The fields taskGraphGate READS are declared below rather than left to the comment above.
+  // `additionalProperties: true` keeps the rest of the documented shape legal, but a field the gate
+  // counts must be named in the schema: with the whole object opaque, a graph that calls the
+  // enforcement column anything other than `enforced_by` validates, and the gate then reports
+  // "0 edges enforced only by a launch boundary" — which reads as the finding "nothing to unfuse"
+  // when the truth is "the column was never filled in". Those two must not look alike.
+  task_graph: {
+    type: ['object', 'null'],
+    additionalProperties: true,
+    properties: {
+      nodes: { type: 'array', items: obj({
+        id: { type: 'string' }, stage: { type: 'string' }, duration_us: { type: 'number' },
+        // measured | assumed. The gate counts assumed durations, because a graph whose every
+        // duration is assumed is a hypothesis wearing a measurement's formatting.
+        source: { type: 'string', enum: ['measured', 'assumed'] },
+      }, ['id', 'source']) },
+      edges: { type: 'array', items: obj({
+        from: { type: 'string' }, to: { type: 'string' },
+        // data | launch_boundary | barrier | assumed. `launch_boundary` is the load-bearing value:
+        // it marks an ordering the DATA does not require, which is the only kind fusion can delete.
+        enforced_by: { type: 'string' },
+        scope: { type: 'string' },
+      }, ['from', 'to', 'enforced_by']) },
+      unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      critical_path_us: { type: 'number' },
+      measured_e2e_us: { type: 'number' },
+    },
+  },
   // PER-PIPE RESOURCE TIMELINE. The other half of the analysis, required alongside task_graph.
   //
   // The graph answers whether two pieces of work MAY overlap. That is necessary and not sufficient,
@@ -483,7 +536,33 @@ const ANALYZE_SCHEMA = obj({
   // kernel boundary is a grid-wide barrier plus a pipeline drain, so the next stage's weight loads
   // and index preprocessing are not merely unscheduled, they are inexpressible.
   // See knowledge/pipe_occupancy.md.
-  resource_timeline: { type: ['object', 'null'], additionalProperties: true },
+  //
+  // Same rule as task_graph: what the gate reads is declared. `utilization_pct` in particular is
+  // the number every direction this run proposes will be priced against, and the gate DROPS any
+  // pipe row whose value is not finite — so a row that omits it or ships it as a string vanishes
+  // silently, and a table of five pipes with one saturated row can arrive at the gate as an empty
+  // table reported as PIPE TABLE MISSING.
+  resource_timeline: {
+    type: ['object', 'null'],
+    additionalProperties: true,
+    properties: {
+      pipes: { type: 'array', items: obj({
+        stage: { type: 'string' },
+        pipe: { type: 'string' },   // valu|mfma|lds|hbm|scalar
+        utilization_pct: { type: 'number' },
+        source: { type: 'string' },
+      }, ['stage', 'pipe', 'utilization_pct']) },
+      interkernel_gap_us: obj({
+        median: { type: 'number' }, max: { type: 'number' }, n_boundaries: { type: 'number' },
+      }, ['median']),
+      // The gate DERIVES the class from the numbers and compares it against this one; a mismatch is
+      // itself reportable, so the stated value must be present to be contradicted.
+      class: { type: 'string', enum: ['throughput_bound', 'latency_bound', 'launch_bound', 'mixed'] },
+      idle_pipe_opportunities: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      closed_axes: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    },
+  },
 }, ['kernel_type', 'roadmap_summary']);
 
 const BENCH_SCHEMA = obj({
@@ -512,7 +591,25 @@ const BENCH_SCHEMA = obj({
   // `control_pairs_pct` and `null_pairs_pct` — the individual paired deltas, not just their medians —
   // are read by the gate: sign agreement across pairs and the WORST null pair are what separate a
   // small real effect from a small piece of drift, and a median hides both.
-  positive_control: { type: 'object', additionalProperties: true },
+  // Declared, not merely described above. The gate reads seven fields off this object and every one
+  // of them has a DEFAULT that reads as success when the field is absent: `ran` missing means it
+  // ran (`pc.ran !== false`), `switch_present` missing means the pre-flight is inert, `null_arm_pct`
+  // missing makes the overshoot check silently non-quiet. An opaque object lets a renamed or
+  // dropped field validate and then be interpreted as a passing control.
+  positive_control: obj({
+    ran: { type: 'boolean' },
+    switch_present: { type: 'boolean' },
+    switch_checked: { type: 'string' },
+    measured_pct: { type: 'number' },
+    expected_lo: { type: 'number' }, expected_hi: { type: 'number' },
+    passed: { type: 'boolean' }, reps: { type: 'number' },
+    control_pairs_pct: { type: 'array', items: { type: 'number' } },
+    null_pairs_pct: { type: 'array', items: { type: 'number' } },
+    null_arm_pct: { type: 'number' },
+    note: { type: 'string' },
+    // Required only when the object exists at all: a run with no control omits it entirely. When it
+    // IS reported, these three are what separate a control from a number, so none may be defaulted.
+  }, ['ran', 'switch_present', 'measured_pct']),
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
 
@@ -642,7 +739,19 @@ const INTEGRATE_SCHEMA = obj({
 
 const MEMORY_SCHEMA = obj({
   insights: { type: 'array', items: { type: 'string' } },
-  ledger: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
+  // out of `roadmap_rung`. A row missing `id` merges as a new row every round; a row missing
+  // `verdict` is treated by the next plan_round as untried. Both read as normal ledger growth.
+  ledger: { type: 'array', items: obj({
+    id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
+    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by
+    // result". `unresolved` is what keeps a rung re-openable instead of closing everything above it.
+    verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
+    roadmap_rung: { type: ['string', 'null'] },
+    expected: { type: 'number' }, actual: { type: 'number' },
+    lesson: { type: 'string' },
+    first_round: { type: 'number' }, last_round: { type: 'number' },
+  }, ['id', 'verdict']) },
   bottleneck_now: { type: 'string' }, suggest_next: { type: 'string' },
 }, ['insights']);
 

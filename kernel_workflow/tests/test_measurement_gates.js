@@ -32,8 +32,20 @@ const verify = read('roles/verify_engineer.md');
 console.log('\n# positive control');
 ok(/const POSITIVE_CONTROL = \(A\.positive_control/.test(wf),
    'kernel_workflow.js reads args.positive_control');
-ok(/positive_control: \{ type: 'object'/.test(wf),
-   'BENCH_SCHEMA carries a positive_control result object');
+// Was `positive_control: { type: 'object', additionalProperties: true }` — an opaque bag. Every
+// field the gate reads off it defaults to a PASSING reading when absent (`pc.ran !== false` is true
+// for a missing `ran`; a missing `switch_present` makes the pre-flight inert), so a renamed or
+// dropped field validated and was then interpreted as a control that ran and passed.
+ok(/positive_control: obj\(\{/.test(wf),
+   'BENCH_SCHEMA declares positive_control\'s shape rather than accepting any object');
+{
+  const seg = wf.slice(wf.indexOf('positive_control: obj({'), wf.indexOf('positive_control: obj({') + 1400);
+  for (const f of ['ran', 'switch_present', 'measured_pct', 'null_arm_pct',
+                   'control_pairs_pct', 'null_pairs_pct'])
+    ok(new RegExp(`\\b${f}:`).test(seg), `  and declares ${f}, which the gate reads`);
+  ok(/\}, \['ran', 'switch_present', 'measured_pct'\]\)/.test(seg),
+     '  and requires the three whose absence would otherwise read as a passing control');
+}
 // The gate must sit between Benchmark and the optimize loop. If it ran later, the budget it exists
 // to protect would already be spent.
 const iBench = wf.indexOf("phase('Benchmark')");
