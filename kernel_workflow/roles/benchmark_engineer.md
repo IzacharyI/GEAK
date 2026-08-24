@@ -236,6 +236,16 @@ correct response is to build a synthetic control (next section) and declare
 `magnitude: 'constructed'` — not to hunt for the switch in some other workspace and quietly point
 the control at it.
 
+**When `how` describes a control you must BUILD, `switch_present` is about the knob you built, not
+about a knob that pre-existed.** A synthetic control's `how` deliberately names no in-tree switch, so
+"is the switch `how` names in the tree?" has no useful answer before you start, and answering `false`
+would abort a control that is perfectly valid. The question the field exists to answer is the same
+either way — *did the two arms execute different code?* — so run the grep **after** you have committed
+the gate, against the tree you actually measured in, and report what it found. If your own knob does
+not grep out of the measured tree, that is a real absent switch and `false` is the right answer.
+`switch_present` is required precisely because there is no safe default: omitted, it used to read as
+"checked and fine".
+
 Then run it exactly as `how` describes, changing nothing else, on the guard named in `guard` (or the
 whole suite if none):
 
