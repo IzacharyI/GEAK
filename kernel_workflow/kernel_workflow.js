@@ -1908,6 +1908,15 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
       ROADMAP: `${EVAL_DIR}/roadmap.md`,
       ROADMAP_LADDER: LADDER,
       LADDER_DISPATCHED: [...dispatchedRungs],
+      // The dependency graph and the pipe table, for the SAME reason. pipeOccupancyGate (below)
+      // rejects a direction whose claim exceeds what its pipe's idle fraction can pay — judging the
+      // planner against a table the planner was never shown. And the graph is the whole basis for
+      // "these two stages have no edge between them, so they can overlap": a plan phase without it
+      // can only reorder work it already knows about, never fuse.
+      ...(REQUIRE_TASK_GRAPH && analysis && analysis.task_graph
+        ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 4000) } : {}),
+      ...(REQUIRE_TASK_GRAPH && analysis && analysis.resource_timeline
+        ? { RESOURCE_TIMELINE: JSON.stringify(analysis.resource_timeline).slice(0, 3000) } : {}),
       KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE, KK_REFS,
       ...KB_INPUTS,
     }),
@@ -2083,6 +2092,17 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         roleAgent('verify_engineer', 'verify', 'Independently re-measure this candidate patch.', {
           CANONICAL, PATCH: patch, VERIFY_DIR: `${d.out_dir}/verify`,
           GPU_ID: d.gpu_id, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+          // The file whitelist Analyze declared. verify_engineer.md step 5 says to diff the patch's
+          // file list against it and fail anything outside — a patch that edits the instrument and
+          // the subject in the same diff has no readable result. Analyze has produced
+          // `modifiable_files` all along and nothing consumed it, so that check was asking verify to
+          // compare against a list it did not have; it either skipped the check or invented the list.
+          // Absent, it says UNDECLARED rather than being omitted — the same rule as ACTIVATION
+          // below. An omitted whitelist and an empty one read identically to the agent, and the
+          // silent reading is "no check to do".
+          MODIFIABLE_FILES: (analysis && Array.isArray(analysis.modifiable_files)
+            && analysis.modifiable_files.length)
+            ? analysis.modifiable_files : 'UNDECLARED',
           // Verify applies specialty-specific gates (see verify_engineer.md step 4c: a
           // `distributed` patch can be numerically correct and still deadlock).
           ...(d.specialty ? { SPECIALTY: d.specialty } : {}),
@@ -2332,10 +2352,18 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       ROUND_RESULTS: clean.map(r => ({ id: r.d.id, title: r.d.title, specialty: r.d.specialty,
         expected: r.d.expected_speedup, claimed: r.eng ? r.eng.speedup_geomean : 0,
         verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
+        // The rung this direction was dispatched under. The ledger has a `roadmap_rung` column, so
+        // without this the TechLead has to guess which rung each row settled — and a rung graded
+        // dead_end by guess is a rung nothing above it will ever be built on.
+        roadmap_rung: r.d.roadmap_rung || null, rung_deviation: r.d.rung_deviation || null,
         notes: r.eng ? r.eng.notes : '' })),
       INTEGRATE: integrate, WINNER: winner ? { source: winner.source, geomean: winner.geomean } : null,
       IMPROVED: improved, REPROFILE_SHIFT: profileSummary ? profileSummary.shift_note : '',
       PRIOR_HISTORY: history,
+      // The ladder and what is still unspent on it. update_memory writes the memory the NEXT wave
+      // reads; an unreached rung that is not written down here is a rung the next wave re-derives
+      // from scratch or never sees. This is the only phase positioned to carry it across waves.
+      ROADMAP_LADDER: LADDER, LADDER_DISPATCHED: [...dispatchedRungs],
       ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase } : {}),
       ...(SHARED_KB ? { SHARED_KB, TARGET_LANGUAGE } : {}),
     }),

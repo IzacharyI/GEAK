@@ -136,7 +136,11 @@ absolute per-case latencies. The script trusts only your numbers.
    **A harness edit is its own rejection, independent of the speedup.** Diff the patch's file list
    against `MODIFIABLE_FILES`; any path outside it — a test file, a benchmark script, a config the
    harness reads — is `status:"harness_modified"`, and you must still report the measured numbers so
-   the direction can be re-run cleanly rather than silently lost. A patch that edits the instrument
+   the direction can be re-run cleanly rather than silently lost.
+   If `MODIFIABLE_FILES` is the literal `UNDECLARED`, Analyze produced no whitelist: do **not** treat
+   that as "no check to do". Apply the rule by inspection instead — any file that the benchmark, the
+   correctness oracle, or COMMANDMENT reads is out of bounds regardless of what was declared — and
+   say in your report that you judged the boundary yourself, so the missing declaration is visible. A patch that edits the instrument
    and the subject in the same diff has no readable result, however good the number looks.
 
 5b. **Provenance check (only when `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or

@@ -345,6 +345,16 @@ prior rounds — see below). Also the current best per-case table. Plus `KERNEL_
 `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` (the kk pointer resolved in analyze; may be empty).
 And **`ROADMAP_LADDER`** (the `candidate_directions` you ranked in `analyze`, inline) +
 **`LADDER_DISPATCHED`** (the rung ids taken so far, across all rounds) + `ROADMAP` (the path).
+Plus **`TASK_GRAPH`** and **`RESOURCE_TIMELINE`** (present only when the run requires a task graph) —
+the dependency graph you built in `analyze` and the per-pipe busy/idle table. These are not
+background reading:
+- Every direction you propose is priced against `RESOURCE_TIMELINE` before the round is charged. A
+  direction claiming more than its pipe's idle fraction can pay is rejected by arithmetic, so read
+  the table first and claim inside it.
+- `TASK_GRAPH` is the only input that tells you which work has **no edge** between it and other work.
+  Reordering and tuning can be planned from a profile; *overlap* cannot. If two nodes are unordered
+  in the graph and sit on different pipes, that pair is a fusion/overlap candidate whether or not the
+  profile makes it look expensive — and if you do not propose it, say in `reasoning` why not.
 
 **DEEP-MODE hooks (act on these ONLY if present in your inputs; otherwise ignore — a normal run never
 passes them):**
@@ -584,8 +594,15 @@ Return JSON:
 ## PHASE=update_memory
 
 Inputs: `ROUND`, the round's per-direction verified results (id, title, specialty, claimed vs
-verified geomean, status, the engineer's notes), the integrate result, the round winner, the
-re-profile shift (if any), and the prior `HISTORY`.
+verified geomean, status, the engineer's notes, **and the `roadmap_rung` each was dispatched
+under**), the integrate result, the round winner, the re-profile shift (if any), and the prior
+`HISTORY`. Also **`ROADMAP_LADDER`** and **`LADDER_DISPATCHED`**.
+
+**Write the unspent rungs down.** You are the only phase whose output the *next wave* reads. Any rung
+in `ROADMAP_LADDER` that is not in `LADDER_DISPATCHED` must appear in the ledger with verdict
+`unresolved` and a one-line note saying what is still owed and what it was gated on — including
+rungs no direction ever mentioned. A rung that is merely absent reads to the next wave as a rung that
+was tried and dropped, and the next wave will not re-propose it.
 
 Maintain two structures and write them to `EVAL_DIR/insight_log.md` (human-readable) and return
 them as JSON so the script can thread them into the next `plan_round`:
@@ -663,7 +680,7 @@ Return JSON:
 ## PHASE=report
 
 Inputs: `EVAL_DIR`, `WORKSPACE`, full `HISTORY` (all rounds), the final winner's verified per-case
-table, `BASELINE_TIMING`, and `BASELINE_GEOMEAN_MS`.
+table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), and `BASELINE_GEOMEAN_MS`.
 
 1. Write the cumulative final patch:
    ```bash
