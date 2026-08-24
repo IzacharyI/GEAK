@@ -38,7 +38,14 @@ tuned shapes dispatch to it transparently.
 | You need the +X% the compiler leaves on the table, without dropping to raw HIP/asm | Last % beyond FlyDSL → `asm`/HipKittens |
 
 ## On-box: where it lives and what it exposes
-Installed package `flydsl 0.1.5` at `/opt/venv/lib/python3.10/site-packages/flydsl/`:
+
+> **This section was written against `flydsl 0.1.5`; the box now has `0.3.0`.** Two modules named in
+> the tree below, `expr/vector` and `expr/buffer_ops`, no longer exist in `0.3.0`, and `expr/rocdl/`
+> is now split per architecture (`cdna3`, `cdna4`, `cdna5`, `rdna3`, `rdna4`). Before copying a call
+> form from here, check [version_map.md](version_map.md) for where the symbol went — the rest of this
+> page describes the shape of the DSL, which is what still transfers.
+
+Package layout as of `flydsl 0.1.5` at `/opt/venv/lib/python3.10/site-packages/flydsl/`:
 ```
 flydsl/
 ├── expr/          # the DSL surface: arith, gpu, vector, math, buffer_ops, rocdl/  ← intrinsics
@@ -84,6 +91,12 @@ gfx (`..._gfx942`). Key arch behavior baked into aiter's wrappers:
 - [authoring_gemm_levers.md](authoring_gemm_levers.md) — GEMM-specific levers (tiling / LDS staging / swizzle / epilogue).
 - [authoring_attention_levers.md](authoring_attention_levers.md) — fused multi-GEMM attention levers (fusion boundary, MFMA fragment orientation, which output goes on atomics, wave count vs the register cap).
 - [debugging.md](debugging.md) — correctness/stability/hang triage (NaN / zeros / mismatch / compile / hang).
+
+**Porting a recipe across FlyDSL versions:**
+- [version_map.md](version_map.md) — generated: which symbol moved where, what is gone, and what
+  replaces it, across `0.2.0 / 0.2.2 / 0.2.4 / 0.3.0`, plus the call sites in aiter that fail on the
+  installed version. Use it when a recipe was validated on another version: the logic transfers, the
+  call form has to be looked up, and the performance number has to be re-measured.
 
 ## Sources
 - Kimi-K2.5 optimization with FlyDSL (FLIR, instruction-level control, +162% throughput): https://rocm.blogs.amd.com/artificial-intelligence/kimi-k2.5-optimize/README.html
