@@ -121,9 +121,19 @@ jobs:
             e2e_workflow/scripts/tests/test_bench_replica_lifecycle.py \
             e2e_workflow/scripts/tests/test_roofline_skill.py \
             e2e_workflow/scripts/tests/test_vllm_adapter_profiler_config.py \
+            perf_knowledge/expert_skills/_contribute/test_validation_env.py \
             perf_knowledge/languages/flydsl/test_version_map.py \
             kernel_workflow/scripts/test_detect_language.py \
             geak/test_bootstrap.py
+
+      # Advisory, on the same reasoning as the ruff step: three skills declare `validated` while
+      # pointing at no measurement record, and a record cannot be invented for a run nobody archived.
+      # Blocking on it today would only teach people to delete the check. The three artifacts that DO
+      # exist are held clean by test_validation_env.py in the suite above, so this step exists to keep
+      # the remaining gap visible in the log rather than to gate.
+      - name: validated skills state their measurement environment (advisory)
+        continue-on-error: true
+        run: python3 perf_knowledge/expert_skills/_contribute/check_validation_env.py
 
       - name: expert skill static validation
         run: |
