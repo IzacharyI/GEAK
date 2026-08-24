@@ -4,11 +4,11 @@
 
 provenance:
   aiter_commit: "7a8ff7dd4ae3063ff1a18622a46460125c84370e"
-  aiter_tree_dirty: true
-  aiter_path: "/sgl-workspace/aiter"
+  aiter_dirty_sources: []
+  aiter_origin: "https://github.com/ROCm/aiter.git"
   extractor: "perf_knowledge/corpus/_extract_impl_facts.py"
   operator_family: "gemm"
-  records: 1203
+  records: 1202
   autotune_configs: 0
 
 coverage:
@@ -34,8 +34,8 @@ coverage:
     facts: 53
   - language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    lines: 5191
-    facts: 56
+    lines: 4585
+    facts: 55
   - language: "flydsl"
     file: "aiter/ops/flydsl/kernels/hgemm_dispatch.py"
     lines: 83
@@ -3603,72 +3603,72 @@ facts:
   - category: "mfma_intrinsic"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1471
+    line: 1359
     match: "rocdl.mfma_scale_f32_16x16x128_f8f6f4("
     captured:
       - "mfma_scale_f32_16x16x128_f8f6f4"
     arch_scope: ""
     evidence:
-      - "1469:                                                 acc_idx = mi_idx * num_acc_n + ni_idx"
-      - "1470:                                                 gate_list[acc_idx] = ("
-      - "1471:                                                     rocdl.mfma_scale_f32_16x16x128_f8f6f4("
-      - "1472:                                                         mfma_res_ty,"
-      - "1473:                                                         ["
+      - "1357:                                                 acc_idx = mi_idx * num_acc_n + ni_idx"
+      - "1358:                                                 gate_list[acc_idx] = ("
+      - "1359:                                                     rocdl.mfma_scale_f32_16x16x128_f8f6f4("
+      - "1360:                                                         mfma_res_ty,"
+      - "1361:                                                         ["
   - category: "mfma_intrinsic"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1488
+    line: 1376
     match: "rocdl.mfma_scale_f32_16x16x128_f8f6f4("
     captured:
       - "mfma_scale_f32_16x16x128_f8f6f4"
     arch_scope: ""
     evidence:
-      - "1486:                                                 if const_expr(not _single_b):"
-      - "1487:                                                     up_list[acc_idx] = ("
-      - "1488:                                                         rocdl.mfma_scale_f32_16x16x128_f8f6f4("
-      - "1489:                                                             mfma_res_ty,"
-      - "1490:                                                             ["
+      - "1374:                                                 if const_expr(not _single_b):"
+      - "1375:                                                     up_list[acc_idx] = ("
+      - "1376:                                                         rocdl.mfma_scale_f32_16x16x128_f8f6f4("
+      - "1377:                                                             mfma_res_ty,"
+      - "1378:                                                             ["
   - category: "mfma_intrinsic"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1568
+    line: 1456
     match: "rocdl.mfma_scale_f32_16x16x128_f8f6f4("
     captured:
       - "mfma_scale_f32_16x16x128_f8f6f4"
     arch_scope: ""
     evidence:
-      - "1567:                             acc_idx = mi_idx * num_acc_n + ni_idx"
-      - "1568:                             gate_list[acc_idx] = rocdl.mfma_scale_f32_16x16x128_f8f6f4("
-      - "1569:                                 mfma_res_ty,"
-      - "1570:                                 ["
+      - "1455:                             acc_idx = mi_idx * num_acc_n + ni_idx"
+      - "1456:                             gate_list[acc_idx] = rocdl.mfma_scale_f32_16x16x128_f8f6f4("
+      - "1457:                                 mfma_res_ty,"
+      - "1458:                                 ["
   - category: "mfma_intrinsic"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1584
+    line: 1472
     match: "rocdl.mfma_scale_f32_16x16x128_f8f6f4("
     captured:
       - "mfma_scale_f32_16x16x128_f8f6f4"
     arch_scope: ""
     evidence:
-      - "1582:                             if const_expr(not _single_b_pipe):"
-      - "1583:                                 up_list[acc_idx] = ("
-      - "1584:                                     rocdl.mfma_scale_f32_16x16x128_f8f6f4("
-      - "1585:                                         mfma_res_ty,"
-      - "1586:                                         ["
+      - "1470:                             if const_expr(not _single_b_pipe):"
+      - "1471:                                 up_list[acc_idx] = ("
+      - "1472:                                     rocdl.mfma_scale_f32_16x16x128_f8f6f4("
+      - "1473:                                         mfma_res_ty,"
+      - "1474:                                         ["
   - category: "mfma_intrinsic"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4094
+    line: 3949
     match: "rocdl.mfma_scale_f32_16x16x128_f8f6f4("
     captured:
       - "mfma_scale_f32_16x16x128_f8f6f4"
     arch_scope: ""
     evidence:
-      - "4092:                                         acc_idx = mi_idx * num_acc_n + ni_idx"
-      - "4093:                                         acc_list[acc_idx] = ("
-      - "4094:                                             rocdl.mfma_scale_f32_16x16x128_f8f6f4("
-      - "4095:                                                 mfma_res_ty,"
-      - "4096:                                                 ["
+      - "3947:                                         acc_idx = mi_idx * num_acc_n + ni_idx"
+      - "3948:                                         acc_list[acc_idx] = ("
+      - "3949:                                             rocdl.mfma_scale_f32_16x16x128_f8f6f4("
+      - "3950:                                                 mfma_res_ty,"
+      - "3951:                                                 ["
   - category: "lds_swizzle"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
@@ -3686,451 +3686,477 @@ facts:
   - category: "lds_swizzle"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1235
+    line: 1123
     match: "swizzle_xor16"
     captured:
       - "swizzle_xor16"
     arch_scope: ""
     evidence:
-      - "1233:                             row_local_i = x_row_local[i]"
-      - "1234:                             col_local_i32_i = x_col_local_i32[i]"
-      - "1235:                             col_local_sw = swizzle_xor16("
-      - "1236:                                 row_local_i, col_local_i32_i * c4_idx, k_blocks16"
-      - "1237:                             )"
+      - "1121:                             row_local_i = x_row_local[i]"
+      - "1122:                             col_local_i32_i = x_col_local_i32[i]"
+      - "1123:                             col_local_sw = swizzle_xor16("
+      - "1124:                                 row_local_i, col_local_i32_i * c4_idx, k_blocks16"
+      - "1125:                             )"
   - category: "lds_swizzle"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1273
+    line: 1161
     match: "swizzle_xor16"
     captured:
       - "swizzle_xor16"
     arch_scope: ""
     evidence:
-      - "1272:                 def lds_load_packs_k64(curr_row_a_lds, col_base, lds_buffer):"
-      - "1273:                     col_base_swz_bytes = swizzle_xor16("
-      - "1274:                         curr_row_a_lds, col_base, k_blocks16"
-      - "1275:                     )"
+      - "1160:                 def lds_load_packs_k64(curr_row_a_lds, col_base, lds_buffer):"
+      - "1161:                     col_base_swz_bytes = swizzle_xor16("
+      - "1162:                         curr_row_a_lds, col_base, k_blocks16"
+      - "1163:                     )"
   - category: "lds_swizzle"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 3926
+    line: 3781
     match: "swizzle_xor16"
     captured:
       - "swizzle_xor16"
     arch_scope: ""
     evidence:
-      - "3924:                 # --- A LDS load helper for K64 (load 16B once, extract 2x i64 halves) ---"
-      - "3925:                 def lds_load_packs_k64(curr_row_a_lds, col_base, lds_buffer):"
-      - "3926:                     col_base_swz_bytes = swizzle_xor16("
-      - "3927:                         curr_row_a_lds, col_base, k_blocks16"
-      - "3928:                     )"
+      - "3779:                 # --- A LDS load helper for K64 (load 16B once, extract 2x i64 halves) ---"
+      - "3780:                 def lds_load_packs_k64(curr_row_a_lds, col_base, lds_buffer):"
+      - "3781:                     col_base_swz_bytes = swizzle_xor16("
+      - "3782:                         curr_row_a_lds, col_base, k_blocks16"
+      - "3783:                     )"
   - category: "lds_swizzle"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4135
+    line: 3990
     match: "swizzle_xor16"
     captured:
       - "swizzle_xor16"
     arch_scope: ""
     evidence:
-      - "4133:                         row_local_i = x_row_local[i]"
-      - "4134:                         col_local_i32_i = x_col_local_i32[i]"
-      - "4135:                         col_local_sw = swizzle_xor16("
-      - "4136:                             row_local_i, col_local_i32_i * c4_idx, k_blocks16"
-      - "4137:                         )"
+      - "3988:                         row_local_i = x_row_local[i]"
+      - "3989:                         col_local_i32_i = x_col_local_i32[i]"
+      - "3990:                         col_local_sw = swizzle_xor16("
+      - "3991:                             row_local_i, col_local_i32_i * c4_idx, k_blocks16"
+      - "3992:                         )"
   - category: "lds_pad"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 263
+    line: 241
     match: "pad_k = 0"
     captured:
       - "pad_k"
       - "0"
     arch_scope: ""
     evidence:
-      - "261:         \"yes\","
-      - "262:     )"
-      - "263:     pad_k = 0 if _use_lds128 else 8"
-      - "264:     lds_stride = tile_k + pad_k"
+      - "239:         \"yes\","
+      - "240:     )"
+      - "241:     pad_k = 0 if _use_lds128 else 8"
+      - "242:     lds_stride = tile_k + pad_k"
   - category: "lds_pad"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2839
+    line: 2705
     match: "tile2_pad = 0"
     captured:
       - "tile2_pad"
       - "0"
     arch_scope: ""
     evidence:
-      - "2838:         inter_dim_pad_total = arith.constant(2 * inter_dim_pad, index=True)"
-      - "2839:         tile2_pad = 0"
-      - "2840:         if const_expr(not gate_only):"
-      - "2841:             tile_k_stage2 = tile_k // 2"
+      - "2704:         inter_dim_pad_total = arith.constant(2 * inter_dim_pad, index=True)"
+      - "2705:         tile2_pad = 0"
+      - "2706:         if const_expr(not gate_only):"
+      - "2707:             tile_k_stage2 = tile_k // 2"
   - category: "lds_pad"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 3080
+    line: 2940
     match: "pad_k = 0"
     captured:
       - "pad_k"
       - "0"
     arch_scope: ""
     evidence:
-      - "3078:         \"yes\","
-      - "3079:     )"
-      - "3080:     pad_k = 0 if _use_lds128 else 8"
-      - "3081:     lds_stride = tile_k + pad_k"
+      - "2938:         \"yes\","
+      - "2939:     )"
+      - "2940:     pad_k = 0 if _use_lds128 else 8"
+      - "2941:     lds_stride = tile_k + pad_k"
   - category: "async_copy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 130
+    line: 117
     match: "use_async_copy:"
     captured:
       - "use_async_copy"
     arch_scope: ""
     evidence:
-      - "128:     persist_m: int = 1,"
-      - "129:     a_merge: int = 1,"
-      - "130:     use_async_copy: bool = False,"
-      - "131:     waves_per_eu: int = 4,"
-      - "132:     k_batch: int = 1,"
+      - "115:     inter_dim_pad: int = 0,"
+      - "116:     persist_m: int = 1,"
+      - "117:     use_async_copy: bool = False,"
+      - "118:     waves_per_eu: int = 4,"
+      - "119:     k_batch: int = 1,"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1007
+    line: 895
     match: "cache_modifier=b"
     captured:
       - "b"
     arch_scope: ""
     evidence:
-      - "1005:                         elem_bytes=b_elem_bytes,"
-      - "1006:                         offset_in_bytes=(b_elem_bytes == 1),"
-      - "1007:                         cache_modifier=b_nt,"
-      - "1008:                     )"
-      - "1009:                     b_i64x2 = vector.bitcast(vec2_i64, b16)"
+      - "893:                         elem_bytes=b_elem_bytes,"
+      - "894:                         offset_in_bytes=(b_elem_bytes == 1),"
+      - "895:                         cache_modifier=b_nt,"
+      - "896:                     )"
+      - "897:                     b_i64x2 = vector.bitcast(vec2_i64, b16)"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 3741
+    line: 3596
     match: "cache_modifier=b"
     captured:
       - "b"
     arch_scope: ""
     evidence:
-      - "3739:                         elem_bytes=b_elem_bytes,"
-      - "3740:                         offset_in_bytes=(b_elem_bytes == 1),"
-      - "3741:                         cache_modifier=b_nt,"
-      - "3742:                     )"
-      - "3743:                     b_i64x2 = vector.bitcast(vec2_i64, b16)"
+      - "3594:                         elem_bytes=b_elem_bytes,"
+      - "3595:                         offset_in_bytes=(b_elem_bytes == 1),"
+      - "3596:                         cache_modifier=b_nt,"
+      - "3597:                     )"
+      - "3598:                     b_i64x2 = vector.bitcast(vec2_i64, b16)"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2445
+    line: 2320
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2443:                                 )"
-      - "2444:                                 llvm.StoreOp("
-      - "2445:                                     store_raw, out_ptr_v, alignment=1, nontemporal=True"
-      - "2446:                                 )"
-      - "2447:                             elif const_expr(_pack_bytes == 2):"
+      - "2318:                                 )"
+      - "2319:                                 llvm.StoreOp("
+      - "2320:                                     store_raw, out_ptr_v, alignment=1, nontemporal=True"
+      - "2321:                                 )"
+      - "2322:                             elif const_expr(_pack_bytes == 2):"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2455
+    line: 2330
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2453:                                 )"
-      - "2454:                                 llvm.StoreOp("
-      - "2455:                                     store_raw, out_ptr_v, alignment=2, nontemporal=True"
-      - "2456:                                 )"
-      - "2457:                             else:"
+      - "2328:                                 )"
+      - "2329:                                 llvm.StoreOp("
+      - "2330:                                     store_raw, out_ptr_v, alignment=2, nontemporal=True"
+      - "2331:                                 )"
+      - "2332:                             else:"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2464
+    line: 2339
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2462:                                 )"
-      - "2463:                                 llvm.StoreOp("
-      - "2464:                                     packed_raw, out_ptr_v, alignment=4, nontemporal=True"
-      - "2465:                                 )"
+      - "2337:                                 )"
+      - "2338:                                 llvm.StoreOp("
+      - "2339:                                     packed_raw, out_ptr_v, alignment=4, nontemporal=True"
+      - "2340:                                 )"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2495
+    line: 2370
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2493:                                         out_ptr_v,"
-      - "2494:                                         alignment=2,"
-      - "2495:                                         nontemporal=True,"
-      - "2496:                                     )"
-      - "2497:                                 else:"
+      - "2368:                                         out_ptr_v,"
+      - "2369:                                         alignment=2,"
+      - "2370:                                         nontemporal=True,"
+      - "2371:                                     )"
+      - "2372:                                 else:"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2507
+    line: 2382
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2505:                                         out_ptr_v,"
-      - "2506:                                         alignment=4,"
-      - "2507:                                         nontemporal=True,"
-      - "2508:                                     )"
-      - "2509:                             else:"
+      - "2380:                                         out_ptr_v,"
+      - "2381:                                         alignment=4,"
+      - "2382:                                         nontemporal=True,"
+      - "2383:                                     )"
+      - "2384:                             else:"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2540
+    line: 2415
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2538:                                         out_ptr_v,"
-      - "2539:                                         alignment=4,"
-      - "2540:                                         nontemporal=True,"
-      - "2541:                                     )"
+      - "2413:                                         out_ptr_v,"
+      - "2414:                                         alignment=4,"
+      - "2415:                                         nontemporal=True,"
+      - "2416:                                     )"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2602
+    line: 2477
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "2600:                             out_ptr_v,"
-      - "2601:                             alignment=_e_vec * out_elem_bytes,"
-      - "2602:                             nontemporal=True,"
-      - "2603:                         )"
+      - "2475:                             out_ptr_v,"
+      - "2476:                             alignment=_e_vec * out_elem_bytes,"
+      - "2477:                             nontemporal=True,"
+      - "2478:                         )"
   - category: "cache_policy"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4592
+    line: 4427
     match: "nontemporal=True"
     captured: []
     arch_scope: ""
     evidence:
-      - "4590:                                 pk = pk._value if hasattr(pk, \"_value\") else pk"
-      - "4591:                                 wptr = _idx_to_llvm_ptr(ptr_addr_idx + arith.constant(wi * 4, index=True))"
-      - "4592:                                 llvm.StoreOp(pk, wptr, alignment=4, nontemporal=True)"
-      - "4593:                         else:"
-      - "4594:                             out_ptr_v = _idx_to_llvm_ptr(ptr_addr_idx)"
-  - category: "cache_policy"
-    language: "flydsl"
-    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4598
-    match: "nontemporal=True"
-    captured: []
-    arch_scope: ""
-    evidence:
-      - "4596:                             llvm.StoreOp("
-      - "4597:                                 frag_v, out_ptr_v,"
-      - "4598:                                 alignment=_e_vec * out_elem_bytes, nontemporal=True,"
-      - "4599:                             )"
-      - "4600:                     else:"
+      - "4425:                             out_ptr_v,"
+      - "4426:                             alignment=_e_vec * out_elem_bytes,"
+      - "4427:                             nontemporal=True,"
+      - "4428:                         )"
+      - "4429:                     else:"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 124
+    line: 112
     match: "use_cshuffle_epilog:"
     captured:
       - "use_cshuffle_epilog"
     arch_scope: ""
     evidence:
-      - "122:     out_dtype: str = \"f16\","
-      - "123:     act: str = \"silu\","
-      - "124:     use_cshuffle_epilog: bool | None = None,"
-      - "125:     enable_bias: bool = False,"
-      - "126:     model_dim_pad: int = 0,"
+      - "110:     out_dtype: str = \"f16\","
+      - "111:     act: str = \"silu\","
+      - "112:     use_cshuffle_epilog: bool | None = None,"
+      - "113:     enable_bias: bool = False,"
+      - "114:     model_dim_pad: int = 0,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2618
+    line: 2493
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "2616:                     _gui_by_n = by_n / arith.constant(2, index=True)"
-      - "2617:                     _gui_n_tile_base = n_tile_base / arith.constant(2, index=True)"
-      - "2618:                     c_shuffle_epilog("
-      - "2619:                         arith=arith,"
-      - "2620:                         vector=vector,"
+      - "2491:                     _gui_by_n = by_n / arith.constant(2, index=True)"
+      - "2492:                     _gui_n_tile_base = n_tile_base / arith.constant(2, index=True)"
+      - "2493:                     c_shuffle_epilog("
+      - "2494:                         arith=arith,"
+      - "2495:                         vector=vector,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2627
+    line: 2502
     match: "cshuffle_nlane="
     captured:
       - "cshuffle"
     arch_scope: ""
     evidence:
-      - "2625:                         tile_n=_gui_tile_n,"
-      - "2626:                         e_vec=_e_vec,"
-      - "2627:                         cshuffle_nlane=_gui_cshuffle_nlane,"
-      - "2628:                         block_size=total_threads,"
-      - "2629:                         m_repeat=m_repeat,"
+      - "2500:                         tile_n=_gui_tile_n,"
+      - "2501:                         e_vec=_e_vec,"
+      - "2502:                         cshuffle_nlane=_gui_cshuffle_nlane,"
+      - "2503:                         block_size=total_threads,"
+      - "2504:                         m_repeat=m_repeat,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2647
+    line: 2522
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "2645:                     _eff_e_vec = _e_vec_sk"
-      - "2646:                     acc = acc_gate"
-      - "2647:                     c_shuffle_epilog("
-      - "2648:                         arith=arith,"
-      - "2649:                         vector=vector,"
+      - "2520:                     _eff_e_vec = _e_vec_sk"
+      - "2521:                     acc = acc_gate"
+      - "2522:                     c_shuffle_epilog("
+      - "2523:                         arith=arith,"
+      - "2524:                         vector=vector,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2656
+    line: 2531
     match: "cshuffle_nlane="
     captured:
       - "cshuffle"
     arch_scope: ""
     evidence:
-      - "2654:                         tile_n=tile_n,"
-      - "2655:                         e_vec=_eff_e_vec,"
-      - "2656:                         cshuffle_nlane=_cshuffle_nlane_sk,"
-      - "2657:                         block_size=total_threads,"
-      - "2658:                         m_repeat=m_repeat,"
+      - "2529:                         tile_n=tile_n,"
+      - "2530:                         e_vec=_eff_e_vec,"
+      - "2531:                         cshuffle_nlane=_cshuffle_nlane_sk,"
+      - "2532:                         block_size=total_threads,"
+      - "2533:                         m_repeat=m_repeat,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2680
+    line: 2555
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "2678:                     acc = acc_gate"
-      - "2679:                     _sk_n_offset[0] = 0"
-      - "2680:                     c_shuffle_epilog("
-      - "2681:                         arith=arith,"
-      - "2682:                         vector=vector,"
+      - "2553:                     acc = acc_gate"
+      - "2554:                     _sk_n_offset[0] = 0"
+      - "2555:                     c_shuffle_epilog("
+      - "2556:                         arith=arith,"
+      - "2557:                         vector=vector,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2689
+    line: 2564
     match: "cshuffle_nlane="
     captured:
       - "cshuffle"
     arch_scope: ""
     evidence:
-      - "2687:                         tile_n=tile_n,"
-      - "2688:                         e_vec=_eff_e_vec,"
-      - "2689:                         cshuffle_nlane=_cshuffle_nlane_sk,"
-      - "2690:                         block_size=total_threads,"
-      - "2691:                         m_repeat=m_repeat,"
+      - "2562:                         tile_n=tile_n,"
+      - "2563:                         e_vec=_eff_e_vec,"
+      - "2564:                         cshuffle_nlane=_cshuffle_nlane_sk,"
+      - "2565:                         block_size=total_threads,"
+      - "2566:                         m_repeat=m_repeat,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2712
+    line: 2587
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "2710:                     acc = acc_up"
-      - "2711:                     _sk_n_offset[0] = inter_dim"
-      - "2712:                     c_shuffle_epilog("
-      - "2713:                         arith=arith,"
-      - "2714:                         vector=vector,"
+      - "2585:                     acc = acc_up"
+      - "2586:                     _sk_n_offset[0] = inter_dim"
+      - "2587:                     c_shuffle_epilog("
+      - "2588:                         arith=arith,"
+      - "2589:                         vector=vector,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2721
+    line: 2596
     match: "cshuffle_nlane="
     captured:
       - "cshuffle"
     arch_scope: ""
     evidence:
-      - "2719:                         tile_n=tile_n,"
-      - "2720:                         e_vec=_eff_e_vec,"
-      - "2721:                         cshuffle_nlane=_cshuffle_nlane_sk,"
-      - "2722:                         block_size=total_threads,"
-      - "2723:                         m_repeat=m_repeat,"
+      - "2594:                         tile_n=tile_n,"
+      - "2595:                         e_vec=_eff_e_vec,"
+      - "2596:                         cshuffle_nlane=_cshuffle_nlane_sk,"
+      - "2597:                         block_size=total_threads,"
+      - "2598:                         m_repeat=m_repeat,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2739
+    line: 2614
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "2737:                     )"
-      - "2738:                 else:"
-      - "2739:                     c_shuffle_epilog("
-      - "2740:                         arith=arith,"
-      - "2741:                         vector=vector,"
+      - "2612:                     )"
+      - "2613:                 else:"
+      - "2614:                     c_shuffle_epilog("
+      - "2615:                         arith=arith,"
+      - "2616:                         vector=vector,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2748
+    line: 2623
     match: "cshuffle_nlane="
     captured:
       - "cshuffle"
     arch_scope: ""
     evidence:
-      - "2746:                         tile_n=tile_n,"
-      - "2747:                         e_vec=_e_vec,"
-      - "2748:                         cshuffle_nlane=_cshuffle_nlane,"
-      - "2749:                         block_size=total_threads,"
-      - "2750:                         m_repeat=m_repeat,"
+      - "2621:                         tile_n=tile_n,"
+      - "2622:                         e_vec=_e_vec,"
+      - "2623:                         cshuffle_nlane=_cshuffle_nlane,"
+      - "2624:                         block_size=total_threads,"
+      - "2625:                         m_repeat=m_repeat,"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 2905
+    line: 2767
     match: "use_cshuffle_epilog:"
     captured:
       - "use_cshuffle_epilog"
     arch_scope: ""
     evidence:
-      - "2903:     b_dtype: str = \"fp4\","
-      - "2904:     out_dtype: str = \"f16\","
-      - "2905:     use_cshuffle_epilog: bool | None = None,"
-      - "2906:     # Optional experiment: write per-(token,slot) output (no atomics) into an output shaped"
-      - "2907:     # [tokens*topk, model_dim] (or [tokens, topk, model_dim] flattened), then reduce over topk outside."
+      - "2765:     b_dtype: str = \"fp4\","
+      - "2766:     out_dtype: str = \"f16\","
+      - "2767:     use_cshuffle_epilog: bool | None = None,"
+      - "2768:     # Optional experiment: write per-(token,slot) output (no atomics) into an output shaped"
+      - "2769:     # [tokens*topk, model_dim] (or [tokens, topk, model_dim] flattened), then reduce over topk outside."
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 3097
+    line: 2957
     match: "use_cshuffle_epilog="
     captured:
       - "use_cshuffle_epilog"
     arch_scope: ""
     evidence:
-      - "3095:         if _use_cshuffle_epilog:"
-      - "3096:             raise ValueError("
-      - "3097:                 \"out_dtype='f32' does not support CShuffle epilogue (set use_cshuffle_epilog=False).\""
-      - "3098:             )"
-      - "3099:     else:"
+      - "2955:         if _use_cshuffle_epilog:"
+      - "2956:             raise ValueError("
+      - "2957:                 \"out_dtype='f32' does not support CShuffle epilogue (set use_cshuffle_epilog=False).\""
+      - "2958:             )"
+      - "2959:     else:"
   - category: "layout_epilogue"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4619
+    line: 4448
     match: "c_shuffle_epilog("
     captured:
       - "c_shuffle"
     arch_scope: ""
     evidence:
-      - "4618:                 _e_vec = 2 if accumulate else min(tile_n // 32, 8)"
-      - "4619:                 c_shuffle_epilog("
-      - "4620:                     arith=arith,"
-      - "4621:                     vector=vector,"
+      - "4447:                 _e_vec = 2 if accumulate else min(tile_n // 32, 8)"
+      - "4448:                 c_shuffle_epilog("
+      - "4449:                     arith=arith,"
+      - "4450:                     vector=vector,"
+  - category: "scheduling"
+    language: "flydsl"
+    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
+    line: 1518
+    match: "rocdl.sched_barrier("
+    captured:
+      - "sched_barrier"
+    arch_scope: ""
+    evidence:
+      - "1516:                     _k_off = _sk * layout_b_scale.stride_k0"
+      - "1518:                     rocdl.sched_barrier(0)"
+      - "1519:                     rocdl.s_waitcnt(_vmcnt_before_barrier)"
+      - "1520:                     _barrier()"
+  - category: "scheduling"
+    language: "flydsl"
+    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
+    line: 1521
+    match: "rocdl.sched_barrier("
+    captured:
+      - "sched_barrier"
+    arch_scope: ""
+    evidence:
+      - "1519:                     rocdl.s_waitcnt(_vmcnt_before_barrier)"
+      - "1520:                     _barrier()"
+      - "1521:                     rocdl.sched_barrier(0)"
+      - "1523:                     # DMA A to OTHER buffer (for next half), non-blocking"
+  - category: "scheduling"
+    language: "flydsl"
+    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
+    line: 1622
+    match: "rocdl.sched_barrier("
+    captured:
+      - "sched_barrier"
+    arch_scope: ""
+    evidence:
+      - "1621:                         # A ds_reads"
+      - "1622:                         rocdl.sched_barrier(0)"
+      - "1623:                         for _a_j in range_constexpr(len(_pp_a_reads[_p])):"
+      - "1624:                             _ak, _ami = _pp_a_reads[_p][_a_j]"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
@@ -4140,216 +4166,177 @@ facts:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1628:                     _k_off = _sk * layout_b_scale.stride_k0"
-      - "1630:                     rocdl.sched_barrier(0)"
-      - "1631:                     rocdl.s_waitcnt(_vmcnt_before_barrier)"
-      - "1632:                     _barrier()"
+      - "1628:                                 lds_read,"
+      - "1629:                             )"
+      - "1630:                         rocdl.sched_barrier(0)"
+      - "1632:                         # MFMAs on prev data"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
     line: 1633
-    match: "rocdl.sched_barrier("
-    captured:
-      - "sched_barrier"
-    arch_scope: ""
-    evidence:
-      - "1631:                     rocdl.s_waitcnt(_vmcnt_before_barrier)"
-      - "1632:                     _barrier()"
-      - "1633:                     rocdl.sched_barrier(0)"
-      - "1635:                     # DMA A to OTHER buffer (for next half), non-blocking"
-  - category: "scheduling"
-    language: "flydsl"
-    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1734
-    match: "rocdl.sched_barrier("
-    captured:
-      - "sched_barrier"
-    arch_scope: ""
-    evidence:
-      - "1733:                         # A ds_reads"
-      - "1734:                         rocdl.sched_barrier(0)"
-      - "1735:                         for _a_j in range_constexpr(len(_pp_a_reads[_p])):"
-      - "1736:                             _ak, _ami = _pp_a_reads[_p][_a_j]"
-  - category: "scheduling"
-    language: "flydsl"
-    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1742
-    match: "rocdl.sched_barrier("
-    captured:
-      - "sched_barrier"
-    arch_scope: ""
-    evidence:
-      - "1740:                                 lds_read,"
-      - "1741:                             )"
-      - "1742:                         rocdl.sched_barrier(0)"
-      - "1744:                         # MFMAs on prev data"
-  - category: "scheduling"
-    language: "flydsl"
-    file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1745
     match: "rocdl.s_setprio("
     captured:
       - "s_setprio"
     arch_scope: ""
     evidence:
-      - "1744:                         # MFMAs on prev data"
-      - "1745:                         rocdl.s_setprio(1)"
-      - "1746:                         for _m_j in range_constexpr(len(_pp_mfma[_p])):"
-      - "1747:                             _k_idx, _ni_idx, _ikxdl, _inxdl, _ku128 = _pp_mfma[_p][_m_j]"
+      - "1632:                         # MFMAs on prev data"
+      - "1633:                         rocdl.s_setprio(1)"
+      - "1634:                         for _m_j in range_constexpr(len(_pp_mfma[_p])):"
+      - "1635:                             _k_idx, _ni_idx, _ikxdl, _inxdl, _ku128 = _pp_mfma[_p][_m_j]"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1778
+    line: 1666
     match: "rocdl.s_setprio("
     captured:
       - "s_setprio"
     arch_scope: ""
     evidence:
-      - "1776:                                 _inxdl,"
-      - "1777:                             )"
-      - "1778:                         rocdl.s_setprio(0)"
-      - "1779:                         rocdl.sched_barrier(0)"
+      - "1664:                                 _inxdl,"
+      - "1665:                             )"
+      - "1666:                         rocdl.s_setprio(0)"
+      - "1667:                         rocdl.sched_barrier(0)"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1779
+    line: 1667
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1777:                             )"
-      - "1778:                         rocdl.s_setprio(0)"
-      - "1779:                         rocdl.sched_barrier(0)"
-      - "1781:                     # ---- Assemble loaded data for next half-iteration ----"
+      - "1665:                             )"
+      - "1666:                         rocdl.s_setprio(0)"
+      - "1667:                         rocdl.sched_barrier(0)"
+      - "1669:                     # ---- Assemble loaded data for next half-iteration ----"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1845
+    line: 1733
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1844:                 # Pipeline (split ping/pong allocators)"
-      - "1845:                 rocdl.sched_barrier(0)"
-      - "1847:                 k0 = k_base_idx"
+      - "1732:                 # Pipeline (split ping/pong allocators)"
+      - "1733:                 rocdl.sched_barrier(0)"
+      - "1735:                 k0 = k_base_idx"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1853
+    line: 1741
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1851:                     x_regs0 = load_x_tile(k0)"
-      - "1852:                     store_x_tile_to_lds(x_regs0, lds_x_pong)"
-      - "1853:                 rocdl.sched_barrier(0)"
-      - "1854:                 _k0_scale = k_base_idx // arith.constant(pack_K * 128, index=True)"
-      - "1855:                 a_scale_pong, gate_bs_pong, up_bs_pong = prefetch_ab_scale_tile("
+      - "1739:                     x_regs0 = load_x_tile(k0)"
+      - "1740:                     store_x_tile_to_lds(x_regs0, lds_x_pong)"
+      - "1741:                 rocdl.sched_barrier(0)"
+      - "1742:                 _k0_scale = k_base_idx // arith.constant(pack_K * 128, index=True)"
+      - "1743:                 a_scale_pong, gate_bs_pong, up_bs_pong = prefetch_ab_scale_tile("
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1876
+    line: 1764
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1875:                 _k1 = k_base_idx + arith.constant(tile_k, index=True)"
-      - "1876:                 rocdl.sched_barrier(0)"
-      - "1877:                 if const_expr(use_async_copy):"
-      - "1878:                     prefetch_x_to_lds(_k1, lds_x_ping)"
+      - "1763:                 _k1 = k_base_idx + arith.constant(tile_k, index=True)"
+      - "1764:                 rocdl.sched_barrier(0)"
+      - "1765:                 if const_expr(use_async_copy):"
+      - "1766:                     prefetch_x_to_lds(_k1, lds_x_ping)"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1889
+    line: 1777
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1887:                     rocdl.s_waitcnt(0)"
-      - "1888:                 gpu.barrier()"
-      - "1889:                 rocdl.sched_barrier(0)"
-      - "1890:                 a_tile_pong = prefetch_full_a_from_lds(lds_x_pong)"
+      - "1775:                     rocdl.s_waitcnt(0)"
+      - "1776:                 gpu.barrier()"
+      - "1777:                 rocdl.sched_barrier(0)"
+      - "1778:                 a_tile_pong = prefetch_full_a_from_lds(lds_x_pong)"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1892
+    line: 1780
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1890:                 a_tile_pong = prefetch_full_a_from_lds(lds_x_pong)"
-      - "1892:                 rocdl.sched_barrier(0)"
-      - "1893:                 rocdl.s_waitcnt(6)"
+      - "1778:                 a_tile_pong = prefetch_full_a_from_lds(lds_x_pong)"
+      - "1780:                 rocdl.sched_barrier(0)"
+      - "1781:                 rocdl.s_waitcnt(6)"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 1905
+    line: 1793
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "1903:                 up_w_pong = up_w0"
-      - "1905:                 rocdl.sched_barrier(0)"
-      - "1907:                 if const_expr(k_main2_py > 0):"
+      - "1791:                 up_w_pong = up_w0"
+      - "1793:                 rocdl.sched_barrier(0)"
+      - "1795:                 if const_expr(k_main2_py > 0):"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4172
+    line: 4027
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "4170:                     dma_x_tile_to_lds(base_k, lds_buffer)"
-      - "4172:                 rocdl.sched_barrier(0)"
-      - "4174:                 def hot_loop_scheduler():"
+      - "4025:                     dma_x_tile_to_lds(base_k, lds_buffer)"
+      - "4027:                 rocdl.sched_barrier(0)"
+      - "4029:                 def hot_loop_scheduler():"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4175
+    line: 4030
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "4174:                 def hot_loop_scheduler():"
-      - "4175:                     rocdl.sched_barrier(0)"
-      - "4177:                 def _k_shift_bits(k_py):"
+      - "4029:                 def hot_loop_scheduler():"
+      - "4030:                     rocdl.sched_barrier(0)"
+      - "4032:                 def _k_shift_bits(k_py):"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4210
+    line: 4065
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "4208:                     _k_base(0), _k_shift_bits(0)"
-      - "4209:                 )"
-      - "4210:                 rocdl.sched_barrier(0)"
-      - "4211:                 prefetch_x_to_lds(k0, lds_x_pong)"
-      - "4212:                 rocdl.s_waitcnt(0)"
+      - "4063:                     _k_base(0), _k_shift_bits(0)"
+      - "4064:                 )"
+      - "4065:                 rocdl.sched_barrier(0)"
+      - "4066:                 prefetch_x_to_lds(k0, lds_x_pong)"
+      - "4067:                 rocdl.s_waitcnt(0)"
   - category: "scheduling"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py"
-    line: 4254
+    line: 4109
     match: "rocdl.sched_barrier("
     captured:
       - "sched_barrier"
     arch_scope: ""
     evidence:
-      - "4252:                 if const_expr(k_main2_py > 0):"
-      - "4253:                     for k_iv_py in range_constexpr(0, k_main2_py, tile_k * 2):"
-      - "4254:                         rocdl.sched_barrier(0)"
-      - "4255:                         k_iv = arith.index(k_iv_py)"
-      - "4256:                         next_k1 = k_iv + tile_k"
+      - "4107:                 if const_expr(k_main2_py > 0):"
+      - "4108:                     for k_iv_py in range_constexpr(0, k_main2_py, tile_k * 2):"
+      - "4109:                         rocdl.sched_barrier(0)"
+      - "4110:                         k_iv = arith.index(k_iv_py)"
+      - "4111:                         next_k1 = k_iv + tile_k"
   - category: "persistent"
     language: "flydsl"
     file: "aiter/ops/flydsl/kernels/hgemm_dispatch.py"

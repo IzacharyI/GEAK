@@ -4,8 +4,8 @@
 
 provenance:
   aiter_commit: "7a8ff7dd4ae3063ff1a18622a46460125c84370e"
-  aiter_tree_dirty: true
-  aiter_path: "/sgl-workspace/aiter"
+  aiter_dirty_sources: []
+  aiter_origin: "https://github.com/ROCm/aiter.git"
   extractor: "perf_knowledge/corpus/_extract_impl_facts.py"
   operator_family: "gemm"
   records: 357

@@ -11,10 +11,12 @@ python3 perf_knowledge/corpus/_render_facts.py --emit
 
 | provenance | |
 |---|---|
+| aiter_origin | `https://github.com/ROCm/aiter.git` |
 | aiter_commit | `7a8ff7dd4ae3063ff1a18622a46460125c84370e` |
-| aiter_tree_dirty | `True` |
 | operator_family | `gemm` |
-| records | `1203` |
+| records | `1202` |
+
+Every citation below resolves at that commit — no contributing file had uncommitted changes when this was extracted.
 
 ## What this is, and what it is not
 
@@ -43,7 +45,7 @@ decision; it is simply not in the text. See the coverage note below.
 | `asm_object` | · | · | · | · | · | 13 |
 | `asm_tile` | · | · | · | · | · | 50 |
 | `async_copy` | 23 | · | · | · | · | · |
-| `cache_policy` | 12 | 103 | 2 | · | · | · |
+| `cache_policy` | 11 | 103 | 2 | · | · | · |
 | `ck_instance` | · | · | · | 29 | · | · |
 | `ck_pipeline` | · | · | · | 20 | · | · |
 | `instance_name` | · | · | · | · | 2 | · |
@@ -62,7 +64,7 @@ decision; it is simply not in the text. See the coverage note below.
 | `tile_shape` | 7 | · | · | · | · | · |
 | `tunable_param` | · | 459 | · | · | · | · |
 | `waves` | 6 | · | · | · | · | · |
-| **total** | **339** | **616** | **13** | **60** | **90** | **85** |
+| **total** | **338** | **616** | **13** | **60** | **90** | **85** |
 
 The zeros are the interesting part, and they are easy to misread. `scheduling` is dense in
 FlyDSL and empty elsewhere, but Triton kernels are scheduled too — by a compiler pass, and CK
@@ -93,7 +95,7 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 **flydsl** — 11 in 3 file(s)
 
-- `mfma_scale_f32_16x16x128_f8f6f4` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1031`, `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1083`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1471` +4 more
+- `mfma_scale_f32_16x16x128_f8f6f4` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1031`, `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1083`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1359` +4 more
 - `mfma_f32_16x16x16bf16_1k` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:61`
 - `mfma_f32_16x16x16f16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:64`
 - `mfma_f32_16x16x32_bf16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:82`
@@ -187,8 +189,8 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 **flydsl** — 5 in 2 file(s)
 
-- `pad_k, 0` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:285`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2166`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:263` +1 more
-- `tile2_pad, 0` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2839`
+- `pad_k, 0` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:285`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2166`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:241` +1 more
+- `tile2_pad, 0` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2705`
 
 **ck** — 6 in 3 file(s)
 
@@ -227,10 +229,10 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `cache_policy` — Which cache hint loads and stores carry
 
-**flydsl** — 12 in 2 file(s)
+**flydsl** — 11 in 2 file(s)
 
-- `nontemporal=True` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2445`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2455`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2464` +6 more
-- `b` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1007`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3741`
+- `nontemporal=True` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2320`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2330`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2339` +5 more
+- `b` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:895`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3596`
 - `cache` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:86`
 
 **triton** — 103 in 21 file(s)
@@ -263,7 +265,7 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 - `use_cshuffle_epilog` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:127`, `aiter/ops/flydsl/kernels/preshuffle_gemm.py:183`, `aiter/ops/flydsl/kernels/preshuffle_gemm.py:339` +18 more
 - `c_shuffle` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1659`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1691`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:3509` +9 more
-- `cshuffle` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1668`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1700`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2627` +9 more
+- `cshuffle` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1668`, `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1700`, `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2502` +9 more
 - `CShuffle` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:138`, `aiter/ops/flydsl/kernels/mfma_epilogues.py:160`, `aiter/ops/flydsl/kernels/mfma_epilogues.py:163` +4 more
 
 **ck** — 5 in 5 file(s)

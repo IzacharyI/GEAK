@@ -429,10 +429,39 @@ def summarize_tuned(rows):
 def aiter_commit(aiter):
     r = subprocess.run(["git", "-C", aiter, "rev-parse", "HEAD"],
                        capture_output=True, text=True, check=False)
-    commit = r.stdout.strip() or "unknown"
-    dirty = subprocess.run(["git", "-C", aiter, "status", "--porcelain"],
-                           capture_output=True, text=True, check=False).stdout.strip()
-    return commit, bool(dirty)
+    return r.stdout.strip() or "unknown"
+
+
+def aiter_origin(aiter):
+    """The repository the facts came from, as a remote URL where one exists.
+
+    Not the local path. A reader who wants to check a citation needs to know WHICH aiter, and the
+    honest way to extract from a dirty working copy is a throwaway clean worktree — which made the
+    recorded path `/tmp/aiter-clean`, a directory that no longer exists and never meant anything to
+    anyone else. The remote plus the commit is the pair that actually identifies the source.
+    """
+    r = subprocess.run(["git", "-C", aiter, "remote", "get-url", "origin"],
+                       capture_output=True, text=True, check=False)
+    return r.stdout.strip() or f"(no remote; read from {os.path.abspath(aiter)})"
+
+
+def dirty_paths(aiter):
+    """Repo-relative paths with uncommitted changes, as a set.
+
+    Needed per-file, not as a boolean. The boolean this replaced (`aiter_tree_dirty`) recorded the
+    problem and did nothing with it: 56 records pointed into a locally-modified kernel while the
+    provenance named a commit that did not contain those edits, so `file:line` did not resolve for
+    anyone but the person who ran the extractor. That is the corpus's one promise, broken, with a
+    green test suite — the test asserted a commit was PRESENT, never that it IDENTIFIED what was read.
+    """
+    r = subprocess.run(["git", "-C", aiter, "status", "--porcelain"],
+                       capture_output=True, text=True, check=False)
+    out = set()
+    for line in r.stdout.splitlines():
+        if len(line) > 3:
+            # `XY path` — and for a rename, `XY old -> new`; the new name is what was read.
+            out.add(line[3:].split(" -> ")[-1].strip().strip('"'))
+    return out
 
 
 def collect(aiter):
@@ -505,7 +534,10 @@ def emit_yaml(payload, path):
          "# claims a decision is good; see README.md for why that line is drawn here.", ""]
     L.append("provenance:")
     for k, v in payload["provenance"].items():
-        L.append(f"  {k}: {yaml_quote(v)}")
+        if isinstance(v, list):
+            L.append(f"  {k}: [{', '.join(yaml_quote(x) for x in v)}]")
+        else:
+            L.append(f"  {k}: {yaml_quote(v)}")
     L.append("")
     for section in ("coverage", "missing", "autotune_configs", "tuned_configs", "facts"):
         if section not in payload:
@@ -538,6 +570,9 @@ def main():
     ap.add_argument("--aiter", help="an aiter checkout to read (required for --emit / --json)")
     ap.add_argument("--emit", action="store_true", help="write facts/gemm_family.yaml")
     ap.add_argument("--json", action="store_true", help="dump to stdout instead")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="extract even when files that produce facts have uncommitted changes; "
+                         "the affected records are marked `unreproducible: true`")
     a = ap.parse_args()
 
     if not a.aiter:
@@ -547,16 +582,43 @@ def main():
         return 2
 
     facts, configs, tuned, seen, missing = collect(a.aiter)
-    commit, dirty = aiter_commit(a.aiter)
+    commit = aiter_commit(a.aiter)
+
+    # Which files that CONTRIBUTED evidence are locally modified. Scoped to contributors rather than
+    # the whole tree because that is the actual condition: an unrelated edit elsewhere in aiter cannot
+    # make a citation unresolvable, and refusing on it would be superstition rather than a check.
+    contributors = {f["file"] for f in facts}
+    unreproducible = sorted(contributors & dirty_paths(a.aiter))
+    if unreproducible and not a.allow_dirty:
+        print(f"REFUSING: {len(unreproducible)} file(s) that produced facts have uncommitted changes, "
+              f"so their `file:line` would not resolve at {commit[:12]} for anyone else:",
+              file=sys.stderr)
+        for p in unreproducible[:10]:
+            print(f"  {p}", file=sys.stderr)
+        print("\nA citation index whose citations do not resolve is not a weaker index, it is a\n"
+              "different document that looks like one. Either commit those changes, or extract from a\n"
+              "clean checkout:\n"
+              f"  git -C {a.aiter} worktree add /tmp/aiter-clean {commit[:12]}\n"
+              "Pass --allow-dirty to record the facts anyway; the affected records are then marked\n"
+              "and the committed corpus is not allowed to contain them.", file=sys.stderr)
+        return 3
+
     prov = {
         # The commit is the expiry date. Without it a stale fact and a current one are the same
         # document, which is how `kernel_families.md` came to state a default tile nothing checks.
         "aiter_commit": commit,
-        "aiter_tree_dirty": dirty,
-        "aiter_path": os.path.abspath(a.aiter),
+        # Empty means every citation below resolves at that commit for anyone. Non-empty names exactly
+        # which ones do not, which is the part a boolean could not say.
+        "aiter_dirty_sources": unreproducible,
+        "aiter_origin": aiter_origin(a.aiter),
         "extractor": "perf_knowledge/corpus/_extract_impl_facts.py",
         "operator_family": "gemm",
     }
+    if unreproducible:
+        dirt = set(unreproducible)
+        for f in facts:
+            if f["file"] in dirt:
+                f["unreproducible"] = True
     payload = {
         "provenance": dict(prov, records=len(facts), autotune_configs=len(configs)),
         "coverage": seen, "missing": missing, "autotune_configs": configs, "facts": facts,

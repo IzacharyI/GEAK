@@ -313,7 +313,87 @@ def test_provenance_names_the_commit_the_facts_were_read_at(facts):
     prov = facts["provenance"]
     assert re.fullmatch(r"[0-9a-f]{40}|unknown", str(prov["aiter_commit"])), prov
     assert prov["aiter_commit"] != "unknown", "facts without a commit have no expiry date"
-    assert "aiter_tree_dirty" in prov, "a dirty tree makes the commit a partial lie; say so"
+
+
+def test_the_committed_corpus_resolves_at_the_commit_it_names(facts):
+    """The corpus's one promise, checked rather than assumed.
+
+    An earlier version asserted only that a commit was PRESENT, and passed while 56 records pointed
+    into a locally-modified kernel that the named commit does not contain — `file:line` resolved for
+    the person who ran the extractor and nobody else. Present and identifying are different
+    properties, and only the second one is worth anything in a citation index.
+    """
+    dirt = facts["provenance"].get("aiter_dirty_sources")
+    assert dirt == [] or dirt is None or not dirt, (
+        f"extracted from a tree with uncommitted changes in {dirt}; re-extract from a clean "
+        f"checkout (`git -C <aiter> worktree add /tmp/aiter-clean <commit>`)")
+    assert not [f for f in facts["facts"] if f.get("unreproducible")], \
+        "the committed corpus must not contain records flagged unreproducible"
+
+
+def test_extraction_refuses_a_dirty_source_by_default(tmp_path, monkeypatch):
+    """The refusal, not just the label. A marker on an artifact nobody re-reads is a footnote."""
+    calls = {}
+
+    def fake_dirty(path):
+        calls["asked"] = path
+        return {"aiter/ops/flydsl/kernels/splitk_hgemm.py"}
+
+    monkeypatch.setattr(EX, "dirty_paths", fake_dirty)
+    monkeypatch.setattr(EX, "collect", lambda a: (
+        [{"file": "aiter/ops/flydsl/kernels/splitk_hgemm.py", "line": 1, "language": "flydsl",
+          "category": "mfma_intrinsic", "match": "x", "captured": [], "arch_scope": "",
+          "evidence": ["1: x"]}], [], [], [], []))
+    monkeypatch.setattr(EX, "aiter_commit", lambda a: "0" * 40)
+    monkeypatch.setattr(sys, "argv", ["x", "--aiter", str(tmp_path), "--emit"])
+    assert EX.main() == 3, "a dirty contributing file must abort the emit"
+    assert calls["asked"] == str(tmp_path)
+
+
+def test_allow_dirty_records_but_marks_every_affected_record(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(EX, "dirty_paths", lambda a: {"dirty.py"})
+    monkeypatch.setattr(EX, "collect", lambda a: (
+        [{"file": "dirty.py", "line": 1, "language": "flydsl", "category": "tile_shape",
+          "match": "x", "captured": [], "arch_scope": "", "evidence": ["1: x"]},
+         {"file": "clean.py", "line": 2, "language": "flydsl", "category": "tile_shape",
+          "match": "y", "captured": [], "arch_scope": "", "evidence": ["2: y"]}], [], [], [], []))
+    monkeypatch.setattr(EX, "aiter_commit", lambda a: "0" * 40)
+    monkeypatch.setattr(sys, "argv", ["x", "--aiter", str(tmp_path), "--json", "--allow-dirty"])
+    assert EX.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    got = {f["file"]: f.get("unreproducible") for f in payload["facts"]["facts"]}
+    assert got == {"dirty.py": True, "clean.py": None}, got
+    assert payload["facts"]["provenance"]["aiter_dirty_sources"] == ["dirty.py"]
+
+
+def test_an_unrelated_dirty_file_does_not_block_extraction(tmp_path, monkeypatch, capsys):
+    """Scoped to contributors. Refusing on any edit anywhere in aiter would be superstition — an
+    unrelated change cannot make a citation unresolvable."""
+    monkeypatch.setattr(EX, "dirty_paths", lambda a: {"docs/README.md", "aiter/unrelated.py"})
+    monkeypatch.setattr(EX, "collect", lambda a: (
+        [{"file": "clean.py", "line": 1, "language": "flydsl", "category": "tile_shape",
+          "match": "x", "captured": [], "arch_scope": "", "evidence": ["1: x"]}], [], [], [], []))
+    monkeypatch.setattr(EX, "aiter_commit", lambda a: "0" * 40)
+    monkeypatch.setattr(sys, "argv", ["x", "--aiter", str(tmp_path), "--json"])
+    assert EX.main() == 0
+    assert json.loads(capsys.readouterr().out)["facts"]["provenance"]["aiter_dirty_sources"] == []
+
+
+def test_dirty_paths_parses_renames_and_quoted_names():
+    """`XY old -> new`: the new name is what was read. A parser that kept the old one would clear a
+    file that is in fact modified."""
+    out = subprocess.run([sys.executable, "-c", textwrap.dedent("""
+        import subprocess, importlib.util, sys
+        spec = importlib.util.spec_from_file_location("x", sys.argv[1])
+        m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+        class R:
+            stdout = ' M a/b.py\\nR  old/x.py -> new/y.py\\n?? "sp ace.py"\\n'
+        subprocess.run = lambda *a, **k: R()
+        print(sorted(m.dirty_paths("/nowhere")))
+        """), os.path.join(HERE, "_extract_impl_facts.py")],
+        capture_output=True, text=True, check=False)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "['a/b.py', 'new/y.py', 'sp ace.py']", out.stdout
 
 
 def test_gaps_are_stated_with_a_reason(facts):
@@ -381,8 +461,12 @@ def test_json_mode_is_machine_readable():
     aiter = os.environ.get("AITER_PATH", "/sgl-workspace/aiter")
     if not os.path.isdir(aiter):
         pytest.skip("no aiter checkout")
+    # `--allow-dirty` because this asserts the OUTPUT PARSES, and whether the source tree is clean has
+    # nothing to do with that. Without it the test asserts reproducibility twice and fails on any
+    # developer box with a modified aiter, which teaches people to skip it.
     r = subprocess.run([sys.executable, os.path.join(HERE, "_extract_impl_facts.py"),
-                        "--aiter", aiter, "--json"], capture_output=True, text=True)
+                        "--aiter", aiter, "--json", "--allow-dirty"],
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     assert payload["facts"]["facts"] and payload["tuned"]["tuned_configs"]

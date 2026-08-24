@@ -51,6 +51,29 @@ python3 perf_knowledge/corpus/_render_facts.py --emit
 Commit the YAML and the `.md` together. They are a pair; a commit containing one without the other is
 the stale-doc failure this directory is built to prevent.
 
+**Extraction refuses a dirty source.** If any file that produces facts has uncommitted changes, the
+emit aborts, because its `file:line` would resolve for you and for nobody else — and a citation index
+whose citations do not resolve is not a weaker index, it is a different document that looks like one.
+This is not hypothetical: the first version of this corpus shipped 56 records pointing into a locally
+modified kernel, under a commit that did not contain those edits, with the whole suite green. The test
+asserted a commit was *present*; it never asked whether the commit *identified* what was read.
+
+The fix when your working copy is dirty is a throwaway clean checkout, which leaves your edits alone:
+
+```bash
+git -C /path/to/aiter worktree add /tmp/aiter-clean <commit>
+python3 perf_knowledge/corpus/_extract_impl_facts.py --aiter /tmp/aiter-clean --emit
+```
+
+`--allow-dirty` extracts anyway and marks every affected record `unreproducible: true`, which is
+useful for a local look and is rejected by `test_corpus.py` for the committed artifact. The refusal is
+scoped to files that actually *contributed* facts — an unrelated edit elsewhere in aiter cannot make a
+citation unresolvable, and refusing on it would be superstition rather than a check.
+
+Provenance records `aiter_origin` (the remote) rather than a local path, since the pair that
+identifies a source is repository plus commit. A path like `/tmp/aiter-clean` names a directory that
+no longer exists and never meant anything to anyone else.
+
 ## Reading the coverage table without drawing the wrong conclusion
 
 The table counts **where a decision is stated in source**, per axis per language. The zeros mislead
@@ -98,3 +121,7 @@ Two things the regex approach deliberately does not attempt:
    nothing was found and one that is empty because the search never ran look identical otherwise, and
    the difference decides whether the next person repeats the search.
 5. `gemm_family.md` matches the facts byte for byte.
+6. The committed corpus resolves at the commit it names: `aiter_dirty_sources` is empty and no record
+   is flagged `unreproducible`. This is the promise in the first paragraph, checked rather than
+   assumed — "a commit is recorded" and "the commit identifies what was read" are different
+   properties, and only the second one is worth anything here.

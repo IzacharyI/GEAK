@@ -387,9 +387,20 @@ def render(data, tuned_data):
     facts = data.get("facts") or []
     L = [PROSE["header"], ""]
     L += ["| provenance | |", "|---|---|"]
-    for k in ("aiter_commit", "aiter_tree_dirty", "operator_family", "records"):
+    for k in ("aiter_origin", "aiter_commit", "operator_family", "records"):
         if k in prov:
             L.append(f"| {k} | `{prov[k]}` |")
+    # Stated as a sentence rather than a field, because the empty case is the one that needs saying:
+    # "these citations resolve" is the corpus's whole claim, and a reader should not have to infer it
+    # from an absent list.
+    dirt = prov.get("aiter_dirty_sources") or []
+    if dirt:
+        L += ["", f"**{len(dirt)} source file(s) had uncommitted changes when this was extracted**, so "
+                  f"records from them are marked `unreproducible` and do not resolve at the commit "
+                  f"above for anyone else: " + ", ".join(f"`{p}`" for p in dirt) + "."]
+    else:
+        L += ["", "Every citation below resolves at that commit — no contributing file had "
+                  "uncommitted changes when this was extracted."]
     L += ["", PROSE["what_this_is"], "", "## Coverage", ""]
     L += coverage_table(facts)
     L += ["", PROSE["coverage_note"], "", PROSE["axes_intro"], "", PROSE["arch_note"], ""]
