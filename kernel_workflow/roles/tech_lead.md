@@ -217,6 +217,19 @@ Return JSON:
     "zero_slack_nodes": ["<id>"],
     "false_edges": [{"from": "<id>", "to": "<id>", "why": "regions do not overlap: ..."}],
     "unknowns": [{"what": "...", "why": "...", "what_would_settle_it": "..."}]
+  },
+  "resource_timeline": {
+    "pipes": [{"stage": "<stage>", "pipe": "valu|mfma|lds|hbm|scalar",
+               "utilization_pct": 0.0, "source": "<the counter expression, so it can be recomputed>"}],
+    "interkernel_gap_us": {"median": 0.0, "max": 0.0, "n_boundaries": 0},
+    "class": "throughput_bound|latency_bound|launch_bound|mixed",
+    "stall_reason": [{"stage": "<stage>", "waiting_on": "...", "counter": "..."}],
+    "idle_pipe_opportunities": [
+      {"stage": "<stage>", "idle_pipe": "<pipe>", "candidate_work": "<the dependency-free work>",
+       "dag_edge_status": "<the task_graph finding that says there is no edge>",
+       "blocked_by": "launch_boundary|register_pressure|no_async_copy|..."}],
+    "closed_axes": [{"axis": "<lever this table rules out>", "ruled_out_by": "<the counter>"}],
+    "unknowns": [{"what": "...", "why": "...", "what_would_settle_it": "..."}]
   }
 }
 ```
@@ -248,7 +261,31 @@ Four things about this artifact that decide whether it is worth anything:
   graph outranks a complete invented one**, and if the honest version is mostly unknowns, that is
   the analysis result — return it and say what measurement would settle each one.
 
-Then rank directions **from** the graph. Before proposing a fusion specifically, apply the
+**`resource_timeline` is required whenever `task_graph` is, and it is the half that decides whether
+any edge in the graph is worth touching.** Read `SKILL_DIR/knowledge/pipe_occupancy.md` before you
+build it. The graph answers *may* these overlap; the timeline answers *which unit is idle and what
+dependency-free work could be issued into it*. A program that only builds the graph proposes overlaps
+whose pipe was already saturated, or fuses to reclaim a launch gap that measures zero. Three things
+this artifact decides that the graph cannot:
+
+- **`class` forecloses whole families of levers before they cost a lease.** All pipes low with a
+  near-zero inter-kernel gap is `latency_bound`, and the standard reflex there — raise occupancy — is
+  the wrong medicine: adding waves does not create independent work inside a wave whose instruction
+  stream has none, and it takes the registers and LDS that software pipelining needs. Fusing launches
+  is equally dead when the measured gap is zero. Put both in `closed_axes` with the counter that
+  closed them, and rule 3e will keep the next round from re-buying them.
+- **A zero launch gap is an argument FOR fusion, not against it, but a different one.** A kernel
+  boundary is a full grid-wide barrier plus a pipeline drain, so nothing on its far side can be in
+  flight. The next stage's weight loads, scale tensors and index/shape preprocessing are frequently
+  dependency-free — the graph will show no edge at all — and they are not merely unscheduled, they
+  are *inexpressible*. "Fuse to remove launch overhead" and "fuse so the next GEMM's weight loads can
+  issue in this GEMM's MFMA shadow" are different claims with different implementations and different
+  falsifications. Only the second survives a zero gap. Say which one you mean.
+- **Cross-stage cost asymmetry is priced here, not in the graph.** Normalize each stage to time per
+  1e3 MFMA and attribute the gap with the other counters. Bringing a 1.5×-cost stage to parity is
+  often the largest single number available, and no dependency edge points at it.
+
+Then rank directions **from** the graph and the timeline together. Before proposing a fusion specifically, apply the
 three-condition test in `SKILL_DIR/knowledge/fusion_preconditions.md` per edge and rule out the
 cheaper levers it lists; a fusion direction that does not carry that test is not ranked. If anything
 will end up overlapping, `SKILL_DIR/knowledge/resource_partition.md` is where the CU-allocation and
@@ -444,6 +481,14 @@ Rules:
      it wins every tie-break unless you make this rule explicit. Structural directions are the ones
      that need the hardware most, because unlike a tile-shape arm they cannot be compile-screened at
      all.
+   - **Every GPU direction names the pipe it fills, and its claim is capped by that pipe's idle
+     fraction.** This is the check that makes `resource_timeline` load-bearing instead of a
+     deliverable nobody reads. Set `fills_pipe`, `pipe_util_pct` and `headroom_basis` on the
+     direction; `expected_speedup` above `min(idle fraction of that pipe over the interval it
+     applies to, measured_e2e − critical_path)` is arithmetically impossible and is rejected without
+     a run. **A direction that cannot name a pipe is a hunch, not an optimization** — send it back
+     rather than spending the lease to find out. Two directions filling the *same* pipe are not
+     additive: plan the second as a follow-up, never as a parallel arm.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.

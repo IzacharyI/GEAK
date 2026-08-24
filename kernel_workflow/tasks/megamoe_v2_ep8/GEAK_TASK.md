@@ -171,10 +171,14 @@ Batch-to-batch drift on the small guards is larger than the whole available gain
 guards it is not even drift. Measured 2026-08-23, unmodified tree against itself, 10 runs per guard:
 `8192_uniform` is unimodal with a worst pair of 1.09%; `512_uniform` worst pair 6.21%; `512_rank-
 mixed-skew` worst pair 9.30%, with 2 of 10 runs sitting ~7-8% above an otherwise tight cluster. That
-slow state is **bimodal, not noisy** — repeat readings land on the same value to four digits — and
-the excess sits in the residual (end-to-end minus stage1 minus stage2_combine), i.e. host- or
-launch-side, invisible to both kernel timers. A 5-pair sample of `512_skew` the day before had read
-its worst pair as 1.93% and missed the tail entirely. Therefore:
+slow state is **bimodal, not noisy** — repeat readings land on the same value to four digits — and it
+is invisible to both kernel timers, showing up only in the residual (end-to-end minus stage1 minus
+stage2_combine). **Do not read that as proof of a host cost.** All three timers are independently
+rank-reduced, so the residual is `max-of-sums minus sum-of-maxes` and is signed: its median over 68
+records on this box is −9.6 µs. A large residual is therefore uninformative on its own; what carries
+weight is a residual that moves *between paired arms* while both kernel timers hold still. The slow
+state is real and currently unattributed. A 5-pair sample of `512_skew` the day before had read its
+worst pair as 1.93% and missed the tail entirely. Therefore:
 
 - Run baseline and candidate **alternately** (A,B,A,B,A,B) and report the **per-pair** delta plus the
   median. Never compare two independently collected medians. **At least 3 pairs on the 8192 guards

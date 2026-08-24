@@ -445,6 +445,30 @@ const ANALYZE_SCHEMA = obj({
   // complete invented one, and `source: 'assumed'` on every node is itself the finding.
   // See knowledge/tile_task_graph.md for the derivation method.
   task_graph: { type: ['object', 'null'], additionalProperties: true },
+  // PER-PIPE RESOURCE TIMELINE. The other half of the analysis, required alongside task_graph.
+  //
+  // The graph answers whether two pieces of work MAY overlap. That is necessary and not sufficient,
+  // and a program that only asks it proposes overlaps whose pipe was already saturated, or fuses to
+  // reclaim a launch gap that measures zero. This artifact answers the complementary question:
+  // which functional unit is idle, when, and what dependency-free work could be issued into it.
+  //
+  //   {pipes: [{stage, pipe, utilization_pct, source}],   // pipe: valu|mfma|lds|hbm|scalar
+  //    interkernel_gap_us: {median, max, n_boundaries},
+  //    class: throughput_bound|latency_bound|launch_bound|mixed,
+  //    stall_reason: [{stage, waiting_on, counter}],
+  //    idle_pipe_opportunities: [{stage, idle_pipe, candidate_work, dag_edge_status, blocked_by}],
+  //    closed_axes: [{axis, ruled_out_by}],
+  //    unknowns: [{what, why, what_would_settle_it}]}
+  //
+  // `class` is what forecloses lever families before they cost a lease: all pipes low with a
+  // near-zero inter-kernel gap is latency_bound, where raising occupancy is the wrong medicine
+  // (adding waves creates no independent work inside a wave whose instruction stream has none, and
+  // it spends the registers software pipelining needs) and fusing for launch overhead is dead on
+  // arrival. `idle_pipe_opportunities` is what a fusion direction is actually FOR in that state: a
+  // kernel boundary is a grid-wide barrier plus a pipeline drain, so the next stage's weight loads
+  // and index preprocessing are not merely unscheduled, they are inexpressible.
+  // See knowledge/pipe_occupancy.md.
+  resource_timeline: { type: ['object', 'null'], additionalProperties: true },
 }, ['kernel_type', 'roadmap_summary']);
 
 const BENCH_SCHEMA = obj({
@@ -509,6 +533,16 @@ const PLAN_SCHEMA = obj({
       focus_files: { type: 'array', items: { type: 'string' } },
       expected_speedup: { type: 'number' }, prompt: { type: 'string' },
       kk_refs: { type: 'array', items: { type: 'string' } }, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
+      // Binds the direction to the Analyze artifacts so the graph and the pipe table are READ when
+      // the lease is allocated, not merely emitted. `fills_pipe` is the functional unit this
+      // direction puts work into (or removes work from); `pipe_util_pct` is that pipe's measured
+      // current utilization from `resource_timeline.pipes`; `headroom_basis` says which bound caps
+      // the claim — the pipe's idle fraction or `measured_e2e_us - critical_path_us`. A direction
+      // that cannot name a pipe is a hunch. See knowledge/pipe_occupancy.md.
+      fills_pipe: { type: 'string' },
+      pipe_util_pct: { type: 'number' },
+      headroom_basis: { type: 'string' },
+      graph_refs: { type: 'array', items: { type: 'string' } }, // task_graph node/edge ids this direction acts on
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -1012,6 +1046,114 @@ function taskGraphGate(tg) {
 }
 // <</REPLAY:task_graph_gate>>
 
+// <<REPLAY:pipe_occupancy_gate>>
+// THE PIPE TABLE, AND WHETHER THE DIRECTIONS WERE PRICED AGAINST IT.
+//
+// Why this is a separate gate from taskGraphGate rather than more fields on it: they answer
+// different questions and they fail independently. The graph can be perfect and the plan still
+// worthless, which is exactly what happened. A program spent four waves on occupancy, launch-count
+// and communication-overlap directions, every one of them derivable from a correct dependency
+// graph, and then collected hardware counters for the first time and found: no pipe above 41%, HBM
+// at 7-8%, inter-kernel gap 0.00us over 72 boundaries, and occupancy kill-gated at BOTH ends. Every
+// lever it had tried was foreclosed by a measurement nobody had made. The graph was not wrong; it
+// was answering "may these overlap", and nothing was answering "is that pipe even busy".
+//
+// The gate is deliberately cheap to satisfy and expensive to fake: it prints the table, derives the
+// class from the numbers rather than trusting the stated one, and names the directions that claimed
+// more than their pipe's idle fraction can pay.
+const PIPE_SATURATED_PCT = 80;   // at or above this, the pipe is the constraint
+const PIPE_LOW_PCT = 50;         // below this for EVERY pipe, nothing is throughput-bound
+const GAP_NEGLIGIBLE_US = 0.5;   // inter-kernel gap below this cannot fund a launch-count direction
+
+function pipeOccupancyGate(rt, directions) {
+  const dirs = Array.isArray(directions) ? directions : [];
+  const pipes = rt && Array.isArray(rt.pipes) ? rt.pipes.filter((p) => p && Number.isFinite(Number(p.utilization_pct))) : [];
+  if (!pipes.length) {
+    return { verdict: 'MISSING', summary: '', class_derived: null, caveat:
+      'PIPE TABLE MISSING: this run required a per-pipe resource timeline from Analyze and none was ' +
+      'returned. Nothing below is priced against what the machine was actually doing — there is no ' +
+      'record of which functional unit was the constraint, so a direction targeting an already-' +
+      'saturated pipe and one filling an idle pipe are indistinguishable here, and the classic ' +
+      'reflexes (raise occupancy, fuse launches) cannot be ruled out before they cost a lease. ' +
+      'Read every expected_speedup as unbounded above.' };
+  }
+  const maxUtil = Math.max(...pipes.map((p) => Number(p.utilization_pct)));
+  const satur = pipes.filter((p) => Number(p.utilization_pct) >= PIPE_SATURATED_PCT);
+  const gap = rt.interkernel_gap_us && Number.isFinite(Number(rt.interkernel_gap_us.median))
+    ? Number(rt.interkernel_gap_us.median) : null;
+  const opps = Array.isArray(rt.idle_pipe_opportunities) ? rt.idle_pipe_opportunities.length : 0;
+  const closed = Array.isArray(rt.closed_axes) ? rt.closed_axes.length : 0;
+
+  // Derive the class from the numbers. A stated class that the table does not support is the
+  // failure this catches: `class` drives which levers are even candidates, so a wrong one is worse
+  // than an absent one.
+  let derived = 'mixed';
+  if (satur.length) derived = 'throughput_bound';
+  else if (maxUtil < PIPE_LOW_PCT && gap !== null && gap > GAP_NEGLIGIBLE_US) derived = 'launch_bound';
+  else if (maxUtil < PIPE_LOW_PCT) derived = 'latency_bound';
+
+  const table = pipes
+    .map((p) => `${p.stage || '?'}.${p.pipe || '?'}=${Number(p.utilization_pct).toFixed(1)}%`)
+    .join(' ');
+  const summary = `Pipe table: ${table}; max=${maxUtil.toFixed(1)}% ` +
+    `(${satur.length} pipe(s) at/above ${PIPE_SATURATED_PCT}%); ` +
+    `inter-kernel gap median=${gap === null ? 'UNMEASURED' : gap.toFixed(3) + 'us'}; ` +
+    `class stated=${rt.class || 'none'} derived=${derived}; ` +
+    `${opps} idle-pipe opportunit(y/ies), ${closed} closed axis/axes.`;
+
+  const notes = [];
+  if (rt.class && rt.class !== derived) {
+    notes.push(`CLASS CONTRADICTS THE TABLE: Analyze stated class="${rt.class}" but the numbers it ` +
+      `reported derive "${derived}" (max pipe ${maxUtil.toFixed(1)}%, gap ` +
+      `${gap === null ? 'unmeasured' : gap.toFixed(3) + 'us'}). The class decides which lever ` +
+      'families are candidates at all, so take the derived one and re-read the rankings against it.');
+  }
+  if (derived === 'latency_bound') {
+    notes.push('LATENCY-BOUND: every pipe is below ' + PIPE_LOW_PCT + '% and the launch gap is ' +
+      'negligible, so the machine is stalled on dependences, not on any resource. Two standard ' +
+      'levers are dead here and should not be given a lease: raising OCCUPANCY (adding waves adds ' +
+      'stalled waves when each wave\'s instruction stream has no independent work, and it spends ' +
+      'the registers and LDS that software pipelining needs), and fusing to reclaim LAUNCH ' +
+      'OVERHEAD (the gap is already zero). What does pay is making dependency-free work of the ' +
+      'NEXT stage issuable in this one\'s shadow — a kernel boundary is a grid-wide barrier plus a ' +
+      'pipeline drain, so that work is not unscheduled, it is inexpressible.');
+    if (!opps) {
+      notes.push('NO IDLE-PIPE OPPORTUNITIES LISTED: the table says the pipes are idle and the ' +
+        'artifact names nothing that could be issued into them. That is the one question this ' +
+        'analysis existed to answer; without it the directions below cannot have been derived from it.');
+    }
+  }
+  // Directions priced above what their own pipe can pay. Checked here rather than trusted, because
+  // expected_speedup is the field most likely to be a wish.
+  const overclaimed = [];
+  const unpriced = [];
+  for (const d of dirs) {
+    if (!d || d.specialty === 'deep_explore') continue;
+    if (!d.fills_pipe) { unpriced.push(d.id || d.title || '?'); continue; }
+    const util = Number.isFinite(Number(d.pipe_util_pct)) ? Number(d.pipe_util_pct) : null;
+    const exp = Number(d.expected_speedup);
+    if (util === null || !Number.isFinite(exp)) continue;
+    const ceiling = 1 / Math.max(util / 100, 1e-6); // filling an idle pipe completely, the optimistic bound
+    if (exp > ceiling) {
+      overclaimed.push(`${d.id || d.title}: claims ${exp.toFixed(3)}x on ${d.fills_pipe} at ` +
+        `${util.toFixed(1)}% utilization, whose perfect-fill bound is ${ceiling.toFixed(3)}x`);
+    }
+  }
+  if (unpriced.length) {
+    notes.push(`DIRECTIONS WITH NO PIPE NAMED (${unpriced.length}): ${unpriced.join(', ')}. A ` +
+      'direction that cannot say which functional unit it fills has not been derived from the ' +
+      'table and its expected_speedup is unbounded by anything. Treat as hypotheses.');
+  }
+  if (overclaimed.length) {
+    notes.push('DIRECTION OVERCLAIMS ITS PIPE: ' + overclaimed.join('; ') +
+      '. These are arithmetically impossible against the reported utilization and can be rejected ' +
+      'without a run; if the utilization is wrong, that is the finding.');
+  }
+  const verdict = notes.length ? (overclaimed.length || (rt.class && rt.class !== derived) ? 'INCONSISTENT' : 'ADVISORY') : 'OK';
+  return { verdict, summary, class_derived: derived, caveat: notes.join(' ') };
+}
+// <</REPLAY:pipe_occupancy_gate>>
+
 // <<REPLAY:claim_boundary>>
 // THE CLAIM BOUNDARY. Three decisions that together answer one question: did a measurement that
 // happened on hardware actually reach the scoring harness?
@@ -1045,11 +1187,20 @@ const CLAIM = claimBoundary(primSpeedup);
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
 let TASK_GRAPH_CAVEAT = '';
+let PIPE_TABLE_CAVEAT = '';
 if (REQUIRE_TASK_GRAPH) {
   const g = taskGraphGate(analysis && analysis.task_graph);
   if (g.summary) log(g.summary);
   TASK_GRAPH_CAVEAT = g.caveat;
   if (g.caveat) log(g.caveat);
+  // The graph says which orderings are real; the pipe table says whether any of them is worth
+  // touching. They fail independently — a correct graph with no table is exactly the state that
+  // funded four waves of occupancy and launch-count directions on a machine whose busiest pipe was
+  // at 41%. Print both, always, and carry both to the report.
+  const pg = pipeOccupancyGate(analysis && analysis.resource_timeline, []);
+  if (pg.summary) log(pg.summary);
+  PIPE_TABLE_CAVEAT = pg.caveat;
+  if (pg.caveat) log(pg.caveat);
 }
 
 // Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
@@ -1599,6 +1750,13 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
   // and charge DEEP_COST against the budget. Otherwise each specialist direction costs 1.
   const deepDir = directions.find(d => d.specialty === 'deep_explore');
   if (deepDir) directions = [deepDir];
+  // Price this round's directions against the pipe table BEFORE the lease is spent. The table was
+  // printed once after Analyze; this is the call that makes it load-bearing, because a direction
+  // claiming more than its pipe's idle fraction can pay is rejectable by arithmetic alone.
+  if (REQUIRE_TASK_GRAPH) {
+    const pg = pipeOccupancyGate(analysis && analysis.resource_timeline, directions);
+    if (pg.caveat) log(`Round ${round}: ${pg.caveat}`);
+  }
   const roundCost = directions.reduce((s, d) => s + (d.specialty === 'deep_explore' ? DEEP_COST : 1), 0);
   dispatched += roundCost;
   log(`Round ${round}: ${directions.length} direction(s) [${directions.map(d => d.specialty).join(', ')}], cost ${roundCost}, budget ${dispatched}/${BUDGET}`);
@@ -2026,8 +2184,11 @@ const report = await agentT(
     // Travels to the report because the thing it qualifies — whether the directions were derived
     // or asserted — is invisible in the final number, and by report time nobody re-reads the log.
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
+    ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.task_graph
       ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 4000) } : {}),
+    ...(REQUIRE_TASK_GRAPH && analysis && analysis.resource_timeline
+      ? { RESOURCE_TIMELINE: JSON.stringify(analysis.resource_timeline).slice(0, 3000) } : {}),
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 
