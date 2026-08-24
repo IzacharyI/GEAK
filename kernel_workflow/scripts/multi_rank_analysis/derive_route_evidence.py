@@ -75,8 +75,8 @@ def main() -> int:
             "stage2_padded_rows": stage2_padding,
             "stage2_padding_pct": stage2_padding / useful_rows * 100.0,
             "active_experts": sum(count > 0 for count in expert_counts),
-            "expert_max_routes": max(expert_counts),
-            "expert_mean_routes": sum(expert_counts) / len(expert_counts),
+            "expert_routes_max": max(expert_counts),
+            "expert_routes_mean": sum(expert_counts) / len(expert_counts),
         }
     _write(
         args.output,

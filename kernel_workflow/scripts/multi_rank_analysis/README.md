@@ -11,9 +11,10 @@ MegaMoE/AITER/MORI/FlyDSL name anywhere in this directory, stop — that belongs
 ## Why this exists
 
 Before this package, "gather a float from every rank, compute mean/max, and merge into a report" was
-implemented once, privately, inside one distributed MoE unit test (`_reduce_float`, `_all_ranks_true`,
-`_time_graph` in an AITER `op_tests/multigpu_tests/test_mega_moe_v2.py` — none of them exported, none
-of them named for reuse). A repo-wide grep at design time confirmed **zero** other reusable
+implemented once, privately, inside one distributed MoE unit test — a handful of module-private
+gather/reduce/timing helpers, none of them exported, none of them named for reuse. (Their identifiers
+are deliberately not reproduced here: this tree is walked by capability-eval engineers, and a private
+name is an address into a tree they are not supposed to read. The pattern is what transfers.) A repo-wide grep at design time confirmed **zero** other reusable
 multi-rank aggregation utilities existed anywhere in GEAK or in the AITER checkouts under
 `/sgl-workspace`. Any future distributed UT/benchmark that Kernel Workflow drives would otherwise have
 re-derived the same all_gather/mean/max plumbing from scratch.
@@ -22,8 +23,8 @@ re-derived the same all_gather/mean/max plumbing from scratch.
 
 - **`aggregate.reduce_scalar` / `all_ranks_true` / `time_distributed`** — require a live
   `torch.distributed` process group (torch imported lazily). Call these **inside** a running
-  distributed harness to produce per-rank numbers, generalizing the private `_reduce_float` /
-  `_all_ranks_true` / `_time_graph` pattern.
+  distributed harness to produce per-rank numbers, generalizing the module-private
+  gather / reduce / graph-timing pattern described above.
 - **`aggregate.merge_rank_records` / `classify_case_speedup`** — pure Python, **no torch import at
   all**. Call these **offline**, after per-rank records have already been gathered (by the harness's
   own `dist.all_gather_object`, or read back from a JSON report) — including from unit tests that

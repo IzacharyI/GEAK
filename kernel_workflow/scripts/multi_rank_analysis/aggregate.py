@@ -1,8 +1,8 @@
 """Generic per-rank scalar reduction, timing, and merge primitives.
 
-Extracted and generalized from the private helpers written for one distributed MoE UT
-(``_reduce_float``, ``_all_ranks_true``, ``_time_graph`` in an AITER op_test file — see this
-package's README for the provenance). Nothing here is named after that UT, its operator, or its
+Extracted and generalized from the module-private gather / reduce / graph-timing helpers
+written for one distributed MoE UT (their identifiers are deliberately not reproduced — see this
+package's README for why a private name is an address, not a citation). Nothing here is named after that UT, its operator, or its
 backend: every function takes plain values/callables and returns plain dicts, so it can be reused by
 any distributed correctness/benchmark harness that GEAK's Kernel Workflow drives.
 
