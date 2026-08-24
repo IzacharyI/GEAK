@@ -157,6 +157,11 @@ jobs:
           python3 kernel_workflow/scripts/test_kb.py
           python3 kernel_workflow/scripts/test_lane_refs.py
           python3 kernel_workflow/scripts/test_kb_switch.py
+          # The read half of the knowledge loop. Nothing else checks it: a generated artifact can
+          # pass every --check gate above while no role prompt names it, which is how run_recurrence,
+          # the corpus and version_map were all built, tested, gated — and unreachable by the agent
+          # that plans directions. A doc no role reads is a comment with a CI gate on it.
+          python3 kernel_workflow/scripts/test_knowledge_reachable.py
           python3 e2e_workflow/scripts/tests/test_e2e_lane_defaults.py
           # The kernel KB must lint clean and its generated index must match the cards. `lint --cards`
           # now exits non-zero on failure, so this is a gate rather than a printout.

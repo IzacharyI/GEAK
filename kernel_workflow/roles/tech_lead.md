@@ -220,6 +220,19 @@ Rules:
    set. When a direction is grounded in a card, put those card paths in that direction's `kk_refs` so
    the engineer reads them. Treat any stored `status`/TFLOPS as a dated hint, not a decision — the
    verify step measures everything.
+   Two more files in that base, both generated, both counts-and-links only:
+   - `KERNEL_KNOWLEDGE_DIR/index/run_recurrence.md` — per optimization axis, how many DISTINCT
+     kernels it has PAID on and how many it was already CLOSED on, rolled up from this workflow's own
+     learned cards. **Price an axis before funding it.** Read both columns: an axis closed on eight
+     kernels and paid on one is a round you can spend elsewhere, and that is the more common shape.
+     It is a base rate, not a verdict on YOUR kernel — a closed-heavy axis is still worth one
+     direction when the profile points at it, and it never shrinks the set.
+   - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_family.md` — for GEMM-family ops, the same operator as written
+     in FlyDSL / Triton / Gluon / CK / HIP / asm, indexed per decision (which MFMA, what tile, how LDS
+     is padded and swizzled, where instruction order is pinned) with `file:line` into aiter. Use it to
+     make a direction CONCRETE — "preshuffle B" becomes a named layout with six precedents to read.
+     It records what was chosen, never whether it was right; the counts say where a decision is
+     *stated in source*, so an empty cell means "not written down here", not "nobody does this".
 2b. **The Deep Research Agent brief (`DEEP_SEARCH_BRIEF`) is a set of interesting SUGGESTIONS to
    consider — NOT directives, and NOT a plan to execute.** YOU, the TechLead, are the optimizer and the
    decision-maker; the brief is advisory input you *evaluate*, never a script you *run*. Follow this

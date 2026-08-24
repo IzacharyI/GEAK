@@ -66,6 +66,22 @@ Read, as reference, before writing:
   fuller language surface, the TTGIR→Gluon transcription toolchain and pipeline re-injection live in the
   `gluon_authoring` expert skill and are only injected when `use_expert_skills` is on. That skill is
   mechanics only — it carries no search strategy, so it does not compete with your own loop.
+- **How six implementations answered the same question:** `KERNEL_KNOWLEDGE_DIR/corpus/gemm_family.md`
+  — for GEMM-family ops, every tiling / LDS / MFMA / layout / scheduling decision aiter states in
+  FlyDSL, Triton, Gluon, CK, HIP and asm, with `file:line`. Most useful when `TARGET_LANGUAGE` is
+  `flydsl`, `hip` or `asm`, because those are the languages where the choice is yours: Triton hands
+  the schedule to a compiler pass, and this is the page that shows what the languages without that
+  luxury did instead. Two things on it are worth reading before a first GEMM:
+  the **tunable-surface** rows (which knobs exist at all) and the **shipped tuned starting points**
+  (aiter's own sweep, grouped by gfx and M bucket, separating knobs every swept shape agreed on from
+  knobs that moved). A config known to compile and known to have been measured beats a guessed tile.
+  It carries no rankings — it says what was chosen, not what is best.
+- **Porting a recipe across FlyDSL versions:** `KERNEL_KNOWLEDGE_DIR/languages/flydsl/version_map.md`
+  — generated: which symbol moved where, what is gone, and what replaces it across
+  `0.2.0 / 0.2.2 / 0.2.4 / 0.3.0`. Use it when a skeleton or skill was written against another
+  version: the logic ports, the call form has to be looked up rather than guessed, and any number
+  attached to it has to be re-measured. Do not infer an API from a version you are not running —
+  `buffer_ops` and `vector` were removed outright in 0.3.0.
 - **Op + per-backend authoring card:** `KERNEL_KNOWLEDGE_DIR/operators/<op>/overview.md` plus
   `operators/<op>/backends/<lang>.md` (the card for your exact language — code skeleton, knobs, pitfalls).
   Op short→dir: gemm→`dense_gemm`, attention_prefill→`attention_prefill_fmha`,
