@@ -116,6 +116,16 @@ kernels: [<kernel symbol / entry point measured>] # e.g. _gqa_sparse_fwd_kernel,
 platforms: [<gfx>]                          # e.g. [gfx942] — the arch the evidence was measured on
 kernel_class: <kernel_class>                # e.g. dense_gemm | moe_grouped_gemm | attention_decode | method
 regime: decode | prefill | both | n/a       # the shape regime the evidence covers
+language: <authoring language>              # REQUIRED on a new card. The language the finding was
+                                            # MEASURED in: triton | flydsl | hip | ck | asm | tilelang |
+                                            # gluon | rocwmma | hipkittens | mojo | cutlass_port (ids from
+                                            # perf_knowledge/index/taxonomy.md). It joins the index line's
+                                            # scope prefix, so a run can tell at a glance whether a card
+                                            # was measured in the language it is writing. A library
+                                            # backend (aiter, hipblaslt, ...) is NOT a language: "call
+                                            # this library" is not a finding about how a kernel is
+                                            # written. Not backfilled onto cards that predate the field —
+                                            # a guessed language is worse than an absent one.
 # --- classification + evidence ---
 key: <one line of plain English identifying WHAT this card is about>
                                             # The human-readable identity + dedupe/merge target. Write it

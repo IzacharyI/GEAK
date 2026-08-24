@@ -1566,7 +1566,39 @@ if (kbGate) log(`[kb] not distilling: ${kbGate}.`);
 // no-op, correctness fail, contended box), and curating from it teaches the next run a lesson this
 // run did not earn. Reported in review of #411.
 const kbAccepted = String((validation && validation.validation_status) || '').toLowerCase() === 'accepted';
+let observedLanguage = null;
 if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
+  // OBSERVE the language instead of echoing the request. `TARGET_LANGUAGE` is what the CALLER asked
+  // for: it defaults to 'triton' and on an optimize run is never derived from the source at all, so
+  // handing it to the card labels every optimize-mode finding 'triton' whatever the kernel is. A
+  // wrong label is worse than the `unknown` it replaces, because a wrong one gets trusted.
+  // `detect_language.py` reads it off the winning source and returns null rather than guessing; a
+  // card with no language is then refused by `kb.py`, which is the outcome we want — no card beats a
+  // mislabelled one.
+  try {
+    const det = await agentT(
+      `Run EXACTLY this command and nothing else. Do NOT edit any file.
+\`\`\`bash
+python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${CANONICAL} --entry ${JSON.stringify(KERNEL_NAME)} --json
+\`\`\`
+Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
+      { phase: 'Validate', label: 'lang:detect', effort: 'low',
+        schema: { type: 'object',
+                  properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
+                  required: ['language'], additionalProperties: true } });
+    observedLanguage = det && det.language ? String(det.language) : null;
+    log(observedLanguage
+      ? `[lang] winning source reads as ${observedLanguage}`
+      : `[lang] undecided: ${det && det.reason ? det.reason : 'no result'} — no language on the card, which kb.py will refuse`);
+    // AUTHOR MODE ONLY. There the caller named the language it wanted written, so a mismatch is a
+    // finding about the run: the seed was authored in something else. On an optimize run there is
+    // nothing to compare against, because `TARGET_LANGUAGE` is only its own default.
+    if (MODE === 'author' && observedLanguage && observedLanguage !== TARGET_LANGUAGE) {
+      log(`[lang] MISMATCH: author mode was asked for ${TARGET_LANGUAGE}, the winning source reads as ${observedLanguage}. Recording what was measured.`);
+    }
+  } catch (e) {
+    log(`[lang] detection failed: ${e && e.message ? e.message : e}`);
+  }
   try {
     learned_card = await agentT(
       roleAgent('update_experience', 'Validate',
@@ -1575,7 +1607,11 @@ if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimar
           SCOPE: 'lane', LEARNED_DIR, SKILL_DIR: WORKFLOW_DIR, EVAL_DIR,
           PERF_KNOWLEDGE_DIR: KERNEL_KNOWLEDGE_DIR,
           WINNER: {
-            kernel: KERNEL_NAME, language: TARGET_LANGUAGE, mode: MODE, gfx: GFX,
+            // `language` is what the source READS AS, not what was requested; null when the
+            // detector would have had to guess, and the curator must leave the field off rather
+            // than fill it in.
+            kernel: KERNEL_NAME, language: observedLanguage, mode: MODE, gfx: GFX,
+            requested_language: MODE === 'author' ? TARGET_LANGUAGE : undefined,
             kernel_class: (analysis && analysis.kernel_type) || '',
             speedup: finalPrimary, validation_status: validation ? validation.validation_status : '',
             bottleneck: profileSummary ? profileSummary.bottleneck : '',

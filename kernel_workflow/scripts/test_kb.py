@@ -314,6 +314,7 @@ prop = {"run_id": "assert1", "date": "2026-08-18", "kernel_names": ["k"],
                    "description": "a lever on an op: +11% on the large shapes",
                    "keywords": ["tiling"], "kernels": [], "platforms": ["gfx950"],
                    "kernel_class": "dense_gemm", "regime": "decode", "lifecycle": "active",
+                   "language": "triton",
                    "source": "campaign 2026-08-18", "last_seen": "2026-08-18",
                    "lever": "x", "verify": "y"}]}
 pf = os.path.join(dd, "p.json")
@@ -338,6 +339,7 @@ for i, title in enumerate(("First wording of it", "Completely different wording"
                        "description": f"{title}: a lever on an op, +11% on the large shapes",
                        "keywords": ["tiling"], "kernels": [], "platforms": ["gfx950"],
                        "kernel_class": "dense_gemm", "regime": "decode", "lifecycle": "active",
+                       "language": "flydsl",
                        "source": "campaign 2026-08-19", "last_seen": "2026-08-19",
                        "lever": "x", "verify": "y"}]}
     with open(os.path.join(dd, "_inbox", f"m{i}.json"), "w") as f:
@@ -415,6 +417,64 @@ run(dd, "drain", "--apply", "--validated-runs", "1")
 check("a backfilled card can now earn a blind confirmation",
       "confirms_blind: 1" in open(os.path.join(dd, "known.md")).read(),
       open(os.path.join(dd, "known.md")).read().split("---")[1])
+shutil.rmtree(dd)
+
+# LANGUAGE. Required on a new card, only validated on an old one. Until this field existed the index
+# carried no language at all, so a FlyDSL run could not tell a FlyDSL card from a Triton one, and
+# `toolchain` could not stand in: it is a whole-stack fingerprint that `drain` defaults to "unknown",
+# which is what all 133 cards carrying it say.
+def propose_card(dd, **over):
+    c = {"title": "T", "name": "t-card",
+         "key": "a plainly worded gfx950 situation with an op and a regime",
+         "type": "lever", "confidence": "★★", "effect": "+11% geomean over 4 shapes",
+         "attempts": 3, "confirms_cited": 0, "confirms_blind": 0, "losses": 0,
+         "description": "a lever on an op: +11% on the large shapes",
+         "keywords": ["tiling"], "kernels": [], "platforms": ["gfx950"],
+         "kernel_class": "dense_gemm", "regime": "decode", "lifecycle": "active",
+         "language": "flydsl", "source": "campaign 2026-08-18", "last_seen": "2026-08-18",
+         "lever": "x", "verify": "y"}
+    c.update(over)
+    pf = os.path.join(dd, "p.json")
+    with open(pf, "w") as f:
+        json.dump({"run_id": "lang", "date": "2026-08-18", "kernel_names": ["k"],
+                   "validation_status": "accepted", "box_quiet": True, "held_out": False,
+                   "citations": [], "cards": [c]}, f)
+    return run(dd, "lint", "--file", pf)
+
+
+dd = fresh()
+_, out, _ = propose_card(dd)
+check("a new card naming its language is admitted", out.strip() in ("", "{}") or "language" not in out,
+      out[:300])
+_, out, _ = propose_card(dd, language="")
+check("a new card with no language is refused", "language is required" in out, out[:300])
+_, out, _ = propose_card(dd, language="cuda")
+check("a language outside the taxonomy is refused", "not an authoring-language id" in out, out[:300])
+_, out, _ = propose_card(dd, language="aiter")
+check("a library backend is not accepted as a language", "not an authoring-language id" in out,
+      out[:300])
+shutil.rmtree(dd)
+
+# The 135 cards that predate the field must stay lintable. Requiring it retroactively would force a
+# guess, and a guessed field is how 11 invented kernel symbols got into the corpus.
+dd = fresh()
+write(dd, "old.md", card("old"))
+_, out, _ = run(dd, "lint", "--cards")
+check("a card predating the language field still lints", json.loads(out)["cards_failing"] == 0,
+      json.dumps(json.loads(out)["failures"]))
+shutil.rmtree(dd)
+gate("a bogus language on an existing card is refused", "not an authoring-language id",
+     language="rust")
+
+# Adding the field only helps if the READ path shows it: discovery is "open INDEX.md and judge by
+# meaning", so a language recorded in frontmatter and absent from the index changes nothing.
+dd = fresh()
+write(dd, "fly.md", card("fly", language="flydsl"))
+run(dd, "index")
+with open(os.path.join(dd, "INDEX.md")) as f:
+    idx = f.read()
+check("language reaches the index line", "flydsl" in idx,
+      "\n".join(l for l in idx.splitlines() if "fly.md" in l))
 shutil.rmtree(dd)
 
 # A well-formed card must pass: a gate that rejects everything is not a gate.

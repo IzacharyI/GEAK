@@ -98,9 +98,16 @@ fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (b
      (**pick from the `## keyword vocabulary` appendix at the bottom of `INDEX.md`** — reusing an existing
      term is what keeps sibling cards clustered; coin a new one only when nothing there fits), `kernels`
      (the concrete kernel
-     symbol / entry point you measured), `platforms`, `kernel_class`, `regime` — followed by
+     symbol / entry point you measured), `platforms`, `kernel_class`, `regime`, `language` — followed by
      `key, layer: learned, levers, cost, lifecycle: active, type, confidence, effect, roofline,
      verified_on, last_seen`. Discovery lives on the card; that is what makes it findable.
+     **`language` is copied verbatim from `WINNER.language`.** It is the language the winning source
+     was DETECTED to be, not the one the run was asked for, and it is what lets a later run in one
+     language tell your card apart from a card measured in another. If `WINNER.language` is null the
+     detector refused to guess: omit the field and expect the proposal to be rejected — a card
+     labelled with a guessed language is worse than no card, because a wrong label gets trusted.
+     Never substitute `WINNER.requested_language` (author mode only, present so a mismatch between
+     what was asked for and what was written is visible); if the two differ, say so in `caution:`.
 4. Confidence tier: ★ single-run overlapping isolated A/B · ★★ single non-overlap or ≥2 consistent ·
    ★★★ ≥2 independent runs non-overlapping. Do not inflate.
 5. Set `verified_on` to today only if this run's A/B actually confirmed the effect on-box; else `null`.

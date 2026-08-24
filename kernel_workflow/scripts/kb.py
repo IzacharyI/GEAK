@@ -206,6 +206,21 @@ REQUIRED_HEADER_FIELDS = ("name", "description", "keywords", "platforms",
 # forbidden from naming a kernel, so the symbol genuinely was not recoverable) produced 11 invented
 # symbols across the corpus, one of them, `fused_moe_grouped_gemm`, in 17 cards. A grep aid that
 # sends the reader to the wrong card is worse than an absent one. Optional, and checked when given.
+# The language the card's finding was measured in. Required on a NEW card and absent from the 135
+# cards that predate it -- deliberately not backfilled, for the same reason `kernels` is optional:
+# nobody can recover it from a card body that is forbidden from naming a kernel, so a backfill would
+# be a guess, and this field only earns its place if a reader can trust it.
+#
+# Why it is required going forward: the read path is "open INDEX.md, judge by meaning", and until now
+# the index carried no language at all. A FlyDSL run therefore could not tell a FlyDSL card from a
+# Triton one, and `toolchain` could not stand in -- it is a whole-stack fingerprint, and `drain`
+# defaults it to "unknown", which is what all 133 cards carrying it say.
+#
+# Ids are taken verbatim from perf_knowledge/index/taxonomy.md ("Backends -- the Cartesian columns",
+# authoring-language rows). Library/auto backends (`aiter`, `hipblaslt`, ...) are NOT languages: a
+# card whose finding is "call this library" is not a card about how a kernel was written.
+AUTHORING_LANGUAGES = ("triton", "flydsl", "hip", "ck", "asm", "tilelang",
+                       "gluon", "rocwmma", "hipkittens", "mojo", "cutlass_port")
 MAX_DESCRIPTION_CHARS = 160          # README: the description IS the index line
 CARD_BODY_FIELDS = ("title", "lever", "apply", "stack", "verify", "pitfall", "caution", "effect",
                     "source")
@@ -328,6 +343,18 @@ def lint_card(card, kernel_names=(), strict_source=True, is_new=True):
         if int(card.get(fld, 0) or 0) != 0:
             errs.append(f"{fld} must be 0 on a NEW card — confirmations are earned by citations, "
                         f"applied by `drain`, never asserted by the author")
+
+    # `language` is required on a new card and merely validated on an old one, so the cards that
+    # predate the field stay lintable without anyone inventing a value for them.
+    lang = str(card.get("language", "")).strip()
+    if is_new and not lang:
+        errs.append(f"language is required on a NEW card: the index line is filtered on it, and "
+                    f"without it a run in one language reads cards measured in another. One of "
+                    f"{'|'.join(AUTHORING_LANGUAGES)}")
+    if lang and lang not in AUTHORING_LANGUAGES:
+        errs.append(f"language {lang!r} is not an authoring-language id from "
+                    f"perf_knowledge/index/taxonomy.md; expected one of "
+                    f"{'|'.join(AUTHORING_LANGUAGES)}")
 
     body_lines = sum(len(str(card.get(f, "")).splitlines()) or 1 for f in CARD_BODY_FIELDS)
     if body_lines > MAX_CARD_LINES:
@@ -782,6 +809,7 @@ def build_index(kb_dir):
             "keywords": list(dict.fromkeys(filter(None, (_kw_normalize(k) for k in arr(m.get("keywords")))))),
             "kernels": arr(m.get("kernels")), "platforms": arr(m.get("platforms")),
             "kernel_class": class_of(m), "regime": m.get("regime") or "",
+            "language": str(m.get("language") or ""),
             "confidence": st.group(0) if st else "★",
         })
 
@@ -796,7 +824,11 @@ def build_index(kb_dir):
         rows = sorted(groups[g], key=lambda c: (-len(c["confidence"]), c["name"]))
         body += f"\n## {g}\n"
         for c in rows:
-            scope = " · ".join([x for x in ["/".join(c["platforms"]), c["regime"]] if x])
+            # Language joins the scope prefix rather than the tag line below it: the prefix is what
+            # a reader scans to decide whether a card is even about their situation, and "measured in
+            # a different language" disqualifies a card as hard as "measured on a different gfx".
+            scope = " · ".join([x for x in ["/".join(c["platforms"]), c["regime"],
+                                            c["language"]] if x])
             body += f"- {'[' + scope + '] ' if scope else ''}{c['description']} {c['confidence']} — ({c['file']})\n"
             tags = " · ".join([x for x in [
                 f"kernels: {', '.join(c['kernels'])}" if c["kernels"] else "",
@@ -945,6 +977,9 @@ def cmd_drain(kb, a):
                     "platforms": card.get("platforms", []),
                     "kernel_class": card.get("kernel_class", "other"),
                     "regime": card.get("regime", ""),
+                    # No "unknown" default: the lint above already rejected a proposal without it,
+                    # and defaulting is how `toolchain` ended up reading "unknown" on every card.
+                    "language": card.get("language", ""),
                     "key": key, "layer": "learned",
                     "lifecycle": card.get("lifecycle", "active"),
                     "type": card.get("type", "lever"),
