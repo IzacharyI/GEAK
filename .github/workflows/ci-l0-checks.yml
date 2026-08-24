@@ -162,6 +162,10 @@ jobs:
           # the corpus and version_map were all built, tested, gated — and unreachable by the agent
           # that plans directions. A doc no role reads is a comment with a CI gate on it.
           python3 kernel_workflow/scripts/test_knowledge_reachable.py
+          # The two structural promises perf_knowledge/README.md makes about itself. They had been
+          # advertised in its banner and checked by nothing; the first run found 25 content files with
+          # no `## Sources`, so the banner had been wrong for a while with nothing to say so.
+          python3 perf_knowledge/test_docs_contract.py
           python3 e2e_workflow/scripts/tests/test_e2e_lane_defaults.py
           # The kernel KB must lint clean and its generated index must match the cards. `lint --cards`
           # now exits non-zero on failure, so this is a gate rather than a printout.

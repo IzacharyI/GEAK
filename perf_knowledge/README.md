@@ -17,9 +17,10 @@ It has two jobs:
 2. **Be a SOTA registry** — for **every `operator × backend` cell**, point at the *best known
    implementation(s)* with source, measured performance, applicability, knobs, and pitfalls.
 
-> **~586 docs · ~43,900 lines · 0 broken links · every content file ends with `## Sources`.**
-> 14× the file count of the original `perf_knowledge`. Built P0→P4 + hot-path enrichment, 2026-06-08
-> (see [`index/changelog.md`](index/changelog.md)).
+> **661 docs · ~60,300 lines. Links all resolve and every content file cites its sources** — both
+> checked by [`test_docs_contract.py`](test_docs_contract.py), not asserted here. Exemptions (indexes,
+> templates, vendored skills) are listed in that file with a reason each.
+> Built P0→P4 + hot-path enrichment from 2026-06-08 (see [`index/changelog.md`](index/changelog.md)).
 
 ---
 
