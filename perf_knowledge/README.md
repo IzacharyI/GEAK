@@ -30,6 +30,7 @@ It has two jobs:
 | **Pick the best backend for an operator** | [`index/sota_matrix.md`](index/sota_matrix.md) (human) · [`index/sota_registry.yaml`](index/sota_registry.yaml) (machine) → the operator's [`operators/<op>/backends/<backend>.md`](operators/) card |
 | **Decide what to even try** | [`index/decision_trees.md`](index/decision_trees.md) |
 | **See which axes keep paying and which keep closing** | [`index/run_recurrence.md`](index/run_recurrence.md) — base rates rolled up from the workflows' own learned cards (generated) |
+| **See how the same operator is written in six languages** | [`corpus/gemm_family.md`](corpus/gemm_family.md) — every tiling / LDS / MFMA / scheduling decision AITER states in FlyDSL, Triton, Gluon, CK, HIP and asm, with `file:line`. Facts only, no rankings (generated) |
 | **Understand an operator** | [`operators/<op>/overview.md`](operators/) (+ `tuning` / `numerics` / `fusion`) |
 | **Learn the hardware / a language / a library** | [`hardware/`](hardware/) · [`languages/`](languages/) · [`backends/`](backends/) |
 | **Apply a cross-cutting technique** | [`optimization/`](optimization/) · [`quantization/`](quantization/) |
@@ -48,6 +49,10 @@ It has two jobs:
 perf_knowledge/
 ├── index/         (11)  navigation + SOTA registry + taxonomy + sourcing rules + templates + generators
 │                        + run_recurrence (base rates fed back from workflow runs)
+├── corpus/         (4)  the same operator family written six ways, indexed from AITER at a named
+│                        commit: facts/*.yaml (machine) + gemm_family.md (human). Facts, not claims —
+│                        a decision that was MADE is readable from source; whether it was RIGHT is a
+│                        measurement, and those live in expert_skills/
 ├── hardware/      (27)  CDNA1–4 deep dives + shared (matrix core, memory, numerics)
 ├── languages/     (42)  triton · flydsl · hip · ck · asm · tilelang · rocwmma · hipkittens · mojo · cutlass
 ├── backends/      (35)  aiter · hipblaslt · ck_lib · rocblas/tunableop · fa_rocm · mori/rccl · miopen

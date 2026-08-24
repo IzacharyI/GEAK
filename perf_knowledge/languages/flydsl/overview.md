@@ -98,6 +98,17 @@ gfx (`..._gfx942`). Key arch behavior baked into aiter's wrappers:
   installed version. Use it when a recipe was validated on another version: the logic transfers, the
   call form has to be looked up, and the performance number has to be re-measured.
 
+**Answering a design question somebody has already answered:**
+- [`../../corpus/gemm_family.md`](../../corpus/gemm_family.md) — the same GEMM family as written in
+  FlyDSL, Triton, Gluon, CK, HIP and hand-written asm, indexed by decision (which MFMA, what tile,
+  how LDS is swizzled, where instruction order is pinned) with `file:line` into AITER at a named
+  commit. FlyDSL is the language where all of these become your problem — the table shows what the
+  other five did about each one. It records decisions, not verdicts: whether a choice was *right* is
+  a measurement, and those live in [`../../expert_skills/`](../../expert_skills/).
+- The same page carries AITER's shipped Triton sweep results grouped by `(gfx, variant, M bucket)`,
+  separating knobs every swept shape agreed on from knobs that moved. A configuration known to
+  compile and known to have been measured is a better starting point than a guessed tile.
+
 ## Sources
 - Kimi-K2.5 optimization with FlyDSL (FLIR, instruction-level control, +162% throughput): https://rocm.blogs.amd.com/artificial-intelligence/kimi-k2.5-optimize/README.html
 - aiter (engine that hosts FlyDSL): https://github.com/ROCm/aiter
