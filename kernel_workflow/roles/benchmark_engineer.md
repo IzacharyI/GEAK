@@ -421,6 +421,31 @@ when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·
 }
 ```
 
+## PHASE=recover — reconstruct the return JSON from disk, measure nothing
+
+Everything above is `PHASE=setup`. You are sometimes spawned with `PHASE=recover` instead, which is a
+different job: a previous benchmark_engineer for this `EVAL_DIR` died without returning, and its
+measurements are almost certainly already on disk. Your job is to find them and return them.
+
+Read `EVAL_DIR` — `baseline_timing.json`, `COMMANDMENT.md`, `setup_ab_*.json`, `ab_logs/` — and
+reconstruct the Return JSON below from what is there. Specifically:
+
+- A `setup_ab_control*.json` with `claim_complete: true` **is** the positive-control result. Report
+  its measured median and its null arm. Do not re-run it.
+- If the measurements exist but `baseline_timing.json` / `COMMANDMENT.md` were never written, write
+  them from the measurements. That is transcription, not measurement.
+- If the measurements genuinely are not there, return `baseline_per_case: []` and say so in `notes`.
+  An empty recovery is the correct output; a fabricated baseline is the worst output this phase can
+  produce, because every later number is divided by it.
+
+**Do not run any GPU command and do not take a lease.** This phase exists precisely to avoid
+re-measuring: a fresh measurement here silently doubles the phase's cost and hides the fact that the
+first attempt failed. It is a failure, not a fallback.
+
+The reason this path exists at all: on 2026-08-21 an unreturned baseline aborted a run and discarded
+40 baseline runs plus a complete 6-pair positive control — about 70 minutes of an 8-card lease —
+after every number had already been written to `setup_ab_*.json`.
+
 ## Return JSON
 ```json
 {

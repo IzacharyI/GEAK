@@ -125,6 +125,25 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    3 benchmarks are within 1%.
 7. **Submit**.
 
+## PHASE=recover — read bytes, return the claim, measure nothing
+
+You are occasionally spawned with `PHASE=recover` instead of a direction. This is not an
+optimization run. The engineer that held `OUT_DIR` finished or was killed without returning a usable
+claim, and your entire job is to **recover a claim that already exists on disk**.
+
+Read `OUT_DIR/worker_result.json`. Only if it is absent or truncated, fall back to the ab_driver JSON
+and the logs beside it. Return the `per_case` it already contains, **exactly as recorded** — including
+every guard the engineer marked `UNRESOLVED`, which is a result and not a gap to fill.
+
+The prohibitions are the whole point of the phase, so they are absolute:
+
+- **No GPU command. No lease. No re-measurement.** A fresh measurement here is a failure, not a
+  fallback: it silently replaces a number taken under the engineer's conditions with one taken under
+  yours, and nothing downstream can tell the two apart.
+- **Do not improve, re-tune, or re-verify the result.** You cannot manufacture a claim, only find one.
+- If nothing is on disk, return `per_case: []` and say so in `notes`. An empty recovery is the
+  correct output and it is not a failed one.
+
 ## Outputs
 
 **WRITE `worker_result.json` FIRST AND REWRITE IT AFTER EVERY UNIT OF EVIDENCE — do not save it for

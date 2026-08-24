@@ -1851,7 +1851,11 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         // RECOVER ONLY: no GPU, no lease, no re-measurement. This can surface a claim the engineer
         // already produced; it cannot manufacture one.
         const onDisk = await agentT(
-          roleAgent('optimize_engineer', 'recover',
+          // `engineer`, not `optimize_engineer` — the latter has never existed. roleAgent tells the
+          // agent to Read roles/<role>.md, so a wrong name sends it to a missing file and it
+          // improvises the procedure for the one path whose whole point is NOT to improvise.
+          // Wave 13 hit this in three consecutive rounds before the report named it.
+          roleAgent('engineer', 'recover',
             `The engineer for ${d.out_dir} did not return a usable claim. RECOVER ONLY: read ` +
             `${d.out_dir}/worker_result.json (and, only if that is absent or truncated, the ab_driver ` +
             'JSON and logs beside it) and return the claim it already contains. Do NOT run any GPU ' +
