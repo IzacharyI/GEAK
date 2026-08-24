@@ -281,6 +281,38 @@ cap, the lowest `confidence × freshness × earned-standing` card in THAT class 
 is in that product on purpose: ranking on stars and date alone let a card written this morning that
 nothing had ever tested outrank one cited and confirmed three times.
 
+## Where these cards go NEXT — the roll-up into `perf_knowledge/`
+
+A card is one run's conclusion, and the counters above only measure re-citations of the *same* card.
+That leaves the most common shape of repeated evidence unrecorded: a dozen independent runs on a
+dozen different kernels each concluding, separately, that the dispatch path was already at its floor.
+Twelve cards, no aggregate — and the aggregate is the useful part, because what a planner wants
+before spending a round is the **base rate**.
+
+`drain` therefore ends by regenerating
+[`perf_knowledge/index/run_recurrence.md`](../../../perf_knowledge/index/run_recurrence.md)
+(`perf_knowledge/index/_gen_run_recurrence.py`, CI checks it with `--check`). Per optimization axis it
+reports how many DISTINCT kernels it paid on, how many it was already closed on, and links every card
+behind both numbers — routed to the cross-operator table, to an `operators/<op>/` row, to a language,
+or to an architecture comparison. Distinct kernels rather than cards, because one campaign writes
+several cards over the same few kernels and counting cards would read that as broad measurement.
+
+Two properties are load-bearing, and both are enforced by
+`perf_knowledge/index/test_run_recurrence.py`:
+
+- **It never restates a claim.** Rows are counts and links; the sentences stay in the cards. The
+  generalization is the one thing no run measured, so a generator that paraphrased 135 cards into
+  curated prose would be inventing exactly the part nobody checked. It also makes Content rule 1
+  automatic — no card text is copied, so no absolute number can travel.
+- **Both sides, always.** 56 of the 135 cards here are anti-patterns, and on several axes the closed
+  side is the majority verdict. A digest of only the wins would sell an axis this tree has already
+  measured shut.
+
+Nothing about the card schema changes for this. Write the card; the roll-up is derived. The one thing
+worth knowing is that `keywords` is the axis vocabulary it groups on, which is the third reason to
+reuse a term from the published vocabulary before coining one: a synonym costs relevance in the index
+(above), and it splits a base rate here.
+
 ## How to UPDATE it after a run (write path) — CURATE, never blind-append
 Owner: **TechLead** (holds the global routing view; runs the `update_experience` step after Report).
 One transaction:

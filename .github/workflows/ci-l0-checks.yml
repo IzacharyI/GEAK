@@ -123,6 +123,7 @@ jobs:
             e2e_workflow/scripts/tests/test_vllm_adapter_profiler_config.py \
             perf_knowledge/expert_skills/_contribute/test_validation_env.py \
             perf_knowledge/languages/flydsl/test_version_map.py \
+            perf_knowledge/index/test_run_recurrence.py \
             kernel_workflow/scripts/test_detect_language.py \
             geak/test_bootstrap.py
 
@@ -160,6 +161,10 @@ jobs:
           # now exits non-zero on failure, so this is a gate rather than a printout.
           python3 kernel_workflow/scripts/kb.py --kb-dir kernel_workflow/knowledge/learned lint --cards
           python3 kernel_workflow/scripts/kb.py --kb-dir kernel_workflow/knowledge/learned index --check
+          # Same rule one level up: the perf_knowledge roll-up of those cards is generated, so a
+          # commit that adds a card and not the regenerated digest is a tree where the curated base
+          # and the cards disagree. Gated rather than advisory because the fix is one command.
+          python3 perf_knowledge/index/_gen_run_recurrence.py --check
 
       # Renders the per-file table + total into the run's Job Summary, which is
       # where the coverage percentage is read from the GitHub web UI. Runs even

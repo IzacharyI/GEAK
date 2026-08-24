@@ -40,6 +40,7 @@ import glob as globmod
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import date, datetime
 
@@ -1156,7 +1157,36 @@ def cmd_drain(kb, a):
     # drift" and "the index can never drift as long as everyone remembers"; a stale index after a
     # bulk import is indistinguishable from a KB that learned nothing.
     open(os.path.join(kb.root, "INDEX.md"), "w").write(build_index(kb.root))
+    refresh_recurrence()
     return 0
+
+
+# The perf_knowledge roll-up of these cards. Regenerated from HERE, for the reason stated above
+# INDEX.md: the digest is a projection of the cards, and a projection an operator has to remember to
+# refresh is a projection that will be stale. It is the last step of the ingest rather than a
+# separate chore, so "cards changed" and "the curated base reflects them" are one action.
+RECURRENCE_GEN = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "perf_knowledge", "index", "_gen_run_recurrence.py")
+
+
+def refresh_recurrence():
+    """Best-effort, reported either way. Never fatal.
+
+    Soft on purpose, in both directions. A checkout without `perf_knowledge/` (this tool serves
+    several trees) must still be able to drain, so a missing generator is a note and not an error.
+    And by the time this runs the cards are already on disk: raising here would abort a half-applied
+    ingest, which is strictly worse than a stale digest that CI's `--check` will catch on the way in.
+    """
+    if not os.path.exists(RECURRENCE_GEN):
+        print("note: no perf_knowledge/index/_gen_run_recurrence.py in this checkout; "
+              "the run-recurrence digest was not refreshed")
+        return
+    r = subprocess.run([sys.executable, RECURRENCE_GEN], capture_output=True, text=True,
+                       check=False)
+    print((r.stdout or r.stderr).strip() or "run-recurrence digest: no output")
+    if r.returncode != 0:
+        print(f"note: the digest generator exited {r.returncode}; the cards ARE written. "
+              f"Re-run `python3 {os.path.relpath(RECURRENCE_GEN)}` once it is fixed.")
 
 
 def cmd_doctor(kb, a):

@@ -140,6 +140,13 @@ fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (b
    If `propose` rejects the card it prints exactly what it refused, and NOTHING is written. Fix the
    card, never the rule.
 
+   Nor do you roll anything up into `perf_knowledge/`. `drain` regenerates
+   `perf_knowledge/index/run_recurrence.md` itself as its last step — the per-axis base rates
+   ("paid on N distinct kernels, already closed on M") that no single card can hold. It is derived
+   from the `keywords` on the cards, so the only thing you do for it is reuse a term from the
+   published vocabulary instead of coining a near-synonym: a new spelling splits a base rate that
+   would otherwise have counted your run.
+
 ## Do NOT touch the cited cards' counters
 
 `CITATIONS` is shown to you as CONTEXT — which of your directions a card seeded, and what the

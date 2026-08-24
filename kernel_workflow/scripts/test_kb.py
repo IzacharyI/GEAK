@@ -11,6 +11,7 @@ Pure stdlib on a throwaway tmp dir: no GPU, no agent, no repo mutation, no netwo
     python3 kernel_workflow/scripts/test_kb.py
 """
 import importlib.util
+import io
 import json
 import os
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("kb", os.path.join(HERE, "kb.py"))
@@ -484,6 +486,33 @@ _, out, _ = run(dd, "lint", "--cards")
 check("a well-formed card is admitted", json.loads(out)["cards_failing"] == 0,
       json.dumps(json.loads(out)["failures"]))
 shutil.rmtree(dd)
+
+# ---------------------------------------------------------------------------------------------
+# The hand-off to perf_knowledge. `drain` regenerates the run-recurrence digest for the same
+# reason it regenerates INDEX.md: a projection an operator has to remember to refresh is one
+# that will be stale, and a stale roll-up is indistinguishable from a base that learned nothing.
+# ---------------------------------------------------------------------------------------------
+check("the recurrence generator drain points at exists", os.path.exists(kb.RECURRENCE_GEN),
+      kb.RECURRENCE_GEN)
+
+# A missing generator must be a NOTE, not a failure: this tool serves trees that have no
+# perf_knowledge/ beside them, and draining cards must not depend on the curated base being there.
+_saved, kb.RECURRENCE_GEN = kb.RECURRENCE_GEN, "/nonexistent/_gen_run_recurrence.py"
+_buf = io.StringIO()
+with redirect_stdout(_buf):
+    kb.refresh_recurrence()
+kb.RECURRENCE_GEN = _saved
+check("a missing digest generator is reported, not raised", "note:" in _buf.getvalue(),
+      _buf.getvalue())
+
+# And the cards must already be on disk when it runs: the digest is derived from them, so the
+# order is write-then-project. Asserted on the source because the failure it guards against —
+# projecting the pre-drain tree — produces a digest that looks right and is one ingest behind.
+with open(os.path.join(os.path.dirname(os.path.abspath(kb.__file__)), "kb.py")) as f:
+    _src = f.read()
+_body = _src[_src.index("def cmd_drain"):]
+check("the digest is refreshed AFTER the cards and index are written",
+      _body.index("refresh_recurrence()") > _body.index('"INDEX.md"'), "")
 
 print()
 if FAILED:
