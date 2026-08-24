@@ -86,6 +86,46 @@ emitted ISA/IR text after stripping symbol names; or compare the resolved cache 
 Any one of the three is sufficient. Doing none of them makes your result provisional at best and void
 at worst.
 
+## The same instrument, run backwards: proving a guard *cannot* move
+
+Everything above uses ISA identity as a **failure** detector — two arms that hash the same did not
+really run two arms. The identical hash is also a **result**, and it is the cheapest result in this
+workflow, because it settles a guard without spending a lease on it.
+
+The situation: your change helps the shapes it targets and appears to cost a few percent on a
+small guard. The instinct is to buy more reps until the noise resolves. Do not — first ask whether
+the compiled code for that shape differs at all between the arms. If both arms emit **byte-identical
+ISA** for the guard's shape, the guard's measured delta is noise *by construction*: the same binary
+cannot be slower than itself. Reproduce the hash once per arm, put both in `activation_evidence`,
+and the guard is closed at zero GPU cost. Confirmed on this workflow: a candidate that read −2.5% on
+a small guard was resolved this way — both arms at `sha 9b3da4e5b1181d5a` for that shape — instead of
+by ten more paired reps.
+
+This inverts the usual burden and it is worth stating plainly: **a measurement can only tell you a
+guard did not move to within its noise floor; identical ISA tells you it could not have moved.** When
+both are available, the hash is the stronger claim and the cheaper one. Reach for it whenever a
+change is gated on a compile-time predicate (a tile size, a block-count threshold, a dtype branch)
+and some guard's shape falls outside the predicate.
+
+### A shape that compiles a different kernel config is a different experiment
+
+The precondition for the above, and a trap on its own. In a JIT'd kernel with shape-driven tuning,
+each guard shape may select a **different compiled configuration** — different tile shape, different
+persistence mode, different scratch budget — under the same source. So a change written against one
+configuration is *structurally incapable* of touching a guard that compiles another one, and any
+delta you measure there is attributable to something else.
+
+Concretely, on this workflow the large guards compiled a persistent `BM=128` config while the small
+guards compiled `t64x512x256 … dcu128 … pc0 ptr0` — `BM=64`, non-persistent, zero scratch. A
+candidate gated on `BM=128` could not reach the small guards at all, which is both why their ISA was
+identical and why a per-guard attribution written without that fact would have been wrong.
+
+So: **enumerate the compiled config per guard before attributing any per-guard result.** Dump the
+kernel name / cache key that each guard's shape resolves to and put the table in the report next to
+the per-guard numbers. It costs one run of the harness with the JIT's naming visible, and it turns
+"this guard is inexplicably flat" into "this guard compiles a config the change does not touch",
+which is an explanation rather than an anomaly.
+
 ## Do not confuse this with activation
 
 They fail at different layers and have different remedies:
