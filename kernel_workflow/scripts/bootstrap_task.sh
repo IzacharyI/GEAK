@@ -20,6 +20,11 @@
 #   --mori-root <dir>    MORI checkout                 (default: $MORI_ROOT, else probed)
 #   --jit-dir <dir>      prebuilt AITER JIT cache      (default: $AITER_JIT_DIR, else probed)
 #   --known-reference <csv>  paths the provenance check must refuse (default: none)
+#   --args-out <file>    where launch_args.json is written. Defaults to <out>/../launch_args.json,
+#                        EXCEPT when --known-reference is set: those paths must not be written into
+#                        the tree an engineer walks, so the default moves to
+#                        $HOME/geak_launch/<workspace>/launch_args.json and an in-tree --args-out
+#                        is refused.
 #   --force              overwrite a non-empty --out
 #   --check              probe the environment and exit; assemble nothing
 #   --no-probe           assemble without probing. For inspecting a task off-machine and for the
@@ -39,6 +44,7 @@ BASELINE= OUT= EXP_ROOT= STATE_DIR= FORCE=0 CHECK_ONLY=0 PROBE=1
 MORI_ROOT_IN="${MORI_ROOT:-}"
 JIT_DIR_IN="${AITER_JIT_DIR:-}"
 KNOWN_REF=""
+ARGS_OUT="${ARGS_OUT:-}"
 
 die() { echo "bootstrap_task: $*" >&2; exit "${2:-1}"; }
 
@@ -52,6 +58,7 @@ while [ $# -gt 0 ]; do
     --mori-root) MORI_ROOT_IN="${2:?}"; shift 2 ;;
     --jit-dir) JIT_DIR_IN="${2:?}"; shift 2 ;;
     --known-reference) KNOWN_REF="${2:?}"; shift 2 ;;
+    --args-out) ARGS_OUT="${2:?}"; shift 2 ;;
     --force) FORCE=1; shift ;;
     --check) CHECK_ONLY=1; shift ;;
     --no-probe) PROBE=0; shift ;;
@@ -157,6 +164,31 @@ PARENT="$(dirname "$OUT")"
 EXP_ROOT="${EXP_ROOT:-$PARENT/geak_runs}"
 STATE_DIR="${STATE_DIR:-$PARENT/geak_state/$TASK}"
 
+# WHERE THE LAUNCH ARGS LAND, and why it is not next to the workspace.
+#
+# launch_args.json carries `known_reference_paths` -- the very paths the provenance check exists to
+# refuse. The default used to be the workspace's own parent directory, i.e. the directory it sits
+# in, which is exactly the tree an engineer walks. That publishes the answer's address in the one
+# place the containment rule says it must never appear ("grep -rn <reference> over the workspace tree
+# must come back empty except for the detector tooling"), and it does it silently, at assembly time,
+# in a file whose whole purpose is to hold the paths nobody is allowed to read. Reference isolation
+# is by DISTANCE -- under uid 0 a chmod quarantine is inert -- so the fix has to be the location.
+#
+# So: with no reference declared the old default is fine and stays. With one declared, the args go
+# outside the workspace's tree unless the caller says otherwise, and the choice is printed.
+if [ -z "$ARGS_OUT" ]; then
+  if [ -n "$KNOWN_REF" ]; then ARGS_OUT="$HOME/geak_launch/$(basename "$OUT")/launch_args.json"
+  else ARGS_OUT="$PARENT/launch_args.json"; fi
+fi
+mkdir -p "$(dirname "$ARGS_OUT")"
+ARGS_OUT="$(cd "$(dirname "$ARGS_OUT")" && pwd)/$(basename "$ARGS_OUT")"
+# Refuse rather than warn. A warning here scrolls past under the probe output, and the file is
+# already written by the time anyone reads it.
+case "$ARGS_OUT" in
+  "$PARENT"/*|"$OUT"/*)
+    [ -n "$KNOWN_REF" ] && die "refusing to write launch args naming a reference path to $ARGS_OUT: that is inside the workspace tree an engineer walks. Pass ARGS_OUT=<somewhere else>." 1 ;;
+esac
+
 echo "assembling '$TASK' into $OUT"
 # The workspace IS the aiter that gets imported (every command sets PYTHONPATH="$PWD"), so it has to
 # be a real copy, not a symlink or a worktree of the baseline — an engineer editing it must not be
@@ -173,7 +205,7 @@ subst() {
       -e "s|\${KNOWN_REFERENCE_PATHS}|$KNOWN_REF|g" "$1"
 }
 subst "$TASK_DIR/GEAK_TASK.md" > "$OUT/GEAK_TASK.md"
-subst "$TASK_DIR/launch_args.json" > "$PARENT/launch_args.json"
+subst "$TASK_DIR/launch_args.json" > "$ARGS_OUT"
 mkdir -p "$EXP_ROOT" "$STATE_DIR"
 
 # INLINE THE TASK TEXT INTO THE LAUNCH ARGS, because nothing else carries it.
@@ -191,7 +223,7 @@ mkdir -p "$EXP_ROOT" "$STATE_DIR"
 # workflow script cannot touch the filesystem, so a filename in args is a promise only an agent can
 # keep, while text in args is in the prompt by construction. It happens BEFORE the placeholder
 # check below so the emitted file's no-placeholder guarantee covers the task text too.
-python3 - "$PARENT/launch_args.json" "$OUT/GEAK_TASK.md" <<'PY' || die "failed to inline the task text into launch_args.json" 2
+python3 - "$ARGS_OUT" "$OUT/GEAK_TASK.md" <<'PY' || die "failed to inline the task text into launch_args.json" 2
 import json, sys
 args_path, task_path = sys.argv[1], sys.argv[2]
 with open(args_path) as f: args = json.load(f)
@@ -207,7 +239,7 @@ PY
 
 # A placeholder that survived substitution is a silent misconfiguration: the run starts, the path
 # does not resolve, and the failure surfaces an hour later as an import error inside a lease.
-if grep -n '\${[A-Z_]*}' "$OUT/GEAK_TASK.md" "$PARENT/launch_args.json"; then
+if grep -n '\${[A-Z_]*}' "$OUT/GEAK_TASK.md" "$ARGS_OUT"; then
   die "unresolved placeholders above — the workspace is not runnable" 2
 fi
 if [ -z "$KNOWN_REF" ]; then
@@ -221,7 +253,7 @@ cat <<EOF
 done.
   workspace   $OUT
   task        $OUT/GEAK_TASK.md
-  launch args $PARENT/launch_args.json
+  launch args $ARGS_OUT
   exp root    $EXP_ROOT
   state dir   $STATE_DIR
 

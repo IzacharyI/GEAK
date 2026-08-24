@@ -138,6 +138,36 @@ fs.writeFileSync(copied, 'BASELINE_MARKER = 2\n');
 ok(fs.readFileSync(path.join(base, 'aiter', 'ops', 'flydsl', 'marker.py'), 'utf8') === 'BASELINE_MARKER = 1\n',
    'editing the workspace cannot mutate the baseline — the denominator stays frozen');
 
+console.log('\n# the reference paths are not written into the tree an engineer walks');
+// launch_args.json holds `known_reference_paths` — the addresses the provenance check exists to
+// refuse. The default destination was the workspace's own parent, so assembling a capability-eval
+// wave published the answer's location inside the walk path, silently, in the one file whose whole
+// job is to hold what nobody may read. Containment here is by DISTANCE (under uid 0 a chmod
+// quarantine is inert), so only the location can fix it.
+const REF = '/root/geak_reference/aiter-m25-reference';
+const wsr = path.join(tmp, 'wsref');
+// Genuinely outside: `tmp` IS the workspace's parent, which is precisely the swept tree, so a
+// subdirectory of it would not be outside anything.
+const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'gk_boot_args_'));
+const argsOut = path.join(outside, 'launch_args.json');
+r = run(['--no-probe', '--baseline', base, '--out', wsr, '--known-reference', REF,
+         '--args-out', argsOut]);
+ok(r.code === 0 && fs.existsSync(argsOut), '--args-out places the launch args where it is told');
+ok(JSON.parse(fs.readFileSync(argsOut, 'utf8')).known_reference_paths === REF,
+   'and the reference path is still carried to the script, which is what VERIFY needs');
+ok(!fs.existsSync(path.join(tmp, 'launch_args.json')) ||
+   !fs.readFileSync(path.join(tmp, 'launch_args.json'), 'utf8').includes(REF),
+   'nothing naming the reference is left beside the workspace');
+r = run(['--no-probe', '--baseline', base, '--out', path.join(tmp, 'wsref2'),
+         '--known-reference', REF, '--args-out', path.join(tmp, 'launch_args.json')]);
+ok(r.code === 1 && /refusing to write launch args/.test(r.out),
+   'an in-tree --args-out is REFUSED, not warned about — a warning scrolls past and the file is already written');
+// The no-reference case must keep the old, convenient default: this rule is about the reference,
+// not about making every assembly harder.
+r = run(['--no-probe', '--baseline', base, '--out', path.join(tmp, 'wsplain')]);
+ok(r.code === 0 && fs.existsSync(path.join(tmp, 'launch_args.json')),
+   'with no reference declared the args still land next to the workspace, as before');
+
 console.log('\n# a non-empty --out is not silently clobbered');
 r = run(['--no-probe', '--baseline', base, '--out', ws]);
 ok(r.code === 1 && /--force/.test(r.out), 'a populated output dir is refused unless --force is given');
