@@ -185,6 +185,29 @@ analysis below exactly as before.)
    mapped to specialties, and which round-1 results could later compound/integrate. If a kk operator
    was resolved, note the relevant SOTA levers/knobs it surfaces (as reference hypotheses to measure).
 
+6a. **The ladder in `candidate_directions` is the machine-readable copy of that strategy, and it is
+   the only copy anything downstream can check.** Give every rung a short stable `id` (`D0`, `D1`, …)
+   that matches the heading you use in `roadmap.md`, and fill in three fields that prose cannot
+   carry:
+   - `gated_on` — the rung ids that must have run **to spec** before this one's result means
+     anything. Note *to spec*, not *successfully*: a prerequisite is usually what makes a result
+     interpretable, not what makes it likelier to win.
+   - `mandatory_arms` — arms without which the rung cannot be read at all. If a rung needs a
+     publish-only arm to price producer cost separately from consumer benefit, that is not advice
+     in the `why` paragraph; put it here, because the round that runs the rung will be planned by
+     an agent that reads the field and may not read the paragraph.
+   - `is_positive_control` — set it on the rung that IS this run's control, if one of them is. A
+     run whose designated control is never dispatched has no control, and every null it reports is
+     ambiguous between "no effect" and "no instrument".
+
+   This ordering is not decoration and it is not free to lose. A wave wrote a correct four-rung
+   ladder ending in the exact fused shape the program existed to produce, and then planned every
+   round from the profile instead: the bounding readout never ran, the rung designated as the
+   positive control never ran (so the run improvised a substitute mid-flight), the readiness rung
+   ran first and without its own mandatory arm, read negative — and the fusion rung, gated on it,
+   was never proposed at all. Six directions, and the top of the ladder was never reached. Rungs
+   are how the next phase knows what it still owes.
+
 Return JSON:
 ```json
 {
@@ -195,7 +218,11 @@ Return JSON:
   "bottleneck_guess": "memory|compute|latency|lds|overhead|unknown",
   "roadmap_summary": "3-6 sentences",
   "candidate_directions": [
-    {"title": "...", "specialty": "algorithm|memory|compute|host_runtime|distributed", "why": "..."}
+    {"id": "D0", "title": "...", "specialty": "algorithm|memory|compute|host_runtime|distributed",
+     "why": "...",
+     "gated_on": ["<rung ids that must have RUN TO SPEC before this one is interpretable>"],
+     "mandatory_arms": ["<arm without which this rung's result cannot be read, e.g. a publish-only arm>"],
+     "is_positive_control": false}
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",
@@ -316,6 +343,8 @@ Inputs: `EVAL_DIR`, `ROUND` (1-based), `BUDGET_REMAINING` (hard cap on direction
 `PROFILE_SUMMARY` (path + inline), and `HISTORY` (the insight blackboard + hypothesis ledger from
 prior rounds — see below). Also the current best per-case table. Plus `KERNEL_KNOWLEDGE_DIR`,
 `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` (the kk pointer resolved in analyze; may be empty).
+And **`ROADMAP_LADDER`** (the `candidate_directions` you ranked in `analyze`, inline) +
+**`LADDER_DISPATCHED`** (the rung ids taken so far, across all rounds) + `ROADMAP` (the path).
 
 **DEEP-MODE hooks (act on these ONLY if present in your inputs; otherwise ignore — a normal run never
 passes them):**
@@ -342,6 +371,25 @@ Your job: decide this round's directions (or stop). Re-read `geomean_levers.md` 
 optimization knowledge first.
 
 Rules:
+
+0. **Plan against `ROADMAP_LADDER`, and account for every rung you do not take.** Set
+   `roadmap_rung` on each direction to the rung id it implements, or to the literal `off_ladder`.
+   Set `rung_deviation` whenever the direction is `off_ladder`, is taken out of the ladder's order,
+   or has an unsatisfied `gated_on` — one sentence saying what is being displaced and what happens
+   to it. Three consequences follow and none of them is optional:
+   - **A rung's `gated_on` is about interpretability, not about odds.** Taking a rung before its
+     prerequisite usually does not make it lose; it makes its result unreadable, and an unreadable
+     negative closes the rungs above it exactly as hard as a real one would.
+   - **A rung's `mandatory_arms` are part of the direction's `prompt`, verbatim.** If you dispatch
+     a rung and drop one of its mandatory arms, you have dispatched a different experiment under
+     that rung's name — and the ladder above it will be gated on a result that was never produced.
+   - **`is_positive_control` outranks expected speedup.** Dispatch it early. Until it has run, a
+     null anywhere in this wave cannot be distinguished from a dead instrument.
+   Leaving the ladder is allowed and is often right — a round's measurements can be better evidence
+   than the plan that preceded them. Leaving it *silently* is what produces a wave that spends six
+   directions and never proposes its own top rung. If the ladder is now wrong, say that in
+   `reasoning`; that is a finding, and the next wave inherits it.
+
 1. **Default to USING the budget — stopping early is the exception, not the default.** Unspent
    budget is wasted optimization, and the biggest wins are often found in LATER rounds (after
    integration shifts the bottleneck). Two rules:
@@ -544,9 +592,20 @@ them as JSON so the script can thread them into the next `plan_round`:
 
 - **Insight blackboard**: durable, transferable findings ("transposed native input saves ~100us of
   host transpose"; "dispatch count dropped 4→1, small shapes now ~2x faster"; "L2 already 99%").
-- **Hypothesis ledger**: one row per direction tried — expected vs actual speedup, verdict
-  (confirmed / partial / dead-end), and a one-line lesson. Re-planning must avoid confirmed
-  dead-ends.
+- **Hypothesis ledger**: one row per direction tried — expected vs actual speedup, its
+  `roadmap_rung`, verdict, and a one-line lesson. Re-planning must avoid confirmed dead-ends.
+
+  **Verdict by SPEC, not by result.** `dead_end` means the direction was executed as specified and
+  lost. A direction that dropped one of its rung's `mandatory_arms`, or ran with an unsatisfied
+  `gated_on`, is **`unresolved`** however clean its numbers are — it measured a different
+  experiment under that rung's name. The distinction is load-bearing because `plan_round` treats a
+  `dead_end` as closed, and every rung gated on it closes with it. A wave lost its acceptance-shape
+  fusion direction exactly this way: the readiness rung it was gated on ran without the
+  publish-only arm that would have priced producer cost separately from consumer benefit, read a
+  clean and reproducible 8/8 negative, was filed `dead_end`, and the fusion rung above it was never
+  proposed. The measurement was sound. The verdict was not, because the arm that made it
+  interpretable was never run. Say which arm was missing in the `lesson`, so the rung can be
+  re-opened rather than re-derived.
 
 **Return only THIS round's insights. The board is merged, not replaced.** The script keeps every
 prior entry, tags each with the round it first appeared in, and hands the whole board to the next
@@ -591,7 +650,8 @@ Return JSON:
   "insights": ["durable finding 1", "..."],
   "ledger": [
     {"direction": "r1_d0", "specialty": "...", "expected": 2.0, "actual": 3.4,
-     "verdict": "confirmed|partial|dead_end", "lesson": "..."}
+     "roadmap_rung": "D2|off_ladder",
+     "verdict": "confirmed|partial|unresolved|dead_end", "lesson": "..."}
   ],
   "bottleneck_now": "memory|compute|latency|lds|overhead|...",
   "suggest_next": "one-line steer for next round (or 'consider stopping')"

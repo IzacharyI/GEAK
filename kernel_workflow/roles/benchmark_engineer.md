@@ -220,8 +220,24 @@ harness can *see* anything. Those are different properties and only one of them 
 measured: a harness that returns the same number no matter what you do is maximally "reliable".
 
 `POSITIVE_CONTROL` names a change whose effect is **already known from a prior measurement**, so the
-answer is not in question — only your instrument is. Run it exactly as `how` describes, changing
-nothing else, on the guard named in `guard` (or the whole suite if none):
+answer is not in question — only your instrument is.
+
+**Before you run it: prove the knob exists in the tree you will run it in.** `grep` the tree for the
+env var / flag / symbol `how` names, and report the result as `switch_present` (and the exact
+command you ran as `switch_checked`). This costs seconds and it is not optional, because the failure
+it catches produces a *perfectly well-formed reading*: if the knob is absent, both arms execute
+identical code and you measure the session's drift, which is a number that passes every check
+looking only at numbers. This has happened — a prescribed control named an env var that existed in
+no tree in the run, measured −1.00%, and was a base-vs-base null wearing a control's costume; the
+wave only avoided proceeding on an unproven instrument because someone went looking. **A control
+that reads ≈0 is far more likely absent than the instrument is dead — check before you conclude.**
+If the switch is not there, say so plainly: that is a launch-args defect, not your failure, and the
+correct response is to build a synthetic control (next section) and declare
+`magnitude: 'constructed'` — not to hunt for the switch in some other workspace and quietly point
+the control at it.
+
+Then run it exactly as `how` describes, changing nothing else, on the guard named in `guard` (or the
+whole suite if none):
 
 - Use the **same interleaving discipline** the COMMANDMENT requires of real candidates: A,B,A,B,
   **≥5 pairs**, paired delta, rank-max on multi-rank.
@@ -463,7 +479,10 @@ after every number had already been written to `setup_ab_*.json`.
   "weights_provenance": "trace|caller|regime_prior|mixed",
   "num_test_cases": 0,
   "reliable": true,
-  "positive_control": {"ran": true, "measured_pct": 0.0, "expected_lo": 0.0, "expected_hi": 0.0,
+  "positive_control": {"ran": true,
+                       "switch_present": true,
+                       "switch_checked": "<the exact grep you ran and what it returned>",
+                       "measured_pct": 0.0, "expected_lo": 0.0, "expected_hi": 0.0,
                        "passed": true, "reps": 5, "null_arm_pct": 0.0,
                        "magnitude": "recorded | constructed",
                        "control_pairs_pct": [0.0], "null_pairs_pct": [0.0],

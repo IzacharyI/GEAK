@@ -115,6 +115,30 @@ ok(r.undershoot === false && r.ok === false,
    'but 1.93% is under half the 4.0% target, the signature of an injection that never took ' +
    'effect, so it still aborts -- separation is not a way past that floor');
 
+// --- 7. the absent switch: a well-formed reading with nothing behind it -------------------------
+// The pre-flight, and it outranks everything above. If the knob `how` names is not in the tree, the
+// two arms ran identical code and `measured_pct` is the session's drift. A wave shipped a prescribed
+// control whose env var existed in no tree in the run; it read -1.00% and nothing in the numbers
+// could have told anyone. So the gate is given a fact the numbers cannot supply, and honours it.
+console.log('\n# an absent switch is not a reading');
+{
+  const textbook = { ran: true, measured_pct: -5.2, control_pairs_pct: [-5.1, -5.4, -4.9, -5.6, -5.2],
+                     null_pairs_pct: [0.3, -0.4, 0.2, 0.5, -0.3], null_arm_pct: 0.06 };
+  ok(gate(textbook, PC).ok === true, 'a textbook control passes when the switch question is not raised');
+  ok(gate({ ...textbook, switch_present: true }, PC).ok === true,
+     'and still passes when the switch is confirmed present');
+  const absent = gate({ ...textbook, switch_present: false }, PC);
+  ok(absent.ran === false,
+     'switch_present:false means the control DID NOT RUN, however good the numbers look');
+  ok(absent.ok === false,
+     'so it fails the gate — an unproven instrument must not be certified by its own drift');
+  // Historical controls never reported the field. If undefined changed the verdict, every recorded
+  // control in every prior run would re-decide on replay, which is exactly what replay is for
+  // catching. Keep the default inert.
+  ok(gate({ ...textbook, switch_present: undefined }, PC).ok === true,
+     'an unreported switch_present is inert, so historical controls replay unchanged');
+}
+
 console.log(failures
   ? `\nFAILED: ${failures} assertion(s).`
   : '\nPASS: resolution has two routes, and the second one rejects the case it was written for.');

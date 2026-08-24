@@ -407,6 +407,21 @@ const ANALYZE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
   modifiable_files: { type: 'array', items: { type: 'string' } },
   bottleneck_guess: { type: 'string' }, roadmap_summary: { type: 'string' },
+  // THE LADDER. Analyze's ranked candidate list — and the only place the run records what the
+  // ORDER was and what each rung is CONDITIONAL on. Each entry should carry, beyond the free-form
+  // fields: `id` (short, stable, quotable — `D0`, `D1`, …), `gated_on` (rung ids that must have
+  // been *executed to spec* first, [] if none), `mandatory_arms` (arms without which the rung's
+  // result cannot be interpreted, e.g. a publish-only arm that prices producer cost separately
+  // from consumer benefit), and `is_positive_control` when the rung IS this run's control.
+  //
+  // Why the conditions have to be structured rather than prose. Wave 13's Analyze wrote a correct
+  // four-rung ladder — bounding readout, then a positive control, then a readiness signal, then the
+  // persistent fusion gated on the readiness signal — into `roadmap.md` and this field, and then
+  // every round planned from the profile instead. D0 and D1 never ran; D2 ran first, in one
+  // implementation that omitted its own mandatory publish-only arm; it read negative; and D3, the
+  // acceptance-shape fusion, was never proposed because its gate was written against D2. The
+  // ladder was right and it was structurally an orphan. Prose cannot be checked against what was
+  // dispatched. A list of ids can. See roadmapLadderGate.
   candidate_directions: { type: 'array', items: { type: 'object', additionalProperties: true } },
   // perf_knowledge resolution (REFERENCE ONLY): the operator/language this kernel maps to in the
   // AMD perf_knowledge base, plus the most relevant card paths, so engineers read focused context
@@ -485,7 +500,15 @@ const BENCH_SCHEMA = obj({
   // Result of args.positive_control, when one was supplied. `measured_pct` is the delta the harness
   // actually recovered for a change whose effect is already known; `passed` is whether it landed in
   // the expected band. This is the run's evidence that its own measurement loop can SEE a real win.
-  //   {ran, measured_pct, expected_lo, expected_hi, passed, reps, null_arm_pct, note}
+  //   {ran, switch_present, switch_checked, measured_pct, expected_lo, expected_hi, passed, reps,
+  //    null_arm_pct, note}
+  // `switch_present` is the pre-flight: does the knob `how` names actually EXIST in the tree the
+  // control will run in? It is separated from the reading because the failure it catches produces
+  // a perfectly well-formed reading. A prescribed control named an env var absent from every tree
+  // in the run; both arms therefore executed the same code; it measured -1.00%, a base-vs-base null
+  // wearing a control's costume, and the only reason the wave did not proceed on a dead instrument
+  // is that an engineer went looking. Absent switch => the control did not run, whatever number
+  // came back.
   // `control_pairs_pct` and `null_pairs_pct` — the individual paired deltas, not just their medians —
   // are read by the gate: sign agreement across pairs and the WORST null pair are what separate a
   // small real effect from a small piece of drift, and a median hides both.
@@ -543,6 +566,16 @@ const PLAN_SCHEMA = obj({
       pipe_util_pct: { type: 'number' },
       headroom_basis: { type: 'string' },
       graph_refs: { type: 'array', items: { type: 'string' } }, // task_graph node/edge ids this direction acts on
+      // Binds the direction to Analyze's LADDER the way `fills_pipe` binds it to the pipe table.
+      // `roadmap_rung` is the candidate_directions id this direction implements, or the literal
+      // `off_ladder`. `rung_deviation` is REQUIRED whenever the rung is off_ladder, or is being
+      // taken out of the ladder's order, or has unsatisfied `gated_on`: say what is being skipped
+      // and what happens to it. Skipping a rung is allowed — the ladder is a plan, and the round's
+      // evidence may be better than it. Skipping one silently is what is not: that is how a run
+      // loses its own positive control and its own acceptance-shape direction in the same wave
+      // without either loss appearing anywhere in the log.
+      roadmap_rung: { type: 'string' },
+      rung_deviation: { type: 'string' },
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -1154,6 +1187,118 @@ function pipeOccupancyGate(rt, directions) {
 }
 // <</REPLAY:pipe_occupancy_gate>>
 
+// <<REPLAY:roadmap_ladder_gate>>
+// DID THE ROUND PLAN AGAINST THE LADDER ANALYZE BUILT, OR AROUND IT?
+//
+// The third of the three "was the artifact READ" gates, and the one that catches a failure the
+// other two structurally cannot. taskGraphGate asks whether the dependency graph exists.
+// pipeOccupancyGate asks whether each direction was priced against a busy or idle pipe. Both look
+// at the directions that WERE issued. Neither can see the direction that was never issued.
+//
+// The cost of not having it, measured: a wave's Analyze produced a correct four-rung ladder ending
+// in the exact acceptance shape the whole program existed to reach, wrote it to `roadmap.md` and to
+// `analysis.json:candidate_directions`, and then `plan_round` was never handed either artifact and
+// never mentioned a rung again — `grep -c 'D0\|D1\|D2\|D3\|roadmap'` over the run's report and
+// insight log returned 0. Six directions were dispatched. The bounding readout never ran. The rung
+// the ladder explicitly designated as THIS RUN'S POSITIVE CONTROL never ran, so the run had no
+// control and had to improvise a substitute mid-flight from an engineer's scratch workspace. The
+// fusion rung, gated on a rung that ran out of order and without its own mandatory arm, was never
+// proposed at all. Every one of those is invisible in a per-direction check; all of them are
+// obvious the moment you diff dispatched-rungs against the ladder.
+//
+// Deliberately advisory, like its siblings. The ladder is Analyze's plan, and a round with better
+// evidence SHOULD leave it — `rung_deviation` exists to make that a statement rather than a
+// silence. The gate never blocks a direction; it refuses to let a skip be invisible.
+function roadmapLadderGate(ladder, directions, dispatchedRungs) {
+  const rungs = (Array.isArray(ladder) ? ladder : []).filter((c) => c && (c.id || c.title));
+  const dirs = Array.isArray(directions) ? directions : [];
+  const done = new Set(Array.isArray(dispatchedRungs) ? dispatchedRungs : dispatchedRungs instanceof Set ? [...dispatchedRungs] : []);
+  if (!rungs.length) {
+    return { verdict: 'MISSING', summary: '', planned: [], caveat:
+      'LADDER MISSING: Analyze returned no candidate_directions, so there is no recorded ordering ' +
+      'for this run and nothing below can be checked against a plan. Each round is then free to ' +
+      'start from the profile, which is exactly the state in which the most expensive direction — ' +
+      'the one that is conditional on two cheaper ones — is never reached, because nothing is ' +
+      'tracking that it was owed.' };
+  }
+  // `id` is what a plan can quote; fall back to the leading token of the title, which is how these
+  // are written in practice ("D2 Per-token ... readiness").
+  const idOf = (c) => String(c.id || String(c.title).trim().split(/\s+/)[0] || '').trim();
+  const byId = new Map(rungs.map((c) => [idOf(c), c]));
+
+  const planned = [];
+  const undeclared = [];
+  const offLadder = [];
+  const gateViolations = [];
+  for (const d of dirs) {
+    if (!d) continue;
+    const label = d.id || d.title || '?';
+    const rung = (d.roadmap_rung || '').trim();
+    if (!rung) { undeclared.push(label); continue; }
+    if (rung === 'off_ladder') {
+      if (!String(d.rung_deviation || '').trim()) offLadder.push(label);
+      continue;
+    }
+    planned.push(rung);
+    const c = byId.get(rung);
+    if (!c) { offLadder.push(`${label} (names rung "${rung}", which is not on the ladder)`); continue; }
+    const gates = Array.isArray(c.gated_on) ? c.gated_on.map(String) : [];
+    const unmet = gates.filter((g) => !done.has(g));
+    if (unmet.length && !String(d.rung_deviation || '').trim()) {
+      gateViolations.push(`${label} takes ${rung}, whose gated_on [${unmet.join(', ')}] ` +
+        'has not been dispatched, with no rung_deviation stated');
+    }
+  }
+
+  const seen = new Set([...done, ...planned]);
+  const never = rungs.filter((c) => !seen.has(idOf(c)));
+  const controls = never.filter((c) => c.is_positive_control);
+  const blocked = rungs.filter((c) => {
+    const gates = Array.isArray(c.gated_on) ? c.gated_on.map(String) : [];
+    return gates.length && !seen.has(idOf(c)) && gates.some((g) => !seen.has(g));
+  });
+
+  const summary = `Ladder: ${rungs.length} rung(s) [${rungs.map(idOf).join(', ')}]; ` +
+    `dispatched so far [${[...done].join(', ') || 'none'}]; ` +
+    `this round [${planned.join(', ') || 'none on ladder'}]; ` +
+    `${never.length} never reached.`;
+
+  const notes = [];
+  if (undeclared.length) {
+    notes.push(`DIRECTIONS WITH NO RUNG NAMED (${undeclared.length}): ${undeclared.join(', ')}. ` +
+      'A direction that cannot say which rung it is — including "off_ladder" — has not been ' +
+      'planned against the ladder, and the ladder cannot then be used to tell what is still owed.');
+  }
+  if (offLadder.length) {
+    notes.push(`OFF-LADDER WITHOUT A STATED DEVIATION: ${offLadder.join('; ')}. Leaving the ladder ` +
+      'is allowed and often right; leaving it silently means the rung it displaced is not recorded ' +
+      'anywhere as still open.');
+  }
+  if (gateViolations.length) {
+    notes.push('RUNG TAKEN OUT OF ORDER: ' + gateViolations.join('; ') + '. The prerequisite is ' +
+      'usually what makes the result INTERPRETABLE, not merely what makes it likelier to win — a ' +
+      'readiness rung measured before its bounding readout can read negative for a reason the ' +
+      'bounding readout would have priced in advance.');
+  }
+  if (controls.length) {
+    notes.push('THE LADDER\'S OWN POSITIVE CONTROL HAS NOT BEEN DISPATCHED: ' +
+      controls.map(idOf).join(', ') + '. Analyze designated this rung as the change with a ' +
+      'predicted direction that proves the harness can detect a win at all. Until it runs, every ' +
+      'null below is ambiguous between "no effect" and "no instrument".');
+  }
+  if (blocked.length) {
+    notes.push(`RUNGS STILL BLOCKED BY UNDISPATCHED PREREQUISITES (${blocked.length}): ` +
+      blocked.map((c) => `${idOf(c)} gated_on [${(c.gated_on || []).join(', ')}]`).join('; ') +
+      '. These cannot be reached by continuing to plan around the ladder. If a gate is being ' +
+      'abandoned, say so; a gate that is simply never satisfied silently deletes everything above it.');
+  }
+  const verdict = notes.length
+    ? (gateViolations.length || controls.length ? 'INCONSISTENT' : 'ADVISORY')
+    : 'OK';
+  return { verdict, summary, planned, caveat: notes.join(' ') };
+}
+// <</REPLAY:roadmap_ladder_gate>>
+
 // <<REPLAY:claim_boundary>>
 // THE CLAIM BOUNDARY. Three decisions that together answer one question: did a measurement that
 // happened on hardware actually reach the scoring harness?
@@ -1201,6 +1346,18 @@ if (REQUIRE_TASK_GRAPH) {
   if (pg.summary) log(pg.summary);
   PIPE_TABLE_CAVEAT = pg.caveat;
   if (pg.caveat) log(pg.caveat);
+}
+
+// The ladder Analyze ranked, and the record of what has been taken off it. Both are threaded into
+// every plan_round call: an artifact a phase is not handed is an artifact that phase does not use,
+// and this one was orphaned for an entire wave — correct ladder, zero mentions downstream, the
+// acceptance-shape rung never proposed. Not gated on require_task_graph; every run has a roadmap.
+const LADDER = (analysis && Array.isArray(analysis.candidate_directions)) ? analysis.candidate_directions : [];
+const dispatchedRungs = new Set();
+{
+  const lg0 = roadmapLadderGate(LADDER, [], dispatchedRungs);
+  if (lg0.summary) log(lg0.summary);
+  if (lg0.caveat) log(lg0.caveat);
 }
 
 // Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
@@ -1396,7 +1553,17 @@ if (POSITIVE_CONTROL) {
   // An overshoot is only benign if the null arm is quiet. If the byte-identical arm is ALSO reading
   // high, the interleave is drifting and the overshoot is the drift, not the effect.
   const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= mLo / 2;
-  const ran = pc.ran !== false && Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
+  // PRE-FLIGHT, AND IT OUTRANKS THE READING. If the knob `how` names is not in the tree the control
+  // ran in, both arms executed the same code and `measured_pct` is a null, not a control — a
+  // well-formed number with nothing behind it, which is strictly worse than a missing one because
+  // it passes every check that looks only at the number. `switch_present: false` therefore means
+  // the control DID NOT RUN, whatever came back. Reported explicitly rather than inferred from a
+  // small reading, because a real control can legitimately read small and an absent one can
+  // legitimately read large (drift). Undefined keeps the old behaviour: runs that never reported
+  // the field are decided exactly as before, so replay of historical controls is unaffected.
+  const switchAbsent = pc.switch_present === false;
+  const ran = pc.ran !== false && !switchAbsent &&
+    Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
 
   // A CONTROL'S EXPECTED MAGNITUDE IS EITHER A MEASUREMENT OR A GUESS, AND THE TWO CANNOT BE GATED
   // THE SAME WAY.
@@ -1483,6 +1650,14 @@ if (POSITIVE_CONTROL) {
   const overshoot = ran && mGot > mHi && !absurd;
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
   // <</REPLAY:pc_gate>>
+  if (switchAbsent) {
+    log(`POSITIVE CONTROL SWITCH ABSENT: "${POSITIVE_CONTROL.name || 'unnamed'}" names a knob that ` +
+        `is not in the tree it was run against, so both arms executed identical code and the ` +
+        `${Number.isFinite(got) ? got.toFixed(2) + '%' : 'reported'} reading is a base-vs-base null. ` +
+        `This is a LAUNCH-ARGS defect, not an instrument failure — fix \`positive_control.how\` to ` +
+        `name a switch that exists, or have the benchmark engineer construct a synthetic control ` +
+        `(benchmark_engineer.md 5b) and declare magnitude:'constructed'.`);
+  }
   log(`Positive control "${POSITIVE_CONTROL.name || 'unnamed'}": ` +
       `measured ${Number.isFinite(got) ? got.toFixed(2) + '%' : 'NOT RUN'}, ` +
       `expected ${lo}..${hi}% (absurd above ${Number.isFinite(ABSURD) ? ABSURD.toFixed(2) + '% in magnitude' : '?'}) ` +
@@ -1728,6 +1903,11 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
       EVAL_DIR, ROUND: round, BUDGET_REMAINING: remaining, CUMULATIVE_SPEEDUP: cumulative,
       BASELINE_GEOMEAN_MS, SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
       CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: history,
+      // The ladder Analyze built, and what has been taken off it. Passed as DATA, not as a path to
+      // maybe-read: a plan phase that is only told where roadmap.md lives plans from the profile.
+      ROADMAP: `${EVAL_DIR}/roadmap.md`,
+      ROADMAP_LADDER: LADDER,
+      LADDER_DISPATCHED: [...dispatchedRungs],
       KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE, KK_REFS,
       ...KB_INPUTS,
     }),
@@ -1756,6 +1936,16 @@ while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
   if (REQUIRE_TASK_GRAPH) {
     const pg = pipeOccupancyGate(analysis && analysis.resource_timeline, directions);
     if (pg.caveat) log(`Round ${round}: ${pg.caveat}`);
+  }
+  // And against the ladder. Unlike the pipe check this one is NOT gated on require_task_graph:
+  // every run has a roadmap, and "the rung that was never reached" is not a multi-stage-operator
+  // problem. Runs BEFORE the directions are charged to the budget, so the skip is on the record at
+  // the moment it is still cheap to change.
+  {
+    const lg = roadmapLadderGate(LADDER, directions, dispatchedRungs);
+    log(`Round ${round}: ${lg.summary}`);
+    if (lg.caveat) log(`Round ${round}: ${lg.caveat}`);
+    for (const r of lg.planned) dispatchedRungs.add(r);
   }
   const roundCost = directions.reduce((s, d) => s + (d.specialty === 'deep_explore' ? DEEP_COST : 1), 0);
   dispatched += roundCost;
@@ -2189,6 +2379,12 @@ const report = await agentT(
     // or asserted — is invisible in the final number, and by report time nobody re-reads the log.
     ...(TASK_GRAPH_CAVEAT ? { TASK_GRAPH_CAVEAT } : {}),
     ...(PIPE_TABLE_CAVEAT ? { PIPE_TABLE_CAVEAT } : {}),
+    // Recomputed against the FINAL dispatch record, not the round-0 one: the question the report
+    // has to answer is which rungs the wave never reached, and that is only knowable at the end.
+    // A wave that stops with its highest rung unproposed has produced a number and not an answer,
+    // and that fact belongs next to the number rather than in a log nobody re-reads.
+    ...(LADDER.length ? { ROADMAP_LADDER_FINAL: JSON.stringify(
+      roadmapLadderGate(LADDER, [], dispatchedRungs)).slice(0, 3000) } : {}),
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.task_graph
       ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 4000) } : {}),
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.resource_timeline
