@@ -23,6 +23,14 @@ do not invent new optimizations; you compose and reconcile existing ones.
        --exclude=./__pycache__ --exclude='*/__pycache__' --exclude=./.torch_ext --exclude='*/.torch_ext' \
        --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd "$WS" && tar -xf - )
    cd "$WS"
+   # .git was excluded on purpose (the source history must not be readable here), so make a FRESH
+   # one-commit repo. Both `git apply` in step 3 and `git diff` in Output need a repo with a HEAD;
+   # without it the diff is taken against whatever ancestor repo happens to be above $WS, or nothing.
+   printf '%s\n' 'build/' '__pycache__/' '*.so' '.torch_ext/' '.rocprofv3/' '*.o' > .gitignore
+   export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
+   git init -q
+   git -c user.email=team@workflow -c user.name=team add -A
+   git -c user.email=team@workflow -c user.name=team commit -q -m "integrate baseline"
    ```
 2. Sort patches by verified speedup (best first). Check compatibility using
    `optimization_strategies.md` (compatible: template+launch-bounds, tiling+coalescing, warp-coop +
@@ -44,7 +52,8 @@ do not invent new optimizations; you compose and reconcile existing ones.
 ## Output
 If the best combination beats `BEST_INDIVIDUAL`, save it:
 ```bash
-cd "$WS" && git diff > "$INTEGRATE_DIR/integrated_patch.diff"   # $WS = the unique private ws from step 1
+# Stage first — a plain `git diff` silently omits files you CREATED during the merge.
+cd "$WS" && git add -A && git diff HEAD > "$INTEGRATE_DIR/integrated_patch.diff"   # $WS = step 1's ws
 ```
 
 ## Return JSON

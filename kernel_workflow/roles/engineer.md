@@ -104,7 +104,12 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    METRIC is the time-weighted ratio-of-sums (workload-aligned), ALSO compute and report
    `speedup_weighted = Σ_i weight_i / Σ_i (weight_i / speedup_i)` using each case's `weight` from
    `baseline_per_case` — that is the PRIMARY number you optimize toward; the geomean is secondary.
-5. **Save patch** when geomean > 1.0: `cd $KERNEL_PATH && git diff > $OUTPUT_DIR/best_patch.diff`.
+5. **Save patch** when geomean > 1.0:
+   `cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`.
+   Your workspace is a fresh one-commit git repo created when it was copied, so HEAD *is* the
+   baseline you started from. Stage first: a plain `git diff` omits files you CREATED, and a patch
+   missing a new file applies cleanly and then fails at import. Regenerate the patch this way rather
+   than hand-editing it — a hand-maintained diff is a second source of truth for your own change.
 5b. **Your patch must be ON by default.** Ship it so that applying the diff and running the
    benchmark, with no environment variable set and no config edited, exercises your new code. Do not
    hide it behind an opt-in flag "for safety" — the person who measures it is not you, does not know

@@ -101,8 +101,10 @@ Your target may be expressed as "% of roofline". Estimate the ceiling, then driv
 2. **Plan a stack**: pick a primary lever from the dominant bottleneck, plus 1–2 compounding levers
    from other categories (e.g. warp-cooperative rewrite + native output layout + dispatch fusion).
 3. **Implement → correctness → benchmark** the change. Keep it only if correct AND faster than your
-   current best. Save `best_patch.diff` (`cd $KERNEL_PATH && git diff > $OUTPUT_DIR/best_patch.diff`)
-   whenever you set a new best with geomean > 1.0.
+   current best. Save `best_patch.diff`
+   (`cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`) whenever you set
+   a new best with geomean > 1.0. Your workspace is a fresh one-commit repo, so HEAD is your
+   baseline; stage first or files you CREATED are silently left out of the patch.
 4. **Self-profile to re-steer**: every few accepted changes, re-run
    `bash $SKILL_DIR/scripts/profile_kernel.sh $GPU_ID "<benchmark cmd that cd's into $KERNEL_PATH>" $OUTPUT_DIR/profile_rN`
    to find the NEW dominant bottleneck, and attack that next. This is the core of going deep.

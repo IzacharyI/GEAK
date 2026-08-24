@@ -28,7 +28,14 @@ absolute per-case latencies. The script trusts only your numbers.
        --exclude=./__pycache__ --exclude='*/__pycache__' --exclude=./.torch_ext --exclude='*/.torch_ext' \
        --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd "$WS" && tar -xf - )
    cd "$WS"
-   git checkout -- . 2>/dev/null || true
+   # .git was excluded on purpose, so make a FRESH one-commit repo (no history is copied). `git
+   # apply` and the `git diff --stat` audit in step 7 both need a repo with a HEAD; a `git checkout`
+   # without one is a no-op that reports success, which is worse than an error.
+   printf '%s\n' 'build/' '__pycache__/' '*.so' '.torch_ext/' '.rocprofv3/' '*.o' > .gitignore
+   export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
+   git init -q
+   git -c user.email=team@workflow -c user.name=team add -A
+   git -c user.email=team@workflow -c user.name=team commit -q -m "verify baseline"
    git apply "$PATCH" || { echo "PATCH_APPLY_FAILED"; }
    ```
    (Use `$WS` as your verify workspace for all subsequent commands.)

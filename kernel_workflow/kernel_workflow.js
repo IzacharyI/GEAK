@@ -1977,11 +1977,23 @@ mkdir -p ${d.out_dir}/workspace
 ( cd ${CANONICAL} && tar --exclude=./.git --exclude='*/.git' --exclude=./build --exclude='*/build' \\
     --exclude=./__pycache__ --exclude='*/__pycache__' --exclude=./.torch_ext --exclude='*/.torch_ext' \\
     --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd ${d.out_dir}/workspace && tar -xf - )
+# The tar excluded .git ON PURPOSE (the source history must never be readable from a workspace), so
+# make a FRESH one-commit repo here instead. Without this \`git diff\` has no HEAD to diff against and
+# best_patch.diff has to be hand-maintained — which is how a wave shipped patches nobody could
+# regenerate. A fresh repo carries no history, so nothing leaks and nothing extra is copied.
+cd ${d.out_dir}/workspace
+printf '%s\\n' 'build/' '__pycache__/' '*.so' '.torch_ext/' '.rocprofv3/' '*.o' > .gitignore
+export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
+git init -q
+git -c user.email=team@workflow -c user.name=team add -A
+git -c user.email=team@workflow -c user.name=team commit -q -m "workspace baseline"
 \`\`\`
 ${readLine} If KK_OPERATOR is non-empty, also consult the operator/language SOTA cards under
 KERNEL_KNOWLEDGE_DIR per your role's "operator/language SOTA knowledge (REFERENCE ONLY)" section
 (facts/how-to only; measure everything; never go below baseline).
-Save best_patch.diff via \`cd <KERNEL_PATH> && git diff > ${d.out_dir}/best_patch.diff\` when geomean>1.0.
+Save best_patch.diff via \`cd <KERNEL_PATH> && git add -A && git diff HEAD > ${d.out_dir}/best_patch.diff\`
+when geomean>1.0 (stage first: a plain \`git diff\` omits files you CREATED, and a patch missing a new
+file applies cleanly and then fails at import).
 
 ## Inputs
 ${cfg({
