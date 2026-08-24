@@ -36,6 +36,14 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 
 Always also read `SKILL_DIR/knowledge/self_monitoring.md` and follow its guard signals.
 
+**When a candidate crashes or hangs and the fault has no line number — which is the normal state of
+a fused kernel, since one launch produces one trace record — read
+`SKILL_DIR/knowledge/crash_bisection.md` before reading the source again.** It is a compile-time
+truncation ladder: fifteen numbered cut points selected by an env var, one binary per rung, roughly
+half a minute per rung, and the first failing rung names the segment. Reading a thousand lines of
+index arithmetic harder does not converge; this does, and it separates a hang from an illegal access
+for free.
+
 **If your candidate is gated by an env var, a config flag or a module-level constant AND the kernel
 comes from a caching JIT (FlyDSL, Triton, `torch.compile`), read
 `SKILL_DIR/knowledge/jit_arm_isolation.md` BEFORE you author the switch.** Two arms can print two
