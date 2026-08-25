@@ -825,7 +825,8 @@ Return JSON:
 ## PHASE=report
 
 Inputs: `EVAL_DIR`, `WORKSPACE`, full `HISTORY` (all rounds), the final winner's verified per-case
-table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), and `BASELINE_GEOMEAN_MS`.
+table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), `BASELINE_GEOMEAN_MS`, and
+`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent).
 
 1. Write the cumulative final patch:
    ```bash
@@ -856,6 +857,15 @@ table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), and `BASELI
      re-measured the same case at **-4.14%** and the run's true headline was **1.0021x**. The
      inflation was 1.56pp and every bit of it came from cases the run had itself declared unreadable.
      The verifier will catch this and flag the run; the point is not to produce the number.
+   - **Why the run ended** — quote `STOP_REASON` verbatim, then say in one sentence what the next
+     wave should do about it. The four endings call for four different things and they are not
+     interchangeable: a budget that ran out means the ladder was too long for the budget; a
+     no-improve cap means the search stopped paying; a no-evidence cap means the instrument was
+     broken and no direction was ever tested; the TechLead's own stop means the plan was finished.
+     **If budget was left unspent, name the number and name the direction that would have got it.**
+     A wave once ended with a lease still in the budget and its own insight log naming round 4 as
+     the round that had to spend it; nothing recorded why the loop stopped, and reconstructing it
+     afterwards took longer than the round would have. Write it down while you still know.
    - **Key optimizations applied** (what + impact).
    - **What didn't work** (dead-ends from the ledger).
    - **Cross-round reuse** — only when `SHELF_ACTIVITY` is present. Report its numbers as they are:

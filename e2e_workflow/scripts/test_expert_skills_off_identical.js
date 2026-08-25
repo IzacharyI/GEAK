@@ -34,16 +34,20 @@ for (const t of TARGETS) {
   if (!m) continue;
 
   // 2) Rebuild it with controlled "module-scope" deps and probe its behavior.
+  // CAPABILITY_EVAL is read by the kernel_workflow copy (it appends the "an existing
+  // implementation is not your result" clause) and not by the e2e one. It is supplied here for
+  // both, and pinned OFF, because this test is about the expert-skills toggle: the assertions below
+  // must hold on the block the DEFAULT run emits.
   const make = new Function(
-    'USE_EXPERT_SKILLS', 'EXPERT_SKILL_ROLES', 'EXPERT_SKILLS_DIR', 'WORKFLOW_DIR',
+    'USE_EXPERT_SKILLS', 'EXPERT_SKILL_ROLES', 'EXPERT_SKILLS_DIR', 'WORKFLOW_DIR', 'CAPABILITY_EVAL',
     m[0] + '\nreturn expertSkillsBlock;');
   const roles = new Set([t.consumer]);
 
-  const off = make(false, roles, '/x/expert_skills', '/wf');
+  const off = make(false, roles, '/x/expert_skills', '/wf', false);
   ok(off(t.consumer) === '', `OFF -> '' for consumer role (${t.consumer})`);
   ok(off(t.nonConsumer) === '', `OFF -> '' for non-consumer role (${t.nonConsumer})`);
 
-  const on = make(true, roles, '/x/expert_skills', '/wf');
+  const on = make(true, roles, '/x/expert_skills', '/wf', false);
   ok(on(t.consumer) !== '', `ON -> non-empty for consumer role (${t.consumer})`);
   ok(on(t.nonConsumer) === '', `ON -> '' for NON-consumer role (${t.nonConsumer}) (no pollution)`);
   ok(on(t.consumer).includes('/x/expert_skills/index.yaml'), 'ON block points at the skills index');

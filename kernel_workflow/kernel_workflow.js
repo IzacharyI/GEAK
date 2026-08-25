@@ -1810,6 +1810,57 @@ function roadmapLadderGate(ladder, directions, dispatchedRungs) {
 }
 // <</REPLAY:roadmap_ladder_gate>>
 
+// <<REPLAY:evidence_stop>>
+// WHAT THE NO-IMPROVE COUNTER IS ALLOWED TO COUNT.
+//
+// `MAX_NO_IMPROVE` stops a search that has stopped finding anything. To conclude that, the round
+// has to have LOOKED — some direction must have produced a number that survived verification. A
+// round whose directions never got the lease, never executed the patched path, or handed back a
+// claim with no patch behind it has said nothing about the search space, and charging it to the
+// stopping criterion ends the run on the strength of experiments that were never performed.
+//
+// This is not hypothetical. Measured on wave 14: budget 8, max_no_improve 3, three rounds, seven
+// directions, one GPU lease left in the budget and the plan naming round 4 as the round that had
+// to spend it. Round 1 dispatched three directions and produced zero measurements (two returned
+// static analysis without a lease, one copied the baseline latencies into `optimized_ms`). Round 2
+// dispatched two and produced zero the same way. Round 3 produced exactly one real reading. The
+// counter reached 3 and the loop exited at the top of round 4 with the budget not exhausted. Of
+// the three rounds it counted, one was an experiment that ran and lost and two were rounds in
+// which nothing was measured at all.
+//
+// An earlier, narrower version of this rule existed — it exempted a round only when EVERY
+// direction was `inactive`. It missed wave 14 twice over: a single direction that returned nothing
+// (rather than returning an unexecuted patch) breaks the `every`, and "never got the lease" is not
+// `inactive` in the first place.
+//
+// Admissibility is deliberately the same standard the rest of the round already applies, so a
+// reading that is VOID for promotion cannot be counted as evidence for stopping:
+//   - `inactive`      the patched path did not run, or was not proven to run
+//   - `unbacked`      a claim whose declared patch does not exist
+//   - `same_artifact` both arms resolved to one compiled binary
+//   - outcome         `measured` per rungOutcomeOf — a verified number for a terminal step, or
+//                     functional acceptance for an enabling one
+const evidenceGap = (r, roleOf, outcomeOf) => {
+  if (!r) return 'no result was returned';
+  if (r.inactive) return `the patched path was ${r.inactive === 'no' ? 'not executed' : 'not proven to execute'}`;
+  if (r.unbacked) return 'the claim has no patch behind it';
+  if (r.same_artifact) return 'both arms were the same compiled binary';
+  const outcome = outcomeOf(r, roleOf(r.d));
+  return outcome === 'measured' ? null : `the direction ${outcome === 'faulted' ? 'faulted' : 'returned no verified number'}`;
+};
+function roundEvidence(clean, roleOf, outcomeOf) {
+  const arr = Array.isArray(clean) ? clean : [];
+  let measured = 0;
+  const gaps = [];
+  for (const r of arr) {
+    const gap = evidenceGap(r, roleOf, outcomeOf);
+    if (gap === null) measured++;
+    else gaps.push(`${(r && r.d && r.d.id) || '?'}: ${gap}`);
+  }
+  return { measured, total: arr.length, gaps };
+}
+// <</REPLAY:evidence_stop>>
+
 // <<REPLAY:claim_boundary>>
 // THE CLAIM BOUNDARY. Three decisions that together answer one question: did a measurement that
 // happened on hardware actually reach the scoring harness?
@@ -2506,6 +2557,16 @@ let dispatched = 0;          // counts ONLY optimization-direction engineers (th
 let round = 0;
 let cumulative = 1.0;        // best verified geomean speedup vs the TRUE baseline
 let noImprove = 0;
+// Consecutive rounds that produced no admissible measurement. Separate from `noImprove` because it
+// means the opposite thing: `noImprove` says the search is not finding wins, `noEvidence` says the
+// instrument is not returning readings. Both stop the loop at MAX_NO_IMPROVE, and they must not be
+// summed — see roundEvidence.
+let noEvidence = 0;
+// Why the round loop ended. Written down because nothing used to write it down: reconstructing the
+// stop condition of one finished wave took a full session of reading code against artifacts, and
+// the answer ("the counter reached its cap while a lease was still in the budget") was a defect
+// that had been invisible for four waves.
+let stopReason = null;
 let bestPerCase = BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source}
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
@@ -2975,7 +3036,13 @@ if (setup.resumed && setup.prior_state) {
 // one is non-improving by construction, so leaving it armed would end the wave on round 3 with a
 // 15-lease budget untouched — see OBJECTIVE, item 2. The remaining stops are the budget and the
 // TechLead's own decision, both of which still apply.
-while (dispatched < BUDGET && (WORKING_KERNEL || noImprove < MAX_NO_IMPROVE)) {
+//
+// `noEvidence` is the same cap applied to a different failure. A round that measures nothing does
+// not advance `noImprove` (roundEvidence explains why), so without a second bound a run whose
+// harness is broken would keep planning rounds until the budget ran out. Three consecutive rounds
+// with no reading is not a search that has run out of ideas, it is an instrument that is not
+// working, and the answer to that is not another lease.
+while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE))) {
   round++;
   const remaining = BUDGET - dispatched;
   phase('Optimize');
@@ -3020,6 +3087,9 @@ while (dispatched < BUDGET && (WORKING_KERNEL || noImprove < MAX_NO_IMPROVE)) {
 
   if (!plan || plan.stop || !plan.directions || plan.directions.length === 0) {
     log(`Round ${round}: TechLead chose to stop. ${plan ? plan.reasoning || '' : ''}`);
+    stopReason = `the TechLead planned no directions for round ${round}` +
+      `${plan && plan.reasoning ? `: ${plan.reasoning}` : '.'} ` +
+      `${BUDGET - dispatched} of ${BUDGET} budget unit(s) were left unspent.`;
     break;
   }
 
@@ -3700,6 +3770,12 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
   }
 
   const enablingLanded = CHAIN_DEBT.filter((e) => e.round === round).length;
+  // Did this round measure anything at all? Decided before the counters move, by the same
+  // admissibility standard promotion uses, so a reading that is VOID for a candidate cannot be
+  // evidence for stopping. See roundEvidence.
+  const ev = roundEvidence(clean, stepRoleOf, rungOutcomeOf);
+  if (ev.measured) noEvidence = 0;
+  else noEvidence++;
   if (improved) {
     // noImprove was already reset at the commit above.
   } else if (enablingLanded) {
@@ -3710,12 +3786,15 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
     log(`Round ${round}: NOT counted toward noImprove — ${enablingLanded} enabling step(s) landed. ` +
         'A prerequisite that passed functional acceptance and entered the canonical tree is progress ' +
         'the cumulative speedup cannot show.');
-  } else if (clean.length && clean.every(r => r.inactive)) {
-    // Every direction this round measured code that never ran. That is a harness/activation fault,
-    // not a search-space fault, and charging it to the stopping criterion would end the run on the
-    // strength of experiments that were never performed.
-    log(`Round ${round}: NOT counted toward noImprove — every direction was INACTIVE, so the round ` +
-        `produced no evidence about the kernel at all. Fix activation before spending more budget.`);
+  } else if (!ev.measured) {
+    // No direction this round produced a reading the round is allowed to believe. That is a
+    // harness, lease or reporting fault, not a search-space fault, and charging it to the stopping
+    // criterion ends the run on the strength of experiments that were never performed.
+    log(`Round ${round}: NOT counted toward noImprove — none of the ${ev.total} direction(s) ` +
+        `produced an admissible measurement, so the round produced no evidence about the kernel ` +
+        `at all. ${ev.gaps.join('; ')}. noEvidence=${noEvidence}/${MAX_NO_IMPROVE} consecutive ` +
+        `such rounds; at the cap the run stops, because the thing to fix is the instrument, not ` +
+        `the direction. Fix the lease or the activation before spending more budget.`);
   } else {
     noImprove++;
   }
@@ -3846,8 +3925,38 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
     winner: winner ? { source: winner.source, geomean: winner.geomean } : null,
     improved, cumulative,
   });
-  log(`Round ${round} done. winner=${winner ? winner.source + ' ' + winner.geomean.toFixed(2) + 'x' : 'none'}, cumulative=${cumulative.toFixed(2)}x, noImprove=${noImprove}`);
+  log(`Round ${round} done. winner=${winner ? winner.source + ' ' + winner.geomean.toFixed(2) + 'x' : 'none'}, ` +
+      `cumulative=${cumulative.toFixed(2)}x, measured ${ev.measured}/${ev.total} direction(s), ` +
+      `noImprove=${noImprove}/${MAX_NO_IMPROVE}, noEvidence=${noEvidence}/${MAX_NO_IMPROVE}, ` +
+      `budget=${dispatched}/${BUDGET}`);
 }
+
+// Which of the four stops fired, in the loop's own order of evaluation. Recorded rather than
+// inferred: the budget is denominated in DIRECTIONS while the scarce resource is GPU leases, so
+// "the budget was not exhausted" and "there was still hardware to spend" are the same sentence
+// only by accident, and a reader looking at the artifacts a day later cannot tell which stop it
+// was. One wave ended with a lease in hand and the next round already named in its own plan.
+if (!stopReason) {
+  const left = BUDGET - dispatched;
+  if (dispatched >= BUDGET) {
+    stopReason = `the direction budget was exhausted (${dispatched}/${BUDGET} charged over ${round} round(s)). ` +
+      'The budget counts directions, not GPU leases; a round of directions that never reached the ' +
+      'hardware costs the same as a round that did.';
+  } else if (!WORKING_KERNEL && noEvidence >= MAX_NO_IMPROVE) {
+    stopReason = `${noEvidence} consecutive round(s) produced no admissible measurement, which is the ` +
+      `max_no_improve cap (${MAX_NO_IMPROVE}). ${left} of ${BUDGET} budget unit(s) were left unspent. ` +
+      'This is an instrument failure, not an exhausted search: the next wave should fix the lease ' +
+      'or the activation path before it plans another direction.';
+  } else if (!WORKING_KERNEL && noImprove >= MAX_NO_IMPROVE) {
+    stopReason = `${noImprove} round(s) in a row measured a candidate and none beat the current best by ` +
+      `more than ${(MIN_IMPROVE * 100).toFixed(0)}%, which is the max_no_improve cap (${MAX_NO_IMPROVE}). ` +
+      `${left} of ${BUDGET} budget unit(s) were left unspent.`;
+  } else {
+    stopReason = `the loop ended after ${round} round(s) with ${left} of ${BUDGET} budget unit(s) unspent ` +
+      'and no stop condition recorded.';
+  }
+}
+log(`Rounds ended: ${stopReason}`);
 
 // ===========================================================================
 // PHASE: Final report (TechLead)
@@ -3857,6 +3966,10 @@ const report = await agentT(
   roleAgent('tech_lead', 'report', 'Write the final report and the cumulative final patch.', {
     EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR,
     HISTORY: history, FINAL_WINNER: finalWinner, BASELINE_PER_CASE,
+    // Why the loop ended, and what was left on the table when it did. The report is where the next
+    // wave reads its starting conditions from; "the run finished" and "the run ran out of things
+    // to try" are different facts and only one of them is usually true.
+    STOP_REASON: stopReason,
     BASELINE_GEOMEAN_MS, CUMULATIVE_SPEEDUP: cumulative,
     PROFILE_SUMMARY: profileSummary,
     // The report's provenance paragraph must cite this, not recollection. UNRECORDED means the
@@ -3978,6 +4091,7 @@ return {
   rounds: report ? report.rounds : round,
   budget_used: dispatched,
   budget_total: BUDGET,
+  stop_reason: stopReason,
   report_path: report ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`,
   final_patch: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
 };

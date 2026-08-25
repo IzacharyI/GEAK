@@ -96,6 +96,12 @@ jobs:
       - name: enabling steps judged on function
         run: node kernel_workflow/tests/test_enabling_step.js
 
+      # max_no_improve stops a search that has stopped finding things. A round that never got the
+      # lease found nothing because it never looked, and charging it ended one wave a round early
+      # with hardware still in the budget.
+      - name: a round that measured nothing is not a round that found nothing
+        run: node kernel_workflow/tests/test_evidence_stop.js
+
       # The two Analyze artifacts. Both gates decide what a lease gets spent on, and both have a
       # blind spot that already cost waves: the graph cannot see operands nobody produces, and the
       # pipe table can size a hole that no direction then claims.

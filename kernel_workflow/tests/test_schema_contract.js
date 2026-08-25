@@ -95,6 +95,12 @@ const ARTIFACT_ROOTS = {
   // at risk of drifting: the meter does not exist yet, so the schema is the only thing pinning the
   // names the engineer will be asked to fill in.
   overlap_gate: ['ver', 'o'],
+  // evidence_stop is deliberately absent for the same reason as memory_merge's outputs: the three
+  // fields it decides on (`inactive`, `unbacked`, `same_artifact`) are marks the round attaches to
+  // a result AFTER verification, not things any agent was asked to return. The one agent-returned
+  // field it touches, `verified_geomean`, it reaches through rungOutcomeOf, which is checked where
+  // that region is.
+  //
   // bimodal_split is deliberately absent. It reads nothing off an agent artifact — its inputs are
   // raw latency readings the benchmark collected, passed in as plain numbers. Listing it here would
   // require inventing schema fields for `p.base`/`p.cand` and would check the script against itself.

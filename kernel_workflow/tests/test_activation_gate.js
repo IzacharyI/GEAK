@@ -87,11 +87,16 @@ ok(/it has \` \+\s*\n?\s*`not been tried/.test(wf) || /not been tried/.test(wf),
    'the log forbids recording the direction as tried-and-failed');
 ok(/&& !r\.inactive\)/.test(wf),
    'inactive directions cannot become verified wins either');
-ok(/clean\.every\(r => r\.inactive\)/.test(wf),
-   'an all-inactive round is detected');
+// The all-inactive exemption this file used to check has been widened and moved into
+// `roundEvidence` (tests/test_evidence_stop.js) — "every direction was inactive" missed a round
+// where the directions failed in different ways. What must remain true here is the consequence:
+// an inactive direction is not evidence, so a round with nothing but inactive directions cannot
+// advance the stopping criterion.
+ok(/if \(r\.inactive\) return `the patched path was/.test(wf),
+   'an inactive direction is excluded from a round\'s evidence by name');
 ok(/NOT counted toward noImprove/.test(wf),
-   'an all-inactive round does not advance the stopping criterion');
-ok(/produced no evidence about the kernel at all/.test(wf),
+   'a round with no admissible measurement does not advance the stopping criterion');
+ok(/produced no evidence about the kernel/.test(wf),
    'the code says why: the round measured nothing about the subject');
 
 console.log(

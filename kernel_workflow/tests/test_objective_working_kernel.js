@@ -87,7 +87,10 @@ console.log('\n# the commit gate is "does it run"');
 
 console.log('\n# the three enforcement points are in the script, not in prose');
 {
-  ok(/while \(dispatched < BUDGET && \(WORKING_KERNEL \|\| noImprove < MAX_NO_IMPROVE\)\)/.test(src),
+  // WORKING_KERNEL short-circuits BOTH speedup-side stops. The second one (`noEvidence`) was added
+  // later and is armed the same way; if it were left outside the short-circuit, a debug wave that
+  // legitimately produces no speed reading for three rounds would stop for the same wrong reason.
+  ok(/while \(dispatched < BUDGET && \(WORKING_KERNEL \|\| \(noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE\)\)\)/.test(src),
      'the no-improve stop is disabled in this mode — otherwise a 15-lease budget ends on round 3 ' +
      'and every other part of the mode is decoration');
   ok(/if \(WORKING_KERNEL && directions\.length > 1\)/.test(src),
