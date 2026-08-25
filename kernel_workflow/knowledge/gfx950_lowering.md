@@ -42,6 +42,25 @@ reads `buffer_wbl2 sc1; s_waitcnt vmcnt(0); s_barrier` on all threads, followed 
 3. the readiness flag's **clear** cannot land after the producer's increment (that ordering is a
    hang, and it is the twin failure of the race above — fixing one direction can open the other).
 
+### Where in the loop the publish sits decides whether it runs at all
+
+The ordering above is necessary and not sufficient. A `tid == 0`-guarded `global_atomic_add` is safe
+at a loop **head** and faults at a loop **tail**: at the tail the compiler folds the publish into the
+loop-exit mask, and the store executes with an exec mask that does not correspond to the thread the
+guard selected. The symptom is a device-side illegal memory access, not a wrong answer — it does not
+degrade, it kills the arm and the arm returns no number.
+
+Publish at the head of the iteration that follows the tile, not at the tail of the iteration that
+produced it. If the last tile then has no following iteration, publish it in the drain, explicitly,
+outside the loop.
+
+This is worth stating as a rule rather than as an anecdote because it has already been paid for
+twice. One run found it, wrote it into that wave's insight log, and a **different** engineer in the
+next round of the **same wave** hit it again on an independently authored kernel — the second time it
+was the fault that cost a fusion rung its only chance at a measurement. A lesson that lives in a
+per-wave log reaches the rounds after it only if someone happens to read it; a lesson on this card
+reaches every engineer on every wave.
+
 ### Price the release before you place it
 
 `buffer_wbl2 sc1` is a cross-XCD writeback because agent scope on an 8-XCD part cannot be satisfied

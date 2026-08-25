@@ -78,6 +78,17 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 1. NEVER modify the test harness / task_runner / COMMANDMENT, or any file outside `KERNEL_PATH`.
 2. Only edit files within your `DIRECTION.focus_files` (plus the wrapper/binding if `host_runtime`).
    Staying in your lane keeps your patch orthogonal and mergeable.
+2b. **Check the lane BEFORE you write anything, and if it is too narrow, say so instead of
+   delivering the part that fits.** Trace where the state your change needs actually lives — the
+   buffer allocations, the launch arguments, the workspace struct — and check every one of those
+   files against `focus_files`. If a required file is missing from your lane, stop and return that
+   as the result: name the file, name what has to be added to it, and say what fraction of the
+   direction you could reach. Do NOT author the reachable half and report a partial success. A
+   direction that reports "the lane was missing `<file>`, which owns every cross-block buffer" is
+   fixed by one edit to next round's plan. The same direction delivered as a half-built arm looks
+   like a hard problem, gets re-attempted with the same lane, and burns the round twice. This has
+   happened: one wave lost a whole direction to a lane that excluded the single file owning all
+   cross-block state, and the next round had to re-author the same arm from scratch.
 3. NEVER set `HIP_VISIBLE_DEVICES` directly. Execute the already lease-wrapped COMMANDMENT
    correctness/benchmark entries verbatim; for an additional ad-hoc GPU command, use
    `cd $KERNEL_PATH && bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>`. Never double-wrap. The wrapper isolates your
