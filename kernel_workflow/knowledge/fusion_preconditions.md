@@ -171,6 +171,53 @@ Concurrency without answering these often produces *no speedup at all*, because 
 accelerated had slack and the one you starved did not. Serialized code has one bottleneck and it is
 easy to find; concurrent code has a bottleneck that moves. See `resource_partition.md`.
 
+## Three ways a fusion result gets accepted for the wrong reason
+
+Each of these actually happened in this campaign. Check all three before you propose promoting a
+fused candidate.
+
+**1. A whole-grid-join arm is a control, not a candidate.** If the two roles are separated by one
+grid-wide barrier — every block finishes role A, all blocks join, then role B — the execution order
+is identical to two launches. The dependency edge has been moved from the launch boundary into the
+kernel, not relaxed. Such an arm has, by construction, *zero* overlap; what it measures is the
+**cost** of unifying the two roles (one register budget for both, sized by the larger role; one LDS
+allocation, sized by the larger role; scratch/spill growth; the join itself). It is worth building
+— it is the subtraction baseline that makes a fine-grained arm's number interpretable — but it can
+never satisfy an overlap acceptance criterion, and a wave that only ships this arm has not tested
+the hypothesis. Say so in the report in those words rather than reporting it as "overlap not yet
+measured".
+
+Corollary, which explains a shape you will otherwise misread: a whole-join arm tends to *win* on
+routes with load imbalance and *lose* on balanced routes. Imbalance leaves idle time that absorbs
+the unification cost; a balanced route has none, so the cost is fully exposed. That asymmetry is
+evidence the arm is the control arm. It is not evidence that fusion is route-dependent.
+
+**2. Attribute the win before you claim it.** Compute, at the same guard, in the same trace:
+
+```
+fused_kernel_us   vs   sum of the kernels it replaced
+residual_us = e2e - sum(all kernel_us)   for BOTH arms
+```
+
+If the fused kernel is *slower* than the kernels it replaced while e2e is faster, the win is not
+inside the code you changed, and the difference in `residual` will tell you how much of it lives in
+the gaps. Locate it before writing it into a speedup claim. A grid-wide join is an unintended
+cross-rank synchroniser: it aligns every rank's role-B start, which tightens the arrival window of
+whatever comes next and can shrink a downstream peer-wait by more than the fusion itself costs.
+That is a real effect and possibly worth shipping — as a barrier, which is far cheaper than a
+megakernel — but it is not the mechanism the wave set out to test, and recording it as one poisons
+the next wave's priors.
+
+**3. A route gate resolved once and cached is not shippable.** Under graph capture you cannot branch
+inside the captured region and you cannot device-to-host sync inside it, so the natural
+implementation resolves the statistic on the first eager forward and caches it forever. In serving
+that means whichever batch happens to arrive first permanently selects the path for every batch
+after it — including the batches the gate would have routed the other way. Such a gate is a
+temporary stop-loss for a regression you have not fixed yet, not a feature, and a gated result does
+not satisfy an "improves on all guards" criterion. The only shippable form is one captured graph
+per path plus a host-side per-batch statistic, at 2x graph memory — which is only worth building if
+the regression it hides is genuinely unfixable.
+
 ## What to write in the report
 
 Whatever your conclusion, the Analyze phase should contain, per candidate edge:

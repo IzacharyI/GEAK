@@ -64,7 +64,8 @@ jobs:
             e2e_workflow/scripts/tests/test_gsm8k_eval.py \
             kernel_workflow/tests/test_gpu_lease.py \
             kernel_workflow/tests/test_multi_rank_analysis.py \
-            kernel_workflow/tests/test_moe_bottleneck_analysis.py
+            kernel_workflow/tests/test_moe_bottleneck_analysis.py \
+            kernel_workflow/tests/test_ab_retry.py
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -72,6 +73,16 @@ jobs:
         run: node kernel_workflow/tests/test_moe_advisory_skill_off_identical.js
       - name: distributed specialty wiring
         run: node kernel_workflow/tests/test_distributed_fusion_knowledge.js
+      # This is the KERNEL workflow: a win has to be visible in the changed kernel's own
+      # time, not in the wall time around it. The gate that enforces that REJECTS
+      # candidates, so it is the one place where a silent regression in the workflow
+      # turns straight back into a promoted regression in the kernel.
+      - name: attribution gate
+        run: node kernel_workflow/tests/test_attribution_gate.js
+      # A resumed wave whose analyze fast path finds no prior roadmap must re-analyse rather than
+      # run on an empty ladder. Wave 15 ran three rounds that way and lost a rung for three waves.
+      - name: analyze resume fallback
+        run: node kernel_workflow/tests/test_analyze_resume_fallback.js
 
   secrets:
     name: Secret scan (gitleaks)

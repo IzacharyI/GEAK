@@ -818,6 +818,32 @@ const VERIFY_SCHEMA = obj({
     meter_overhead_pct: { type: 'number' },
     note: { type: 'string' },
   }, ['measured']),
+  // ATTRIBUTION. See knowledge/fusion_preconditions.md, "Three ways a fusion result gets accepted
+  // for the wrong reason". This is a KERNEL workflow: the thing being optimised is the kernel, so
+  // the number that decides a win must be the CHANGED KERNEL's own time against the time of the
+  // kernels it replaced. End-to-end is a do-no-harm guard rail, not a source of credit.
+  //
+  // The two diverge exactly when a patch changes launch structure, and the divergence is not small.
+  // Measured on this campaign: a fused candidate whose kernel ran 4878us against the 4774us of the
+  // two kernels it replaced -- 2.18% SLOWER -- was promoted to current best on a +4.24% end-to-end
+  // reading. The whole 223us lived in the gaps between kernels (residual moved +0.0799 -> -0.2178
+  // ms), most likely because the fused kernel's grid-wide join incidentally aligned every rank's
+  // consumer start and tightened the arrival window of the NEXT kernel. A real effect, worth a
+  // barrier, not worth a megakernel -- and not a result this workflow may claim.
+  //
+  // Report it whenever the patch adds, removes or merges a launch. `changed_us` is the patched
+  // kernel; `replaced_sum_us` is the sum of the kernels it stands in for, read PAIRED in the same
+  // collection at the same guard. When the two disagree in sign with the end-to-end claim, the
+  // candidate is not promoted -- see attributionVerdict.
+  attribution: obj({
+    changed_us: { type: 'number' },
+    replaced_sum_us: { type: 'number' },
+    guard: { type: 'string' },
+    // e2e minus the sum of all kernel times, both arms. Where a gap-win hides.
+    residual_ms_base: { type: 'number' },
+    residual_ms_cand: { type: 'number' },
+    note: { type: 'string' },
+  }, []),
 }, ['status', 'verified_geomean', 'touched_files']);
 
 const INTEGRATE_SCHEMA = obj({
@@ -1231,7 +1257,12 @@ if (MODE === 'author') {
 // PHASE: Analyze + Roadmap (TechLead)
 // ===========================================================================
 phase('Analyze');
-const analysis = await agentT(
+// The two analyze call sites below repeat their inputs verbatim instead of sharing one object, and
+// that is deliberate: tests/test_input_contract.js reads THIS FILE and checks that every input a
+// role declares is actually threaded to it. A spread of a named object hides the inputs from that
+// check, which then reports the role as under-supplied. Factoring these eight lines out would trade
+// a real static guard for a cosmetic saving. If you add an input, add it in both places.
+let analysis = await agentT(
   roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
     KERNEL_KNOWLEDGE_DIR,
@@ -1243,6 +1274,71 @@ const analysis = await agentT(
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
+
+// <<REPLAY:analyze_resume_fallback>>
+// THE RESUMED WAVE THAT ANALYSED NOTHING.
+//
+// roles/tech_lead.md gives analyze a fast path when INCREMENTAL_RESUME is set: read the roadmap a
+// prior wave persisted instead of re-deriving it, and "do a full analysis only if no prior roadmap
+// exists". That last clause is the whole safety of the fast path, and it is unenforceable from here
+// -- workflow scripts have no filesystem, so this file cannot see whether EVAL_DIR/roadmap.md was
+// found or whether the phase quietly returned an empty shell.
+//
+// Wave 15 is what that costs. bootstrap_task.sh assembles a FRESH EVAL_DIR, so the prior wave's
+// roadmap was not in it; analyze took the fast path, found nothing to read, and returned a valid
+// schema with no candidate_directions and no task_graph. Three rounds then ran with an empty ladder.
+// The engineers carried the D0..D3 rung ids forward from wave 14 by hand, out of their own memory,
+// and D2 went unspent for three waves because nothing on disk was tracking that it was owed. Round
+// 3's engineer eventually re-materialised roadmap.md himself, at 01:08, unprompted.
+//
+// The LADDER MISSING caveat below did fire -- every round, unchanged, changing nothing. A warning
+// that repeats and is never acted on is not a guard, it is a log line. So act on it here: an empty
+// ladder out of a RESUMED analyze is not a fact about the kernel, it is the fast path failing to
+// find its input, and the remedy is the one the role file already prescribes. Re-run once with the
+// resume flag off. One extra analyze call against three wasted rounds.
+//
+// Deliberately narrow: only when INCREMENTAL was on, only on an empty ladder (a resume with no
+// ladder is a contradiction in terms -- the ladder IS what is being resumed), and only once.
+function analyzeResumeDegenerate(incremental, ver) {
+  if (!incremental) return { retry: false, reason: '' };
+  const rungs = (ver && Array.isArray(ver.candidate_directions) ? ver.candidate_directions : [])
+    .filter((c) => c && (c.id || c.title));
+  if (rungs.length) return { retry: false, reason: '' };
+  return { retry: true, reason:
+    'ANALYZE RESUME DEGENERATE: the fast path ran with INCREMENTAL_RESUME and returned no ' +
+    'candidate_directions. A resumed wave with no ladder has nothing to resume, which means the ' +
+    'prior roadmap was not reachable from EVAL_DIR rather than that the ladder is empty. ' +
+    'Re-running analyze once WITHOUT the resume flag, per roles/tech_lead.md ("do a full analysis ' +
+    'only if no prior roadmap exists").' };
+}
+// <</REPLAY:analyze_resume_fallback>>
+
+{
+  const d = analyzeResumeDegenerate(INCREMENTAL, analysis);
+  if (d.retry) {
+    log(d.reason);
+    // Identical to the call above except that RESUME_INPUT is absent — that omission IS the fix.
+    const full = await agentT(
+      roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
+        WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
+        KERNEL_KNOWLEDGE_DIR,
+        GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+        ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
+        ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
+      }),
+      { phase: 'Analyze', label: 'tech_lead:analyze:full', schema: ANALYZE_SCHEMA });
+    const got = (full && Array.isArray(full.candidate_directions) ? full.candidate_directions : [])
+      .filter((c) => c && (c.id || c.title));
+    if (got.length) {
+      log(`ANALYZE RE-RUN recovered a ladder of ${got.length} rung(s). Using the full analysis.`);
+      analysis = full;
+    } else {
+      log('ANALYZE RE-RUN also returned no ladder. This run genuinely has no recorded ordering; ' +
+          'the LADDER MISSING caveat below is a real finding, not a resume artifact.');
+      if (full) analysis = full;
+    }
+  }
+}
 log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 
 // ---------------------------------------------------------------------------------------------
@@ -1634,6 +1730,12 @@ const OVERLAP_CAVEATS = [];
 // report that only prints what survived, and "no number" and "a number we refuse to read" are the
 // two states this project has most often confused.
 const OBJECTIVE_CAVEATS = [];
+// Attribution caveats, and the rejections. A candidate excluded because its win was outside the
+// kernel it changed leaves NO trace in a report that prints only survivors, and "we had no
+// candidate" and "we had one and refused it, for this reason" are exactly the two states a reader
+// must be able to tell apart -- the second is a finding about the mechanism, and it is the more
+// useful of the two.
+const ATTRIBUTION_CAVEATS = [];
 // Hardware/toolchain facts this wave established, for a human to merge into knowledge/. See
 // MEMORY_SCHEMA.knowledge_delta for why this is surfaced rather than written.
 const KNOWLEDGE_DELTA = [];
@@ -2339,6 +2441,77 @@ function overlapVerdict(ver, opts) {
 }
 // <</REPLAY:overlap_gate>>
 
+// <<REPLAY:attribution_gate>>
+// IS THE WIN INSIDE THE KERNEL THAT WAS CHANGED? See knowledge/fusion_preconditions.md.
+//
+// This is the kernel workflow. Its subject is a kernel, so its verdict must be that kernel's own
+// time against the time of the kernels it replaced. End-to-end is the guard rail: it may veto (a
+// candidate that wins on kernel time and loses end-to-end has moved the cost somewhere else), but
+// it may not grant credit on its own, because everything between two launches -- inter-rank arrival
+// skew, launch overhead, L2 residency across a boundary, host-side gaps -- moves it without any
+// kernel getting faster.
+//
+// Unlike the overlap gate, this one CAN reject, and the difference is deliberate. An unmeasured
+// overlap claim is a good result with a hole in it. A kernel-time regression promoted on an
+// end-to-end reading is not a result with a hole; it is the wrong kernel winning, and every round
+// built on top of it inherits the wrong cause. It rejects only on a REPORTED regression, never on a
+// missing field -- a run whose engineers do not report attribution behaves exactly as before.
+const ATTRIBUTION_EPS_PCT = 0.5;  // below this the two readings are the same number
+
+function attributionVerdict(ver, opts) {
+  const a = (ver && ver.attribution) || {};
+  const won = Number((opts && opts.geomean) || 0) > 1.0;
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
+  const chg = num(a.changed_us), rep = num(a.replaced_sum_us);
+  const e2ePct = ((Number((opts && opts.geomean) || 1)) - 1) * 100;
+
+  if (chg == null || rep == null || rep <= 0) {
+    if (!won) return { state: 'not_applicable', reject: false, caveat: '' };
+    return { state: 'unattributed', reject: false, caveat:
+      `This candidate claims ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% end-to-end but did not ` +
+      `report the changed kernel's own time against the kernels it replaced. End-to-end moves for ` +
+      `reasons that live BETWEEN launches, so on its own it cannot say whether the kernel got ` +
+      `faster. Report attribution.changed_us / replaced_sum_us, read paired in one collection, or ` +
+      `the number stays unattributed.` };
+  }
+
+  // Positive delta = the changed kernel is FASTER than what it replaced.
+  const kPct = ((rep - chg) / rep) * 100;
+  const resB = num(a.residual_ms_base), resC = num(a.residual_ms_cand);
+  const gapNote = (resB != null && resC != null)
+    ? ` The residual (end-to-end minus the sum of kernel times) moved ${resB >= 0 ? '+' : ''}` +
+      `${resB.toFixed(4)} -> ${resC >= 0 ? '+' : ''}${resC.toFixed(4)} ms, i.e. ` +
+      `${Math.abs((resB - resC) * 1000).toFixed(0)}us of the claim is in the gaps.`
+    : '';
+
+  if (won && kPct < -ATTRIBUTION_EPS_PCT) {
+    return { state: 'gap_win', reject: true, caveat:
+      `REJECTED as a win. End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% but the ` +
+      `kernel that was changed is SLOWER than the kernels it replaced: ${chg.toFixed(1)}us against ` +
+      `${rep.toFixed(1)}us, ${kPct.toFixed(2)}%.${gapNote} The win is not inside the code under ` +
+      `test. Find the mechanism and, if it is worth having, implement it directly -- a barrier that ` +
+      `aligns ranks is far cheaper than a megakernel, and it can be measured honestly. Promoting ` +
+      `this makes the next round optimise a kernel that is not the one that got faster.` };
+  }
+  if (!won && kPct > ATTRIBUTION_EPS_PCT) {
+    return { state: 'kernel_win_e2e_loss', reject: false, caveat:
+      `The changed kernel is ${kPct.toFixed(2)}% faster than what it replaced, but end-to-end did ` +
+      `not improve.${gapNote} The cost moved rather than disappeared -- into launch structure, ` +
+      `arrival skew, or a downstream kernel's wait. This is a real kernel result with a live ` +
+      `regression attached; locate it before shipping.` };
+  }
+  if (won && Math.abs(kPct) <= ATTRIBUTION_EPS_PCT) {
+    return { state: 'gap_win', reject: true, caveat:
+      `REJECTED as a win. End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% while the ` +
+      `changed kernel is flat against the kernels it replaced (${chg.toFixed(1)}us vs ` +
+      `${rep.toFixed(1)}us, ${kPct >= 0 ? '+' : ''}${kPct.toFixed(2)}%).${gapNote} A flat kernel ` +
+      `cannot produce an end-to-end win; whatever did is outside this workflow's subject.` };
+  }
+  return { state: 'attributed', reject: false, caveat: won
+    ? '' : `Kernel time ${kPct >= 0 ? '+' : ''}${kPct.toFixed(2)}%, consistent with the end-to-end reading.` };
+}
+// <</REPLAY:attribution_gate>>
+
 // <<REPLAY:bimodal_split>>
 // THE 512 GUARDS ARE NOT NOISY, THEY ARE BIMODAL — and the escape hatch the doctrine prescribes for
 // them does not work on them.
@@ -2811,8 +2984,37 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         `is called tried.`);
   }
 
+  // Attribution runs BEFORE the verified filter, because unlike the overlap gate it can reject, and
+  // a rejected candidate must not reach the candidate list at all. Decided for every direction that
+  // passed verification, not only the ones that describe themselves as fusion: a direction's own
+  // account of what it did is exactly the thing that must not decide whether the evidence is checked.
+  for (const r of clean) {
+    if (!(r.ver && r.ver.status === 'verified' && r.ver.correctness === 'pass' && !r.inactive)) continue;
+    const at = attributionVerdict(r.ver, { geomean: primSpeedup(r.ver) });
+    r.attribution_state = at.state;
+    if (at.caveat) r.attribution_caveat = at.caveat;
+    if (at.reject) r.attribution_rejected = at.state;
+  }
+
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
-    r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0 && !r.inactive);
+    r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0 && !r.inactive &&
+    !r.attribution_rejected);
+
+  // Rejection by exclusion is invisible -- the direction just quietly stops existing, which reads
+  // like "it didn't work". Print it with its number attached, for the same reason PLAGIARIZED is
+  // printed with its number: the speedup is exactly what makes it tempting to accept.
+  for (const r of clean) {
+    if (!r.attribution_rejected) continue;
+    log(`ATTRIBUTION ${r.attribution_rejected.toUpperCase()} ${r.d.id}: ${r.attribution_caveat}`);
+    ATTRIBUTION_CAVEATS.push(`${r.d.id} [${r.attribution_rejected}]: ${r.attribution_caveat}`);
+  }
+  for (const r of clean) {
+    if (r.attribution_rejected || !r.attribution_caveat) continue;
+    log(`ATTRIBUTION ${String(r.attribution_state).toUpperCase()} ${r.d.id}: ${r.attribution_caveat}`);
+    if (r.attribution_state !== 'attributed') {
+      ATTRIBUTION_CAVEATS.push(`${r.d.id} [${r.attribution_state}]: ${r.attribution_caveat}`);
+    }
+  }
 
   // `plagiarized` and `harness_modified` are already excluded by the filter above, but exclusion is
   // invisible — the direction just quietly stops existing, which reads like "it didn't work". Both
@@ -3179,6 +3381,7 @@ const report = await agentT(
     // can see it happened.
     ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
     ...(OVERLAP_CAVEATS.length ? { OVERLAP_CAVEATS } : {}),
+    ...(ATTRIBUTION_CAVEATS.length ? { ATTRIBUTION_CAVEATS } : {}),
     // Only present on a non-default objective, so a speedup wave's report is byte-identical to
     // before. On a working_kernel wave it is the first thing a reader needs: the wave's own numbers
     // are withdrawn, and the deliverable is whether an artifact ran.

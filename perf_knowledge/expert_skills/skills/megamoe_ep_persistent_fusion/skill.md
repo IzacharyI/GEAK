@@ -177,8 +177,23 @@ Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive cont
 - Step-2 bottleneck evidence — kernel DAG showing zero overlap, instrumented combine peer-wait,
   matched no-payload control, ATT waitcnt/barrier shares, LDS residency. **Also not cited by path.**
   Every number this card relies on is quoted inline above; reproducing the evidence is part of the
-  work, not a prerequisite handed over with it. If your own profile disagrees with a number here,
-  trust your profile and say so — the card is a prior, not an oracle.
+  work, not a prerequisite handed over with it.
+
+  **When your own profile disagrees with a number here, the size of the disagreement decides what to
+  do, and "trust your own profile" is only correct for the small case.**
+  - Within ~2x: trust your profile, say so, move on. Different tooling, different machine state.
+  - Beyond ~5x: **you and this card are not measuring the same thing.** Do not pick a side, and in
+    particular do not close an optimisation axis on the strength of your own control. Enumerate the
+    plausible readings of the experiment, run each one, and report which reading reproduces which
+    number. A closed axis backed by an unadjudicated 5x disagreement is a defect, not a finding.
+
+  This rule exists because it was already violated once, expensively. Wave 14 closed the axis
+  "hiding the Stage2 P2P payload cost" — the exact mechanism behind this card's largest measured win
+  (+4.71% at `8192_uniform`) — because its own no-payload control moved `stage2_combine` by <=1.2%
+  while this card reports -38.2%. That is ~30x. The two controls are almost certainly not the same
+  experiment: deleting the P2P store instructions is not the same as deleting the store instructions
+  **and** the arrival wait that follows them, and only the second can move the number by a third.
+  Nobody ran both. The highest-payoff axis in the campaign was closed on the coin-flip.
 - Implementation history: **deliberately not cited here by branch or commit.** This card is injected
   into capability-evaluation runs, where an engineer is asked to derive the megakernel; a commit
   address turns that question into a fetch. Two waves already filed candidates 8-of-11 and 11-of-12

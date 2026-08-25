@@ -149,6 +149,36 @@ overlap: {
 number. Naming the collection experiment you could not run is a result. Synthesising a plausible
 fraction to fill the field is the specific failure this instrument exists to make unnecessary.
 
+## Trap 4 (added after it fired): a summed `overlap_fraction` reads high on a kernel with zero overlap
+
+A meter that emits one `overlap_fraction` by summing every pair of concurrently-active roles will
+report a large, entirely honest, entirely useless number, because most of the pairs it sums have
+nothing to do with the edge you fused. Real reading from a whole-grid-join arm — an arm whose own
+source comment says it has zero overlap by construction:
+
+```
+overlap_fraction=0.43399
+pairwise={'dispatch_wait|gemm1': 5636044, 'gemm1|join': 1730112, 'gemm2_p2p|join': 2204}
+join_exit_spread_ticks=26  n=256
+```
+
+`dispatch_wait|gemm1` (76.5%) is intra-producer overlap that the *unfused* kernel already had.
+`gemm1|join` (23.5%) is blocks queueing at the barrier — waiting, not working. The one pair that is
+the fused edge, `gemm2_p2p|join`, is **2204 ticks, 0.03%**. The headline said 43%; the answer is 0.
+
+Two rules follow.
+
+**Partition the pairs before you normalise.** Every pair is either ON the edge under test
+(producer role concurrent with consumer role) or OFF it (pre-existing concurrency, or queueing).
+Only the ON group may be normalised into a headline. Emit the OFF group too — it is useful context —
+but never in the same scalar. A composite overlap number is a false positive generator.
+
+**Always emit `join_exit_spread_ticks` (or the equivalent for your sync primitive)** — the spread in
+exit timestamps across all participating blocks. It is a one-line veto: a spread of tens of ticks
+across hundreds of blocks means everything downstream of that sync is strictly serialised, and any
+overlap claim can be rejected on the spot without reading the pairwise table at all. Cheap to
+collect, and it fails loudly in the one case where the composite fraction fails quietly.
+
 ## If you cannot build it
 
 Then criterion "genuine overlap" is **unmeasured**, and that is what goes in the report — not
