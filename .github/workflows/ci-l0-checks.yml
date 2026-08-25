@@ -96,6 +96,14 @@ jobs:
       - name: enabling steps judged on function
         run: node kernel_workflow/tests/test_enabling_step.js
 
+      # The two Analyze artifacts. Both gates decide what a lease gets spent on, and both have a
+      # blind spot that already cost waves: the graph cannot see operands nobody produces, and the
+      # pipe table can size a hole that no direction then claims.
+      - name: analyze artifact gates
+        run: |
+          node kernel_workflow/tests/test_task_graph_gate.js
+          node kernel_workflow/tests/test_pipe_occupancy_gate.js
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
