@@ -319,7 +319,8 @@ def render(trees, roots, idx, scanned, scan_dirs, installed, notes):
     A("> **Generated file.** Rebuild with `python3 languages/flydsl/_gen_version_map.py` (see the")
     A("> script docstring for the `--root` arguments). Do not hand-edit the tables.")
     A(">")
-    # Sibling generated artifacts (corpus/gemm_family.md, index/run_recurrence.md) DO have a --check
+    # Sibling generated artifacts (corpus/gemm_decisions.md, corpus/gemm_source_evidence.md and
+    # index/run_recurrence.md) DO have a --check
     # gate in CI, so a reader who has seen those will assume this one is held current too. It cannot
     # be: regenerating needs four FlyDSL versions installed side by side, and three of those trees
     # were unpacked wheels that no longer exist. Better to say so here than to let the reader infer a

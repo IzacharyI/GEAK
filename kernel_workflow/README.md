@@ -85,7 +85,8 @@ Workflow({
                                //   ADDITIVE only: the incumbent (input kernel's own) language ALWAYS
                                //   competes as an in-place optimize lane and cannot be dropped here.
     op_spec: {},               // author mode: {op_kind, shapes, dtype, math_contract, regime} for the op
-    perf_knowledge_dir: "",  // optional: AMD authoring knowledge base the author_engineer reads
+    use_perf_knowledge: "true",// optional, default true; false = clean authoring-KB A/B control arm
+    perf_knowledge_dir: "",    // optional override; an explicit empty path remains empty
     // --- workload alignment (optional; aligns the PERF harness with the real workload) ---
     workload_spec_path: "",    // optional: path to a workload-v1 json (parse_profile.py --workload-out).
                                //   The benchmark harness then times the EXACT (shape,dtype) cases the
@@ -265,6 +266,8 @@ the `exp/` folder sibling to `workflow_dir`):
 - `round_N/integrate/`, `insight_log.md`, `current_best.diff`
 - `tech_lead_report.md` — round-by-round narrative + final per-case table (the TechLead summary)
 - `final_patch.diff`, `optimized/`, `director_validation.json` — the official verified result
+- `validation_environment.yaml` — software commits/versions, GPU, shape/workload, measurement protocol,
+  parity verdict and exact `decision_refs` outcomes for this run
 
 ## Generality (single kernel ↔ e2e model)
 The script never branches on kernel type or single-vs-e2e. Everything flows through the

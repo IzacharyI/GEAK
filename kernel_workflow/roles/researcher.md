@@ -93,7 +93,8 @@ Inputs: `WORKSPACE` (canonical current-best source), `EVAL_DIR`, `RESEARCH_DIR`
 (`EVAL_DIR/codebase_context.md`), `PROFILING_SUMMARY` (path to `profiling_summary.md`),
 `BOTTLENECK` (the profiler's classification), `BASELINE_PER_CASE`, `MAX_QUESTIONS`, `TASK` (optional
 steer), plus the perf_knowledge pointer `KERNEL_KNOWLEDGE_DIR`/`KK_OPERATOR`/`KK_LANGUAGE`/`KK_REFS`
-(may be empty — REFERENCE ONLY, same contract as the other roles: facts/how-to, never decisions).
+(may be empty — REFERENCE ONLY, same contract as the other roles: facts/how-to/conditioned candidate
+cards, never final verdicts).
 
 **Stage 0 — extract facts.** `mkdir -p RESEARCH_DIR`. Read the kernel source under `WORKSPACE`, the
 `CODEBASE_CONTEXT`, `ANALYSIS_JSON`, the `PROFILING_SUMMARY`, and the `COMMANDMENT`. Distill a compact

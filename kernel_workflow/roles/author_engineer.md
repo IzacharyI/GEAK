@@ -27,10 +27,12 @@ from the op task dir). The op's correctness contract is an **IMMUTABLE** unittes
   unittest), and `KERNEL_KNOWLEDGE_DIR` (the AMD authoring knowledge base, may be empty).
 
 ## The knowledge base is REFERENCE ONLY (read this contract first)
+When the `PERF_KNOWLEDGE` input is `off`, do not open `KERNEL_KNOWLEDGE_DIR` or use anything below
+from it; author from the op spec and canonical algorithm. This is the clean control arm.
 `KERNEL_KNOWLEDGE_DIR` is reference material that may be **stale, incomplete, or wrong**. It gives you
-*facts and examples* (API entrypoints, code skeletons, knobs, pitfalls, which backends exist) — **not
-decisions**. Decisions are YOURS; correctness/perf is decided by the **immutable unittest + benchmark**,
-never by the knowledge base. Rules (these guarantee the KB can only help, never hurt):
+facts, examples and **candidate decision cards** (conditions → what to try → alternatives → evidence
+strength) — never a verdict. Final decisions are YOURS; correctness/perf is decided by the
+**immutable unittest + benchmark**, never by the knowledge base. Rules:
 - **Baseline first, always.** Write your own clean *canonical* correct implementation first (textbook
   algorithm or the obvious library call). It is your floor — measured no matter what the KB says.
 - **KB only adds candidates / shows how.** Use it to find options you might miss and implement them
@@ -66,16 +68,17 @@ Read, as reference, before writing:
   fuller language surface, the TTGIR→Gluon transcription toolchain and pipeline re-injection live in the
   `gluon_authoring` expert skill and are only injected when `use_expert_skills` is on. That skill is
   mechanics only — it carries no search strategy, so it does not compete with your own loop.
-- **How six implementations answered the same question:** `KERNEL_KNOWLEDGE_DIR/corpus/gemm_family.md`
-  — for GEMM-family ops, every tiling / LDS / MFMA / layout / scheduling decision aiter states in
-  FlyDSL, Triton, Gluon, CK, HIP and asm, with `file:line`. Most useful when `TARGET_LANGUAGE` is
-  `flydsl`, `hip` or `asm`, because those are the languages where the choice is yours: Triton hands
-  the schedule to a compiler pass, and this is the page that shows what the languages without that
-  luxury did instead. Two things on it are worth reading before a first GEMM:
-  the **tunable-surface** rows (which knobs exist at all) and the **shipped tuned starting points**
-  (aiter's own sweep, grouped by gfx and M bucket, separating knobs every swept shape agreed on from
-  knobs that moved). A config known to compile and known to have been measured beats a guessed tile.
-  It carries no rankings — it says what was chosen, not what is best.
+- **GEMM development decisions:** `KERNEL_KNOWLEDGE_DIR/corpus/gemm_decisions.md` — read this first.
+  Match the card's conditions, add its stated action as a candidate, retain its alternatives, and
+  respect the evidence level: `source_observed` is an implementation precedent only and
+  `shipped_config` is a seed selected in AITER's source tree without a benchmark archive.
+  Its tuning tables turn `(gfx, variant, M bucket)` config files into explicit **seed candidate /
+  vary next** instructions, so you do not have to infer advice from occurrence counts. Measured
+  guidance remains behind the learned/expert-skill switches.
+- **Trace a GEMM card to source:** `KERNEL_KNOWLEDGE_DIR/corpus/gemm_source_evidence.md` — the same
+  operator in FlyDSL, Triton, Gluon, CK, HIP and asm with reproducible `file:line`. Open it when you
+  need the exact MFMA/LDS/layout/scheduling precedent behind a card. It is evidence, not advice; do
+  not turn a frequent source value into a preference.
 - **Porting a recipe across FlyDSL versions:** `KERNEL_KNOWLEDGE_DIR/languages/flydsl/version_map.md`
   — generated: which symbol moved where, what is gone, and what replaces it across
   `0.2.0 / 0.2.2 / 0.2.4 / 0.3.0`. Use it when a skeleton or skill was written against another
@@ -148,6 +151,9 @@ Read, as reference, before writing:
    && git -c user.email=team@workflow -c user.name=team commit -q -m "author seed (<lang>)"`.
    This makes HEAD the optimize loop's CODE starting point (what it diffs its edits against), while the
    SPEEDUP the loop optimizes remains `baseline_ms(online) / current_ms` — never seed-vs-optimized.
+7. **Attribute knowledge used:** if a card/config from `gemm_decisions.md` materially shaped the seed,
+   return its exact card `id` or `cfg_…` in `decision_refs`. Reading the page without acting on a row
+   earns no citation; a canonical/profile-only seed returns `[]`.
 
 ## Outputs
 Return JSON:
@@ -159,6 +165,7 @@ Return JSON:
   "baseline_ms": 0.0,
   "kernel_src_path": "<WORKSPACE>/kernel_src/<file>",
   "entry_point": "<module:attr the unittest calls>",
+  "decision_refs": ["<exact card id or cfg_...; [] if none>"],
   "build": false,
   "notes": "algorithm chosen, shape-regime handled, anything the optimize loop should know"
 }

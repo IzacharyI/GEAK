@@ -42,7 +42,7 @@ function build(argsObj, stubs) {
       trace.workflowCalls.push({ scriptPath: ref.scriptPath, args: a });
       trace.lanes.push({ lang: a.target_language, mode: a.mode, gpus: a.gpu_ids });
       const sp = s.lane && s.lane[a.target_language] !== undefined ? s.lane[a.target_language] : 1.0;
-      return { validation_status: 'validated', final_speedup: sp };
+      return { validation_status: 'accepted', final_speedup: sp };
     },
     agent: async (p, o) => {
       const label = (o && o.label) || '';
@@ -123,13 +123,15 @@ const lanesOf = (trace) => trace.lanes.map((l) => `${l.lang}:${l.mode}`).sort().
   console.log('\n# C. pass-through forwards every arg to the worker unchanged');
   {
     const a = { ...BASE, mode: 'author', target_language: 'triton', budget: 3,
-                gpu_ids: '2,3', task: 'make it fast', backends: ['hip', 'ck'] };
+                gpu_ids: '2,3', task: 'make it fast', backends: ['hip', 'ck'],
+                use_perf_knowledge: 'false' };
     const { run, trace } = build(a, {});
     await run();
     const c = trace.workflowCalls[0];
     ok(trace.workflowCalls.length === 1, 'exactly one workflow() call', `n=${trace.workflowCalls.length}`);
     ok(String(c.scriptPath).endsWith(path.sep + 'kernel_lane.js'), 'scriptPath = kernel_lane.js', c.scriptPath);
-    for (const k of ['mode', 'target_language', 'budget', 'gpu_ids', 'task', 'kernel_path']) {
+    for (const k of ['mode', 'target_language', 'budget', 'gpu_ids', 'task', 'kernel_path',
+                     'use_perf_knowledge']) {
       ok(JSON.stringify(c.args[k]) === JSON.stringify(a[k]), `forwards ${k}`, JSON.stringify(c.args[k]));
     }
     ok(trace.agentLabels.length === 0, 'no agent spawned on pass-through', `n=${trace.agentLabels.length}`);
@@ -148,7 +150,9 @@ const lanesOf = (trace) => trace.lanes.map((l) => `${l.lang}:${l.mode}`).sort().
   // -------------------------------------------------------------------------
   console.log('\n# E. auto-discovery: live language optimizes, others follow author_plan.route');
   {
-    const { run, trace } = build({ ...BASE, mode: 'bakeoff', gpu_ids: '0,1,2,3' }, {
+    const { run, trace } = build({
+      ...BASE, mode: 'bakeoff', gpu_ids: '0,1,2,3', use_perf_knowledge: 'false',
+    }, {
       agent: healthy('triton', [{ language: 'hip', route: 'author' },
                                 { language: 'ck', route: 'rewrite' },
                                 { language: 'flydsl', route: 'author' }]),
@@ -159,6 +163,8 @@ const lanesOf = (trace) => trace.lanes.map((l) => `${l.lang}:${l.mode}`).sort().
     ok(trace.lanes.some((l) => l.lang === 'hip' && l.mode === 'author'), 'route=author -> hip:author', lanesOf(trace));
     ok(trace.lanes.some((l) => l.lang === 'ck' && l.mode === 'optimize'), 'route=rewrite -> ck:optimize', lanesOf(trace));
     ok(trace.lanes.some((l) => l.lang === 'flydsl' && l.mode === 'author'), 'flydsl:author', lanesOf(trace));
+    ok(trace.workflowCalls.every(c => c.args.use_perf_knowledge === 'false'),
+      'bake-off forwards the perf-knowledge control arm to every lane');
   }
 
   // -------------------------------------------------------------------------

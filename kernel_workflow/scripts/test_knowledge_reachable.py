@@ -2,7 +2,7 @@
 """test_knowledge_reachable.py — the knowledge loop is closed in BOTH directions.
 
 The return path (run -> card -> digest) has tests and CI gates. The read path had none, and it broke
-silently: `run_recurrence.md`, `corpus/gemm_family.md` and `languages/flydsl/version_map.md` were all
+silently: `run_recurrence.md`, the GEMM corpus and `languages/flydsl/version_map.md` were all
 generated, tested, gated and linked from three READMEs — and named by no role prompt at all. Every
 `--check` passed. A human browsing the base would find them; the agent that plans directions never
 would. A doc no role reads is a comment with a CI gate on it.
@@ -17,7 +17,7 @@ Two directions, and they fail for different reasons:
 
 2. **Every artifact in `MUST_BE_READ` must be named by at least one role prompt.** Deliberately an
    explicit list rather than "everything marked GENERATED": most generated files here are machine
-   inputs (`facts/*.yaml`), human navigation (`sota_matrix.md`) or skill internals, so a blanket rule
+   inputs (`evidence/*.yaml`), human navigation (`sota_matrix.md`) or skill internals, so a blanket rule
    would need an exemption list longer than the rule itself. Being explicit also puts the burden in
    the right place — adding a knowledge artifact should require saying who reads it, which is the
    question that went unasked.
@@ -48,10 +48,11 @@ MUST_BE_READ = {
         "per-axis base rates from this workflow's own cards. If no planning role reads it, the "
         "return path computes priors that nothing ever prices a round against, and the whole "
         "feedback loop terminates in a file.",
-    "corpus/gemm_family.md":
-        "the same operator written six ways, per decision, with file:line. The reason the corpus "
-        "exists is to turn a FlyDSL author's first move from a guess into a lookup; unread, it is "
-        "17k lines of YAML and a rendered page nobody opens.",
+    "corpus/gemm_decisions.md":
+        "conditioned, actionable GEMM candidate cards grounded in source observations or shipped "
+        "configuration seeds. The source index alone leaves the author to infer recommendations from "
+        "regex-hit counts; this is the semantic layer that turns evidence into something usable "
+        "without bypassing the separate switches for measured learned cards and expert skills.",
     "languages/flydsl/version_map.md":
         "which FlyDSL symbol moved where across versions. Unread, an agent porting a recipe guesses "
         "at an API instead of looking it up, which is the specific failure it was built to remove.",

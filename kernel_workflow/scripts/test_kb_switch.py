@@ -96,6 +96,47 @@ disp = open(DISPATCH).read()
 check("the bake-off dispatcher forwards use_learned_kb to each lane",
       "use_learned_kb:" in disp, "kernel_workflow.js builds lane args explicitly; the flag must be there")
 
+# The always-on perf_knowledge corpus needs its own run-level control arm. It is not the learned KB:
+# turning one off must not silently leave the other on, and an explicit empty path must stay empty
+# rather than falling through JavaScript's `|| default`.
+check("the lane defaults perf knowledge on but exposes an override",
+      re.search(r"A\.use_perf_knowledge\s*!=\s*null\s*\?\s*A\.use_perf_knowledge\s*:\s*'true'",
+                lane) is not None,
+      "expected args.use_perf_knowledge with historical default true")
+check("an explicit empty perf knowledge dir does not fall back to the default",
+      "A.perf_knowledge_dir != null ? String(A.perf_knowledge_dir)" in lane
+      and "USE_PERF_KNOWLEDGE ? REQUESTED_PERF_KNOWLEDGE_DIR : ''" in lane,
+      "use nullish selection plus an explicit off branch, not `A.perf_knowledge_dir || default`")
+check("planning and authoring receive the perf knowledge switch",
+      lane.count("PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off'") >= 3,
+      "author, analyze and plan_round must all see the control-arm state")
+check("the bake-off dispatcher forwards use_perf_knowledge to each lane",
+      "use_perf_knowledge:" in disp,
+      "kernel_workflow.js builds bake-off lane args explicitly; the flag must be there")
+
+# Perf-decision attribution is separate from the learned-card citation ledger. A page path (`kk_refs`)
+# cannot identify which curated card or cfg row seeded a direction, so exact IDs must survive the
+# entire plan -> verify -> history -> return path.
+tech = open(os.path.join(ROLES, "tech_lead.md")).read()
+check("the planner schema accepts exact decision refs",
+      "decision_refs: { type: 'array'" in lane and "`decision_refs`" in tech,
+      "PLAN_SCHEMA and the TechLead output contract must both name decision_refs")
+check("decision refs reach engineers and round history",
+      "decision_refs: d.decision_refs || []" in lane
+      and "decision_refs: r.d.decision_refs || []" in lane,
+      "attribution must not stop at the planner output")
+check("verifier outcomes are joined to decision refs",
+      "decisionCitations.push" in lane and "decision_citations: decisionCitations" in lane,
+      "formal validation needs exact per-decision outcomes in the lane result")
+check("the perf-KB-off arm mechanically strips decision attribution",
+      lane.count("USE_PERF_KNOWLEDGE ? normalizeDecisionRefs") >= 2,
+      "author and plan outputs must not smuggle decision refs into the control arm")
+check("every completed validation attempts an environment manifest",
+      "capture_validation_env.py" in lane
+      and "validation_environment.yaml" in lane
+      and "validation_environment:" in lane,
+      "software/GPU/shape/method capture must not depend on earning a learned card")
+
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILED: {', '.join(FAILED)}")

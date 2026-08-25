@@ -57,8 +57,9 @@ When `KERNEL_KNOWLEDGE_DIR` is non-empty AND `KK_OPERATOR` is set, mine the card
 cannot write from memory — `flydsl`/`tilelang`/`gluon` map to the same dir name, triton→`triton_amd`,
 hip→`hip_cpp`, ck→`composable_kernel`, asm→`asm_mfma`) to *widen* your candidate techniques (knobs,
 skeletons, split-K/preshuffle, fusion, MFMA/numerics pitfalls, alternative backends worth mimicking).
-**Contract:** facts/how-to, not decisions; it may be stale/wrong; your measured benchmark is the floor;
-ignore stored `status`/TFLOPS as decisions. It can only add candidates, never narrow them. Skip entirely
+**Contract:** facts/how-to/conditioned candidate cards, never final verdicts; it may be stale/wrong;
+your measured benchmark is the floor. Ignore stored `status`/TFLOPS as verdicts. It can only add
+candidates, never narrow them. Skip entirely
 if empty / `KK_OPERATOR` null.
 **Cross-backend rewrite/port** (your rewrite targets a language ≠ the current source — ANY source→target,
 e.g. ck→flydsl, triton→tilelang, hip→ck): ALSO mine the TARGET backend card

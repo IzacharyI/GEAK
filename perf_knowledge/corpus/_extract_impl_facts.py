@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Index the design decisions in AITER's six GEMM implementations, with file:line evidence.
+"""Extract source evidence from AITER's six GEMM implementations, with file:line provenance.
 
     # from the repo root, with an aiter checkout to read
     python3 perf_knowledge/corpus/_extract_impl_facts.py --aiter /sgl-workspace/aiter --emit
     python3 perf_knowledge/corpus/_extract_impl_facts.py --aiter /sgl-workspace/aiter --json
-    python3 perf_knowledge/corpus/_extract_impl_facts.py --render      # facts YAML -> corpus doc
+    python3 perf_knowledge/corpus/_render_facts.py --emit             # evidence YAML -> source index
+    python3 perf_knowledge/corpus/_render_decisions.py --emit         # cards + evidence -> advice
 
 WHAT PROBLEM THIS SOLVES
 GEAK has to author FlyDSL, and the FlyDSL corpus is thin: 33 files against Triton's 318. The
@@ -14,8 +15,8 @@ layout and which MFMA to issue. What was missing is a way to LOOK ONE UP. `kerne
 the hand-written attempt and it shows the limits: file-level pointers, no line numbers, and claims
 like "default tile 128x128x64" that no longer have anything checking them.
 
-So this walks the implementations and emits one record per decision, each carrying `file:line` and
-the source lines themselves.
+So this walks the implementations and emits one record per source observation, each carrying a
+content-bound identity, `file:line` and the source lines themselves.
 
 WHAT IT DOES NOT DO — and this is the whole safety argument
 It records what the source SAYS. It never says why a choice is faster, never ranks two
@@ -32,6 +33,7 @@ because every record carries the commit it was read at.
 import argparse
 import ast
 import collections
+import hashlib
 import json
 import os
 import re
@@ -41,8 +43,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PK = os.path.dirname(HERE)
 ROOT = os.path.dirname(PK)
-FACTS = os.path.join(HERE, "facts")
-DOC = os.path.join(HERE, "gemm_family.md")
+EVIDENCE = os.path.join(HERE, "evidence")
 
 # The GEMM family, as the pilot. Each entry is (language, subtree, glob) — the subtree is where that
 # language's implementations live in aiter, and languages are kept apart because "which language is
@@ -84,16 +85,17 @@ IMPLS = [
     # is not where the decisions are stated anyway. What IS readable is the launcher: `asm_gemm_*.cu`
     # names the `.co` to load, the block/grid it is launched with, and the argument block layout the
     # assembly expects. That is the asm contract, and it is the part a FlyDSL author has to match.
-    # The instructions inside the binary are a separate, deeper layer (see `_disasm_facts.py`).
+    # The instructions inside the binary are a separate, deeper layer. They require a future
+    # disassembly evidence pass; this source pass does not pretend that file:line can describe a
+    # binary instruction.
     ("asm", "csrc/py_itfs_cu", ("asm_gemm_*.cu", "asm_flatmm_*.cu",
                                 "asm_a8w8_blockscale_bpreshuffle.cu")),
 ]
 
-# Per-shape tuned knob sets that AITER ships for its Triton GEMMs: one JSON per
-# `{gfx}-{KERNEL}-{VARIANT}[-N=..-K=..]`, each mapping an M bucket to the knobs that won. This is
-# the "somebody already swept this" layer, and it is the one an author wants first — a starting
-# point that is known to compile and known to have been measured, rather than a guessed tile.
-# Read as data, not as a recommendation: the file records what won on the box that ran the sweep.
+# Per-shape selected knob sets that AITER ships for its Triton GEMMs: one JSON per
+# `{gfx}-{KERNEL}-{VARIANT}[-N=..-K=..]`, each mapping an M bucket to a concrete config. The source
+# tree preserves neither the benchmark archive nor rejected alternatives, so these are useful seeds,
+# not measured winners.
 TUNED_CONFIG_DIR = "aiter/ops/triton/configs/gemm"
 
 
@@ -241,8 +243,29 @@ def excerpt(lines, idx, span=2):
     return [f"{n + 1}: {lines[n].rstrip()}" for n in range(lo, hi) if lines[n].strip()]
 
 
+def source_evidence_id(record):
+    """Content-bound identity used by decision cards instead of a loose `file:line` pointer.
+
+    `file:line` is useful provenance but not an identity: after an upstream refresh the same line can
+    contain a different construct and a card would still appear grounded. Including the match and
+    excerpt means such a change invalidates the reference and forces the card to be reviewed.
+    """
+    fields = {
+        key: record.get(key)
+        for key in ("category", "language", "file", "line", "match", "captured",
+                    "arch_scope", "evidence")
+    }
+    canonical = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "src_" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 def scan_file(path, rel, language):
-    """Every rule hit in one file, as fact records."""
+    """Every rule hit in one file, as source-evidence records.
+
+    A hit answers only "what is written here?". It is not yet a development decision: deciding
+    whether to copy, benchmark or reject the pattern requires conditions and evidence strength, which
+    live in `decisions/gemm.yaml`.
+    """
     with open(path, encoding="utf-8", errors="replace") as f:
         raw = f.read()
     view = strip_comments(raw, python=path.endswith(".py"))
@@ -257,7 +280,7 @@ def scan_file(path, rel, language):
             if idx >= len(rlines):
                 continue
             groups = [g for g in m.groups() if g] if m.groups() else []
-            out.append({
+            record = {
                 "category": category,
                 "language": language,
                 "file": rel,
@@ -266,8 +289,16 @@ def scan_file(path, rel, language):
                 "captured": groups,
                 "arch_scope": arch_context(vlines, idx),
                 "evidence": excerpt(rlines, idx),
-            })
-    return out, raw, vlines
+            }
+            record["evidence_id"] = source_evidence_id(record)
+            out.append(record)
+    # Overlapping rules occasionally describe the exact same source construct (notably asm launcher
+    # aliases). One piece of evidence must have one identity; keeping duplicates inflates coverage and
+    # makes an ID ambiguous to a decision card.
+    unique = {}
+    for record in out:
+        unique.setdefault(record["evidence_id"], record)
+    return list(unique.values()), raw, vlines
 
 
 def autotune_configs(path, rel):
@@ -386,13 +417,13 @@ def summarize_tuned(rows):
     Grouped rather than copied. 1742 verbatim rows is a re-encoding of JSON that already exists in
     aiter — a second copy with a shelf life, and 34k lines nobody diffs. The grouping is not a
     space trick though: it surfaces the distinction the raw rows bury. Within one bucket some knobs
-    take a single value across every shape swept (`BLOCK_SIZE_K` is 128 in all nine gfx942
+    take a single value across every shipped shape config (`BLOCK_SIZE_K` is 128 in all nine gfx942
     A8W8_BLOCKSCALE M<=32 files, `num_stages` always 2) while others move with the shape. The first
-    kind is a constraint an author should adopt; the second is a dimension they still have to sweep.
-    Both are read off the counts, not asserted — `unanimous` is literally "one distinct value".
+    kind is a useful candidate to seed; the second is a dimension they still have to vary. Both are
+    read off the counts, not asserted — `unanimous` is literally "one distinct value".
 
     Exact per-shape rows are deliberately not reproduced: an author who needs N=4096,K=7168 should
-    open that JSON, and the record here says which directory to open.
+    open the source JSONs, whose exact paths are retained on every group below.
     """
     groups = collections.defaultdict(list)
     for r in rows:
@@ -411,16 +442,25 @@ def summarize_tuned(rows):
                 # `value: count`, not `valueXcount` — `.cgx23` reads as a cache modifier named
                 # `.cgx23` rather than `.cg` seen 23 times, and `32x20` as a tile shape.
                 varies[k] = ", ".join(f"{json.loads(val)}: {n}" for val, n in counter.most_common())
-        rec = {"gfx": gfx, "tags": tags, "m_bucket": bucket, "shapes_swept": len(members)}
+        rec = {
+            "config_id": "cfg_" + hashlib.sha256(
+                json.dumps([gfx, tags, bucket], separators=(",", ":")).encode()
+            ).hexdigest()[:16],
+            "gfx": gfx,
+            "tags": tags,
+            "m_bucket": bucket,
+            "shape_configs": len(members),
+            "source_files": sorted({member["file"] for member in members if member.get("file")}),
+        }
         if len(members) == 1:
-            # One shape swept means there is no cross-shape agreement to report, so the field is not
-            # called agreement. `same_across_shapes` over a single row would read as an invariant
+            # One shape config means there is no cross-shape agreement to report, so the field is not
+            # called agreement. `same_across_configs` over a single row would read as an invariant
             # backed by evidence that does not exist.
             rec["knobs"] = fixed
         else:
-            # Every shape in this bucket landed on this value. Evidence of a constraint, not proof of
-            # one — the sweep may simply never have tried otherwise.
-            rec["same_across_shapes"] = fixed
+            # Every shipped shape config in this bucket carries this value. Useful seed evidence, not
+            # proof of a constraint — the source does not preserve alternatives or benchmark results.
+            rec["same_across_configs"] = fixed
             rec["varies_by_shape"] = varies
         out.append(rec)
     return out
@@ -433,7 +473,7 @@ def aiter_commit(aiter):
 
 
 def aiter_origin(aiter):
-    """The repository the facts came from, as a remote URL where one exists.
+    """The repository the source evidence came from, as a remote URL where one exists.
 
     Not the local path. A reader who wants to check a citation needs to know WHICH aiter, and the
     honest way to extract from a dirty working copy is a throwaway clean worktree — which made the
@@ -467,7 +507,7 @@ def dirty_paths(aiter):
 def collect(aiter):
     """Walk the six implementation sets. Missing subtrees are reported, never silently empty."""
     import glob as globmod
-    facts, configs, seen, missing = [], [], [], []
+    evidence, configs, seen, missing = [], [], [], []
     for language, subtree, patterns in IMPLS:
         base = os.path.join(aiter, subtree)
         if not os.path.isdir(base):
@@ -484,11 +524,11 @@ def collect(aiter):
         for path in files:
             rel = os.path.relpath(path, aiter)
             got, raw, _ = scan_file(path, rel, language)
-            facts += got
+            evidence += got
             if language in ("triton", "gluon") and path.endswith(".py"):
                 configs += [dict(c, language=language) for c in autotune_configs(path, rel)]
             seen.append({"language": language, "file": rel, "lines": raw.count("\n") + 1,
-                         "facts": len(got)})
+                         "evidence_records": len(got)})
     tuned, tuned_gap = tuned_configs(aiter)
     # An empty autotune list is a finding, not a failed pass, so it is stated rather than left as a
     # zero a reader would take for a bug. AITER's GEMM Triton kernels carry no `@triton.autotune` at
@@ -499,8 +539,8 @@ def collect(aiter):
         missing.append({"language": "triton", "subtree": "aiter/ops/triton/_triton_kernels/gemm",
                         "why": "no @triton.autotune in the GEMM family — tuning is shipped as "
                                f"per-shape JSON under {TUNED_CONFIG_DIR} "
-                               f"(see facts/gemm_tuned_configs.yaml, {len(tuned)} rows)"})
-    return facts, configs, tuned, seen, missing + tuned_gap
+                               f"(see evidence/gemm_tuned_configs.yaml, {len(tuned)} rows)"})
+    return evidence, configs, tuned, seen, missing + tuned_gap
 
 
 # ---------------------------------------------------------------------------------------------
@@ -530,8 +570,8 @@ def emit_yaml(payload, path):
     carries its own front-matter parser.
     """
     L = ["# GENERATED by perf_knowledge/corpus/_extract_impl_facts.py — do not hand-edit.",
-         "# Every record is a pointer into an AITER source file at the commit named below. No record",
-         "# claims a decision is good; see README.md for why that line is drawn here.", ""]
+         "# These are SOURCE-EVIDENCE records: what a file states, not what an author should choose.",
+         "# Actionable choices live in decisions/gemm.yaml and are rendered to gemm_decisions.md.", ""]
     L.append("provenance:")
     for k, v in payload["provenance"].items():
         if isinstance(v, list):
@@ -539,7 +579,7 @@ def emit_yaml(payload, path):
         else:
             L.append(f"  {k}: {yaml_quote(v)}")
     L.append("")
-    for section in ("coverage", "missing", "autotune_configs", "tuned_configs", "facts"):
+    for section in ("coverage", "missing", "autotune_configs", "tuned_configs", "source_evidence"):
         if section not in payload:
             continue
         rows = payload[section]
@@ -568,10 +608,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--aiter", help="an aiter checkout to read (required for --emit / --json)")
-    ap.add_argument("--emit", action="store_true", help="write facts/gemm_family.yaml")
-    ap.add_argument("--json", action="store_true", help="dump to stdout instead")
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--emit", action="store_true", help="write evidence/gemm_source.yaml")
+    mode.add_argument("--json", action="store_true", help="dump to stdout instead")
     ap.add_argument("--allow-dirty", action="store_true",
-                    help="extract even when files that produce facts have uncommitted changes; "
+                    help="extract even when files that produce evidence have uncommitted changes; "
                          "the affected records are marked `unreproducible: true`")
     a = ap.parse_args()
 
@@ -581,16 +622,18 @@ def main():
         print(f"no such aiter tree: {a.aiter}", file=sys.stderr)
         return 2
 
-    facts, configs, tuned, seen, missing = collect(a.aiter)
+    evidence, configs, tuned, seen, missing = collect(a.aiter)
     commit = aiter_commit(a.aiter)
+    for record in evidence:
+        record.setdefault("evidence_id", source_evidence_id(record))
 
     # Which files that CONTRIBUTED evidence are locally modified. Scoped to contributors rather than
     # the whole tree because that is the actual condition: an unrelated edit elsewhere in aiter cannot
     # make a citation unresolvable, and refusing on it would be superstition rather than a check.
-    contributors = {f["file"] for f in facts}
+    contributors = {f["file"] for f in evidence}
     unreproducible = sorted(contributors & dirty_paths(a.aiter))
     if unreproducible and not a.allow_dirty:
-        print(f"REFUSING: {len(unreproducible)} file(s) that produced facts have uncommitted changes, "
+        print(f"REFUSING: {len(unreproducible)} file(s) that produced evidence have uncommitted changes, "
               f"so their `file:line` would not resolve at {commit[:12]} for anyone else:",
               file=sys.stderr)
         for p in unreproducible[:10]:
@@ -599,7 +642,7 @@ def main():
               "different document that looks like one. Either commit those changes, or extract from a\n"
               "clean checkout:\n"
               f"  git -C {a.aiter} worktree add /tmp/aiter-clean {commit[:12]}\n"
-              "Pass --allow-dirty to record the facts anyway; the affected records are then marked\n"
+              "Pass --allow-dirty to record the evidence anyway; the affected records are then marked\n"
               "and the committed corpus is not allowed to contain them.", file=sys.stderr)
         return 3
 
@@ -616,14 +659,15 @@ def main():
     }
     if unreproducible:
         dirt = set(unreproducible)
-        for f in facts:
+        for f in evidence:
             if f["file"] in dirt:
                 f["unreproducible"] = True
     payload = {
-        "provenance": dict(prov, records=len(facts), autotune_configs=len(configs)),
-        "coverage": seen, "missing": missing, "autotune_configs": configs, "facts": facts,
+        "provenance": dict(prov, evidence_records=len(evidence), autotune_configs=len(configs)),
+        "coverage": seen, "missing": missing, "autotune_configs": configs,
+        "source_evidence": evidence,
     }
-    # The shipped tuned table changes on a different clock from the source (a re-sweep rewrites all
+    # The shipped config table changes on a different clock from the source (a reselection rewrites all
     # of it; a kernel edit touches a few lines), so it gets its own file and its own diff.
     grouped = summarize_tuned(tuned)
     tuned_payload = {
@@ -632,16 +676,16 @@ def main():
         "tuned_configs": grouped,
     }
     if a.json:
-        print(json.dumps({"facts": payload, "tuned": tuned_payload}, ensure_ascii=False, indent=2))
+        print(json.dumps({"evidence": payload, "tuned": tuned_payload}, ensure_ascii=False, indent=2))
         return 0
 
-    os.makedirs(FACTS, exist_ok=True)
-    out = os.path.join(FACTS, "gemm_family.yaml")
-    tuned_out = os.path.join(FACTS, "gemm_tuned_configs.yaml")
+    os.makedirs(EVIDENCE, exist_ok=True)
+    out = os.path.join(EVIDENCE, "gemm_source.yaml")
+    tuned_out = os.path.join(EVIDENCE, "gemm_tuned_configs.yaml")
     emit_yaml(payload, out)
     emit_yaml(tuned_payload, tuned_out)
-    by_lang = collections.Counter(f["language"] for f in facts)
-    print(f"OK: {len(facts)} records from {len(seen)} files "
+    by_lang = collections.Counter(f["language"] for f in evidence)
+    print(f"OK: {len(evidence)} source-evidence records from {len(seen)} files "
           f"({', '.join(f'{k}={v}' for k, v in sorted(by_lang.items()))}), "
           f"{len(configs)} autotune -> {os.path.relpath(out, ROOT)}")
     print(f"OK: {len(tuned)} shipped tuned rows in {len(grouped)} (gfx, tags, M) groups "

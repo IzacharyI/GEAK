@@ -27,8 +27,9 @@ You are invoked per PHASE. Read first, every time:
   never blind-append.
 - `SKILL_DIR/knowledge/gemm_attention_backends.md` — the head-kernel ladder + per-backend priors; use
   it to build `head_candidates` (GEMM/attention) and pick their candidate backends.
-- The AMD knowledge base at `GEAK/perf_knowledge/` is **REFERENCE ONLY** — facts/how-to, not
-  decisions. Use it to *enumerate candidates and learn mechanisms*, never to pick a winner (you decide;
+- The AMD knowledge base at `GEAK/perf_knowledge/` is **REFERENCE ONLY** — facts, how-to and
+  conditioned candidate cards, never final verdicts. Use it to *enumerate candidates and learn
+  mechanisms*, never to pick a winner (you decide;
   measurement confirms). Concretely:
   - `index/capability_index.yaml` — which backends have a documented impl for an op + the gens/dtypes/
     regimes each supports. **Filter by the detected `gfx`/dtype/regime to build `head_candidates`'s

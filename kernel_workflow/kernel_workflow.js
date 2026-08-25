@@ -1,7 +1,7 @@
 export const meta = {
   name: 'kernel-workflow',
   description: 'Single ENTRY POINT for kernel optimization on AMD Instinct MI-series GPUs (CDNA gfx942/gfx950, auto-detected on-box). Dispatches on args.mode: optimize/author -> delegate one unchanged single-language lane to the kernel_lane worker (backward compatible); bakeoff -> freeze the input kernel into ONE immutable oracle + frozen baseline, discover per-language existing impls + offline-tune env backends (aiter/CK), then run one worker lane per backend language (HIP/Triton/FlyDSL/CK/...) in parallel over the GPU pool and pick the fastest verified result across ALL candidates (author/optimize lanes AND the tuned env backend) — every one scored against the SAME frozen original baseline (anti-cheating). Wraps the unchanged kernel_lane worker (one workflow() nesting level; the dispatcher is the bake-off orchestrator).',
-  whenToUse: 'Optimize a kernel. Three modes, all via args.mode (there is NO natural-language mode detection — the caller picks): mode=optimize (DEFAULT) speeds up an EXISTING kernel and behaves exactly like the old single-language workflow; mode=author writes a fresh implementation from scratch, then optimizes it — use it when there is no source to edit yet, or to port the op to another language (pass args.target_language); mode=bakeoff tries several backend languages in parallel and keeps the fastest (pass args.backends, or leave empty to auto-discover — leaving it empty also lets Discover decide per-language whether to optimize an existing impl or author a new one). Anything else throws. Pass args.kernel_path (required), args.workflow_dir (required), args.mode, args.target_language, args.backends, args.budget, args.gpu_ids, args.gpu_mode (pool|pin, default pool).',
+  whenToUse: 'Optimize a kernel. Three modes, all via args.mode (there is NO natural-language mode detection — the caller picks): mode=optimize (DEFAULT) speeds up an EXISTING kernel and behaves exactly like the old single-language workflow; mode=author writes a fresh implementation from scratch, then optimizes it — use it when there is no source to edit yet, or to port the op to another language (pass args.target_language); mode=bakeoff tries several backend languages in parallel and keeps the fastest (pass args.backends, or leave empty to auto-discover — leaving it empty also lets Discover decide per-language whether to optimize an existing impl or author a new one). Anything else throws. Pass args.kernel_path (required), args.workflow_dir (required), args.mode, args.target_language, args.backends, args.budget, args.gpu_ids, args.gpu_mode (pool|pin, default pool). Set args.use_perf_knowledge=false for the authoring-KB control arm.',
   phases: [
     { title: 'Freeze',   detail: 'oracle_freezer: freeze the input kernel -> immutable oracle + baseline_src/ (the ONE denominator) [bakeoff only]' },
     { title: 'Discover', detail: 'op_benchmarker: per-language existing-impl probe + measure + OFFLINE env tune (aiter/CK, shapes from the frozen oracle) -> author_plan, best_known_ms [bakeoff only]' },
@@ -51,8 +51,14 @@ if (MODE !== 'bakeoff') {
 const E2E_WF_DIR = String(A.e2e_workflow_dir ||
   (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/e2e_workflow')).replace(/\/+$/, '');
 const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/exp')).replace(/\/+$/, '');
-const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
-  (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge')).replace(/\/+$/, '');
+const USE_PERF_KNOWLEDGE =
+  String(A.use_perf_knowledge != null ? A.use_perf_knowledge : 'true') === 'true';
+const DEFAULT_PERF_KNOWLEDGE_DIR =
+  WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge';
+const REQUESTED_PERF_KNOWLEDGE_DIR =
+  A.perf_knowledge_dir != null ? String(A.perf_knowledge_dir) : DEFAULT_PERF_KNOWLEDGE_DIR;
+const KERNEL_KNOWLEDGE_DIR =
+  (USE_PERF_KNOWLEDGE ? REQUESTED_PERF_KNOWLEDGE_DIR : '').replace(/\/+$/, '');
 const KERNEL_PATH_ORIG = A.kernel_path;
 const KERNEL_NAME_HINT = String(KERNEL_PATH_ORIG).replace(/\/+$/, '').split('/').pop();
 const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
@@ -379,6 +385,7 @@ const results = await Promise.all(lanes.map(l => sem.with(1, async ([gpu]) => {
       budget: BUDGET, gpu_ids: gpu, gpu_mode: GPU_MODE, task: TASK, apply_to_original: 'false',
       exp_root: `${EVAL_DIR}/bakeoff/${l.key}`,
       use_expert_skills: USE_EXPERT_SKILLS ? 'true' : 'false', expert_skills_dir: EXPERT_SKILLS_DIR,
+      use_perf_knowledge: USE_PERF_KNOWLEDGE ? 'true' : 'false',
       perf_knowledge_dir: KERNEL_KNOWLEDGE_DIR,
       // Forward the KB switch. This arg object is explicit (the optimize/author path spreads {...A},
       // this one does not), so anything omitted here silently reverts to the lane's default — a
@@ -410,6 +417,9 @@ const cands = results.map(x => ({
   lang: x.lane.lang, mode: x.lane.mode, kind: 'lane', speedup: x.speedup,
   validation_status: x.r ? x.r.validation_status : 'failed',
   eval_dir: x.r ? x.r.eval_dir : '', patch: x.r ? x.r.final_patch : '', apply_env: '', tuning_artifact: '',
+  decision_refs: x.r && Array.isArray(x.r.final_decision_refs) ? x.r.final_decision_refs : [],
+  decision_citations: x.r && Array.isArray(x.r.decision_citations) ? x.r.decision_citations : [],
+  validation_environment: x.r ? x.r.validation_environment : '',
 }));
 // (b) tuned env backend candidate (only if it beat the frozen baseline)
 const tunedSpeedup = Number(bake.tuned_speedup);
@@ -506,6 +516,8 @@ if (winner && winner.speedup > 1.0) {
           SCOPE: 'bakeoff', LEARNED_DIR, SKILL_DIR: WORKFLOW_DIR, EVAL_DIR,
           PERF_KNOWLEDGE_DIR: KERNEL_KNOWLEDGE_DIR,
           WINNER: winner, CANDIDATES: laneRows,
+          DECISION_CITATIONS: laneRows.flatMap(row => row.decision_citations || []),
+          VALIDATION_ENV_PATH: winner.validation_environment || '',
           REPORT_PATH: rep ? rep.report_path : `${EVAL_DIR}/bakeoff_report.md`,
           OP_SPEC,
         }),
@@ -520,12 +532,15 @@ return {
   mode: MODE,
   task_dir: oracle.task_dir,
   eval_dir: EVAL_DIR,
+  perf_knowledge_enabled: USE_PERF_KNOWLEDGE,
   baseline_ms: bake.baseline_ms != null ? bake.baseline_ms : (bake.best_known_ms != null ? bake.best_known_ms : null),
   candidates: laneRows,
   winner: winner && {
     lang: winner.lang, mode: winner.mode, kind: winner.kind, speedup: winner.speedup,
     eval_dir: winner.eval_dir, final_patch: winner.patch,
     apply_env: winner.apply_env, tuning_artifact: winner.tuning_artifact,
+    decision_refs: winner.decision_refs || [],
+    validation_environment: winner.validation_environment || '',
     validation_status: winner.validation_status,
   },
   report_path: rep ? rep.report_path : `${EVAL_DIR}/bakeoff_report.md`,

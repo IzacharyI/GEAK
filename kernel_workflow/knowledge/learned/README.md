@@ -126,6 +126,10 @@ language: <authoring language>              # REQUIRED on a new card. The langua
                                             # this library" is not a finding about how a kernel is
                                             # written. Not backfilled onto cards that predate the field —
                                             # a guessed language is worse than an absent one.
+decision_refs: [<decision-card id or cfg_…>] # OPTIONAL attribution. Exact IDs from
+                                            # perf_knowledge/corpus/gemm_decisions.md that seeded the
+                                            # landed implementation. Empty/profile-only is valid.
+                                            # This is not a selector and does not increase confidence.
 # --- classification + evidence ---
 key: <one line of plain English identifying WHAT this card is about>
                                             # The human-readable identity + dedupe/merge target. Write it

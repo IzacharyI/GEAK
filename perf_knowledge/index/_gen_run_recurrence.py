@@ -23,7 +23,8 @@ WHAT IT WILL NOT DO
 It never restates a claim. Every row is counts plus links; the sentences stay in the cards. That is
 deliberate and it is the whole safety argument: a generator that paraphrased 135 cards into curated
 prose would be inventing the one thing nobody measured — the generalization — and `perf_knowledge`'s
-consumption contract (facts and how-to, never decisions) forbids exactly that. It also makes the
+consumption contract (advisory evidence and candidate cards, never final verdicts) forbids exactly
+that. It also makes the
 "ratios, never absolutes" rule automatic, since no card text is copied at all.
 
 It reports BOTH sides of every axis, always. A digest of only the wins is a worse prior than no
@@ -302,7 +303,7 @@ PROSE = {
     ),
     "contract": (
         "Read it as a **prior about where to look first**, never as a verdict. "
-        "[`README.md`](../README.md) applies unchanged: this base provides facts, the box decides."
+        "[`README.md`](../README.md) applies unchanged: this base proposes candidates, the box decides."
     ),
     "general_intro": (
         "An axis reaches this table at >= {min_kernels} distinct kernels and >= {min_classes} "

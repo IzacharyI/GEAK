@@ -1,0 +1,123 @@
+# Curated, actionable GEMM development decisions.
+#
+# This is deliberately NOT generated from regex hits. A source match can prove that an implementation
+# exists; it cannot infer when to use it. Every card therefore states its conditions, allowed action,
+# evidence level and limitations. `_render_decisions.py --check` verifies every content-bound source
+# ID against `evidence/gemm_source.yaml`. Measured guidance is deliberately kept out of this always-on
+# layer; it stays behind the learned-card and expert-skill switches.
+
+provenance:
+  schema_version: 2
+  operator_family: "gemm"
+  curator_contract: "candidate advice only; target-box correctness and benchmark remain the judge"
+
+cards:
+  - id: "flydsl-half-mfma-call-forms"
+    question: "Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "input_dtype in {f16,bf16}"
+    actions:
+      - "For an m16n16k16 candidate, pair bf16 with mfma_f32_16x16x16bf16_1k and f16 with mfma_f32_16x16x16f16."
+      - "Also benchmark the m16n16k32 bf16/f16 forms when fragment shape and target architecture allow them."
+    alternatives:
+      - "Use the m16n16k16 form when the larger-K fragment does not fit the surrounding tile or register budget."
+      - "Let a higher-level backend select the instruction when direct MFMA control is not required."
+    why:
+      - "AITER's FlyDSL split-K GEMM implements both K=16 and K=32 classes and branches explicitly on bf16 versus f16."
+      - "This establishes legal implementation precedents; it does not establish which form is faster for a new shape."
+    source_evidence:
+      - "src_d7886e259f48714f"
+      - "src_272e5086e9d474e5"
+      - "src_f094a4b92bc8637c"
+      - "src_b345f738f9e6911c"
+    measurement_evidence: []
+    limitations:
+      - "No latency or occupancy comparison is attached; treat both K shapes as candidates and re-measure."
+      - "API spelling is version-sensitive; consult languages/flydsl/version_map.md before copying."
+
+  - id: "flydsl-xor16-lds-layout-consistency"
+    question: "How should a FlyDSL GEMM apply an XOR16 LDS layout without making stores and loads disagree?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "operands are staged through LDS"
+      - "XOR16 is included as a bank-conflict candidate"
+    actions:
+      - "Define the byte-column transform once as col_in_bytes XOR ((row modulo k_blocks16) times 16)."
+      - "Apply the identical transform on global-to-LDS stores and on LDS-to-fragment loads for both operands."
+    alternatives:
+      - "Keep the unswizzled layout as the control arm."
+      - "Benchmark a different padding or swizzle scheme when the tile geometry changes."
+    why:
+      - "The AITER implementation uses one helper at both write and read sites; copying only one side changes addressing semantics rather than performance."
+    source_evidence:
+      - "src_e9874262aab7d3ff"
+      - "src_dab8075058138ba2"
+      - "src_5d47b878f8dd7567"
+      - "src_094afa37825243db"
+    measurement_evidence: []
+    limitations:
+      - "The citations prove address consistency, not that XOR16 reduces bank conflicts on every tile."
+      - "Retain the unswizzled implementation and choose by target-box measurement."
+
+  - id: "flydsl-preshuffle-requires-specialized-family"
+    question: "Can B preshuffle be enabled as a flag on the generic FlyDSL HGEMM?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "B preshuffle is being considered"
+    actions:
+      - "Keep b_preshuffle=false on the generic HGEMM and small-M families."
+      - "Route to a specialized preshuffle kernel family and transform B into that family's storage layout before launch."
+      - "Keep b_to_lds=false when the selected specialized family requires preshuffled B."
+    alternatives:
+      - "Use the generic unswizzled B path as the correctness and performance control."
+      - "Build a new specialized family only if no existing preshuffle contract matches the dtype and shape."
+    why:
+      - "AITER rejects b_preshuffle=true on generic and small-M FlyDSL HGEMM rather than treating it as an interchangeable tuning flag."
+      - "The dispatch validation also rejects combining b_preshuffle with b_to_lds in the current specialized path."
+    source_evidence:
+      - "src_3c13c906f1632f79"
+      - "src_ed7afe4a3b63947d"
+      - "src_4066d82b6c84c4bf"
+      - "src_8079a8c47c603564"
+      - "src_e4e5ee9af3744891"
+    measurement_evidence: []
+    limitations:
+      - "This is an API/layout compatibility rule, not evidence that preshuffle is profitable."
+      - "The specialized family's preprocessing cost and reuse count must be included in measurement."
+
+  - id: "flydsl-splitk-hot-loop-schedule-bundle"
+    question: "What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "kernel uses a split-K hot loop with explicit ROCm scheduling directives"
+    actions:
+      - "Include the observed vmem(2), dsrd(2), dsrd(4), mfma(8) directive sequence as one candidate schedule bundle."
+      - "Move or retune the bundle only as a unit against the exact load/MFMA loop, then compare with the unscheduled control."
+    alternatives:
+      - "Leave instruction ordering to the compiler."
+      - "Sweep different vmem, ds-read and MFMA group sizes when the tile or pipeline depth changes."
+    why:
+      - "The four directives are adjacent in AITER's hot-loop scheduler and describe one ordering pattern; copying one directive in isolation loses that context."
+    source_evidence:
+      - "src_e6e24f015d6a1411"
+      - "src_29e3a8349d05cc33"
+      - "src_b7c9a5f1e1355a11"
+      - "src_ee6fe2bcbd689094"
+    measurement_evidence: []
+    limitations:
+      - "The numeric group sizes are source-observed for one loop and are not portable performance constants."
+      - "Changing tile geometry, LDS stages or access width changes the schedule that must be re-measured."
+

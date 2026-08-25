@@ -10,7 +10,7 @@ generated_by: index/_gen_run_recurrence.py
 
 A learned card is one run's conclusion. This file is the part no single card can hold: for each optimization axis, on how many *distinct kernels* it paid, and on how many it was already closed. Rows are counts and links only — the claims stay in the cards, because the generalization is the one thing no run measured.
 
-Read it as a **prior about where to look first**, never as a verdict. [`README.md`](../README.md) applies unchanged: this base provides facts, the box decides.
+Read it as a **prior about where to look first**, never as a verdict. [`README.md`](../README.md) applies unchanged: this base proposes candidates, the box decides.
 
 Corpus: **158 active cards** across kernel=135 (135 with keywords), e2e=23 (0 with keywords) · **93 axes published** (>= 3 distinct kernels), 146 below threshold.
 

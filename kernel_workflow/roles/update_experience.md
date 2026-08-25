@@ -67,7 +67,9 @@ per-round ledger, insights, and each round's directions/results/winner/cumulativ
 you decompose a stacked win and find the pitfalls), `PROFILE` (lane only: the final profile summary —
 bottleneck class and key metrics for the `roofline:` line; convert anything absolute in it into a
 fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (bake-off only), and
-`PERF_KNOWLEDGE_DIR` (the read-only reference base; may be empty).
+`PERF_KNOWLEDGE_DIR` (the read-only reference base; may be empty), `DECISION_CITATIONS` (exact corpus
+card/config IDs declared by each direction, joined to verifier outcomes), and
+`VALIDATION_ENV_PATH` (the run-local environment/shape/method/parity manifest).
 
 ## Steps
 1. Read `${LEARNED_DIR}/README.md` and `${LEARNED_DIR}/INDEX.md`.
@@ -98,7 +100,8 @@ fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (b
      (**pick from the `## keyword vocabulary` appendix at the bottom of `INDEX.md`** — reusing an existing
      term is what keeps sibling cards clustered; coin a new one only when nothing there fits), `kernels`
      (the concrete kernel
-     symbol / entry point you measured), `platforms`, `kernel_class`, `regime`, `language` — followed by
+     symbol / entry point you measured), `platforms`, `kernel_class`, `regime`, `language`,
+     `decision_refs` (copy `WINNER.decision_refs`; omit/`[]` when the winner was profile-only) — followed by
      `key, layer: learned, levers, cost, lifecycle: active, type, confidence, effect, roofline,
      verified_on, last_seen`. Discovery lives on the card; that is what makes it findable.
      **`language` is copied verbatim from `WINNER.language`.** It is the language the winning source
@@ -108,6 +111,8 @@ fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (b
      labelled with a guessed language is worse than no card, because a wrong label gets trusted.
      Never substitute `WINNER.requested_language` (author mode only, present so a mismatch between
      what was asked for and what was written is visible); if the two differ, say so in `caution:`.
+     `decision_refs` is attribution, not authority: include only IDs attached to the final landed
+     winner, not failed directions merely because they appear in `DECISION_CITATIONS`.
 4. Confidence tier: ★ single-run overlapping isolated A/B · ★★ single non-overlap or ≥2 consistent ·
    ★★★ ≥2 independent runs non-overlapping. Do not inflate.
 5. Set `verified_on` to today only if this run's A/B actually confirmed the effect on-box; else `null`.
@@ -147,10 +152,17 @@ fraction before it reaches the card), `CANDIDATES` (bake-off only), `OP_SPEC` (b
    published vocabulary instead of coining a near-synonym: a new spelling splits a base rate that
    would otherwise have counted your run.
 
+   The card's `source:` must identify the run and say that the exact software/GPU/shape/measurement
+   context is archived in `validation_environment.yaml` at `VALIDATION_ENV_PATH`. Do not copy its
+   absolute `/exp/` path into the reusable principle; absolute timing remains in that manifest.
+
 ## Do NOT touch the cited cards' counters
 
 `CITATIONS` is shown to you as CONTEXT — which of your directions a card seeded, and what the
 verifier then measured. Read it to judge whether the card you are about to write says anything new.
+`DECISION_CITATIONS` is the equivalent telemetry for source/config decisions. Use it to distinguish
+the IDs that landed from candidates that failed; do not edit the always-on corpus or invent counters
+for it.
 
 Do not apply it. `attempts`, `confirms_cited`, `confirms_blind` and `losses` on the CITED cards are
 now written by `kb.py drain` from the ledger the lane files, and a second writer doing the same

@@ -43,12 +43,20 @@ const KERNEL_WF_SCRIPT = `${KERNEL_WF_DIR}/kernel_lane.js`;
 // Off is also the conservative default for the layer that has never been measured with it on.
 // Override per run with args.use_learned_kb=true.
 const LANE_USE_LEARNED_KB = String(A.use_learned_kb != null ? A.use_learned_kb : 'false');
+// Perf authoring knowledge is ON by default (the historical behavior) but must have a real off arm
+// for causal validation. Kept beside the learned-KB default because every nested lane needs both.
+const LANE_USE_PERF_KNOWLEDGE =
+  String(A.use_perf_knowledge != null ? A.use_perf_knowledge : 'true');
 
 // EVERY nested lane invocation goes through here. Setting the flag at each call site instead would
 // be the defect this repo keeps re-making — there are seven call sites today, and the eighth would
 // silently take the lane's own default (on) with nothing to catch it. test_e2e_lane_defaults.py
 // fails if a `scriptPath: KERNEL_WF_SCRIPT` call is added that does not route through this.
-const laneArgs = (wfArgs) => ({ use_learned_kb: LANE_USE_LEARNED_KB, ...wfArgs });
+const laneArgs = (wfArgs) => ({
+  use_learned_kb: LANE_USE_LEARNED_KB,
+  use_perf_knowledge: LANE_USE_PERF_KNOWLEDGE,
+  ...wfArgs,
+});
 
 // EXP_ROOT = where timestamped run dirs go. Default: sibling "exp/" next to this workflow dir.
 const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/exp')).replace(/\/+$/, '');
@@ -406,11 +414,16 @@ const ACCURACY_TOL = parseFloat(A.accuracy_tol != null ? A.accuracy_tol : 0.01);
 const ACCURACY_INPUTS = (ACCURACY_GATE !== 'none')
   ? { ACCURACY_GATE, ACCURACY_LIMIT, ACCURACY_TOL, GSM8K_EVAL_SCRIPT: `${WORKFLOW_DIR}/scripts/gsm8k_eval.py` }
   : {};
-// The AMD authoring knowledge base (REFERENCE ONLY — facts/how-to, never decisions; agents always
-// measure). Default: sibling perf_knowledge/. Workflows enumerate candidates from
+// The AMD authoring knowledge base (REFERENCE ONLY — facts/how-to/conditioned candidate cards, never
+// final verdicts; agents always measure). Default: sibling perf_knowledge/. Workflows enumerate candidates from
 // index/capability_index.yaml; status/perf in cards are dated evidence, not routing inputs.
-const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
-  (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge')).replace(/\/+$/, '');
+const USE_PERF_KNOWLEDGE = LANE_USE_PERF_KNOWLEDGE === 'true';
+const DEFAULT_PERF_KNOWLEDGE_DIR =
+  WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge';
+const REQUESTED_PERF_KNOWLEDGE_DIR =
+  A.perf_knowledge_dir != null ? String(A.perf_knowledge_dir) : DEFAULT_PERF_KNOWLEDGE_DIR;
+const KERNEL_KNOWLEDGE_DIR =
+  (USE_PERF_KNOWLEDGE ? REQUESTED_PERF_KNOWLEDGE_DIR : '').replace(/\/+$/, '');
 // Warm start = the kernel layer's LOCAL experience reuse: before round 1 a lane resolves this kernel's
 // own history in kb_artifacts/ and re-validates the top stored patches through the same verify gate as
 // a fresh candidate. The knobs live in the kernel layer; e2e only forwards them, so that (a) one store
@@ -512,8 +525,9 @@ const KB_ENV_PRELUDE = `. "${WORKFLOW_DIR}/scripts/kb_env.sh"; `;
 // When OFF (the default) NOTHING is injected into any role prompt -> the prompt (and thus the whole run)
 // is byte-identical to a build without this feature. The flag + dir are passed DOWN to the kernel layer.
 const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
-const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
-  (KERNEL_KNOWLEDGE_DIR + '/expert_skills')).replace(/\/+$/, '');
+const EXPERT_SKILLS_DIR = String(A.expert_skills_dir != null
+  ? A.expert_skills_dir
+  : (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
 // Only routing/bake-off/integration roles consult skills; every other role gets no injection.
 const EXPERT_SKILL_ROLES = new Set(['system_architect', 'op_benchmarker', 'e2e_integrator']);
 const GEMM_SYNTH = String(A.gemm_synth != null ? A.gemm_synth : 'true');     // synth GEMM inputs (cheap)

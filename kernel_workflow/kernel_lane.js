@@ -1,7 +1,7 @@
 export const meta = {
   name: 'kernel-lane',
   description: 'SINGLE-LANGUAGE kernel optimization worker (Director/TechLead/specialist Engineers) with budget-controlled rounds, independent verification, and integration. Optimizes ONE kernel in ONE language (mode=optimize) or authors a fresh seed then optimizes it (mode=author). This is the worker invoked per lane by the kernel-workflow dispatcher (kernel_workflow.js) and by e2e_workflow; prefer calling kernel-workflow directly unless you specifically want one unchanged lane. Target: AMD Instinct MI-series GPUs (MI300X/300A/308X/325X on CDNA3 gfx942, MI350X/355X on CDNA4 gfx950 — the target card is auto-detected on-box).',
-  whenToUse: 'Internal single-language worker. Prefer the kernel-workflow dispatcher (kernel_workflow.js) as the entry point; invoke this directly only to run one unchanged lane. Pass args.kernel_path (required), args.mode, args.target_language, args.budget, args.gpu_ids, args.gpu_mode, args.task.',
+  whenToUse: 'Internal single-language worker. Prefer the kernel-workflow dispatcher (kernel_workflow.js) as the entry point; invoke this directly only to run one unchanged lane. Pass args.kernel_path (required), args.mode, args.target_language, args.budget, args.gpu_ids, args.gpu_mode, args.task. Set args.use_perf_knowledge=false for a clean authoring-KB control arm.',
   phases: [
     { title: 'Setup', detail: 'director builds the isolated eval dir + canonical workspace' },
     { title: 'Author', detail: 'author_engineer writes a fresh optimize-loop seed (only when mode=author); speedup denominator stays the frozen online kernel' },
@@ -105,8 +105,10 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 // the workspace from an op task dir (immutable oracle + frozen online kernel in baseline_src/), the
 // author_engineer writes a passing seed, then the SAME optimize loop runs — always timing against the
 // frozen online kernel, never against the seed's own language. KERNEL_KNOWLEDGE_DIR is the AMD authoring
-// knowledge base — REFERENCE ONLY (facts/how-to, never decisions; the author always measures regardless). Default:
-// sibling perf_knowledge/ so standalone runs use it too; empty if WORKFLOW_DIR is unset (no behavior change).
+// knowledge base — REFERENCE ONLY (facts/how-to/conditioned candidate cards, never final verdicts;
+// the author always measures regardless). Default:
+// sibling perf_knowledge/ so standalone runs use it too. `use_perf_knowledge=false` is the explicit
+// control arm; an explicitly empty perf_knowledge_dir also stays empty rather than falling back.
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
@@ -142,12 +144,31 @@ const primSpeedup = (o) => {
   const g = o.verified_geomean != null ? o.verified_geomean : o.speedup_geomean;
   return Number.isFinite(g) ? g : 0;
 };
+const hasPrimSpeedup = (o) => {
+  if (!o) return false;
+  const w = o.verified_weighted != null ? o.verified_weighted
+          : (o.speedup_weighted != null ? o.speedup_weighted : null);
+  if (HAS_WORKLOAD && Number.isFinite(w)) return true;
+  const g = o.verified_geomean != null ? o.verified_geomean : o.speedup_geomean;
+  return Number.isFinite(g);
+};
 // Gate fields like `correctness` / `status` are free strings in the schemas, so an agent legitimately
 // answers "PASS - 15/15 draws" and a `=== 'pass'` test silently drops a genuinely verified candidate.
 // Match the leading word instead: "PASS - ..." / "passed" gate open, "FAIL"/"did not pass" stay shut.
 const says = (v, w) => String(v == null ? '' : v).trim().toLowerCase().startsWith(w);
-const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
-  (WORKFLOW_DIR ? WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge' : '')).replace(/\/+$/, '');
+const normalizeDecisionRefs = (refs) => [...new Set(
+  (Array.isArray(refs) ? refs : [])
+    .map(ref => String(ref || '').trim())
+    .filter(ref => /^(?:[a-z0-9][a-z0-9-]*|cfg_[0-9a-f]{16})$/.test(ref))
+)];
+const USE_PERF_KNOWLEDGE =
+  String(A.use_perf_knowledge != null ? A.use_perf_knowledge : 'true') === 'true';
+const DEFAULT_PERF_KNOWLEDGE_DIR =
+  WORKFLOW_DIR ? WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge' : '';
+const REQUESTED_PERF_KNOWLEDGE_DIR =
+  A.perf_knowledge_dir != null ? String(A.perf_knowledge_dir) : DEFAULT_PERF_KNOWLEDGE_DIR;
+const KERNEL_KNOWLEDGE_DIR =
+  (USE_PERF_KNOWLEDGE ? REQUESTED_PERF_KNOWLEDGE_DIR : '').replace(/\/+$/, '');
 // Expert skills = human-authored, validated kernel recipes (perf_knowledge/expert_skills/). ADVISORY
 // priors only: a matched `validated` skill is a HIGH-PRIOR author/optimize candidate the planning/author
 // roles reproduce, then gate by the isolated A/B vs the oracle — it NEVER overrides measurement. Default
@@ -375,6 +396,7 @@ const SETUP_SCHEMA = obj({
 const AUTHOR_SCHEMA = obj({
   authored: { type: 'boolean' }, target_language: { type: 'string' }, correctness: { type: 'string' },
   baseline_ms: { type: 'number' }, kernel_src_path: { type: 'string' }, entry_point: { type: 'string' },
+  decision_refs: { type: 'array', items: { type: 'string' } },
   build: { type: 'boolean' }, notes: { type: 'string' },
 }, ['authored', 'correctness']);
 
@@ -401,6 +423,8 @@ const BENCH_SCHEMA = obj({
   workload_aligned: { type: 'boolean' },
   baseline_weighted_total_ms: { type: 'number' },
   weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
+  measurement_method: { type: 'string' }, warmup_iterations: { type: 'number' },
+  benchmark_iterations: { type: 'number' },
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
 
@@ -482,6 +506,10 @@ const PLAN_SCHEMA = obj({
       focus_files: { type: 'array', items: { type: 'string' } },
       expected_speedup: { type: 'number' }, prompt: { type: 'string' },
       kk_refs: { type: 'array', items: { type: 'string' } }, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
+      // Exact IDs from corpus/gemm_decisions.md that seeded THIS direction: curated card `id` values
+      // or generated `cfg_…` config IDs. A file path in kk_refs cannot distinguish two cards in the
+      // same generated page, so it is insufficient for outcome attribution.
+      decision_refs: { type: 'array', items: { type: 'string' } },
       // Learned cards that SEEDED this direction, by filename. Structural attribution: the planner
       // declares what it opened, the script joins that against what the VERIFIER independently
       // measured. Declared here rather than inferred because the read path is semantic — the planner
@@ -775,12 +803,14 @@ if (!hasBaseline) {
 // On failure (no correct seed), abort early with a structured result so the
 // e2e caller drops this language.
 // ===========================================================================
+let authorDecisionRefs = [];
 if (MODE === 'author') {
   phase('Author');
   const authored = await agentT(
     roleAgent('author_engineer', 'author', 'Write the simplest correct baseline in the target language.', {
       TARGET_LANGUAGE, OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
       GPU_ID: GPU_POOL, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
+      PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
       // The author engineer reads the learned index too, so the switch has to reach it. It is the
       // second reader; a switch that covers one of two readers is not a switch.
       LEARNED_KB: USE_LEARNED_READ ? 'on' : 'off',
@@ -795,6 +825,7 @@ if (MODE === 'author') {
       reason: authored ? authored.notes || 'author produced no correct baseline' : 'author returned nothing',
     };
   }
+  authorDecisionRefs = USE_PERF_KNOWLEDGE ? normalizeDecisionRefs(authored.decision_refs) : [];
   log(`Author mode: ${TARGET_LANGUAGE} seed written (correct, seed ${authored.baseline_ms || '?'} ms; denominator = frozen online kernel). Optimizing it now.`);
 }
 
@@ -805,7 +836,7 @@ phase('Analyze');
 const analysis = await agentT(
   roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
-    KERNEL_KNOWLEDGE_DIR,
+    KERNEL_KNOWLEDGE_DIR, PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
@@ -954,6 +985,11 @@ const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileS
 // the round loop). Fed to update_experience and returned to the caller: a driver aggregating these
 // is how anyone notices the KB has been cited fifty times and never once carried a round.
 const citations = [];
+// Same structural join for always-on perf_knowledge decisions. Unlike learned-card citations these
+// rows do not mutate card standing; they are validation telemetry persisted in history, the run
+// manifest and the returned result. That keeps source-derived candidates ADD-only while making their
+// actual win/loss rate measurable.
+const decisionCitations = [];
 
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
@@ -1158,6 +1194,7 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
     BASELINE_GEOMEAN_MS, SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
     CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: history,
     KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE, KK_REFS,
+    PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
     ...KB_INPUTS,
     // DRA brief (REFERENCE), from main. plan_round reads it and seeds directions[] from the ranked
     // DRA directions — see tech_lead.md plan_round. Spread conditionally, so when dra_enabled was off
@@ -1224,6 +1261,7 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
 
   let directions = plan.directions.slice(0, remaining).map((d, i) => ({
     ...d,
+    decision_refs: USE_PERF_KNOWLEDGE ? normalizeDecisionRefs(d.decision_refs) : [],
     idx: i,
     id: d.id || `r${round}_d${i}`,
     gpu_id: GPU_MODE === 'pin' ? GPU_LIST[i % GPU_LIST.length] : GPU_POOL,
@@ -1277,7 +1315,11 @@ Save best_patch.diff via \`cd <KERNEL_PATH> && git diff > ${d.out_dir}/best_patc
 ## Inputs
 ${cfg({
         SPECIALTY: d.specialty,
-        DIRECTION: { id: d.id, title: d.title, focus_files: d.focus_files || [], expected_speedup: d.expected_speedup, prompt: d.prompt },
+        DIRECTION: {
+          id: d.id, title: d.title, focus_files: d.focus_files || [],
+          expected_speedup: d.expected_speedup, prompt: d.prompt,
+          decision_refs: d.decision_refs || [],
+        },
         ...(isDeep ? { TARGET: d.expected_speedup ? `reach ${d.expected_speedup}x (or ~90% of the roofline ceiling), whichever is the harder bar` : 'reach ~90% of the roofline ceiling' } : {}),
         KERNEL_PATH: `${d.out_dir}/workspace`,
         OUTPUT_DIR: d.out_dir,
@@ -1346,6 +1388,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
     weighted: r.ver.verified_weighted != null ? r.ver.verified_weighted : null,
     arithmetic: r.ver.verified_arithmetic || r.ver.verified_geomean,
     per_case: r.ver.per_case || [], patch: r.patch,
+    decision_refs: r.d.decision_refs || [],
   }));
 
   let integrate = null;
@@ -1358,7 +1401,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
         BEST_INDIVIDUAL: Math.max(...candidates.map(c => c.geomean)),
         PATCHES: verified.map(r => ({ id: r.d.id, specialty: r.d.specialty, title: r.d.title,
           strategy: r.eng ? r.eng.strategy : '', verified_geomean: r.ver.verified_geomean,
-          files: r.d.focus_files || [], patch: r.patch })),
+          files: r.d.focus_files || [], patch: r.patch, decision_refs: r.d.decision_refs || [] })),
         INSIGHTS: history.insights,
       }),
       { phase: 'Merge', label: `integrate r${round}`, schema: INTEGRATE_SCHEMA });
@@ -1367,12 +1410,17 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
     }) : 0;
     if (integrate && integrate.conclusion === 'improved' && integrate.best &&
       integPrim > Math.max(...candidates.map(c => c.geomean))) {
+      const includedPatchIds = new Set(
+        Array.isArray(integrate.best.patches) ? integrate.best.patches : []);
       candidates.push({
         source: 'integrated', id: `r${round}_integrated`, title: 'integrated', specialty: 'integrate',
         geomean: integPrim, geomean_unweighted: integrate.best.geomean,
         weighted: integrate.best.weighted != null ? integrate.best.weighted : null,
         arithmetic: integrate.best.arithmetic || integrate.best.geomean,
         per_case: integrate.best.per_case || [], patch: integrate.best.patch_file,
+        decision_refs: [...new Set(verified
+          .filter(r => includedPatchIds.has(r.d.id))
+          .flatMap(r => r.d.decision_refs || []))],
       });
     }
   }
@@ -1433,7 +1481,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       ROUND_RESULTS: clean.map(r => ({ id: r.d.id, title: r.d.title, specialty: r.d.specialty,
         expected: r.d.expected_speedup, claimed: r.eng ? r.eng.speedup_geomean : 0,
         verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
-        notes: r.eng ? r.eng.notes : '' })),
+        decision_refs: r.d.decision_refs || [], notes: r.eng ? r.eng.notes : '' })),
       INTEGRATE: integrate, WINNER: winner ? { source: winner.source, geomean: winner.geomean } : null,
       IMPROVED: improved, REPROFILE_SHIFT: profileSummary ? profileSummary.shift_note : '',
       PRIOR_HISTORY: history,
@@ -1492,11 +1540,21 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
         became_winner: !!(winner && winner.id === r.d.id && improved),
       });
     }
+    for (const decisionRef of (r.d.decision_refs || [])) {
+      decisionCitations.push({
+        decision: decisionRef, round, direction: r.d.id, specialty: r.d.specialty,
+        cited_then_verified: hasPrimSpeedup(r.ver) ? primSpeedup(r.ver) : null,
+        status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
+        correctness: r.ver ? r.ver.correctness : '',
+        became_winner: !!(winner && winner.id === r.d.id && improved),
+      });
+    }
   }
   history.rounds.push({
     round,
     directions: directions.map(d => ({ id: d.id, title: d.title, specialty: d.specialty,
-      learned_refs: d.learned_refs || [] })),
+      focus_files: d.focus_files || [], learned_refs: d.learned_refs || [],
+      decision_refs: d.decision_refs || [] })),
     results: clean.map(r => ({ id: r.d.id, claimed: r.eng ? r.eng.speedup_geomean : 0,
       verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none') })),
     integrate: integrate ? { conclusion: integrate.conclusion, geomean: integrate.best ? integrate.best.geomean : 0 } : null,
@@ -1542,6 +1600,118 @@ const finalPrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeigh
 log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
     `${HAS_WORKLOAD && Number.isFinite(finalGeomean) ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
     ` (status ${validation ? validation.validation_status : '?'}). Results in ${EVAL_DIR}`);
+const finalDecisionRefs = normalizeDecisionRefs([
+  ...authorDecisionRefs,
+  ...(finalWinner && Array.isArray(finalWinner.decision_refs) ? finalWinner.decision_refs : []),
+]);
+for (const decisionRef of authorDecisionRefs) {
+  decisionCitations.push({
+    decision: decisionRef, phase: 'author_seed', direction: 'author_seed',
+    cited_then_verified: validation && Number.isFinite(finalPrimary) ? finalPrimary : null,
+    status: validation ? validation.validation_status : 'unknown',
+    correctness: validation ? validation.correctness : '',
+    survived_to_final: true,
+    became_winner: false,
+  });
+}
+
+// Observe the FINAL source language and capture the run-local lab notebook for every validated run,
+// not only wins that earn a learned card. Selectively recording successful environments would make
+// failed decision candidates unauditable and bias the validation set.
+let observedLanguage = null;
+try {
+  const det = await agentT(
+    `Run EXACTLY this command and nothing else. Do NOT edit any file.
+\`\`\`bash
+python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${CANONICAL} --entry ${JSON.stringify(KERNEL_NAME)} --json
+\`\`\`
+Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
+    { phase: 'Validate', label: 'lang:detect', effort: 'low',
+      schema: { type: 'object',
+                properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
+                required: ['language'], additionalProperties: true } });
+  observedLanguage = det && det.language ? String(det.language) : null;
+  log(observedLanguage
+    ? `[lang] winning source reads as ${observedLanguage}`
+    : `[lang] undecided: ${det && det.reason ? det.reason : 'no result'}`);
+  if (MODE === 'author' && observedLanguage && observedLanguage !== TARGET_LANGUAGE) {
+    log(`[lang] MISMATCH: author mode was asked for ${TARGET_LANGUAGE}, the winning source reads as ${observedLanguage}. Recording what was measured.`);
+  }
+} catch (e) {
+  log(`[lang] detection failed: ${e && e.message ? e.message : e}`);
+}
+
+const VALIDATION_ENV_PATH = `${EVAL_DIR}/validation_environment.yaml`;
+let validationEnvironment = null;
+try {
+  const envMetadata = {
+    kernel: KERNEL_NAME,
+    mode: MODE,
+    requested_language: MODE === 'author' ? TARGET_LANGUAGE : null,
+    observed_language: observedLanguage,
+    device: profileSummary ? profileSummary.device : '',
+    gfx: GFX,
+    op_spec: OP_SPEC,
+    workload_spec_path: WORKLOAD_SPEC_PATH,
+    measurement: {
+      method: bench ? (bench.measurement_method || 'kernel_workflow frozen-baseline A/B') : '',
+      benchmark_cmd: bench ? bench.benchmark_cmd : '',
+      warmup_iterations: bench ? bench.warmup_iterations : null,
+      benchmark_iterations: bench ? bench.benchmark_iterations : null,
+      parse_hint: bench ? bench.parse_hint : '',
+      num_test_cases: bench ? bench.num_test_cases : null,
+      baseline_per_case: BASELINE_PER_CASE,
+      baseline_geomean_ms: BASELINE_GEOMEAN_MS,
+      workload_aligned: HAS_WORKLOAD,
+      baseline_weighted_total_ms: bench ? bench.baseline_weighted_total_ms : null,
+      weights_provenance: bench ? bench.weights_provenance : '',
+      reliable: bench ? bench.reliable : null,
+    },
+    validation: {
+      status: validation ? validation.validation_status : 'unknown',
+      correctness: validation ? validation.correctness : 'unknown',
+      speedup_primary: finalPrimary,
+      speedup_geomean: finalGeomean,
+      speedup_weighted: finalWeighted,
+      speedup_arithmetic: validation ? validation.director_verified_speedup_arithmetic : null,
+      per_case: validation ? validation.per_case : [],
+    },
+    decision_outcomes: decisionCitations,
+    perf_knowledge_dir: KERNEL_KNOWLEDGE_DIR,
+    report_path: report && report.report_path ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`,
+  };
+  validationEnvironment = await agentT(
+    `Run EXACTLY this command and nothing else. Do NOT edit any file except the requested output.
+\`\`\`bash
+cat <<'VALIDATION_ENV_JSON' | python3 ${WORKFLOW_DIR}/scripts/capture_validation_env.py \\
+  --output ${JSON.stringify(VALIDATION_ENV_PATH)} \\
+  --workspace ${JSON.stringify(CANONICAL)} \\
+  --workflow-dir ${JSON.stringify(WORKFLOW_DIR)} \\
+  --gpu-ids ${JSON.stringify(GPU_POOL)} --metadata -
+${JSON.stringify(envMetadata)}
+VALIDATION_ENV_JSON
+\`\`\`
+Return the command's final JSON object.`,
+    { phase: 'Validate', label: 'env:capture', effort: 'low',
+      schema: { type: 'object',
+                properties: {
+                  path: { type: 'string' },
+                  not_captured: { type: 'array', items: { type: 'string' } },
+                  decision_outcomes: { type: 'number' },
+                  unresolved_decision_refs: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['path', 'not_captured'], additionalProperties: true } });
+  log(`[env] validation manifest: ${VALIDATION_ENV_PATH}` +
+      `${validationEnvironment && validationEnvironment.not_captured &&
+         validationEnvironment.not_captured.length
+        ? ` (not captured: ${validationEnvironment.not_captured.join(', ')})` : ''}`);
+  if (validationEnvironment && validationEnvironment.unresolved_decision_refs &&
+      validationEnvironment.unresolved_decision_refs.length) {
+    log(`[decision] unresolved refs: ${validationEnvironment.unresolved_decision_refs.join(', ')}`);
+  }
+} catch (e) {
+  log(`[env] validation manifest capture failed: ${e && e.message ? e.message : e}`);
+}
 
 // ===========================================================================
 // PHASE: UpdateExperience — distill ONE reusable card into this workflow's knowledge/learned/
@@ -1566,39 +1736,7 @@ if (kbGate) log(`[kb] not distilling: ${kbGate}.`);
 // no-op, correctness fail, contended box), and curating from it teaches the next run a lesson this
 // run did not earn. Reported in review of #411.
 const kbAccepted = String((validation && validation.validation_status) || '').toLowerCase() === 'accepted';
-let observedLanguage = null;
 if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
-  // OBSERVE the language instead of echoing the request. `TARGET_LANGUAGE` is what the CALLER asked
-  // for: it defaults to 'triton' and on an optimize run is never derived from the source at all, so
-  // handing it to the card labels every optimize-mode finding 'triton' whatever the kernel is. A
-  // wrong label is worse than the `unknown` it replaces, because a wrong one gets trusted.
-  // `detect_language.py` reads it off the winning source and returns null rather than guessing; a
-  // card with no language is then refused by `kb.py`, which is the outcome we want — no card beats a
-  // mislabelled one.
-  try {
-    const det = await agentT(
-      `Run EXACTLY this command and nothing else. Do NOT edit any file.
-\`\`\`bash
-python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${CANONICAL} --entry ${JSON.stringify(KERNEL_NAME)} --json
-\`\`\`
-Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
-      { phase: 'Validate', label: 'lang:detect', effort: 'low',
-        schema: { type: 'object',
-                  properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
-                  required: ['language'], additionalProperties: true } });
-    observedLanguage = det && det.language ? String(det.language) : null;
-    log(observedLanguage
-      ? `[lang] winning source reads as ${observedLanguage}`
-      : `[lang] undecided: ${det && det.reason ? det.reason : 'no result'} — no language on the card, which kb.py will refuse`);
-    // AUTHOR MODE ONLY. There the caller named the language it wanted written, so a mismatch is a
-    // finding about the run: the seed was authored in something else. On an optimize run there is
-    // nothing to compare against, because `TARGET_LANGUAGE` is only its own default.
-    if (MODE === 'author' && observedLanguage && observedLanguage !== TARGET_LANGUAGE) {
-      log(`[lang] MISMATCH: author mode was asked for ${TARGET_LANGUAGE}, the winning source reads as ${observedLanguage}. Recording what was measured.`);
-    }
-  } catch (e) {
-    log(`[lang] detection failed: ${e && e.message ? e.message : e}`);
-  }
   try {
     learned_card = await agentT(
       roleAgent('update_experience', 'Validate',
@@ -1615,6 +1753,7 @@ Return the command's JSON as {"language": <its "language", or null>, "reason": <
             kernel_class: (analysis && analysis.kernel_type) || '',
             speedup: finalPrimary, validation_status: validation ? validation.validation_status : '',
             bottleneck: profileSummary ? profileSummary.bottleneck : '',
+            decision_refs: finalDecisionRefs,
           },
           // `rounds[]` (per-round directions + per-candidate claimed/verified/status + running
           // `cumulative`) is what makes the card's `stack:` attribution and `pitfall:` lines derivable.
@@ -1624,6 +1763,8 @@ Return the command's JSON as {"language": <its "language", or null>, "reason": <
           // The comment that used to sit here said the curator merges them, which stopped being
           // true when that arithmetic moved into code.
           CITATIONS: citations,
+          DECISION_CITATIONS: decisionCitations,
+          VALIDATION_ENV_PATH,
           PROFILE: profileSummary,
           REPORT_PATH: report && report.report_path ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`,
         }),
@@ -1766,6 +1907,9 @@ return {
   final_arithmetic: validation ? validation.director_verified_speedup_arithmetic : null,
   tech_lead_reported_geomean: report ? report.final_speedup_geomean : cumulative,
   validation_status: validation ? validation.validation_status : 'unknown',
+  validation_environment: validationEnvironment && validationEnvironment.path
+    ? validationEnvironment.path : null,
+  perf_knowledge_enabled: USE_PERF_KNOWLEDGE,
   rounds: report ? report.rounds : round,
   budget_used: dispatched,
   budget_total: BUDGET,
@@ -1786,6 +1930,10 @@ return {
   // What the plan cited and whether it carried its round. Returned ALWAYS, including when nothing was
   // cited (an empty array is the finding: the KB was read and nothing in it was worth acting on).
   learned_citations: citations,
+  // Exact source/config decisions the planner acted on, joined to independent verifier outcomes.
+  // Empty on the KB-off arm is expected and is itself part of the validation result.
+  decision_citations: decisionCitations,
+  final_decision_refs: finalDecisionRefs,
   // Rounds where the planner overran the KB budget. A KB that binds every round is one that has taken
   // over planning, which is the regression this budget exists to catch.
   kb_cap_bound_rounds: kbCapBound,

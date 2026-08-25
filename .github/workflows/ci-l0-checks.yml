@@ -126,6 +126,7 @@ jobs:
             perf_knowledge/index/test_run_recurrence.py \
             perf_knowledge/corpus/test_corpus.py \
             kernel_workflow/scripts/test_detect_language.py \
+            kernel_workflow/scripts/test_capture_validation_env.py \
             geak/test_bootstrap.py
 
       # Advisory, on the same reasoning as the ruff step: three skills declare `validated` while
@@ -175,13 +176,18 @@ jobs:
           # commit that adds a card and not the regenerated digest is a tree where the curated base
           # and the cards disagree. Gated rather than advisory because the fix is one command.
           python3 perf_knowledge/index/_gen_run_recurrence.py --check
-          # And the same rule for the operator corpus. Note this checks only the RENDER half: the
+          # And the same rule for both layers of the operator corpus. Note this checks only the
+          # RENDER half: the
           # extractor needs an aiter checkout, which this runner does not have and should not need.
-          # That split is why the two scripts are separate — the doc-versus-facts disagreement is the
+          # That split is why extraction and rendering are separate — a doc-versus-evidence
+          # disagreement is the
           # one that misleads a reader, and it is catchable with no source tree and no GPU. Whether
-          # the facts still match aiter is a different question, answered by re-running the extractor
+          # the evidence still matches AITER is a different question, answered by re-running the extractor
           # against a named commit, and its answer is recorded in the provenance block.
           python3 perf_knowledge/corpus/_render_facts.py --check
+          # Decision cards are the semantic layer the workflow reads. This also rejects a card whose
+          # source citation is absent or whose measured validation artifact does not exist.
+          python3 perf_knowledge/corpus/_render_decisions.py --check
 
       # Renders the per-file table + total into the run's Job Summary, which is
       # where the coverage percentage is read from the GitHub web UI. Runs even

@@ -342,6 +342,8 @@ for i, title in enumerate(("First wording of it", "Completely different wording"
                        "keywords": ["tiling"], "kernels": [], "platforms": ["gfx950"],
                        "kernel_class": "dense_gemm", "regime": "decode", "lifecycle": "active",
                        "language": "flydsl",
+                       "decision_refs": (["flydsl-half-mfma-call-forms"] if i == 0
+                                         else ["cfg_0123456789abcdef"]),
                        "source": "campaign 2026-08-19", "last_seen": "2026-08-19",
                        "lever": "x", "verify": "y"}]}
     with open(os.path.join(dd, "_inbox", f"m{i}.json"), "w") as f:
@@ -354,6 +356,9 @@ if len(files) == 1:
     meta = open(os.path.join(dd, files[0])).read()
     check("a merge does not fabricate a confirmation",
           "confirms_cited: 0" in meta and "confirms_blind: 0" in meta, meta.split("---")[1])
+    check("a merge preserves and unions decision attribution",
+          "flydsl-half-mfma-call-forms" in meta and "cfg_0123456789abcdef" in meta,
+          meta.split("---")[1])
 shutil.rmtree(dd)
 
 # A verifier that produced no number is an ATTEMPT, not a loss. Encoding "no evidence" as 0 charged
@@ -455,6 +460,13 @@ check("a language outside the taxonomy is refused", "not an authoring-language i
 _, out, _ = propose_card(dd, language="aiter")
 check("a library backend is not accepted as a language", "not an authoring-language id" in out,
       out[:300])
+_, out, _ = propose_card(
+    dd, decision_refs=["flydsl-half-mfma-call-forms", "cfg_0123456789abcdef"])
+check("source/config decision refs are admitted", "decision_ref" not in out, out[:300])
+_, out, _ = propose_card(dd, decision_refs="flydsl-half-mfma-call-forms")
+check("decision_refs must be a list", "must be a YAML list" in out, out[:300])
+_, out, _ = propose_card(dd, decision_refs=["not valid!"])
+check("a malformed decision_ref is refused", "invalid decision_ref" in out, out[:300])
 shutil.rmtree(dd)
 
 # The 135 cards that predate the field must stay lintable. Requiring it retroactively would force a

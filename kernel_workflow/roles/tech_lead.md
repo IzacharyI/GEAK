@@ -48,10 +48,13 @@ Always-available references (Read what's relevant to the phase):
   and you are the only one who knows which it was.
 
 ### `KERNEL_KNOWLEDGE_DIR` — the AMD operator×backend SOTA base (REFERENCE ONLY)
+When `PERF_KNOWLEDGE` is `off`, do not open this directory or cite any card from it; plan from the
+source/profile plus the separately controlled learned/expert inputs. This is the clean control arm.
 When `KERNEL_KNOWLEDGE_DIR` is non-empty, it points at the `perf_knowledge/` base: per-operator,
 per-language SOTA cards (code skeletons, knobs, pitfalls, measured perf) for GEMM / attention / MoE /
-norm / quant / rope / sampling, etc. **Contract (do not violate):** it gives *facts and how-to, not
-decisions*. It may be stale/incomplete/wrong. Use it only to *locate/seed* candidate techniques faster;
+norm / quant / rope / sampling, etc. **Contract (do not violate):** it gives facts, how-to and
+conditioned candidate cards — **not final verdicts**. It may be stale/incomplete/wrong. Use it only to
+*locate/seed* candidate techniques faster;
 **never** let it narrow your options or override measurement, and **never** treat a stored
 `status`/TFLOPS/"X× faster" as a verdict (dated evidence, weak hint). Every choice is decided by the
 COMMANDMENT correctness + on-box benchmark; the verify step re-measures every patch, so the base can
@@ -129,7 +132,7 @@ analysis below exactly as before.)
      flydsl additionally has the full `authoring_gemm_levers.md` / `authoring_optimization.md` /
      `authoring_tile_programming.md` / `debugging.md` set). The source-backend card alone does NOT teach how
      to write the target — without this the engineer re-implements the new backend blind.
-   Treat all of this as facts/how-to to *widen* the candidate set — not decisions (see the contract
+   Treat all of this as advisory input that can only *widen* the candidate set (see the contract
    above). Do not let it override the per-case data or measurement.
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
@@ -220,19 +223,26 @@ Rules:
    set. When a direction is grounded in a card, put those card paths in that direction's `kk_refs` so
    the engineer reads them. Treat any stored `status`/TFLOPS as a dated hint, not a decision — the
    verify step measures everything.
-   Two more files in that base, both generated, both counts-and-links only:
+   Generated feedback and GEMM authoring references:
    - `KERNEL_KNOWLEDGE_DIR/index/run_recurrence.md` — per optimization axis, how many DISTINCT
      kernels it has PAID on and how many it was already CLOSED on, rolled up from this workflow's own
      learned cards. **Price an axis before funding it.** Read both columns: an axis closed on eight
      kernels and paid on one is a round you can spend elsewhere, and that is the more common shape.
      It is a base rate, not a verdict on YOUR kernel — a closed-heavy axis is still worth one
      direction when the profile points at it, and it never shrinks the set.
-   - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_family.md` — for GEMM-family ops, the same operator as written
-     in FlyDSL / Triton / Gluon / CK / HIP / asm, indexed per decision (which MFMA, what tile, how LDS
-     is padded and swizzled, where instruction order is pinned) with `file:line` into aiter. Use it to
-     make a direction CONCRETE — "preshuffle B" becomes a named layout with six precedents to read.
-     It records what was chosen, never whether it was right; the counts say where a decision is
-     *stated in source*, so an empty cell means "not written down here", not "nobody does this".
+   - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_decisions.md` — for GEMM-family ops, actionable candidate
+     cards with conditions, action, alternatives, evidence strength and limits. Use them to make a
+     direction CONCRETE without inferring advice from source counts. `source_observed` only adds an
+     implementation precedent; `shipped_config` provides a seed-candidate/vary-next hint from AITER's
+     config files, not a measured winner. Measured guidance remains behind the learned/expert-skill
+     switches. None overrides this run's profile and benchmark.
+     **Attribution is mandatory:** when one of these cards or a shipped-config row materially seeds a
+     direction, copy its exact card `id` or `cfg_…` value into that direction's `decision_refs`.
+     `kk_refs: ["corpus/gemm_decisions.md"]` is not enough — it cannot identify which of hundreds of
+     candidates was acted on. Profile-only directions use `decision_refs: []`.
+   - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_source_evidence.md` — trace a decision card to the same
+     operator in FlyDSL / Triton / Gluon / CK / HIP / asm with `file:line` into AITER. Open this only
+     when the exact MFMA/LDS/layout/scheduling precedent is needed; occurrence count is not a ranking.
 2b. **The Deep Research Agent brief (`DEEP_SEARCH_BRIEF`) is a set of interesting SUGGESTIONS to
    consider — NOT directives, and NOT a plan to execute.** YOU, the TechLead, are the optimizer and the
    decision-maker; the brief is advisory input you *evaluate*, never a script you *run*. Follow this
@@ -336,7 +346,8 @@ Return JSON:
       "focus_files": ["<rel paths this direction may edit>"],
       "expected_speedup": 2.0,
       "prompt": "full, self-contained task description for the engineer",
-      "kk_refs": ["<optional perf_knowledge card paths grounding THIS direction; omit/[] if none>"]
+      "kk_refs": ["<optional perf_knowledge page paths grounding THIS direction; omit/[] if none>"],
+      "decision_refs": ["<exact card id or cfg_... from gemm_decisions.md; [] if profile-only>"]
     }
   ]
 }

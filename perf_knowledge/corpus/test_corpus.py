@@ -8,7 +8,7 @@ anywhere and they are where a rule's behaviour is pinned — a rule tested only 
 tested against a moving target, and when it breaks you cannot tell whether the rule regressed or the
 upstream file changed.
 
-The committed-artifact ones read `facts/*.yaml` as it stands in the repo and assert the properties
+The committed-artifact ones read `evidence/*.yaml` as it stands in the repo and assert the properties
 the README promises: language vocabulary shared with `kb.py`, verbatim excerpts, no performance
 numbers, gaps stated rather than dropped, and the rendered page matching its inputs. These are the
 tests that catch a bad regeneration, which is the failure mode that actually happens — nobody
@@ -30,10 +30,12 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 PK = os.path.dirname(HERE)
 ROOT = os.path.dirname(PK)
-FACTS = os.path.join(HERE, "facts")
-FAMILY = os.path.join(FACTS, "gemm_family.yaml")
-TUNED = os.path.join(FACTS, "gemm_tuned_configs.yaml")
-DOC = os.path.join(HERE, "gemm_family.md")
+EVIDENCE = os.path.join(HERE, "evidence")
+FAMILY = os.path.join(EVIDENCE, "gemm_source.yaml")
+TUNED = os.path.join(EVIDENCE, "gemm_tuned_configs.yaml")
+DECISIONS = os.path.join(HERE, "decisions", "gemm.yaml")
+SOURCE_DOC = os.path.join(HERE, "gemm_source_evidence.md")
+DECISION_DOC = os.path.join(HERE, "gemm_decisions.md")
 
 
 def _load(name, path):
@@ -45,10 +47,11 @@ def _load(name, path):
 
 EX = _load("_extract_impl_facts", os.path.join(HERE, "_extract_impl_facts.py"))
 RE_ = _load("_render_facts", os.path.join(HERE, "_render_facts.py"))
+RD = _load("_render_decisions", os.path.join(HERE, "_render_decisions.py"))
 
 
 @pytest.fixture(scope="module")
-def facts():
+def source():
     if not os.path.exists(FAMILY):
         pytest.skip(f"{FAMILY} not generated")
     return RE_.load_yaml(FAMILY)
@@ -59,6 +62,13 @@ def tuned():
     if not os.path.exists(TUNED):
         pytest.skip(f"{TUNED} not generated")
     return RE_.load_yaml(TUNED)
+
+
+@pytest.fixture(scope="module")
+def decisions():
+    if not os.path.exists(DECISIONS):
+        pytest.skip(f"{DECISIONS} not written")
+    return RE_.load_yaml(DECISIONS)
 
 
 def scan(tmp_path, name, body, language="flydsl"):
@@ -122,6 +132,16 @@ def test_arch_scope_is_empty_for_an_unconditional_decision(tmp_path):
     assert hits and not hits[0]["arch_scope"]
 
 
+def test_a_scalar_arch_scope_renders_as_one_label_not_six_characters():
+    assert RE_.arch_scopes({"arch_scope": "gfx950"}) == ["gfx950"]
+    page = "\n".join(RE_.question_section("tile_shape", [{
+        "category": "tile_shape", "language": "flydsl", "file": "x.py", "line": 1,
+        "captured": ["128"], "match": "BLOCK_M = 128", "arch_scope": "gfx950",
+    }]))
+    assert "[gfx950]" in page
+    assert "[2, 4, 9, f, g, x]" not in page
+
+
 def test_a_tunable_parameter_is_recorded_separately_from_a_tile_value(tmp_path):
     """The distinction the coverage table depends on: a knob's existence is not its value."""
     got = scan(tmp_path, "k.py", """
@@ -177,7 +197,7 @@ def test_ck_records_the_named_pipeline_choice_and_not_the_positional_soup(tmp_pa
         """, language="ck")
     assert "ck_instance" in cats(got)
     assert {g["captured"][0] for g in got if g["category"] == "ck_pipeline"} == {"Interwave", "v1"}
-    # The 40-position argument list must not have been mined for tile facts: a number at an unnamed
+    # The 40-position argument list must not have been mined for tile evidence: a number at an unnamed
     # position is not a tile until somebody has counted the positions, and that is not this tool.
     assert "tile_shape" not in cats(got)
 
@@ -222,24 +242,25 @@ def test_a_name_without_a_gfx_prefix_is_refused_rather_than_guessed():
 
 def test_a_knob_constant_across_shapes_is_separated_from_one_that_moves():
     rows = [
-        {"gfx": "gfx942", "tags": ["GEMM"], "shape": {}, "m_bucket": "M_LEQ_32",
+        {"file": "a.json", "gfx": "gfx942", "tags": ["GEMM"], "shape": {}, "m_bucket": "M_LEQ_32",
          "knobs": {"BLOCK_SIZE_K": 128, "num_warps": 4}},
-        {"gfx": "gfx942", "tags": ["GEMM"], "shape": {}, "m_bucket": "M_LEQ_32",
+        {"file": "b.json", "gfx": "gfx942", "tags": ["GEMM"], "shape": {}, "m_bucket": "M_LEQ_32",
          "knobs": {"BLOCK_SIZE_K": 128, "num_warps": 8}},
     ]
     g = EX.summarize_tuned(rows)
     assert len(g) == 1
-    assert g[0]["same_across_shapes"] == {"BLOCK_SIZE_K": 128}
+    assert g[0]["same_across_configs"] == {"BLOCK_SIZE_K": 128}
     assert "num_warps" in g[0]["varies_by_shape"]
-    assert g[0]["shapes_swept"] == 2
+    assert g[0]["shape_configs"] == 2
+    assert g[0]["source_files"] == ["a.json", "b.json"]
 
 
-def test_a_single_swept_shape_does_not_claim_agreement():
-    """`same_across_shapes` over one row would assert an invariant on evidence that cannot show it."""
-    g = EX.summarize_tuned([{"gfx": "gfx942", "tags": ["GEMM"], "shape": {},
+def test_a_single_shipped_shape_config_does_not_claim_agreement():
+    """`same_across_configs` over one row would assert an invariant on evidence that cannot show it."""
+    g = EX.summarize_tuned([{"file": "a.json", "gfx": "gfx942", "tags": ["GEMM"], "shape": {},
                              "m_bucket": "any", "knobs": {"BLOCK_SIZE_K": 64}}])
-    assert g[0]["shapes_swept"] == 1
-    assert "same_across_shapes" not in g[0]
+    assert g[0]["shape_configs"] == 1
+    assert "same_across_configs" not in g[0]
     assert g[0]["knobs"] == {"BLOCK_SIZE_K": 64}
 
 
@@ -259,7 +280,7 @@ def test_the_fallback_parser_agrees_with_pyyaml_on_the_real_files():
     """Two parse paths that disagree is worse than one that is absent: `--check` would pass or fail
     depending on whether PyYAML happened to be installed."""
     yaml = pytest.importorskip("yaml")
-    for path in (FAMILY, TUNED):
+    for path in (FAMILY, TUNED, DECISIONS):
         if not os.path.exists(path):
             pytest.skip(f"{path} not generated")
         with open(path, encoding="utf-8") as f:
@@ -282,40 +303,50 @@ def test_escapes_survive_the_round_trip():
 # --------------------------------------------------------------------------------------------
 # The committed artifacts
 # --------------------------------------------------------------------------------------------
-def test_every_fact_uses_the_language_vocabulary_kb_uses(facts):
+def test_every_source_record_uses_the_language_vocabulary_kb_uses(source):
     """A corpus keyed on its own language names cannot be joined to a learned card, which is the
     entire point of putting `language` on cards in the first place."""
     kb = _load("kb", os.path.join(ROOT, "kernel_workflow", "scripts", "kb.py"))
     vocab = set(kb.AUTHORING_LANGUAGES)
-    used = {f["language"] for f in facts["facts"]}
+    used = {e["language"] for e in source["source_evidence"]}
     assert used <= vocab, f"not in kb.AUTHORING_LANGUAGES: {sorted(used - vocab)}"
     assert {l for l, _, _ in EX.IMPLS} <= vocab, "a declared implementation language must be known"
 
 
-def test_every_fact_points_at_a_file_and_a_line(facts):
-    for f in facts["facts"]:
-        assert f["file"] and not os.path.isabs(f["file"]), f
-        assert isinstance(f["line"], int) and f["line"] > 0, f
-        assert f["evidence"], f"a fact with no excerpt is a claim: {f}"
+def test_every_source_record_points_at_a_file_and_a_line(source):
+    for record in source["source_evidence"]:
+        assert record["file"] and not os.path.isabs(record["file"]), record
+        assert isinstance(record["line"], int) and record["line"] > 0, record
+        assert record["evidence"], f"source evidence with no verbatim excerpt: {record}"
 
 
-def test_no_fact_carries_a_performance_number(facts):
-    """The README's one rule, enforced. A timing in a fact file is a measurement with no machine
+def test_every_source_record_has_a_unique_content_bound_id(source):
+    records = source["source_evidence"]
+    ids = [record.get("evidence_id") for record in records]
+    assert all(re.fullmatch(r"src_[0-9a-f]{16}", str(value)) for value in ids)
+    assert len(ids) == len(set(ids))
+    assert all(record["evidence_id"] == EX.source_evidence_id(record) for record in records)
+
+
+def test_no_source_record_carries_a_performance_number(source):
+    """A timing in source evidence is a measurement with no machine
     attached, which is the shape of an unfalsifiable claim."""
     banned = re.compile(r"\b\d+(?:\.\d+)?\s*(?:us|ms|ns|µs|TFLOPS|tflops|GB/s|gbps)\b|"
                         r"\b(?:speedup|faster|slower|x\s*speedup)\b", re.IGNORECASE)
-    for f in facts["facts"]:
-        blob = f"{f.get('match', '')} {' '.join(f.get('evidence') or [])}"
-        assert not banned.search(blob), f"performance language in a fact: {f['file']}:{f['line']}"
+    for record in source["source_evidence"]:
+        blob = f"{record.get('match', '')} {' '.join(record.get('evidence') or [])}"
+        assert not banned.search(blob), (
+            f"performance language in source evidence: {record['file']}:{record['line']}"
+        )
 
 
-def test_provenance_names_the_commit_the_facts_were_read_at(facts):
-    prov = facts["provenance"]
+def test_provenance_names_the_commit_the_source_was_read_at(source):
+    prov = source["provenance"]
     assert re.fullmatch(r"[0-9a-f]{40}|unknown", str(prov["aiter_commit"])), prov
-    assert prov["aiter_commit"] != "unknown", "facts without a commit have no expiry date"
+    assert prov["aiter_commit"] != "unknown", "source evidence without a commit has no expiry date"
 
 
-def test_the_committed_corpus_resolves_at_the_commit_it_names(facts):
+def test_the_committed_corpus_resolves_at_the_commit_it_names(source):
     """The corpus's one promise, checked rather than assumed.
 
     An earlier version asserted only that a commit was PRESENT, and passed while 56 records pointed
@@ -323,11 +354,11 @@ def test_the_committed_corpus_resolves_at_the_commit_it_names(facts):
     the person who ran the extractor and nobody else. Present and identifying are different
     properties, and only the second one is worth anything in a citation index.
     """
-    dirt = facts["provenance"].get("aiter_dirty_sources")
+    dirt = source["provenance"].get("aiter_dirty_sources")
     assert dirt == [] or dirt is None or not dirt, (
         f"extracted from a tree with uncommitted changes in {dirt}; re-extract from a clean "
         f"checkout (`git -C <aiter> worktree add /tmp/aiter-clean <commit>`)")
-    assert not [f for f in facts["facts"] if f.get("unreproducible")], \
+    assert not [e for e in source["source_evidence"] if e.get("unreproducible")], \
         "the committed corpus must not contain records flagged unreproducible"
 
 
@@ -361,9 +392,10 @@ def test_allow_dirty_records_but_marks_every_affected_record(tmp_path, monkeypat
     monkeypatch.setattr(sys, "argv", ["x", "--aiter", str(tmp_path), "--json", "--allow-dirty"])
     assert EX.main() == 0
     payload = json.loads(capsys.readouterr().out)
-    got = {f["file"]: f.get("unreproducible") for f in payload["facts"]["facts"]}
+    got = {e["file"]: e.get("unreproducible")
+           for e in payload["evidence"]["source_evidence"]}
     assert got == {"dirty.py": True, "clean.py": None}, got
-    assert payload["facts"]["provenance"]["aiter_dirty_sources"] == ["dirty.py"]
+    assert payload["evidence"]["provenance"]["aiter_dirty_sources"] == ["dirty.py"]
 
 
 def test_an_unrelated_dirty_file_does_not_block_extraction(tmp_path, monkeypatch, capsys):
@@ -376,7 +408,7 @@ def test_an_unrelated_dirty_file_does_not_block_extraction(tmp_path, monkeypatch
     monkeypatch.setattr(EX, "aiter_commit", lambda a: "0" * 40)
     monkeypatch.setattr(sys, "argv", ["x", "--aiter", str(tmp_path), "--json"])
     assert EX.main() == 0
-    assert json.loads(capsys.readouterr().out)["facts"]["provenance"]["aiter_dirty_sources"] == []
+    assert json.loads(capsys.readouterr().out)["evidence"]["provenance"]["aiter_dirty_sources"] == []
 
 
 def test_dirty_paths_parses_renames_and_quoted_names():
@@ -396,68 +428,126 @@ def test_dirty_paths_parses_renames_and_quoted_names():
     assert out.stdout.strip() == "['a/b.py', 'new/y.py', 'sp ace.py']", out.stdout
 
 
-def test_gaps_are_stated_with_a_reason(facts):
-    for m in facts.get("missing") or []:
+def test_gaps_are_stated_with_a_reason(source):
+    for m in source.get("missing") or []:
         assert m.get("language") and m.get("subtree") and m.get("why"), m
 
 
-def test_every_language_declared_actually_produced_facts(facts):
+def test_every_language_declared_actually_produced_source_evidence(source):
     """A language present in `IMPLS` but absent from the output means the globs no longer match the
     upstream layout — which is how `ck` sat at zero while looking like a deliberate omission."""
     declared = {l for l, _, _ in EX.IMPLS}
-    got = {f["language"] for f in facts["facts"]}
+    got = {e["language"] for e in source["source_evidence"]}
     assert declared == got, f"declared but empty: {sorted(declared - got)}"
 
 
-def test_the_rendered_page_matches_the_facts():
-    if not os.path.exists(DOC):
+def test_the_rendered_source_page_matches_the_evidence():
+    if not os.path.exists(SOURCE_DOC):
         pytest.skip("doc not generated")
     r = subprocess.run([sys.executable, os.path.join(HERE, "_render_facts.py"), "--check"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode == 0, f"stale doc; re-run --emit\n{r.stdout}{r.stderr}"
 
 
-def test_the_page_states_no_ranking(facts):
+def test_the_source_page_states_no_ranking(source):
     """The prose is hand-written, so it is the one place a claim could slip in. Checked as text."""
-    if not os.path.exists(DOC):
+    if not os.path.exists(SOURCE_DOC):
         pytest.skip("doc not generated")
-    with open(DOC, encoding="utf-8") as f:
+    with open(SOURCE_DOC, encoding="utf-8") as f:
         body = f.read()
     for phrase in ("is faster", "is better", "outperforms", "you should use", "the best "):
         assert phrase not in body.lower(), f"the page ranks: {phrase!r}"
 
 
+def test_curated_decision_cards_are_actionable_and_grounded(decisions, source):
+    cards = decisions.get("cards") or []
+    assert cards, "an evidence index without decision cards still leaves the author to infer the answer"
+    assert RD.validate(cards, source["source_evidence"]) == []
+    for card in cards:
+        assert card["conditions"], card
+        assert card["actions"], card
+        assert card["why"], card
+        assert card["limitations"], card
+
+
+def test_always_on_corpus_does_not_bypass_measured_knowledge_switches(decisions):
+    levels = {card["evidence_level"] for card in decisions["cards"]}
+    assert levels == {"source_observed"}
+    for card in decisions["cards"]:
+        assert card["source_evidence"] and not card["measurement_evidence"], card
+
+
+def test_a_loose_file_line_reference_is_rejected(decisions, source):
+    card = dict(decisions["cards"][0], source_evidence=["x.py:1"])
+    errors = RD.validate([card], source["source_evidence"])
+    assert any("content-bound" in error for error in errors)
+
+
+def test_the_rendered_decision_page_matches_its_inputs():
+    if not os.path.exists(DECISION_DOC):
+        pytest.skip("decision doc not generated")
+    result = subprocess.run(
+        [sys.executable, os.path.join(HERE, "_render_decisions.py"), "--check"],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, (
+        f"stale decision doc; re-run _render_decisions.py --emit\n{result.stdout}{result.stderr}"
+    )
+
+
+def test_shipped_configs_become_seed_candidate_and_vary_next_advice(decisions, source, tuned):
+    body = RD.render(decisions, source, tuned)
+    assert "## Shipped configuration seeds" in body
+    assert "seed candidate" in body and "vary next" in body
+    assert "not measured winners" in body
+
+
 def test_tuned_groups_carry_arch_and_bucket(tuned):
     """A knob set without its gfx and its M bucket reads as a global recommendation. It is not one."""
+    ids = []
     for g in tuned["tuned_configs"]:
+        assert re.fullmatch(r"cfg_[0-9a-f]{16}", str(g["config_id"])), g
+        ids.append(g["config_id"])
         assert str(g["gfx"]).startswith("gfx"), g
         assert g["m_bucket"], g
-        assert int(g["shapes_swept"]) >= 1, g
-        assert ("same_across_shapes" in g) != ("knobs" in g), \
-            f"exactly one of the two forms, chosen by shapes_swept: {g}"
+        assert int(g["shape_configs"]) >= 1, g
+        assert g["source_files"], g
+        assert ("same_across_configs" in g) != ("knobs" in g), \
+            f"exactly one of the two forms, chosen by shape_configs: {g}"
+    assert len(ids) == len(set(ids)), "config IDs must identify exactly one (gfx, variant, M bucket)"
 
 
 def test_the_extractor_refuses_to_run_without_a_source_tree():
     """`--emit` with no `--aiter` would write an empty corpus over a good one."""
     r = subprocess.run([sys.executable, os.path.join(HERE, "_extract_impl_facts.py"), "--emit"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     assert r.returncode != 0
     assert "--aiter" in (r.stderr + r.stdout)
+
+
+def test_the_extractor_requires_an_explicit_output_mode(tmp_path):
+    result = subprocess.run(
+        [sys.executable, os.path.join(HERE, "_extract_impl_facts.py"), "--aiter", str(tmp_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode != 0
+    assert "--emit" in (result.stderr + result.stdout)
+    assert "--json" in (result.stderr + result.stdout)
 
 
 def test_the_renderer_runs_without_an_aiter_checkout():
     """The property that makes `--check` a usable gate: rendering reads only committed YAML."""
     if not os.path.exists(FAMILY):
-        pytest.skip("facts not generated")
+        pytest.skip("source evidence not generated")
     r = subprocess.run([sys.executable, os.path.join(HERE, "_render_facts.py")],
-                       capture_output=True, text=True, cwd="/")
+                       capture_output=True, text=True, cwd="/", check=False)
     assert r.returncode == 0, r.stderr
-    assert "## Coverage" in r.stdout
+    assert "## Source-evidence coverage" in r.stdout
 
 
 def test_json_mode_is_machine_readable():
     if not os.path.exists(FAMILY):
-        pytest.skip("facts not generated")
+        pytest.skip("source evidence not generated")
     aiter = os.environ.get("AITER_PATH", "/sgl-workspace/aiter")
     if not os.path.isdir(aiter):
         pytest.skip("no aiter checkout")
@@ -469,7 +559,7 @@ def test_json_mode_is_machine_readable():
                        capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
-    assert payload["facts"]["facts"] and payload["tuned"]["tuned_configs"]
+    assert payload["evidence"]["source_evidence"] and payload["tuned"]["tuned_configs"]
 
 
 if __name__ == "__main__":

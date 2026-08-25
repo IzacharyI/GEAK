@@ -157,6 +157,10 @@ def slugify(s):
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", str(s).lower())).strip("-")[:60]
 
 
+def _as_list(value):
+    return value if isinstance(value, list) else ([str(value)] if value else [])
+
+
 # ---------------------------------------------------------------------------
 # The lint. ONE implementation, called from `propose` (fail fast, at the source, while the run that
 # can explain itself is still alive), from `drain` (defence against hand-written or older proposals),
@@ -356,6 +360,14 @@ def lint_card(card, kernel_names=(), strict_source=True, is_new=True):
         errs.append(f"language {lang!r} is not an authoring-language id from "
                     f"perf_knowledge/index/taxonomy.md; expected one of "
                     f"{'|'.join(AUTHORING_LANGUAGES)}")
+
+    decision_refs = card.get("decision_refs", [])
+    if decision_refs and not isinstance(decision_refs, list):
+        errs.append("decision_refs must be a YAML list of exact decision-card/config IDs")
+    elif isinstance(decision_refs, list):
+        for ref in decision_refs:
+            if not re.fullmatch(r"(?:[a-z0-9][a-z0-9-]*|cfg_[0-9a-f]{16})", str(ref)):
+                errs.append(f"invalid decision_ref {ref!r}: expected a card slug or cfg_<16 hex>")
 
     body_lines = sum(len(str(card.get(f, "")).splitlines()) or 1 for f in CARD_BODY_FIELDS)
     if body_lines > MAX_CARD_LINES:
@@ -954,6 +966,8 @@ def cmd_drain(kb, a):
                 if want == 3 and int(m.get("confirms_blind", 0)) < 1:
                     want = 2      # a merge must not raise a star no single card could claim
                 m["confidence"] = STAR_OF[max(want, STARS.get(m.get("confidence", "★"), 1))]
+                m["decision_refs"] = list(dict.fromkeys(
+                    _as_list(m.get("decision_refs")) + _as_list(card.get("decision_refs"))))
                 cards[fn]["body"] += f"\n- source: {card.get('source')}\n"
                 merged.append({"card": fn, "run": prop.get("run_id")})
             else:
@@ -981,6 +995,7 @@ def cmd_drain(kb, a):
                     # No "unknown" default: the lint above already rejected a proposal without it,
                     # and defaulting is how `toolchain` ended up reading "unknown" on every card.
                     "language": card.get("language", ""),
+                    "decision_refs": card.get("decision_refs", []),
                     "key": key, "layer": "learned",
                     "lifecycle": card.get("lifecycle", "active"),
                     "type": card.get("type", "lever"),
