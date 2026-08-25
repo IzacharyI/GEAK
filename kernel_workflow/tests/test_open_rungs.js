@@ -25,11 +25,16 @@ const ok = (cond, msg) => {
   else { console.error('  FAIL:', msg); failures++; }
 };
 
-const m = src.match(/\/\/ <<REPLAY:open_rungs>>([\s\S]*?)\/\/ <<\/REPLAY:open_rungs>>/);
-if (!m) { console.error('  FAIL: no <<REPLAY:open_rungs>> region — nothing to test'); process.exit(1); }
+const region = (name) => {
+  const m = src.match(new RegExp(`// <<REPLAY:${name}>>([\\s\\S]*?)// <</REPLAY:${name}>>`));
+  if (!m) { console.error(`  FAIL: no <<REPLAY:${name}>> region — nothing to test`); process.exit(1); }
+  return m[1];
+};
+// open_rungs asks each rung HOW it closes, which lives in the enabling_step region: an enabling rung
+// closes on functional acceptance, a terminal one on a measurement. Both are loaded together.
 const { openRungs, rungOutcomeOf, rungIdOf } =
   // eslint-disable-next-line no-new-func
-  new Function(`${m[1]}\nreturn { openRungs, rungOutcomeOf, rungIdOf };`)();
+  new Function(`${region('enabling_step')}\n${region('open_rungs')}\nreturn { openRungs, rungOutcomeOf, rungIdOf };`)();
 
 const LADDER = [
   { id: 'D0', title: 'D0 Instrumentation', gated_on: [], is_positive_control: true },
@@ -80,6 +85,20 @@ console.log('\n# grading a round result');
      'the empty shapes never grade as measured');
 }
 
+console.log('\n# an enabling rung closes on function, not on a number');
+{
+  const passing = { eng: { status: 'ok' }, ver: { status: 'verified', correctness: 'pass',
+    activation_confirmed: 'yes', liveness: 'n/a' } };
+  ok(rungOutcomeOf(passing, 'enabling') === 'measured',
+     'a prerequisite that builds, runs its path, is correct and does not hang is CLOSED even with no speedup number');
+  ok(rungOutcomeOf(passing, 'terminal') === 'unmeasured',
+     'the same result on a terminal rung is not closed — a terminal rung owes a number');
+  const noPath = { eng: { status: 'ok' }, ver: { status: 'verified', correctness: 'pass',
+    activation_confirmed: 'no', liveness: 'n/a' } };
+  ok(rungOutcomeOf(noPath, 'enabling') === 'unmeasured',
+     'a prerequisite whose path never ran is not closed — exempt from the speed bar, not from activation');
+}
+
 console.log('\n# ids');
 {
   ok(rungIdOf({ title: 'D2 Per-token arrival counters' }) === 'D2',
@@ -92,8 +111,8 @@ console.log('\n# wired in');
 {
   ok(/OPEN_RUNGS: openRungs\(LADDER, rungTally\)/.test(src),
      'the owed list is threaded to update_memory — the only phase whose output the next wave reads');
-  ok(/recordRungOutcome\(r\.d\.roadmap_rung, rungOutcomeOf\(r\)\)/.test(src),
-     'and it is fed from the round results, not from what was planned');
+  ok(/const outcome = rungOutcomeOf\(r, stepRoleOf\(r\.d\)\);\n\s*recordRungOutcome\(r\.d\.roadmap_rung, outcome\);/.test(src),
+     'and it is fed from the round results and the step role, not from what was planned');
   ok(/if \(e\.last_outcome !== 'measured'\) e\.last_outcome = outcome;/.test(src),
      "`measured` is absorbing: a later round that retakes a closed rung and faults must not reopen it");
 }

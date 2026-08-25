@@ -502,6 +502,11 @@ const ANALYZE_SCHEMA = obj({
     gated_on: { type: 'array', items: { type: 'string' } },
     mandatory_arms: { type: 'array', items: { type: 'string' } },
     is_positive_control: { type: 'boolean' },
+    // How this rung is CLOSED. `terminal` (default) closes on a measurement. `enabling` closes on
+    // functional acceptance, because a prerequisite step has no standalone speedup to measure --
+    // demanding one is what leaves a fusion permanently half-built. See stepRoleOf below.
+    step_role: { type: 'string', enum: ['enabling', 'terminal'] },
+    enables: { type: 'string' },
   }, ['id', 'title', 'gated_on']) },
   // perf_knowledge resolution (REFERENCE ONLY): the operator/language this kernel maps to in the
   // AMD perf_knowledge base, plus the most relevant card paths, so engineers read focused context
@@ -728,6 +733,16 @@ const PLAN_SCHEMA = obj({
       // without either loss appearing anywhere in the log.
       roadmap_rung: { type: 'string' },
       rung_deviation: { type: 'string' },
+      // WHAT KIND OF STEP THIS IS, and therefore what it is judged on. `terminal` (the default) is
+      // judged on speed. `enabling` is a prerequisite in a multi-step fusion and is judged on
+      // function -- builds, path taken, correct, no deadlock -- because the producer half of a
+      // fusion cannot be faster on its own: it adds signalling and buffering and has no consumer
+      // yet. `enables` names the terminal rung it is a prerequisite for and is REQUIRED when the
+      // role is enabling. `cost_budget_pct` is how much slower this step is expected to make the
+      // operator; exceeding it is a design error rather than an expected temporary slowdown.
+      step_role: { type: 'string', enum: ['enabling', 'terminal'] },
+      enables: { type: 'string' },
+      cost_budget_pct: { type: 'number' },
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -1588,10 +1603,16 @@ function rungIdOf(c) {
 }
 // Grade one round's result for the rung it declared. `verified` is the verified geomean; a direction
 // that never reached verify has none.
-function rungOutcomeOf(res) {
+// `role` is 'enabling' or 'terminal'. An ENABLING rung is closed by functional acceptance, not by a
+// number: it has no standalone speedup to measure and demanding one is what leaves a fusion
+// permanently half-built. A TERMINAL rung is closed by a measurement -- including a losing one.
+function rungOutcomeOf(res, role) {
   if (!res) return 'unmeasured';
   const engFailed = !res.eng || /fail|error|crash/i.test(String(res.eng.status || ''));
   if (engFailed) return 'faulted';
+  if (role === 'enabling') {
+    return functionalAcceptance(res.ver).pass ? 'measured' : 'unmeasured';
+  }
   const v = res.ver && Number(res.ver.verified_geomean);
   return Number.isFinite(v) && v > 0 ? 'measured' : 'unmeasured';
 }
@@ -1607,6 +1628,9 @@ function openRungs(ladder, tally) {
       const outcome = RUNG_OUTCOMES.includes(e.last_outcome) ? e.last_outcome : 'never_planned';
       return { id, title: c.title || id, gated_on: Array.isArray(c.gated_on) ? c.gated_on : [],
         is_positive_control: !!c.is_positive_control,
+        // Carried so the next wave knows what closing this rung would even mean. A prerequisite
+        // re-planned as a speed experiment is a prerequisite that gets rejected again.
+        step_role: stepRoleOf(c), enables: String(c.enables || '') || undefined,
         attempts: Number(e.attempts) || 0, last_outcome: outcome };
     })
     .filter((c) => c.last_outcome !== 'measured');
@@ -1779,6 +1803,128 @@ function runsCleanly(ver) {
 }
 // <</REPLAY:objective_gate>>
 
+// <<REPLAY:enabling_step>>
+// A STEP THAT ENABLES A FUSION IS NOT A STEP THAT SPEEDS ONE UP.
+//
+// The round filter that decides what survives is `primSpeedup(ver) > 1.0`. Every direction is judged
+// by whether it made the operator faster THIS ROUND, and everything else is discarded. For a fusion
+// built in stages that filter is not a quality bar, it is a structural block, because the producer
+// half of a fusion cannot be faster on its own by construction: it adds completion signalling and a
+// second buffer, it has no consumer yet to hand the work to, and the only thing it can possibly
+// measure is its own overhead. It is supposed to be slower. It gets rejected for being exactly what
+// it is, does not enter the next round's canonical tree, and the consumer half is then written
+// against a tree where the producer half no longer exists — so it is never written at all.
+//
+// That is how this project stopped at half a fusion. The producer side of the combine fold was
+// authored, compiled, and never carried forward; the consumer side was never begun; the two-launch
+// shape that was the entire acceptance criterion was never reached.
+//
+// So a direction declares which of two things it is, and is judged accordingly:
+//
+//   terminal  — it closes a fusion chain (or it is a standalone optimisation). Judged on SPEED, with
+//               the full protocol: all four guards, rank-max, base/candidate/blank-control
+//               interleaved, and the overlap fraction on the edge it claims to have fused.
+//   enabling  — it is a prerequisite. Judged on FUNCTION: it builds, its path is actually taken,
+//               the results are correct, and it does not deadlock. Its timing is RECORDED AS A COST,
+//               not used to reject it. It is committed to the canonical tree so the next step has
+//               something to build on.
+//
+// Three things keep `enabling` from being a way to commit anything at all:
+//
+//   1. It must name the terminal rung it enables. A prerequisite to nothing is a regression.
+//   2. Its cost is bounded. `cost_budget_pct` is what the direction predicted it would cost; blowing
+//      through that is a design error rather than an expected temporary slowdown, and it is rejected.
+//   3. The cost is DEBT, and the debt is tracked by name until the terminal step pays it. A chain
+//      that never closes leaves the tree slower than it found it, and that has to be on the record
+//      as an outstanding balance rather than absorbed into the baseline.
+//
+// (3) is also what stops the chain from laundering its own overhead. Every committed enabling step
+// makes the canonical tree slower, and the terminal step is measured against the canonical tree. Left
+// alone, a chain that costs 3% and then recovers 3% reads as +3%. So the baseline is PINNED when the
+// first enabling step of a chain is committed, and the terminal step's claim is against the pin.
+const ENABLING_DEFAULT_BUDGET_PCT = 5.0;   // a prerequisite that costs more than this is a design error
+const CHAIN_DEBT_MAX_ROUNDS = 2;           // rounds an unpaid chain may stay open before it is called out
+
+const round2 = (x) => Math.round(Number(x) * 100) / 100;
+
+function stepRoleOf(d) {
+  const s = String((d && d.step_role) || '').trim().toLowerCase();
+  return s === 'enabling' ? 'enabling' : 'terminal';
+}
+
+// The four functional conditions, each reported by name. "It failed acceptance" and "it failed
+// acceptance because its path was never taken" are different findings and only the second is
+// actionable, so the caller gets the list rather than a boolean.
+function functionalAcceptance(ver) {
+  const s = (v) => String(v == null ? '' : v).toLowerCase();
+  const missing = [];
+  if (!ver) return { pass: false, missing: ['no verify result at all'] };
+  if (!['verified', 'regression', 'slower'].includes(s(ver.status)) && !s(ver.status).startsWith('verif')) {
+    missing.push(`verify did not complete (status=${ver.status || 'none'})`);
+  }
+  if (!s(ver.correctness).startsWith('pass')) missing.push('correctness did not pass');
+  if (s(ver.activation_confirmed) !== 'yes') missing.push('the new path was not confirmed to run');
+  if (!['pass', 'n/a', ''].includes(s(ver.liveness))) missing.push('liveness failed (hang or timeout)');
+  return { pass: missing.length === 0, missing };
+}
+
+// The verdict for ONE enabling direction. `geomean` is its measured speedup, which is expected to be
+// below 1 and is not a reason to reject.
+function enablingVerdict(d, ver, geomean) {
+  const fa = functionalAcceptance(ver);
+  const enables = String((d && d.enables) || '').trim();
+  const budget = Number((d && d.cost_budget_pct) != null ? d.cost_budget_pct : ENABLING_DEFAULT_BUDGET_PCT);
+  const g = Number(geomean);
+  const costPct = Number.isFinite(g) && g > 0 ? round2((1 / g - 1) * 100) : null;
+  if (!enables) {
+    return { commit: false, cost_pct: costPct, reason:
+      'declared step_role=enabling but named no terminal rung in `enables`. A step that is a ' +
+      'prerequisite to nothing is not a prerequisite, it is a change that made the operator slower.' };
+  }
+  if (!fa.pass) {
+    return { commit: false, cost_pct: costPct, reason:
+      `failed functional acceptance: ${fa.missing.join('; ')}. An enabling step is exempt from the ` +
+      'speed bar and from nothing else — these four conditions are the whole bar it is held to.' };
+  }
+  if (costPct != null && Number.isFinite(budget) && costPct > budget) {
+    return { commit: false, cost_pct: costPct, reason:
+      `costs ${costPct}%, over its own declared budget of ${budget}%. A prerequisite is allowed to ` +
+      'be slower than what it replaces; it is not allowed to cost more than the fusion it enables ' +
+      'can return. Over budget is a design error, not a temporary slowdown.' };
+  }
+  return { commit: true, cost_pct: costPct, enables, reason:
+    `functional acceptance passed (builds, path taken, correct, no hang) and it enables ${enables}. ` +
+    `Committed on FUNCTION at ${costPct == null ? 'an unread cost' : costPct + '% cost'}, carried as ` +
+    'debt against that rung. Not scored as a win and cumulative is unchanged.' };
+}
+
+// The outstanding balance. `debt` is a list of {round, id, enables, cost_pct}.
+function chainDebtReport(debt, roundNow, ladderMeasured) {
+  const open = (Array.isArray(debt) ? debt : []).filter((e) => e && !ladderMeasured.has(e.enables));
+  if (!open.length) return { open: [], overdue: [], caveat: '' };
+  const byRung = new Map();
+  for (const e of open) {
+    const k = e.enables;
+    const cur = byRung.get(k) || { enables: k, steps: [], cost_pct: 0, oldest_round: e.round };
+    cur.steps.push(e.id);
+    cur.cost_pct = round2(cur.cost_pct + (Number(e.cost_pct) || 0));
+    cur.oldest_round = Math.min(cur.oldest_round, e.round);
+    byRung.set(k, cur);
+  }
+  const rows = [...byRung.values()];
+  const overdue = rows.filter((r) => roundNow - r.oldest_round >= CHAIN_DEBT_MAX_ROUNDS);
+  const caveat = 'CHAIN DEBT OUTSTANDING: ' + rows.map((r) =>
+    `${r.enables} owes ${r.cost_pct}% from [${r.steps.join(', ')}] since round ${r.oldest_round}`).join('; ') +
+    '. These steps were committed on function, not on speed, so the canonical tree is currently ' +
+    'that much slower and none of it has been paid back yet. The terminal rung is the only thing ' +
+    'that can pay it.' +
+    (overdue.length ? ` OVERDUE (${CHAIN_DEBT_MAX_ROUNDS}+ rounds unpaid): ${overdue.map((r) => r.enables).join(', ')}. ` +
+      'Plan the terminal rung this round or state what happens to the debt — a chain abandoned ' +
+      'half-built leaves the tree slower than it was found, which is the worst of the three outcomes.' : '');
+  return { open: rows, overdue, caveat };
+}
+// <</REPLAY:enabling_step>>
+
 const CLAIM = claimBoundary(primSpeedup);
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
@@ -1796,6 +1942,23 @@ const OBJECTIVE_CAVEATS = [];
 // must be able to tell apart -- the second is a finding about the mechanism, and it is the more
 // useful of the two.
 const ATTRIBUTION_CAVEATS = [];
+// Chain caveats: enabling steps kept on function, enabling steps refused, and the outstanding debt
+// they leave behind. Surfaced for the same reason the others are -- a tree that is 3% slower because
+// two prerequisites landed and their terminal step never did is a tree whose report says 1.00x with
+// no indication that the number is a half-built fusion rather than a null result.
+const CHAIN_CAVEATS = [];
+// Enabling steps committed on function, each {round, id, enables, cost_pct}. Cleared per rung when
+// that rung is finally measured.
+const CHAIN_DEBT = [];
+// Rung ids that have produced a measurement. Kept alongside rungTally because the debt report needs
+// the same fact and must not depend on the tally's grading order.
+const LADDER_MEASURED = new Set();
+// The cumulative speedup at the moment the FIRST enabling step of any open chain was committed, and
+// the canonical commit it was pinned at. Every committed enabling step makes the canonical tree
+// slower, and the terminal step is measured against the canonical tree -- so without this pin a
+// chain that costs 3% and then recovers 3% reads as +3%. The pin is the blank control the terminal
+// step's claim has to be stated against.
+let CHAIN_BASELINE = null;
 // Hardware/toolchain facts this wave established, for a human to merge into knowledge/. See
 // MEMORY_SCHEMA.knowledge_delta for why this is surfaced rather than written.
 const KNOWLEDGE_DELTA = [];
@@ -2753,6 +2916,14 @@ while (dispatched < BUDGET && (WORKING_KERNEL || noImprove < MAX_NO_IMPROVE)) {
       ROADMAP: `${EVAL_DIR}/roadmap.md`,
       ROADMAP_LADDER: LADDER,
       LADDER_DISPATCHED: [...dispatchedRungs],
+      // What the tree currently owes. Enabling steps are committed on function and make the tree
+      // slower; only their terminal rung can pay that back. A planner that is not shown the balance
+      // plans the next round as if the tree were where it started, and the half-built chain stays
+      // half-built -- which is the exact state this project reached and then reported as 1.00x.
+      ...(CHAIN_DEBT.length ? {
+        CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED).open,
+        CHAIN_BASELINE,
+      } : {}),
       // The dependency graph and the pipe table, for the SAME reason. pipeOccupancyGate (below)
       // rejects a direction whose claim exceeds what its pipe's idle fraction can pay — judging the
       // planner against a table the planner was never shown. And the graph is the whole basis for
@@ -2992,7 +3163,12 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // come back, a rung that ran and produced nothing is still owed.
   for (const r of clean) {
     if (r.d && r.d.roadmap_rung && r.d.roadmap_rung !== 'off_ladder') {
-      recordRungOutcome(r.d.roadmap_rung, rungOutcomeOf(r));
+      const outcome = rungOutcomeOf(r, stepRoleOf(r.d));
+      recordRungOutcome(r.d.roadmap_rung, outcome);
+      // A measured terminal rung is what pays the debt its prerequisites ran up. Recorded here
+      // rather than at the commit, because the debt is settled by the MEASUREMENT existing, not by
+      // the candidate winning: a chain that closed and lost is a chain that closed.
+      if (outcome === 'measured') LADDER_MEASURED.add(r.d.roadmap_rung);
     }
   }
   {
@@ -3087,15 +3263,40 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // account of what it did is exactly the thing that must not decide whether the evidence is checked.
   for (const r of clean) {
     if (!(r.ver && r.ver.status === 'verified' && r.ver.correctness === 'pass' && !r.inactive)) continue;
+    // An enabling step makes no win claim, so there is no win to attribute to the wrong kernel. Its
+    // bar is functional acceptance plus its cost budget, both applied below.
+    if (stepRoleOf(r.d) === 'enabling') continue;
     const at = attributionVerdict(r.ver, { geomean: primSpeedup(r.ver) });
     r.attribution_state = at.state;
     if (at.caveat) r.attribution_caveat = at.caveat;
     if (at.reject) r.attribution_rejected = at.state;
   }
 
+  // ENABLING STEPS ARE JUDGED BEFORE THE SPEED FILTER, because the speed filter is what they cannot
+  // pass. An enabling step is a prerequisite half of a fusion: it adds completion signalling and a
+  // second buffer, it has no consumer yet, and its only measurable effect is its own overhead. See
+  // <<REPLAY:enabling_step>>. Judged on function, committed on function, cost carried as debt.
+  const enablingKeeps = [];
+  for (const r of clean) {
+    if (stepRoleOf(r.d) !== 'enabling' || r.inactive) continue;
+    const ev = enablingVerdict(r.d, r.ver, primSpeedup(r.ver));
+    r.enabling_verdict = ev;
+    if (ev.commit && r.patch) {
+      enablingKeeps.push(r);
+      log(`ENABLING KEEP ${r.d.id}: ${ev.reason}`);
+    } else {
+      log(`ENABLING REJECT ${r.d.id}: ${ev.reason}${ev.commit && !r.patch ? ' (and it produced no patch to keep)' : ''}`);
+      CHAIN_CAVEATS.push(`${r.d.id} [enabling, not kept]: ${ev.reason}`);
+    }
+  }
+
   const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
     r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0 && !r.inactive &&
-    !r.attribution_rejected);
+    !r.attribution_rejected &&
+    // An enabling step never competes for the round win: it is expected to be below 1.0 and it has
+    // its own commit path below. One that happens to measure above 1.0 is still not a win claim --
+    // the fusion it enables has not been closed yet, so there is nothing yet to attribute.
+    stepRoleOf(r.d) !== 'enabling');
 
   // Rejection by exclusion is invisible -- the direction just quietly stops existing, which reads
   // like "it didn't work". Print it with its number attached, for the same reason PLAGIARIZED is
@@ -3334,6 +3535,101 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
         analysis_result: reprofileAnalysisResult,
       };
     }
+  }
+
+  // --- (e2) Commit the enabling steps ------------------------------------
+  // Separate from the winner commit above and it has to be. The winner is committed because it is
+  // FASTER; these are committed because they WORK and something else is going to be built on top of
+  // them. Committing them is the whole point of the distinction: a prerequisite that passes on
+  // function and is then left out of the canonical tree is a prerequisite the next round cannot see,
+  // and the step that was supposed to consume it gets written against a tree where it does not
+  // exist. Applied AFTER the winner so the winner's patch still applies against the tree it was cut
+  // from; one that then conflicts is logged and shelved rather than forced.
+  const enablingUnlanded = [];
+  if (enablingKeeps.length) {
+    if (CHAIN_BASELINE == null) {
+      CHAIN_BASELINE = { round, cumulative, note:
+        'Pinned at the first enabling commit. Every enabling step below makes the canonical tree ' +
+        'slower, so the terminal step must state its claim against THIS number, not against the ' +
+        'canonical it will actually be measured on.' };
+      log(`CHAIN BASELINE PINNED at round ${round}, cumulative=${cumulative.toFixed(4)}x. ` +
+          CHAIN_BASELINE.note);
+    }
+    const res = await agentT(
+      `You are the TechLead committing round ${round}'s ENABLING steps into the canonical workspace.
+
+These are NOT round winners. Each one passed functional acceptance — it builds, its path is
+confirmed to run, correctness passes, and it does not hang — and each is a prerequisite for a
+fusion step that has not been written yet. They are expected to be SLOWER on their own. Commit
+them so the next round has something to build the consumer half against.
+
+\`\`\`bash
+export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
+cd ${CANONICAL}
+git checkout -- .
+\`\`\`
+Then, for EACH patch below IN ORDER, run \`git apply <patch> || git apply --3way <patch>\` and commit
+it on its own with the message shown. If a patch fails BOTH plain and --3way apply, do NOT hand-merge
+it and do NOT force it: skip it, leave the tree as it was before that patch, and report it in
+\`skipped\`. A prerequisite that no longer applies is a prerequisite whose assumptions changed, and
+silently reconciling it is how a chain ends up half-applied in a way nobody can see.
+
+${enablingKeeps.map((r) => `- patch: ${r.patch}\n  message: "round ${round} enabling: ${r.d.id} ` +
+  `(enables ${r.enabling_verdict.enables}, cost ${r.enabling_verdict.cost_pct}%)"`).join('\n')}
+
+Finally: \`git --no-pager diff "$(git rev-list --max-parents=0 HEAD)..HEAD" > ${EVAL_DIR}/current_best.diff\`
+and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Report JSON
+{committed: [<patch paths that landed>], skipped: [{patch, reason}], correctness_after, note}.`,
+      { phase: 'Merge', label: `commit enabling r${round}`, schema: obj({
+        committed: { type: 'array', items: { type: 'string' } },
+        skipped: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        correctness_after: { type: 'string' }, note: { type: 'string' },
+      }, ['committed']) });
+    const landed = new Set(Array.isArray(res && res.committed) ? res.committed : []);
+    for (const r of enablingKeeps) {
+      if (!landed.has(r.patch)) {
+        log(`ENABLING NOT LANDED ${r.d.id}: the patch did not apply to the canonical tree. It stays ` +
+            'on the shelf; the rung it enables remains owed.');
+        CHAIN_CAVEATS.push(`${r.d.id} [enabling, did not apply]: ${r.enabling_verdict.enables} still owed.`);
+        enablingUnlanded.push(r);
+        continue;
+      }
+      CHAIN_DEBT.push({ round, id: r.d.id, enables: r.enabling_verdict.enables,
+        cost_pct: r.enabling_verdict.cost_pct });
+      CHAIN_CAVEATS.push(`${r.d.id} [enabling, committed r${round}]: ${r.enabling_verdict.reason}`);
+    }
+    // Committing these does NOT advance cumulative. They are known to be slower; recording them as
+    // progress would make the run's headline number a measure of how much overhead it has installed.
+    log(`Round ${round}: ${landed.size} enabling step(s) committed on function. cumulative unchanged ` +
+        `at ${cumulative.toFixed(4)}x — an enabling step is not a win and must not move the headline.`);
+    if (res && res.correctness_after && !String(res.correctness_after).toLowerCase().startsWith('pass')) {
+      log(`ENABLING COMMIT WARNING r${round}: correctness after the enabling commits reads ` +
+          `"${res.correctness_after}". The canonical tree is the input to every later round; a chain ` +
+          'that lands broken is worse than a chain that never lands.');
+      CHAIN_CAVEATS.push(`r${round} enabling commit: correctness_after=${res.correctness_after}`);
+    }
+  }
+
+  // The outstanding balance, recomputed every round against what has actually been measured.
+  {
+    const dr = chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED);
+    if (dr.caveat) {
+      log(`Round ${round}: ${dr.caveat}`);
+      if (dr.overdue.length) CHAIN_CAVEATS.push(`r${round} OVERDUE: ${dr.caveat}`);
+    }
+  }
+
+  const enablingLanded = CHAIN_DEBT.filter((e) => e.round === round).length;
+  if (improved) {
+    // noImprove was already reset at the commit above.
+  } else if (enablingLanded) {
+    // A round that landed a prerequisite produced verified, carried-forward progress; it just was
+    // not progress the headline number can express. Charging it to the stopping criterion is how a
+    // run gives up two rounds before the step that pays for all of them. MAX_NO_IMPROVE is a guard
+    // against a search that has stopped finding anything, and this search has not.
+    log(`Round ${round}: NOT counted toward noImprove — ${enablingLanded} enabling step(s) landed. ` +
+        'A prerequisite that passed functional acceptance and entered the canonical tree is progress ' +
+        'the cumulative speedup cannot show.');
   } else if (clean.length && clean.every(r => r.inactive)) {
     // Every direction this round measured code that never ran. That is a harness/activation fault,
     // not a search-space fault, and charging it to the stopping criterion would end the run on the
@@ -3344,7 +3640,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     noImprove++;
   }
 
-  // --- (e2) Shelve this round's verified non-winners --------------------
+  // --- (e3) Shelve this round's verified non-winners --------------------
   // Everything that PASSED independent verification and merely lost keeps its patch instead of
   // collapsing to a number in history.rounds. A 1.03x that lost to a 1.09x is a finished, verified
   // piece of work; on an 8-round budget with one collective lease per round, re-deriving it later
@@ -3353,7 +3649,16 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
   // The integrated candidate is NOT shelved: it is not an independent direction, it is a
   // combination of things already on the shelf, and shelving it would offer the same work twice.
   {
-    const losers = candidates.filter((c) => c !== winner && c.source !== 'integrated' && c.patch);
+    // An enabling step that passed on function but did not APPLY is verified work with a patch and
+    // no home. The shelf is exactly the place for that: the rung it enables is still owed, and the
+    // next round should be offered the work rather than made to re-derive it.
+    const unlandedEntries = enablingUnlanded.map((r) => ({
+      source: `enabling ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
+      geomean: primSpeedup(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
+      touched_files: Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [],
+    }));
+    const losers = candidates.filter((c) => c !== winner && c.source !== 'integrated' && c.patch)
+      .concat(unlandedEntries);
     if (losers.length) {
       const added = shelfAdd(shelf, losers, round, SHELF_MAX);
       shelf = added.shelf;
@@ -3405,6 +3710,13 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       // wave's analyze fast path rebuilds its ladder from. LADDER_DISPATCHED cannot serve: it says
       // a rung was taken, not that taking it produced anything.
       OPEN_RUNGS: openRungs(LADDER, rungTally),
+      // The unpaid balance travels to the next wave with everything else, for the same reason the
+      // shelf does: a canonical tree carrying committed prerequisites is not the same artifact as a
+      // clean one, and the next wave has to know which it inherited.
+      ...(CHAIN_DEBT.length ? {
+        CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED).open,
+        CHAIN_BASELINE,
+      } : {}),
       ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase,
         // The shelf travels to the next wave on the same road as the ledger: written into STATE.json
         // here, read back as setup.prior_state.shelf there. It is passed through as data the role
@@ -3484,6 +3796,24 @@ const report = await agentT(
     ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
     ...(OVERLAP_CAVEATS.length ? { OVERLAP_CAVEATS } : {}),
     ...(ATTRIBUTION_CAVEATS.length ? { ATTRIBUTION_CAVEATS } : {}),
+    // The half-built fusion, if there is one. A wave that committed prerequisites and never closed
+    // the chain reports a cumulative speedup that is BELOW where it started, and the reason is not
+    // in the number: the tree is carrying overhead it has not been paid back for. Both facts have to
+    // reach the report or the wave reads as a failed search rather than an unfinished build.
+    ...(CHAIN_CAVEATS.length ? { CHAIN_CAVEATS } : {}),
+    ...(CHAIN_DEBT.length ? {
+      CHAIN_DEBT_FINAL: chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED).open,
+      CHAIN_BASELINE,
+      CHAIN_NOTE:
+        'Enabling steps are committed on FUNCTION (builds, path taken, correct, no deadlock), not ' +
+        'on speed, because the producer half of a fusion cannot be faster on its own. Any rung ' +
+        'still listed in CHAIN_DEBT_FINAL is a fusion that was started and not closed: state the ' +
+        'cost it left in the tree, and state that the speedup for that chain is NOT YET MEASURED ' +
+        'rather than reporting the degraded number as the result. CHAIN_BASELINE is what the ' +
+        'terminal step must be compared against — the canonical tree already contains the ' +
+        'overhead, so measuring against the canonical would credit the chain with removing its own ' +
+        'cost.',
+    } : {}),
     // Only present on a non-default objective, so a speedup wave's report is byte-identical to
     // before. On a working_kernel wave it is the first thing a reader needs: the wave's own numbers
     // are withdrawn, and the deliverable is whether an artifact ran.

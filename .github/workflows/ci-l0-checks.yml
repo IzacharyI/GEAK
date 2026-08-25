@@ -90,6 +90,12 @@ jobs:
       - name: open rungs carry forward
         run: node kernel_workflow/tests/test_open_rungs.js
 
+      # The producer half of a fusion cannot be faster on its own. Judging it on speed rejects it,
+      # it never enters the canonical tree, and the consumer half is written against a tree where it
+      # does not exist -- which is how this project reached a half-fused kernel and stopped.
+      - name: enabling steps judged on function
+        run: node kernel_workflow/tests/test_enabling_step.js
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

@@ -98,6 +98,16 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    an artifact-free fresh copy; if you ever suspect a stale build (e.g. after editing headers), MOVE the
    cache aside instead of deleting: `mv .torch_ext .torch_ext.stale_$(date +%s)_$$ 2>/dev/null || true`.
 5. ALWAYS run CORRECTNESS before BENCHMARK. A fast-but-wrong kernel scores 0.
+5b. **If your direction has `step_role: enabling`, you are judged on FUNCTION, not on speed.** You
+   are building a prerequisite: the producer half of a fusion, a readiness signal, a second buffer.
+   It has no consumer yet, so the only thing it can measure is its own overhead, and it is supposed
+   to be slower. Your acceptance is four things — it compiles, the path marker proves the new code
+   ran, correctness passes, and it does not deadlock. Report your measured number as the COST it is,
+   in `notes`, next to the `cost_budget_pct` your direction declared. **Do not delete working code
+   because it benchmarked below 1.0, and do not bolt on an unrelated optimisation to get the number
+   above 1.0** — both destroy the thing the next round has to build on, which is the only reason
+   your step exists. If the cost is far over the declared budget, say so and say why; that is a
+   finding about the design, and it is the one case where being slower is a real result.
 6. Preserve the kernel's external interface (signature, semantics) so the wrapper/tests still work.
 7. Hipify safety (HIP): never put `<<<>>>` launches inside a macro if/else or ternary — use template
    dispatch functions. See `hip_optimization.md` → Hipify Safety Rules.

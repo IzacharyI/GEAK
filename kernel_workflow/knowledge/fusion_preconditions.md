@@ -234,6 +234,48 @@ edge: <producer tile> -> <consumer tile>
 Plus the ladder, with the rung you are proposing and one line on why each cheaper rung is
 insufficient. A proposal that skips the ladder is not ranked.
 
+## A fusion built in stages: what each stage is judged on
+
+Once a fusion passes the three conditions and gets built, it is normally built in more than one
+step: the producer publishes readiness, then the consumer waits on it, then the two are folded into
+one launch. **Only the last of those steps can be faster.** The earlier ones add completion
+signalling and a second buffer and have nothing yet to hand their work to, so the only effect they
+can measure is their own overhead. They are supposed to be slower.
+
+If they are judged on speed anyway, they are rejected, they do not enter the next round's tree, and
+the consumer half is then written against a tree where the producer half does not exist. It is
+therefore never written. The result is a permanently half-built fusion whose report reads as a
+failed search. That has happened in this project: the producer side of a combine fold was authored
+and compile-checked, no GPU was allocated to it, it could not have shown a gain in isolation even
+if one had been, it was not carried forward, and the consumer side was never begun.
+
+So each step declares what it is, and is judged accordingly.
+
+| | enabling step (a prerequisite) | terminal step (closes the chain) |
+|---|---|---|
+| What it is | producer-side readiness, buffering, signalling — anything with no consumer yet | the step that makes the fused path actually run end to end |
+| Judged on | function | speed |
+| Acceptance | compiles; the path marker appears; results correct; 1000 replays without deadlock | the full protocol below |
+| Its timing | recorded as a cost against a declared budget, never used to reject it | the result |
+| Kept for the next round | yes, committed to the canonical tree | yes, if it wins |
+
+**The terminal step's protocol, in full.** Base / candidate / **blank control** interleaved, all four
+route guards, rank-max, paired within a repetition. Plus the measured overlap fraction on the exact
+edge the fusion claims to have created — a fused kernel that is faster with zero overlap on its own
+edge got its win somewhere else (see "Three ways a fusion result gets accepted for the wrong
+reason"). Then an independent re-check: correctness, 1000 replays of the real call sequence without
+deadlock, performance reproduced, path marker reproduced.
+
+**Compare against the pre-chain baseline, not the current tree.** Every landed prerequisite made the
+canonical tree slower. Measuring the terminal step against that tree credits the fusion with
+removing overhead the chain itself installed. The number to beat is the one from before the first
+prerequisite landed.
+
+**A prerequisite is a debt, and it comes due.** It is allowed to be slower; it is not allowed to cost
+more than the fusion can plausibly return, and it is not allowed to sit unpaid indefinitely. A chain
+abandoned half-built is worse than a chain never started: the tree ends up slower with nothing to
+show for it. Either close the chain or revert the prerequisites and say why.
+
 ## Provenance
 
 Distilled from public analyses arguing *against* the megakernel-by-default position, including

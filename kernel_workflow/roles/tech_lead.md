@@ -355,6 +355,8 @@ prior rounds — see below). Also the current best per-case table. Plus `KERNEL_
 `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` (the kk pointer resolved in analyze; may be empty).
 And **`ROADMAP_LADDER`** (the `candidate_directions` you ranked in `analyze`, inline) +
 **`LADDER_DISPATCHED`** (the rung ids taken so far, across all rounds) + `ROADMAP` (the path).
+Plus **`CHAIN_DEBT`** and **`CHAIN_BASELINE`**, present only when a fusion chain is open (see
+"Multi-step fusions" below).
 Plus **`TASK_GRAPH`** and **`RESOURCE_TIMELINE`** (present only when the run requires a task graph) —
 the dependency graph you built in `analyze` and the per-pipe busy/idle table. These are not
 background reading:
@@ -409,6 +411,45 @@ Rules:
    than the plan that preceded them. Leaving it *silently* is what produces a wave that spends six
    directions and never proposes its own top rung. If the ladder is now wrong, say that in
    `reasoning`; that is a finding, and the next wave inherits it.
+
+0b. **Multi-step fusions: say which steps are prerequisites, and stop asking them to be faster.**
+   Set `step_role` on every direction. `terminal` is the default and means the direction is judged on
+   SPEED. `enabling` means it is a prerequisite in a fusion that takes more than one step, and it is
+   judged on FUNCTION instead: it builds, its path is confirmed to run, correctness passes, and it
+   does not deadlock. Its timing is recorded as a cost, not used to reject it.
+
+   Use `enabling` whenever a step cannot possibly be faster on its own. The producer half of a
+   fusion is the standard case: it adds completion signalling and a second buffer, there is no
+   consumer yet to hand the work to, so the only thing it can measure is its own overhead. Judging
+   it on speed does not set a high bar, it sets an impossible one — and the consequence is not that
+   the step fails, it is that the step is not carried into the next round's tree and the consumer
+   half is then written against a tree where the producer half does not exist. That is how this
+   project reached a half-fused kernel and stopped there.
+
+   Two fields come with it and both are required:
+   - **`enables`** — the rung id this is a prerequisite for. A prerequisite to nothing is refused.
+   - **`cost_budget_pct`** — how much slower you expect it to make the operator. Being slower is
+     expected; being slower than this is a design error and the step is refused. Set it from what
+     the fusion can plausibly return, not from what the step happens to measure.
+
+   What each kind of step is measured with, in full:
+   - **enabling**: functional acceptance only — compiles, the path marker appears, results correct,
+     no deadlock. Record the cost (e.g. how much latency the completion signal added) and move on.
+   - **terminal**: the full protocol. Base / candidate / blank-control interleaved, all four route
+     guards, rank-max, paired within a repetition, plus the measured overlap fraction on the edge
+     the fusion claims to have created. Then an independent re-check: correctness, 1000 replays of
+     the real call sequence without deadlock, and the path marker reproduced.
+
+   **`CHAIN_DEBT` is what the tree currently owes.** Each entry is a rung with the prerequisites that
+   have landed for it and the cost they added. That cost is real and it is in the canonical tree
+   right now. Plan the terminal rung while the debt is open; if you do not, say in `reasoning` what
+   happens to the debt. A chain abandoned half-built is the worst of the three available outcomes —
+   worse than never starting it — because the tree is left slower with nothing to show for it.
+
+   **`CHAIN_BASELINE` is what the terminal step must be compared against.** It is the cumulative
+   speedup from before any prerequisite landed. The canonical tree already carries their overhead,
+   so a terminal step measured against the canonical is credited with removing a cost the chain
+   itself installed. State the terminal claim against `CHAIN_BASELINE`.
 
 1. **Default to USING the budget — stopping early is the exception, not the default.** Unspent
    budget is wasted optimization, and the biggest wins are often found in LATER rounds (after
@@ -593,7 +634,11 @@ Return JSON:
       "focus_files": ["<rel paths this direction may edit>"],
       "expected_speedup": 2.0,
       "prompt": "full, self-contained task description for the engineer",
-      "kk_refs": ["<optional perf_knowledge card paths grounding THIS direction; omit/[] if none>"]
+      "kk_refs": ["<optional perf_knowledge card paths grounding THIS direction; omit/[] if none>"],
+      "roadmap_rung": "D2|off_ladder",
+      "step_role": "terminal|enabling",
+      "enables": "<rung id — REQUIRED when step_role is enabling, omit otherwise>",
+      "cost_budget_pct": 3.0
     }
   ]
 }
