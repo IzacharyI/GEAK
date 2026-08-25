@@ -165,6 +165,48 @@ console.log('\n# kernel-granular graphs are called out');
      'zero launch-boundary edges passes and says so -- "nothing to unfuse" is a valid result');
 }
 
+// --- 4b. the operands the edge does not carry -----------------------------------------------------
+// The graph's nodes are output tiles. Everything the consumer loads that the producer does not
+// produce -- the second weight matrix, its scales, the descriptors, the index arrays -- therefore
+// has no node, no edge, and no way to be ranked. On the operator this was written for that omission
+// hid the cheapest lever on the table: GEMM2's weights depend on nothing and both stages measured
+// ~30% HBM, so they could have been pulled into L2 during GEMM1. Six nodes, five edges, two correct
+// fusable edges found, and prefetch never mentioned once.
+console.log('\n# what the consumer loads that the producer never sends');
+{
+  const g = taskGraphGate(G({
+    edges: [{ from: 'a', to: 'b', scope: 'l2', enforced_by: 'launch_boundary', fan_in: 12 }],
+  }));
+  ok(g.verdict === 'OK' && /DID NOT SAY WHAT THE CONSUMER LOADS ANYWAY/.test(g.caveat),
+     'a fan-in edge that never says what else its consumer needs is called out');
+  ok(/a->b/.test(g.caveat), 'and the edge is named, so the answer is a one-line addition');
+}
+{
+  const g = taskGraphGate(G({
+    edges: [{ from: 'a', to: 'b', scope: 'l2', enforced_by: 'launch_boundary', fan_in: 12,
+              producer_independent_operands: ['w2', 'w2_scale', 'descriptors'] }],
+  }));
+  ok(g.caveat === '', 'answering it clears the note');
+}
+{
+  const g = taskGraphGate(G({
+    edges: [{ from: 'a', to: 'b', scope: 'l2', enforced_by: 'launch_boundary', fan_in: 12,
+              producer_independent_operands: [] }],
+  }));
+  ok(g.caveat === '',
+     'and an EMPTY list clears it too — "the consumer needs nothing else" is a real answer, and a ' +
+     'gate that cannot accept it teaches the role to invent operands');
+}
+{
+  const g = taskGraphGate(G());   // the base fixture's edge has no fan_in
+  ok(g.caveat === '',
+     'an edge with no fan-in is not asked: the question is about a consumer that gathers, and ' +
+     'asking it everywhere turns a real finding into a form field');
+}
+ok(/advisory|Advisory/.test(src.slice(src.indexOf('WHAT THE CONSUMER NEEDS'), src.indexOf('WHAT THE CONSUMER NEEDS') + 1800)),
+   'and it is advisory by construction — a missing operand list makes prefetch unrankable, it does ' +
+   'not make the graph wrong');
+
 // --- 5. wiring ----------------------------------------------------------------------------------
 // The gate can be perfect and still never run. These four are the connections between it and the
 // rest of the workflow, and each has been an independent way for a feature to be inert.

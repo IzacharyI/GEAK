@@ -147,6 +147,54 @@ console.log('\n# directions are priced against the pipe they claim');
      'deep_explore is exempt — its mandate is explicitly not one pipe');
 }
 
+// A hole Analyze located, measured, and put a number on, that no direction then claims. The
+// per-direction checks above cannot see this: the evidence of the miss is in a list they never read.
+// Measured cost of not having it: a Stage2 tail round at 18.75% occupancy, 115us, 2.5% of e2e -- one
+// of two quantified holes in the whole operator -- was assumed to be collected as a side effect of a
+// fusion rung. That rung never ran, and the 2.5% sat unclaimed for four waves without ever being
+// declined.
+console.log('\n# a sized hole that nobody claimed');
+const SIZED = (over) => LATENT(Object.assign({
+  idle_pipe_opportunities: [
+    { id: 'H1', window: 'the combine kernel', idle_pipe: 'mfma', recoverable_us: 140, pct_of_e2e: 3.0 },
+    { id: 'H2', window: 'stage2 final round', idle_pipe: 'all', recoverable_us: 115, pct_of_e2e: 2.5 },
+  ],
+}, over || {}));
+const DIR = (o) => Object.assign({ id: 'D1', fills_pipe: 'mfma', pipe_util_pct: 24.7, expected_speedup: 1.03 }, o);
+{
+  const r = pipeOccupancyGate(SIZED(), [DIR({ fills_hole: 'H1' })]);
+  ok(/SIZED HOLE WITH NO DIRECTION \(1\)/.test(r.caveat) && /H2/.test(r.caveat) && !/H1\b/.test(r.caveat.split('SIZED HOLE')[1]),
+     'the claimed hole drops out and the unclaimed one is named');
+  ok(/115us/.test(r.caveat) && /2\.5% of e2e/.test(r.caveat),
+     'with the size Analyze already measured, so the cost of leaving it is in the sentence');
+}
+{
+  const r = pipeOccupancyGate(SIZED(), [DIR({ graph_refs: ['H1', 'H2'] })]);
+  ok(!/SIZED HOLE/.test(r.caveat),
+     'graph_refs counts as a claim — a direction should not have to name the same hole twice');
+}
+{
+  const r = pipeOccupancyGate(SIZED({
+    idle_pipe_opportunities: [{ id: 'H2', recoverable_us: 115, pct_of_e2e: 2.5, rides_on: 'D2' }],
+  }), [DIR({})]);
+  ok(!/SIZED HOLE/.test(r.caveat),
+     '`rides_on` is a legitimate answer: a hole another rung absorbs is planned for, and now the ' +
+     'claim is on the record where it can be checked when that rung reports');
+}
+{
+  const r = pipeOccupancyGate(SIZED({
+    idle_pipe_opportunities: [{ id: 'H3', window: 'dispatch recv wait', recoverable_us: null, pct_of_e2e: null }],
+  }), [DIR({})]);
+  ok(!/SIZED HOLE/.test(r.caveat),
+     'an UNSIZED hole is not demanded: Analyze explicitly refusing to put a number on one is the ' +
+     'honest state, and charging for it would push the role into inventing the number');
+}
+{
+  const r = pipeOccupancyGate(SIZED(), []);
+  ok(!/SIZED HOLE/.test(r.caveat),
+     'and the post-Analyze call, which has no directions yet, does not report every hole as unowned');
+}
+
 console.log('\n# the knowledge and the roles actually route to it');
 {
   const card = fs.readFileSync(path.join(WF, 'knowledge/pipe_occupancy.md'), 'utf8');

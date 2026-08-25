@@ -567,6 +567,13 @@ const ANALYZE_SCHEMA = obj({
         // it marks an ordering the DATA does not require, which is the only kind fusion can delete.
         enforced_by: { type: 'string' },
         scope: { type: 'string' },
+        fan_in: { type: 'number' },
+        // The operands the CONSUMER needs that the producer does not supply: weights, scales,
+        // descriptors, index arrays. They depend on nothing, so they can be loaded while the
+        // producer is still running. The graph's nodes are output tiles, so these have no node and
+        // no edge and are otherwise unrankable — naming them here is the only place they appear.
+        // An empty array is a real answer; a missing one is the gate's advisory note.
+        producer_independent_operands: { type: 'array', items: { type: 'string' } },
       }, ['from', 'to', 'enforced_by']) },
       unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
       critical_path_us: { type: 'number' },
@@ -618,7 +625,14 @@ const ANALYZE_SCHEMA = obj({
       // The gate DERIVES the class from the numbers and compares it against this one; a mismatch is
       // itself reportable, so the stated value must be present to be contradicted.
       class: { type: 'string', enum: ['throughput_bound', 'latency_bound', 'launch_bound', 'mixed'] },
-      idle_pipe_opportunities: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      // The gate reads `id`, the two size fields, and `rides_on`, so all four are named here rather
+      // than left to `additionalProperties`. A hole with a size and no owner is reported; `rides_on`
+      // is how Analyze says "another rung absorbs this" without the claim going unrecorded.
+      idle_pipe_opportunities: { type: 'array', items: obj({
+        id: { type: 'string' }, window: { type: 'string' }, idle_pipe: { type: 'string' },
+        recoverable_us: { type: ['number', 'null'] }, pct_of_e2e: { type: ['number', 'null'] },
+        rides_on: { type: 'string' },
+      }, []) },
       closed_axes: { type: 'array', items: { type: 'object', additionalProperties: true } },
       unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
@@ -723,6 +737,10 @@ const PLAN_SCHEMA = obj({
       pipe_util_pct: { type: 'number' },
       headroom_basis: { type: 'string' },
       graph_refs: { type: 'array', items: { type: 'string' } }, // task_graph node/edge ids this direction acts on
+      // The `resource_timeline.idle_pipe_opportunities` id this direction fills. `fills_pipe` says
+      // which functional unit is idle; this says WHICH sized window of idleness is being collected,
+      // which is what makes a hole checkable as owned or unowned at the end of the round.
+      fills_hole: { type: 'string' },
       // Binds the direction to Analyze's LADDER the way `fills_pipe` binds it to the pipe table.
       // `roadmap_rung` is the candidate_directions id this direction implements, or the literal
       // `off_ladder`. `rung_deviation` is REQUIRED whenever the rung is off_ladder, or is being
@@ -1446,6 +1464,32 @@ function taskGraphGate(tg) {
       'a graph restates the launch order and cannot separate an ordering the data requires from one ' +
       'the current code imposes. Treat any fusion direction ranked from it as unsupported.' };
   }
+  // WHAT THE CONSUMER NEEDS THAT THE PRODUCER DOES NOT SUPPLY.
+  //
+  // The graph's nodes are output tiles, so its edges only ever describe the operand that flows along
+  // the edge. Every other operand the consumer needs -- the second weight matrix, its scales, the
+  // descriptors, the index arrays -- has no node, therefore no edge, therefore can never surface as
+  // an opportunity. That is a blind spot of the representation, not of the analyst: a real graph on
+  // this operator listed six nodes and five edges, correctly found both fusable edges, and never
+  // mentioned that GEMM2's weights depend on nothing at all and could be pulled into L2 during
+  // GEMM1 -- with both stages measured at ~30% HBM, the one lever the table most obviously funds.
+  //
+  // Asking per edge rather than per node keeps it cheap: the answer is a list of names, it is static
+  // (a read of the consumer's signature), and an empty list is a legitimate answer that means
+  // something. Advisory: a missing answer makes prefetch unrankable, it does not invalidate the graph.
+  const fanInEdges = eArr.filter((e) => e && Number(e.fan_in) > 0);
+  const unanswered = fanInEdges
+    .filter((e) => !Array.isArray(e.producer_independent_operands))
+    .map((e) => `${e.from || '?'}->${e.to || '?'}`);
+  if (unanswered.length) {
+    return { verdict: 'OK', summary, caveat:
+      `EDGES THAT DID NOT SAY WHAT THE CONSUMER LOADS ANYWAY (${unanswered.length}): ` +
+      `${unanswered.join(', ')}. Each names an operand the consumer waits for; none names the ` +
+      'operands it needs that the producer does not supply — weights, scales, descriptors, index ' +
+      'arrays. Those depend on nothing and can be loaded during the producer\'s own execution, ' +
+      'which is a different and usually cheaper lever than moving the dependent operand earlier. ' +
+      'It cannot be ranked from this graph because it has no node here.' };
+  }
   return { verdict: 'OK', summary, caveat: '' };
 }
 // <</REPLAY:task_graph_gate>>
@@ -1552,6 +1596,42 @@ function pipeOccupancyGate(rt, directions) {
     notes.push('DIRECTION OVERCLAIMS ITS PIPE: ' + overclaimed.join('; ') +
       '. These are arithmetically impossible against the reported utilization and can be rejected ' +
       'without a run; if the utilization is wrong, that is the finding.');
+  }
+  // A SIZED HOLE THAT NO DIRECTION CLAIMS.
+  //
+  // `overclaimed` catches a direction that promises more than its pipe can pay. This catches the
+  // opposite and more expensive error: a hole that Analyze located, sized in microseconds, and then
+  // nobody planned against. It is invisible per-direction, because the evidence of the miss is in a
+  // list the per-direction check never reads.
+  //
+  // Measured cost of not having it: a run reported a Stage2 tail round at 18.75% occupancy, 115us,
+  // 2.5% of e2e -- one of only two quantified holes in the whole operator -- and then issued four
+  // directions, none of which mentioned it. The hole was assumed to be collected as a side effect of
+  // the fusion rung. That rung never ran, so nothing collected it, and the 2.5% stayed on the table
+  // for four waves without ever being declined.
+  //
+  // Only checked once directions exist (the post-Analyze call passes none), and `rides_on` is a
+  // legitimate answer: a hole that another rung will absorb is planned for, it just is not planned
+  // for separately. What is refused is silence.
+  if (dirs.length) {
+    const claimed = new Set();
+    for (const d of dirs) {
+      if (!d) continue;
+      if (d.fills_hole) claimed.add(String(d.fills_hole));
+      for (const g of Array.isArray(d.graph_refs) ? d.graph_refs : []) claimed.add(String(g));
+    }
+    const unowned = (Array.isArray(rt.idle_pipe_opportunities) ? rt.idle_pipe_opportunities : [])
+      .filter((o) => o && (Number(o.recoverable_us) > 0 || Number(o.pct_of_e2e) > 0))
+      .filter((o) => !o.rides_on && !claimed.has(String(o.id)))
+      .map((o) => `${o.id || o.window || '?'} (${Number(o.recoverable_us) > 0 ? Number(o.recoverable_us).toFixed(0) + 'us' : ''}` +
+        `${Number(o.pct_of_e2e) > 0 ? (Number(o.recoverable_us) > 0 ? ', ' : '') + Number(o.pct_of_e2e).toFixed(1) + '% of e2e' : ''})`);
+    if (unowned.length) {
+      notes.push(`SIZED HOLE WITH NO DIRECTION (${unowned.length}): ${unowned.join('; ')}. Analyze ` +
+        'located these, measured them and put a number on them, and no direction in this round ' +
+        'names one as the thing it fills. A hole nobody claims is not a hole nobody can reach — it ' +
+        'is a hole nobody looked at. Either give it a direction, or set `rides_on` to the rung that ' +
+        'will absorb it so the claim is recorded and can be checked when that rung reports.');
+    }
   }
   const verdict = notes.length ? (overclaimed.length || (rt.class && rt.class !== derived) ? 'INCONSISTENT' : 'ADVISORY') : 'OK';
   return { verdict, summary, class_derived: derived, caveat: notes.join(' ') };

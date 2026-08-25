@@ -249,7 +249,9 @@ Return JSON:
                "duration_us": 0.0, "source": "profile|derived|assumed"}],
     "edges": [{"from": "<id>", "to": "<id>",
                "scope": "register|lds|l2|hbm|cross_die|cross_rank",
-               "enforced_by": "launch_boundary|barrier|fence_flag|none_needed", "bytes": 0}],
+               "enforced_by": "launch_boundary|barrier|fence_flag|none_needed", "bytes": 0,
+               "fan_in": 0,
+               "producer_independent_operands": ["<operand the consumer needs that this edge does not carry>"]}],
     "critical_path": ["<id>"], "critical_path_us": 0.0, "measured_e2e_us": 0.0,
     "zero_slack_nodes": ["<id>"],
     "false_edges": [{"from": "<id>", "to": "<id>", "why": "regions do not overlap: ..."}],
@@ -262,9 +264,12 @@ Return JSON:
     "class": "throughput_bound|latency_bound|launch_bound|mixed",
     "stall_reason": [{"stage": "<stage>", "waiting_on": "...", "counter": "..."}],
     "idle_pipe_opportunities": [
-      {"stage": "<stage>", "idle_pipe": "<pipe>", "candidate_work": "<the dependency-free work>",
+      {"id": "H1", "stage": "<stage>", "idle_pipe": "<pipe>", "window": "<when it is idle>",
+       "recoverable_us": 0.0, "pct_of_e2e": 0.0,
+       "candidate_work": "<the dependency-free work>",
        "dag_edge_status": "<the task_graph finding that says there is no edge>",
-       "blocked_by": "launch_boundary|register_pressure|no_async_copy|..."}],
+       "blocked_by": "launch_boundary|register_pressure|no_async_copy|...",
+       "rides_on": "<the rung that will absorb this, if no direction targets it separately>"}],
     "closed_axes": [{"axis": "<lever this table rules out>", "ruled_out_by": "<the counter>"}],
     "unknowns": [{"what": "...", "why": "...", "what_would_settle_it": "..."}]
   }
@@ -297,6 +302,16 @@ Four things about this artifact that decide whether it is worth anything:
   fabrication that will be trusted downstream. Mark assumed durations `assumed`. **A short honest
   graph outranks a complete invented one**, and if the honest version is mostly unknowns, that is
   the analysis result — return it and say what measurement would settle each one.
+- **On every edge with a `fan_in`, say what the consumer loads that the producer does not send.**
+  The nodes are output tiles, so the graph only ever describes the operand travelling along the
+  edge. Everything else the consumer needs — the second weight matrix, its scales, the descriptors,
+  the index arrays — has no node, therefore no edge, therefore cannot be ranked, and the lever it
+  represents is invisible no matter how careful the rest of the graph is. Those operands depend on
+  nothing, so they can be loaded while the producer is still running, which is a different and
+  usually cheaper move than making the dependent operand arrive earlier. This has already cost a
+  wave: a graph on this operator found both fusable edges correctly and never mentioned that GEMM2's
+  weights depend on nothing at all and both stages measured ~30% HBM. Answering is one static read
+  of the consumer's signature, and `[]` is a real answer.
 
 **`resource_timeline` is required whenever `task_graph` is, and it is the half that decides whether
 any edge in the graph is worth touching.** Read `SKILL_DIR/knowledge/pipe_occupancy.md` before you
@@ -321,6 +336,15 @@ this artifact decides that the graph cannot:
 - **Cross-stage cost asymmetry is priced here, not in the graph.** Normalize each stage to time per
   1e3 MFMA and attribute the gap with the other counters. Bringing a 1.5×-cost stage to parity is
   often the largest single number available, and no dependency edge points at it.
+- **Give every idle window an `id`, a size, and an owner.** A hole with `recoverable_us` or
+  `pct_of_e2e` on it must be named by some direction's `fills_hole` or `graph_refs`, or must carry
+  `rides_on` pointing at the rung that will absorb it. A sized hole nobody claims is reported by the
+  gate, and it should be: on this operator a Stage2 tail round measured 115 µs, 2.5% of e2e, one of
+  only two quantified holes in the whole thing, was silently assumed to come along with a fusion
+  rung, that rung never ran, and the 2.5% sat unclaimed for four waves without anyone ever deciding
+  to leave it. If a hole is not worth collecting, `rides_on` or a direction that says so is how you
+  put that decision on the record. Leaving `recoverable_us` null is also allowed and means you
+  refused to size it — that is honest and is not charged for.
 
 Then rank directions **from** the graph and the timeline together. Before proposing a fusion specifically, apply the
 three-condition test in `SKILL_DIR/knowledge/fusion_preconditions.md` per edge and rule out the
@@ -598,6 +622,12 @@ Rules:
      a run. **A direction that cannot name a pipe is a hunch, not an optimization** — send it back
      rather than spending the lease to find out. Two directions filling the *same* pipe are not
      additive: plan the second as a follow-up, never as a parallel arm.
+   - **And every sized hole in `idle_pipe_opportunities` is claimed by a direction or is declined in
+     writing.** `fills_pipe` says which unit is idle; `fills_hole` says which measured window of
+     idleness this direction collects. Analyze already put a microsecond number on each one, so a
+     hole with no direction naming it is not a hole that could not be reached — it is a hole nobody
+     read. Either give it a direction, or have Analyze set `rides_on` to the rung that absorbs it so
+     the claim is on the record and can be checked when that rung reports.
 4. Pattern triggers (from `optimization_strategies.md`): if a single thread scans a large array →
    round-1 MUST include a warp-cooperative `algorithm` direction. Oversized runtime arrays →
    include a template-specialization direction.
@@ -636,6 +666,7 @@ Return JSON:
       "prompt": "full, self-contained task description for the engineer",
       "kk_refs": ["<optional perf_knowledge card paths grounding THIS direction; omit/[] if none>"],
       "roadmap_rung": "D2|off_ladder",
+      "fills_hole": "<idle_pipe_opportunities id this direction collects; omit if it fills none>",
       "step_role": "terminal|enabling",
       "enables": "<rung id — REQUIRED when step_role is enabling, omit otherwise>",
       "cost_budget_pct": 3.0

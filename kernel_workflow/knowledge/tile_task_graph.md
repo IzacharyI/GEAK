@@ -51,6 +51,28 @@ rule you need). Two consequences engineers routinely miss:
   direction are the parallelism that exists in the problem. You are not creating parallelism by
   fusing; you are *stopping the current code from destroying it*.
 
+## The operands the graph structurally cannot see
+
+Nodes are output tiles, so an edge only ever describes the operand that flows along it. Every other
+operand the consumer reads — the next stage's weight matrix, its scales, the descriptors, the index
+and offset arrays — is produced by nobody. It has no node, so it has no edge, so no amount of
+correct edge analysis will ever surface it, and the graph is at its most convincing exactly when it
+is silent about this.
+
+It matters because those operands **depend on nothing**. They can be loaded while the producer is
+still running. That is a different lever from making the dependent operand arrive earlier: it does
+not need a readiness flag, a fence, or a counter — only address arithmetic that does not wait — and
+it is usually the cheaper of the two to build.
+
+So on every edge with a `fan_in`, record `producer_independent_operands`: the list of things the
+consumer needs that this edge does not carry. It is one static read of the consumer's signature.
+`[]` is a real answer.
+
+The cost of not asking, measured on a real operator: the graph had six nodes and five edges, found
+both fusable edges correctly, priced them, and never once mentioned that the second GEMM's weights
+depend on nothing at all — while its own pipe table reported both stages at ~30% HBM, which is the
+headroom that would have paid for exactly that prefetch.
+
 ## Edge scope — the column people forget
 
 For each edge, record **what has to be true for the consumer to safely proceed**, at the narrowest
