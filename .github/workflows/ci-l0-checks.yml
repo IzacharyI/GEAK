@@ -84,6 +84,12 @@ jobs:
       - name: analyze resume fallback
         run: node kernel_workflow/tests/test_analyze_resume_fallback.js
 
+      # A rung is closed by a verified number, not by having been planned. Without this, a rung
+      # whose arm faulted counts as taken, nothing records it as owed, and the ladder's last rung
+      # is never reached — which is what happened to the fusion rung for three waves.
+      - name: open rungs carry forward
+        run: node kernel_workflow/tests/test_open_rungs.js
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

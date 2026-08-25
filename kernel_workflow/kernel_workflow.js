@@ -1271,6 +1271,12 @@ let analysis = await agentT(
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
+    // The resume flag says "a prior wave already built the roadmap"; STATE_DIR is the only place
+    // that roadmap and the open-rung list actually survive between waves, because EVAL_DIR is
+    // rebuilt from scratch by bootstrap_task.sh. roles/tech_lead.md's fast path already instructs
+    // analyze to read `STATE_DIR` and `STATE.json` — until now it was never given either, so the
+    // instruction could not be followed and the fast path had nothing to resume from.
+    ...(STATE_DIR ? { STATE_DIR } : {}),
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
@@ -1325,6 +1331,9 @@ function analyzeResumeDegenerate(incremental, ver) {
         GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
         ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
+        // Kept on the recovery call too: the full analysis re-derives the ladder from the source,
+        // but the rungs a prior wave already spent, and the ones it left owed, exist only here.
+        ...(STATE_DIR ? { STATE_DIR } : {}),
       }),
       { phase: 'Analyze', label: 'tech_lead:analyze:full', schema: ANALYZE_SCHEMA });
     const got = (full && Array.isArray(full.candidate_directions) ? full.candidate_directions : [])
@@ -1553,6 +1562,57 @@ function pipeOccupancyGate(rt, directions) {
 // proposed at all. Every one of those is invisible in a per-direction check; all of them are
 // obvious the moment you diff dispatched-rungs against the ladder.
 //
+// <<REPLAY:open_rungs>>
+// A RUNG IS DONE WHEN IT PRODUCED A NUMBER, NOT WHEN IT WAS PLANNED.
+//
+// `dispatchedRungs` is filled from `lg.planned`, i.e. from what the round INTENDED to take. That is
+// the right input for the ordering check — a rung whose prerequisite was attempted and failed should
+// not silently satisfy the prerequisite, but neither should the run pretend the attempt never
+// happened. It is the wrong input for "what is still owed", and until now it was the only record.
+//
+// What that cost, in full: one wave's ladder ended in the fusion rung the whole program existed to
+// reach. The rung below it was planned, its device arm hit an illegal access, and it was retired as
+// a bring-up failure — but it counted as dispatched, so nothing was owed. The fusion rung's producer
+// side was then written in a later round and measured by nobody. The wave ended with the ladder
+// nominally clear, a handover note inside one engineer's round directory, and no measurement. The
+// next wave inherited none of it.
+//
+// So tally an OUTCOME per rung and carry the unfinished ones forward:
+//   never_planned  no round has taken it
+//   faulted        a direction took it and the code did not run
+//   unmeasured     a direction took it, ran, and returned no verified number
+//   measured       a verified number exists — and only this one closes the rung
+const RUNG_OUTCOMES = ['never_planned', 'faulted', 'unmeasured', 'measured'];
+function rungIdOf(c) {
+  return String((c && c.id) || String((c && c.title) || '').trim().split(/\s+/)[0] || '').trim();
+}
+// Grade one round's result for the rung it declared. `verified` is the verified geomean; a direction
+// that never reached verify has none.
+function rungOutcomeOf(res) {
+  if (!res) return 'unmeasured';
+  const engFailed = !res.eng || /fail|error|crash/i.test(String(res.eng.status || ''));
+  if (engFailed) return 'faulted';
+  const v = res.ver && Number(res.ver.verified_geomean);
+  return Number.isFinite(v) && v > 0 ? 'measured' : 'unmeasured';
+}
+// tally: Map<rungId, {attempts, last_outcome}>. Returns the entries the next wave still owes,
+// strongest-evidence-last so `measured` can never be reintroduced by a later weaker grade.
+function openRungs(ladder, tally) {
+  const t = tally instanceof Map ? tally : new Map(Object.entries(tally || {}));
+  return (Array.isArray(ladder) ? ladder : [])
+    .filter((c) => c && (c.id || c.title))
+    .map((c) => {
+      const id = rungIdOf(c);
+      const e = t.get(id) || {};
+      const outcome = RUNG_OUTCOMES.includes(e.last_outcome) ? e.last_outcome : 'never_planned';
+      return { id, title: c.title || id, gated_on: Array.isArray(c.gated_on) ? c.gated_on : [],
+        is_positive_control: !!c.is_positive_control,
+        attempts: Number(e.attempts) || 0, last_outcome: outcome };
+    })
+    .filter((c) => c.last_outcome !== 'measured');
+}
+// <</REPLAY:open_rungs>>
+
 // Deliberately advisory, like its siblings. The ladder is Analyze's plan, and a round with better
 // evidence SHOULD leave it — `rung_deviation` exists to make that a statement rather than a
 // silence. The gate never blocks a direction; it refuses to let a skip be invisible.
@@ -1762,6 +1822,18 @@ if (REQUIRE_TASK_GRAPH) {
 // acceptance-shape rung never proposed. Not gated on require_task_graph; every run has a roadmap.
 const LADDER = (analysis && Array.isArray(analysis.candidate_directions)) ? analysis.candidate_directions : [];
 const dispatchedRungs = new Set();
+// Separate from the set above and it has to be: that one answers "was this taken", this one answers
+// "did taking it produce a number". Only the second can say what the next wave still owes.
+const rungTally = new Map();   // rungId -> { attempts, last_outcome }
+function recordRungOutcome(id, outcome) {
+  const key = String(id || '').trim();
+  if (!key) return;
+  const e = rungTally.get(key) || { attempts: 0, last_outcome: 'never_planned' };
+  // `measured` is absorbing. A rung that produced a number once is closed; a later round that takes
+  // it again and faults must not reopen it, or the ladder never terminates.
+  if (e.last_outcome !== 'measured') e.last_outcome = outcome;
+  rungTally.set(key, e);
+}
 {
   const lg0 = roadmapLadderGate(LADDER, [], dispatchedRungs);
   if (lg0.summary) log(lg0.summary);
@@ -2737,7 +2809,15 @@ while (dispatched < BUDGET && (WORKING_KERNEL || noImprove < MAX_NO_IMPROVE)) {
     const lg = roadmapLadderGate(LADDER, directions, dispatchedRungs);
     log(`Round ${round}: ${lg.summary}`);
     if (lg.caveat) log(`Round ${round}: ${lg.caveat}`);
-    for (const r of lg.planned) dispatchedRungs.add(r);
+    for (const r of lg.planned) {
+      dispatchedRungs.add(r);
+      const e = rungTally.get(r) || { attempts: 0, last_outcome: 'never_planned' };
+      e.attempts += 1;
+      // Provisional: a rung that is taken counts as unmeasured until a verified number arrives.
+      // If the round dies before the grading below runs, that is exactly the state to carry forward.
+      if (e.last_outcome !== 'measured') e.last_outcome = 'unmeasured';
+      rungTally.set(r, e);
+    }
   }
   const roundCost = directions.reduce((s, d) => s + (d.specialty === 'deep_explore' ? DEEP_COST : 1), 0);
   dispatched += roundCost;
@@ -2906,6 +2986,23 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   );
 
   const clean = results.filter(Boolean);
+
+  // Grade each rung this round took. Done here, before any of the promotion filters, because a rung
+  // is closed by a MEASUREMENT and not by a win: a rung that ran and lost is settled and must not
+  // come back, a rung that ran and produced nothing is still owed.
+  for (const r of clean) {
+    if (r.d && r.d.roadmap_rung && r.d.roadmap_rung !== 'off_ladder') {
+      recordRungOutcome(r.d.roadmap_rung, rungOutcomeOf(r));
+    }
+  }
+  {
+    const owed = openRungs(LADDER, rungTally);
+    if (owed.length) {
+      log(`Round ${round}: rungs still owed after grading: ` +
+        owed.map((c) => `${c.id}(${c.last_outcome}, ${c.attempts} attempt(s))`).join(', ') +
+        '. A rung is closed by a verified number, not by having been planned.');
+    }
+  }
 
   // --- UNBACKED CLAIM: the engineer measured a win it cannot hand over ----
   // The other half of the 2026-08-23 claim-boundary loss. An engineer returned a well-formed claim
@@ -3303,6 +3400,11 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       // reads; an unreached rung that is not written down here is a rung the next wave re-derives
       // from scratch or never sees. This is the only phase positioned to carry it across waves.
       ROADMAP_LADDER: LADDER, LADDER_DISPATCHED: [...dispatchedRungs],
+      // The ladder minus what actually produced a number, with each rung's attempt count and last
+      // outcome. This is the entry the role writes into STATE.json as `open_rungs` and the next
+      // wave's analyze fast path rebuilds its ladder from. LADDER_DISPATCHED cannot serve: it says
+      // a rung was taken, not that taking it produced anything.
+      OPEN_RUNGS: openRungs(LADDER, rungTally),
       ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase,
         // The shelf travels to the next wave on the same road as the ledger: written into STATE.json
         // here, read back as setup.prior_state.shelf there. It is passed through as data the role

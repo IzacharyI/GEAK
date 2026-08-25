@@ -50,7 +50,7 @@ The fifth is the **open-ended deep optimizer** — use it differently (see the p
 
 ## PHASE=analyze
 
-Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`, `KERNEL_KNOWLEDGE_DIR` (may be empty), and optionally `INCREMENTAL_RESUME`.
+Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`, `KERNEL_KNOWLEDGE_DIR` (may be empty), and optionally `STATE_DIR` and `INCREMENTAL_RESUME`.
 
 **FAST PATH — if `INCREMENTAL_RESUME` is set** (a resumed deep wave: the roadmap was already built in a
 prior wave and persisted): do NOT re-derive the analysis from scratch. Read the existing
@@ -60,6 +60,16 @@ demonstrably changed since last wave (e.g. a newly-closed dead-end axis). This s
 re-read so the burst spends its budget on optimization rounds. Do a full analysis only if no prior
 roadmap exists. (When `INCREMENTAL_RESUME` is absent — default/fast/first deep burst — do the full
 analysis below exactly as before.)
+
+**`candidate_directions` is never allowed to come back empty on the fast path.** The ladder is the
+one thing a resume exists to carry, so returning the cached summary without the rungs is the same as
+having no plan at all. Rebuild it from, in order of preference: `STATE.json`'s `open_rungs`, the prior
+`roadmap.md`, or a full analysis. Carry each rung's `id`, `title`, `gated_on` and `is_positive_control`
+through unchanged, and drop only the rungs that `STATE.json` records as measured — a rung that was
+attempted and produced no measurement is still owed and must reappear. What this costs when it is
+skipped: one wave's fast path found no roadmap in its freshly-built `EVAL_DIR`, returned a valid
+schema with no rungs, and the fusion rung that was the entire point of the program went unproposed
+for three waves while every round re-planned from the profile.
 
 1. Read every source file under `WORKSPACE`. Classify kernel type (triton / hip / cuda / composable
    / e2e-model) using the patterns in `optimization_strategies.md` and the file contents.
@@ -596,9 +606,12 @@ Return JSON:
 Inputs: `ROUND`, the round's per-direction verified results (id, title, specialty, claimed vs
 verified geomean, status, the engineer's notes, **and the `roadmap_rung` each was dispatched
 under**), the integrate result, the round winner, the re-profile shift (if any), and the prior
-`HISTORY`. Also **`ROADMAP_LADDER`** and **`LADDER_DISPATCHED`**.
+`HISTORY`. Also **`ROADMAP_LADDER`**, **`LADDER_DISPATCHED`** and **`OPEN_RUNGS`**.
 
-**Write the unspent rungs down.** You are the only phase whose output the *next wave* reads. Any rung
+**Write the unspent rungs down.** You are the only phase whose output the *next wave* reads.
+`OPEN_RUNGS` is that list already computed — the ladder minus every rung that produced a verified
+number, each with its attempt count and last outcome. Copy it verbatim into `STATE.json.open_rungs`
+and give each entry a ledger row too. Any rung
 in `ROADMAP_LADDER` that is not in `LADDER_DISPATCHED` must appear in the ledger with verdict
 `unresolved` and a one-line note saying what is still owed and what it was gated on — including
 rungs no direction ever mentioned. A rung that is merely absent reads to the next wave as a rung that
@@ -684,7 +697,17 @@ none of them, so skip this whole block then):**
   ```
   Then write `$STATE_DIR/STATE.json` = `{cumulative: <CUMULATIVE_SPEEDUP>, insights, ledger,
   bottleneck_now, best_per_case: <BEST_PER_CASE>, last_round: <ROUND>,
-  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>}` (the full carried-forward state).
+  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>, open_rungs: <OPEN_RUNGS>}`
+  (the full carried-forward state).
+
+  **`OPEN_RUNGS` is the ladder minus what was actually measured, and it is what the next wave
+  resumes from.** Copy each entry verbatim from `ROADMAP_LADDER` — `id`, `title`, `gated_on`,
+  `is_positive_control` — and add `attempts` (how many rounds have taken it) and `last_outcome`
+  (`never_planned`, `faulted`, `unmeasured`, or `measured`). Drop an entry only once
+  `last_outcome` is `measured`. A rung that was planned, authored, and then produced no number is
+  NOT done: one wave ended with the fusion rung's producer side written and nothing measured, wrote
+  a handover note into a single engineer's round directory, and the next wave started from an empty
+  ladder because that note was the only record and it never left the directory it was written in.
   Do this EVERY round (even non-improving) so a kill mid-wave never loses the ledger; only refresh
   `best/` when the cumulative best actually advanced this wave.
 
