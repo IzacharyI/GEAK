@@ -132,6 +132,18 @@ analysis below exactly as before.)
      flydsl additionally has the full `authoring_gemm_levers.md` / `authoring_optimization.md` /
      `authoring_tile_programming.md` / `debugging.md` set). The source-backend card alone does NOT teach how
      to write the target — without this the engineer re-implements the new backend blind.
+   - **GEMM-family ops: also include `corpus/gemm_decisions.md` in `kk_refs`** when it exists
+     (`ls KERNEL_KNOWLEDGE_DIR/corpus/`). It is the only file in the base that states the shipped
+     CONFIGURATION SPACE — which tile and split-K values the library will accept, how a shape narrows
+     them, and which combinations fail to build — and `kk_refs` is what the engineers are handed.
+     Leaving it out is how it gets missed: the operator and language cards teach the programming
+     model and the levers, and neither one tells an engineer that `tile_m=16` is legal.
+     Read its ARCHITECTURE-GATE card first and carry its conclusions into the roadmap yourself. Which
+     paths the target architecture even offers is the cheapest knowledge available to you and the most
+     expensive to rediscover: a gate costs one `grep` to check and a whole funded round to trip over.
+     Note that the page also carries a large table of shipped configs from OTHER backends — those are
+     seeds for that backend's knob names, not for yours; do not hand an engineer a config whose knobs
+     your target language does not have.
    Treat all of this as advisory input that can only *widen* the candidate set (see the contract
    above). Do not let it override the per-case data or measurement.
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
