@@ -235,16 +235,25 @@ cards:
       - "target_language=flydsl"
       - "B preshuffle is being considered as a candidate"
     actions:
+      - "Put the preshuffled B path on the candidate list on the generic family instead of deferring it: b_preshuffle is the shipped default of the public entry point (flydsl_hgemm) and of the internal compile helper, so the unshuffled path you start from is the deviation from the library's own choice, not the safe baseline."
       - "Treat b_preshuffle as a change of B's storage layout, not as a boolean tuning flag: the kernel expects B already permuted into the family's shuffle layout, and the host side must either shuffle it or be told it is pre-shuffled."
+      - "Do not decline preshuffle on the grounds that no offline shuffle is available. The library performs the permutation itself with shuffle_weight(b, layout=_get_flydsl_shuffle_layout(pack_n)), exposes auto_shuffle_b to apply it at call time, and skips it when the tensor already carries the is_shuffled marker — the shuffle, the layout selector and the once-per-tensor skip are all readable from the entry point, so a copy of the kernel that cannot import them can still reimplement the same three pieces."
+      - "Hoist the permutation out of the measured region rather than counting it against the win: key a cached shuffled copy on the identity of the source tensor so it is paid once per distinct B and reused by every later launch. is_shuffled is that idea in the library; a cache that also detects in-place mutation of the source is the same idea made safe."
+      - "Scope the work item to the host layer before assigning it. The permutation happens on the host side of the entry point, before the launcher is called — it is not reachable from the kernel body. A direction that hands an engineer only the kernel source will come back 'not attempted, the host file is outside my lane', which is a decomposition failure and not a finding about preshuffle. The owner of this direction needs the configuration/launch module and permission to add a host-side module beside it."
+      - "Make the cache invalidation-safe or do not cache: a freed tensor's address can be handed to a later allocation, so identity alone can alias two different matrices. Pair the address with something that changes when the contents do, and treat a mismatch as a re-shuffle rather than a stale hit."
+      - "Settle the accounting question first, then act on the answer instead of parking the lever because the question exists. Read the benchmark loop: if it builds one B and calls the kernel repeatedly against it, with warmup iterations before the timed ones, then a once-per-tensor shuffle lands in warmup by construction and the steady-state cost is the honest number for that workload. Cache it, and write one line in the report saying B is treated as a reused operand and the permutation is amortised — a declared accounting choice is a complete answer, whereas deferring the lever leaves the fastest available configuration untested and reports nothing."
+      - "Where B is genuinely per-call data the same reading gives the opposite instruction: do not cache, charge the shuffle to every launch, and expect the unshuffled path to win. The rule is that the regime decides, and the regime is readable from the caller."
       - "Keep b_to_lds=false whenever b_preshuffle=true; the current kernel rejects the combination."
       - "Keep b_preshuffle=false on the small-M family, which rejects it outright."
-      - "Count the one-off shuffle cost against the number of launches that reuse the same B before claiming a win; for a weight matrix reused across many calls it amortises, for a single call it does not."
+      - "Retune the tile shortlist on the preshuffled tree rather than carrying over the configuration that won without it; the two paths feed the MFMA differently and their best tiles need not agree."
     alternatives:
       - "Use the unshuffled B path as the correctness and performance control."
       - "Shuffle B once at load time outside the timed region when the deployment allows it, and measure both accounting rules explicitly."
+      - "If B genuinely changes every call, the amortisation argument does not apply and the unshuffled path is the right answer — say which of the two regimes you are in before choosing."
     why:
       - "The generic HGEMM path supports preshuffled B and its dispatch default is even b_preshuffle=true, so this is a supported layout rather than a forbidden one — but the guard rails around it are all layout guard rails."
       - "The two rejections in the source are specific and different in kind: an unsupported combination (with b_to_lds) and an unsupported family (small-M). Neither is a statement about speed."
+      - "The reason to name the amortisation machinery explicitly is that the layout requirement reads like a blocker and is not one. An author who stops at 'the kernel wants B permuted' concludes the harness cannot supply it; the entry point shows the library supplying it three different ways in the same nine lines."
     source_evidence:
       - "src_93c0f2962c52fdfb"
       - "src_4c74ced4671a1e5b"
@@ -252,9 +261,12 @@ cards:
       - "src_7b5432b56d9acd63"
       - "src_520242be3bd7400e"
       - "src_e7db1b030bf2e5c6"
+      - "src_886a3fb0a447c9a7"
+      - "src_2aa8afff0a4748b0"
     measurement_evidence: []
     limitations:
-      - "This is an API/layout compatibility rule, not evidence that preshuffle is profitable on any shape."
+      - "A shipped default is a precedent, not a benchmark. That the library chose b_preshuffle=true says the path is first class and worth trying early; it does not say it wins on your shape, and the unshuffled control still has to be run."
+      - "The amortisation only holds where one B is reused across launches. Under an accounting rule that charges the first shuffle to a single call, the path can lose; state which rule you are reporting."
       - "A benchmark that reuses one pre-shuffled B across iterations measures the steady state, not the first call; state which one you are reporting."
       - "The card is grounded in the vendored library's contract. A kernel copy that has been edited may have moved these checks."
 
