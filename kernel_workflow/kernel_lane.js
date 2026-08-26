@@ -299,9 +299,25 @@ const KB_ENV_PRELUDE =
   '/shared_nfs/hyperloom/ca/amd-ca-combined.pem "$HOME/amd-extra-ca-bundle.pem"; do ' +
   '[ -n "$_ca" ] && [ -r "$_ca" ] && { export SSL_CERT_FILE="$_ca" REQUESTS_CA_BUNDLE="$_ca" ' +
   'CURL_CA_BUNDLE="$_ca" NODE_EXTRA_CA_CERTS="$_ca"; break; }; done; fi; ';
+// Two runs must never enter the KB loop, and neither is a failure. A run that shared its GPU measured
+// contention, not the kernel. A run on a HELD-OUT kernel is the instrument for measuring whether the
+// KB helps at all — let it in and the next A/B over that kernel reads back its own answer and looks
+// spectacular. Defaults are permissive, so the CALLER is the one who has to declare a busy box.
+//
+// These are declared HERE, beside the other KB gates, and not next to the distillation phase that
+// first needed them. Down there they gated only the learned card, while the kb_artifacts/ write and
+// the warm-start read — the two halves that actually close the loop — ran on KB_ROOT_OK alone. A
+// `held_out: true` lane therefore still deposited its outcome for the next run to warm-start from,
+// and nothing in the result said so: `validation_status` stays `accepted` and `kb_written` reads
+// like a success. Observed on three of three held-out lanes, one of which also passed
+// `warm_start: off` and wrote anyway. An A/B whose treatment silently seeds its own control is not
+// an A/B, so the flag now gates read, write and distil from one place.
+const BOX_QUIET = String(A.box_quiet != null ? A.box_quiet : 'true') === 'true';
+const HELD_OUT = String(A.held_out != null ? A.held_out : 'false') === 'true';
+const KB_LOOP_OK = BOX_QUIET && !HELD_OUT;
 // Writing in store mode records BOTH planes in one call, so it needs both roots: the directory tree
 // stays the source of truth a curation pass edits, and the store is derived from it.
-const KB_WRITE_OK = KB_ROOT_OK && !!KB_ARTIFACTS_DIR;
+const KB_WRITE_OK = KB_ROOT_OK && !!KB_ARTIFACTS_DIR && KB_LOOP_OK;
 const kebab = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 // ---------------------------------------------------------------------------
@@ -1010,9 +1026,15 @@ if (setup.resumed && setup.prior_state) {
 // on-box `device` string (no extra probe).
 // ===========================================================================
 const GFX = (String((profileSummary && profileSummary.device) || '').match(/gfx\d+/i) || [''])[0].toLowerCase();
-let warm_start = { adopted: false, read_reason: WARM_START_ON ? 'read' : 'disabled', candidates: [] };
+let warm_start = {
+  adopted: false,
+  read_reason: !KB_LOOP_OK ? (HELD_OUT ? 'held_out' : 'box_contended')
+             : (WARM_START_ON ? 'read' : 'disabled'),
+  candidates: [],
+};
 let skipLoop = false;
-if (WARM_START_ON && !setup.resumed && KB_ROOT_OK) {
+if (!KB_LOOP_OK && WARM_START_ON) log(`[kb] warm-start skipped: ${warm_start.read_reason}.`);
+if (WARM_START_ON && !setup.resumed && KB_ROOT_OK && KB_LOOP_OK) {
   phase('WarmStart');
   if (!GFX) {
     warm_start.read_reason = 'missing_arch';
@@ -1721,12 +1743,6 @@ Return the command's final JSON object.`,
 // `cumulative`. ADD-only, so a skipped or failing step leaves the run byte-neutral.
 // ===========================================================================
 let learned_card = null;
-// Two runs must never become a card, and neither is a failure. A run that shared its GPU measured
-// contention, not the kernel. A run on a HELD-OUT kernel is the instrument for measuring whether the
-// KB helps at all — distil it and the next A/B over that kernel reads back its own answer and looks
-// spectacular. Defaults are permissive, so the CALLER is the one who has to declare a busy box.
-const BOX_QUIET = String(A.box_quiet != null ? A.box_quiet : 'true') === 'true';
-const HELD_OUT = String(A.held_out != null ? A.held_out : 'false') === 'true';
 const kbGate = !BOX_QUIET ? 'the box was contended — the number measured neighbours, not the kernel'
   : HELD_OUT ? 'this kernel is in the held-out split and is the measuring instrument'
   : '';
