@@ -3,689 +3,16 @@
 # Actionable choices live in decisions/gemm.yaml and are rendered to gemm_decisions.md.
 
 provenance:
-  aiter_commit: "7a8ff7dd4ae3063ff1a18622a46460125c84370e"
+  aiter_commit: "a6bb499375849eec45d68c5ccaebc8865fd422c0"
   aiter_dirty_sources: []
   aiter_origin: "https://github.com/ROCm/aiter.git"
   extractor: "perf_knowledge/corpus/_extract_impl_facts.py"
   operator_family: "gemm"
-  records: 357
-  rows_summarised: 1742
+  records: 306
+  rows_summarised: 1304
   source: "aiter/ops/triton/configs/gemm"
 
 tuned_configs:
-  - config_id: "cfg_f87e667c505bcc33"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_128"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      kpack: 1
-      matrix_instr_nonkdim: 16
-      num_warps: 8
-    varies_by_shape:
-      BLOCK_SIZE_M: "16: 2, 32: 1"
-      BLOCK_SIZE_N: "128: 2, 256: 1"
-      GROUP_SIZE_M: "1: 1, 4: 1, 8: 1"
-      cache_modifier: ".cg: 2, None: 1"
-      num_stages: "2: 2, 1: 1"
-      waves_per_eu: "4: 2, 8: 1"
-  - config_id: "cfg_1a8a08ef9d02103e"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_16"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      BLOCK_SIZE_M: 16
-      GROUP_SIZE_M: 1
-      cache_modifier: ".cg"
-      kpack: 1
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_N: "32: 2, 128: 1"
-      num_stages: "2: 2, 1: 1"
-      num_warps: "8: 2, 4: 1"
-      waves_per_eu: "6: 2, 2: 1"
-  - config_id: "cfg_806fcc29f6f58170"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      cache_modifier: ".cg"
-      kpack: 1
-      matrix_instr_nonkdim: 16
-      num_warps: 8
-    varies_by_shape:
-      BLOCK_SIZE_M: "16: 2, 32: 1"
-      BLOCK_SIZE_N: "128: 2, 256: 1"
-      GROUP_SIZE_M: "1: 1, 4: 1, 8: 1"
-      num_stages: "2: 2, 1: 1"
-      waves_per_eu: "8: 2, 4: 1"
-  - config_id: "cfg_7ab1a0b425acf6a7"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_32"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      BLOCK_SIZE_M: 16
-      cache_modifier: ".cg"
-      kpack: 1
-      matrix_instr_nonkdim: 16
-      waves_per_eu: 8
-    varies_by_shape:
-      BLOCK_SIZE_N: "128: 2, 64: 1"
-      GROUP_SIZE_M: "8: 2, 1: 1"
-      num_stages: "2: 2, 1: 1"
-      num_warps: "8: 2, 4: 1"
-  - config_id: "cfg_99711b6ae8b82530"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_64"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      BLOCK_SIZE_M: 16
-      BLOCK_SIZE_N: 128
-      cache_modifier: ".cg"
-      kpack: 1
-      matrix_instr_nonkdim: 16
-      num_warps: 8
-    varies_by_shape:
-      GROUP_SIZE_M: "1: 1, 4: 1, 8: 1"
-      num_stages: "2: 2, 1: 1"
-      waves_per_eu: "8: 2, 4: 1"
-  - config_id: "cfg_610cb49904035b20"
-    gfx: "gfx1201"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "any"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      kpack: 1
-      matrix_instr_nonkdim: 16
-      num_warps: 8
-    varies_by_shape:
-      BLOCK_SIZE_M: "16: 2, 32: 1"
-      BLOCK_SIZE_N: "256: 2, 128: 1"
-      GROUP_SIZE_M: "1: 1, 4: 1, 8: 1"
-      cache_modifier: ".cg: 2, None: 1"
-      num_stages: "2: 2, 1: 1"
-      waves_per_eu: "1: 1, 4: 1, 8: 1"
-  - config_id: "cfg_f244fcd1136938a5"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_1"
-    shape_configs: 6
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 16
-      BLOCK_SIZE_N: 16
-      cache_modifier: ".cg"
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      GROUP_SIZE_M: "1: 4, 8: 1, 2: 1"
-      NUM_KSPLIT: "1: 3, 8: 2, 4: 1"
-      num_stages: "2: 3, 3: 3"
-      num_warps: "1: 4, 4: 2"
-      waves_per_eu: "2: 2, 6: 1, 8: 1, 1: 1, 0: 1"
-  - config_id: "cfg_837d38fe7abe3552"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_1024"
-    shape_configs: 6
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      NUM_KSPLIT: 1
-      kpack: 2
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 4, 128: 2"
-      BLOCK_SIZE_N: "128: 4, 64: 2"
-      GROUP_SIZE_M: "8: 5, 4: 1"
-      cache_modifier: "None: 5, .cg: 1"
-      num_warps: "8: 4, 4: 2"
-      waves_per_eu: "4: 4, 2: 1, 6: 1"
-  - config_id: "cfg_55a23665a483a96c"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_128"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "128: 16, 64: 9, 32: 2"
-      BLOCK_SIZE_N: "32: 18, 16: 6, 64: 3"
-      GROUP_SIZE_M: "1: 11, 4: 9, 8: 7"
-      NUM_KSPLIT: "1: 24, 4: 3"
-      cache_modifier: ".cg: 24, None: 3"
-      num_stages: "2: 26, 3: 1"
-      num_warps: "4: 13, 8: 12, 2: 2"
-      waves_per_eu: "4: 14, 8: 10, 6: 3"
-  - config_id: "cfg_761f797d7f113645"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_16"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "32: 17, 16: 10"
-      BLOCK_SIZE_N: "16: 14, 32: 9, 64: 3, 256: 1"
-      GROUP_SIZE_M: "1: 18, 4: 7, 8: 2"
-      NUM_KSPLIT: "1: 20, 4: 5, 8: 1, 16: 1"
-      cache_modifier: ".cg: 24, None: 3"
-      num_stages: "2: 23, 3: 4"
-      num_warps: "8: 12, 4: 7, 2: 5, 1: 3"
-      waves_per_eu: "8: 12, 4: 6, 6: 5, 2: 3, 1: 1"
-  - config_id: "cfg_a4a4ae2757847a4e"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_2048"
-    shape_configs: 6
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      kpack: 2
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 4, 128: 2"
-      BLOCK_SIZE_N: "64: 2, 256: 2, 128: 2"
-      GROUP_SIZE_M: "8: 4, 4: 2"
-      num_warps: "8: 4, 4: 2"
-      waves_per_eu: "4: 3, 6: 2, 2: 1"
-  - config_id: "cfg_d430e5ccb9cccdf4"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      NUM_KSPLIT: 1
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "128: 17, 64: 8, 32: 1, 256: 1"
-      BLOCK_SIZE_N: "64: 14, 32: 12, 128: 1"
-      GROUP_SIZE_M: "4: 19, 8: 6, 1: 2"
-      cache_modifier: ".cg: 20, None: 7"
-      num_stages: "2: 26, 3: 1"
-      num_warps: "8: 17, 4: 10"
-      waves_per_eu: "6: 12, 4: 8, 8: 4, 2: 2, 0: 1"
-  - config_id: "cfg_f4fbef612f8ee483"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_32"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "32: 22, 64: 5"
-      BLOCK_SIZE_N: "16: 12, 32: 12, 64: 3"
-      GROUP_SIZE_M: "1: 19, 4: 7, 8: 1"
-      NUM_KSPLIT: "1: 21, 4: 4, 8: 2"
-      cache_modifier: ".cg: 25, None: 2"
-      num_stages: "2: 22, 3: 5"
-      num_warps: "4: 16, 8: 7, 1: 2, 2: 2"
-      waves_per_eu: "8: 8, 4: 8, 6: 6, 1: 3, 2: 2"
-  - config_id: "cfg_dbdfeba6461d82d1"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_4"
-    shape_configs: 9
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      cache_modifier: ".cg"
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "32: 5, 16: 4"
-      BLOCK_SIZE_N: "16: 4, 32: 4, 64: 1"
-      GROUP_SIZE_M: "1: 6, 8: 3"
-      NUM_KSPLIT: "1: 6, 4: 3"
-      num_stages: "2: 7, 3: 2"
-      num_warps: "4: 6, 1: 2, 2: 1"
-      waves_per_eu: "4: 3, 8: 3, 2: 2, 6: 1"
-  - config_id: "cfg_6dba506c59a44d3c"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_512"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      NUM_KSPLIT: 1
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 15, 128: 12"
-      BLOCK_SIZE_N: "64: 11, 128: 10, 32: 3, 256: 3"
-      GROUP_SIZE_M: "8: 15, 4: 12"
-      cache_modifier: "None: 16, .cg: 11"
-      num_stages: "2: 26, 3: 1"
-      num_warps: "8: 20, 4: 7"
-      waves_per_eu: "4: 19, 2: 4, 6: 3, 8: 1"
-  - config_id: "cfg_37c5c144bdfdd68f"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_64"
-    shape_configs: 21
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 15, 32: 4, 128: 2"
-      BLOCK_SIZE_N: "16: 13, 32: 7, 64: 1"
-      GROUP_SIZE_M: "1: 13, 4: 7, 8: 1"
-      NUM_KSPLIT: "1: 16, 4: 5"
-      cache_modifier: ".cg: 19, None: 2"
-      num_stages: "2: 17, 3: 4"
-      num_warps: "4: 16, 8: 3, 2: 2"
-      waves_per_eu: "4: 8, 8: 8, 6: 2, 1: 2, 2: 1"
-  - config_id: "cfg_1327749e95bce0c2"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "M_LEQ_8"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      kpack: 2
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_M: "16: 17, 32: 10"
-      BLOCK_SIZE_N: "16: 19, 32: 6, 64: 1, 256: 1"
-      GROUP_SIZE_M: "1: 21, 8: 5, 4: 1"
-      NUM_KSPLIT: "1: 16, 4: 6, 8: 4, 16: 1"
-      cache_modifier: ".cg: 24, None: 3"
-      num_stages: "2: 20, 3: 7"
-      num_warps: "8: 10, 1: 8, 4: 5, 2: 4"
-      waves_per_eu: "8: 9, 4: 8, 6: 5, 2: 3, 1: 2"
-  - config_id: "cfg_ec88624fb48fb25f"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE"
-    m_bucket: "any"
-    shape_configs: 27
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2048-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=24576-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=2624-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3072-K=6144.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=32768-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=3584-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=36864-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4096-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=4608-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=512-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=6144-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=16384.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=18432.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=2304.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=7168-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=32768.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      NUM_KSPLIT: 1
-      kpack: 2
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "128: 14, 64: 13"
-      BLOCK_SIZE_N: "64: 17, 128: 8, 256: 2"
-      GROUP_SIZE_M: "4: 16, 8: 11"
-      cache_modifier: "None: 25, .cg: 2"
-      num_warps: "8: 21, 4: 6"
-      waves_per_eu: "2: 11, 4: 10, 6: 4, 8: 2"
-  - config_id: "cfg_8e491cac4305b42f"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
-    m_bucket: "M_LEQ_1024"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=12288.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=6144-K=4096.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 1
-      waves_per_eu: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 3, 128: 1"
-      BLOCK_SIZE_N: "64: 2, 128: 2"
-      num_warps: "4: 3, 2: 1"
-  - config_id: "cfg_c63afec2ae30919d"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
-    m_bucket: "M_LEQ_512"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=12288.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=6144-K=4096.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 1
-      num_warps: 4
-      waves_per_eu: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 3, 128: 1"
-      BLOCK_SIZE_N: "128: 3, 64: 1"
-  - config_id: "cfg_d0abfc1b537f05f8"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
-    m_bucket: "M_LEQ_8"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=12288.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=6144-K=4096.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 16
-      BLOCK_SIZE_N: 32
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 1
-      num_warps: 2
-    varies_by_shape:
-      waves_per_eu: "4: 2, 1: 2"
-  - config_id: "cfg_1abb955bf19d0b38"
-    gfx: "gfx1201"
-    tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
-    m_bucket: "any"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=12288.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=4096-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx1201-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=6144-K=4096.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 16
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-    varies_by_shape: {}
   - config_id: "cfg_386a49c8c892741c"
     gfx: "gfx1250"
     tags: "BATCHED_GEMM A16W16"
@@ -3194,42 +2521,6 @@ tuned_configs:
       num_stages: 2
       num_warps: 4
       waves_per_eu: 2
-  - config_id: "cfg_cbf0aee3cde54c46"
-    gfx: "gfx942"
-    tags: "GEMM AFP8WFP8"
-    m_bucket: "any"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx942-GEMM-AFP8WFP8.json"
-    knobs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 64
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 8
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 0
-  - config_id: "cfg_0ef20a8eb2fe6e50"
-    gfx: "gfx942"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "any"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx942-GEMM-AFP8WFP8_PRESHUFFLED.json"
-    knobs:
-      BLOCK_SIZE_K: 256
-      BLOCK_SIZE_M: 32
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 8
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 0
   - config_id: "cfg_a57a5cb4f0a527d8"
     gfx: "gfx950"
     tags: "BATCHED_GEMM A16W16"
@@ -3262,132 +2553,6 @@ tuned_configs:
       num_stages: 2
       num_warps: 8
       waves_per_eu: 2
-  - config_id: "cfg_4efd38f867ee32e1"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "M_LEQ_128"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 256
-      BLOCK_SIZE_N: 128
-      NUM_KSPLIT: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_M: "128: 2, 64: 1"
-      GROUP_SIZE_M: "2: 2, 1: 1"
-      num_warps: "4: 2, 8: 1"
-      waves_per_eu: "4: 2, 2: 1"
-  - config_id: "cfg_0671599e9fcebbcc"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "M_LEQ_16"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 256
-      BLOCK_SIZE_M: 16
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 6
-    varies_by_shape: {}
-  - config_id: "cfg_97d0676f1c8e8d42"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_N: 128
-      NUM_KSPLIT: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      waves_per_eu: 4
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 2, 128: 1"
-      BLOCK_SIZE_M: "128: 2, 64: 1"
-      GROUP_SIZE_M: "1: 2, 2: 1"
-      num_warps: "8: 2, 4: 1"
-  - config_id: "cfg_0b024b61f91a281e"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "M_LEQ_32"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 256
-      BLOCK_SIZE_M: 32
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 4
-    varies_by_shape: {}
-  - config_id: "cfg_f9934e09ffe6e07e"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "M_LEQ_64"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 256
-      BLOCK_SIZE_M: 64
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 1
-      NUM_KSPLIT: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      waves_per_eu: 4
-    varies_by_shape:
-      num_warps: "4: 2, 8: 1"
-  - config_id: "cfg_d80e8bad5029f0e3"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A16WFP4"
-    m_bucket: "any"
-    shape_configs: 3
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A16WFP4.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 256
-      NUM_KSPLIT: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 8
-    varies_by_shape:
-      BLOCK_SIZE_M: "256: 2, 64: 1"
-      BLOCK_SIZE_N: "256: 2, 128: 1"
-      GROUP_SIZE_M: "64: 2, 1: 1"
-      cache_modifier: "None: 2, .cg: 1"
-      waves_per_eu: "1: 2, 4: 1"
   - config_id: "cfg_5261f7f2c5f25018"
     gfx: "gfx950"
     tags: "BATCHED_GEMM A8W8"
@@ -3398,91 +2563,11 @@ tuned_configs:
     knobs:
       BLOCK_SIZE_K: 64
       BLOCK_SIZE_M: 256
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
+      BLOCK_SIZE_N: 256
+      GROUP_SIZE_M: 4
       matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-  - config_id: "cfg_f06501e0e3535f11"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8"
-    m_bucket: "M_LEQ_1024"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8.json"
-    knobs:
-      BLOCK_SIZE_K: 64
-      BLOCK_SIZE_M: 256
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-  - config_id: "cfg_cb4ef3cc4aa50c23"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8"
-    m_bucket: "M_LEQ_128"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8.json"
-    knobs:
-      BLOCK_SIZE_K: 64
-      BLOCK_SIZE_M: 128
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-  - config_id: "cfg_b00e382b17e27d1e"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8"
-    m_bucket: "M_LEQ_2048"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8.json"
-    knobs:
-      BLOCK_SIZE_K: 64
-      BLOCK_SIZE_M: 256
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-  - config_id: "cfg_e6888d223643f543"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8.json"
-    knobs:
-      BLOCK_SIZE_K: 64
-      BLOCK_SIZE_M: 128
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 2
-  - config_id: "cfg_cc88d402a0373a77"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8"
-    m_bucket: "M_LEQ_512"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8.json"
-    knobs:
-      BLOCK_SIZE_K: 64
-      BLOCK_SIZE_M: 256
-      BLOCK_SIZE_N: 64
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
+      num_stages: 1
+      num_warps: 8
       waves_per_eu: 2
   - config_id: "cfg_cfdc51455df2e87e"
     gfx: "gfx950"
@@ -3504,122 +2589,122 @@ tuned_configs:
     gfx: "gfx950"
     tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
     m_bucket: "M_LEQ_128"
-    shape_configs: 4
+    shape_configs: 3
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
       - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      GROUP_SIZE_M: 1
-      num_warps: 8
-      waves_per_eu: 1
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 3, 32: 1"
-      BLOCK_SIZE_N: "256: 3, 128: 1"
-      cache_modifier: ".cg: 3, None: 1"
-      matrix_instr_nonkdim: "32: 2, 16: 2"
-      num_stages: "2: 3, 1: 1"
-  - config_id: "cfg_bc0272cd92f3b185"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_16"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      BLOCK_SIZE_M: 16
-      GROUP_SIZE_M: 1
-      cache_modifier: ".cg"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_N: "128: 2, 32: 1, 256: 1"
-      num_warps: "8: 3, 4: 1"
-      waves_per_eu: "4: 1, 6: 1, 1: 1, 2: 1"
-  - config_id: "cfg_03bfe2299071dce1"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      GROUP_SIZE_M: 1
-      num_warps: 8
-      waves_per_eu: 1
-    varies_by_shape:
-      BLOCK_SIZE_M: "64: 3, 32: 1"
-      BLOCK_SIZE_N: "256: 3, 128: 1"
-      cache_modifier: ".cg: 3, None: 1"
-      matrix_instr_nonkdim: "32: 2, 16: 2"
-      num_stages: "2: 3, 1: 1"
-  - config_id: "cfg_fa1ae965db1a48b1"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_32"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      GROUP_SIZE_M: 1
-      cache_modifier: ".cg"
-    varies_by_shape:
-      BLOCK_SIZE_M: "32: 3, 16: 1"
-      BLOCK_SIZE_N: "256: 2, 64: 1, 128: 1"
-      matrix_instr_nonkdim: "16: 3, 32: 1"
-      num_stages: "2: 3, 1: 1"
-      num_warps: "4: 2, 8: 2"
-      waves_per_eu: "2: 2, 1: 2"
-  - config_id: "cfg_ed808d7d9d6d4ed7"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "M_LEQ_64"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
-    same_across_configs:
-      GROUP_SIZE_M: 1
-      cache_modifier: ".cg"
-      num_warps: 8
-      waves_per_eu: 1
-    varies_by_shape:
-      BLOCK_SIZE_M: "32: 2, 64: 2"
-      BLOCK_SIZE_N: "256: 3, 64: 1"
-      matrix_instr_nonkdim: "16: 3, 32: 1"
-      num_stages: "2: 3, 1: 1"
-  - config_id: "cfg_ca82327242a25cf4"
-    gfx: "gfx950"
-    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
-    m_bucket: "any"
-    shape_configs: 4
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=8192-K=8192.json"
       - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
     same_across_configs:
       BLOCK_SIZE_M: 32
       BLOCK_SIZE_N: 128
       GROUP_SIZE_M: 1
       cache_modifier: ".cg"
+      kpack: 1
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      num_stages: "2: 3, 1: 1"
-      num_warps: "8: 3, 4: 1"
-      waves_per_eu: "2: 3, 6: 1"
+      num_stages: "2: 2, 1: 1"
+      num_warps: "8: 2, 4: 1"
+      waves_per_eu: "2: 2, 6: 1"
+  - config_id: "cfg_bc0272cd92f3b185"
+    gfx: "gfx950"
+    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
+    m_bucket: "M_LEQ_16"
+    shape_configs: 3
+    source_files:
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
+    same_across_configs:
+      BLOCK_SIZE_M: 16
+      GROUP_SIZE_M: 1
+      cache_modifier: ".cg"
+      kpack: 1
+      matrix_instr_nonkdim: 16
+      num_stages: 2
+    varies_by_shape:
+      BLOCK_SIZE_N: "128: 2, 32: 1"
+      num_warps: "8: 2, 4: 1"
+      waves_per_eu: "4: 1, 6: 1, 2: 1"
+  - config_id: "cfg_03bfe2299071dce1"
+    gfx: "gfx950"
+    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
+    m_bucket: "M_LEQ_256"
+    shape_configs: 3
+    source_files:
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
+    same_across_configs:
+      BLOCK_SIZE_M: 32
+      BLOCK_SIZE_N: 128
+      GROUP_SIZE_M: 1
+      cache_modifier: ".cg"
+      kpack: 1
+      matrix_instr_nonkdim: 16
+    varies_by_shape:
+      num_stages: "2: 2, 1: 1"
+      num_warps: "8: 2, 4: 1"
+      waves_per_eu: "2: 2, 6: 1"
+  - config_id: "cfg_fa1ae965db1a48b1"
+    gfx: "gfx950"
+    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
+    m_bucket: "M_LEQ_32"
+    shape_configs: 3
+    source_files:
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
+    same_across_configs:
+      GROUP_SIZE_M: 1
+      cache_modifier: ".cg"
+      kpack: 1
+      matrix_instr_nonkdim: 16
+      num_stages: 2
+    varies_by_shape:
+      BLOCK_SIZE_M: "16: 2, 32: 1"
+      BLOCK_SIZE_N: "128: 2, 64: 1"
+      num_warps: "8: 2, 4: 1"
+      waves_per_eu: "1: 2, 2: 1"
+  - config_id: "cfg_ed808d7d9d6d4ed7"
+    gfx: "gfx950"
+    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
+    m_bucket: "M_LEQ_64"
+    shape_configs: 3
+    source_files:
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
+    same_across_configs:
+      BLOCK_SIZE_M: 32
+      GROUP_SIZE_M: 1
+      cache_modifier: ".cg"
+      kpack: 1
+      matrix_instr_nonkdim: 16
+      num_warps: 8
+    varies_by_shape:
+      BLOCK_SIZE_N: "128: 2, 64: 1"
+      num_stages: "2: 2, 1: 1"
+      waves_per_eu: "2: 2, 1: 1"
+  - config_id: "cfg_ca82327242a25cf4"
+    gfx: "gfx950"
+    tags: "BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT"
+    m_bucket: "any"
+    shape_configs: 3
+    source_files:
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=128-K=512.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT-N=512-K=128.json"
+      - "aiter/ops/triton/configs/gemm/gfx950-BATCHED_GEMM-A8W8-A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT.json"
+    same_across_configs:
+      BLOCK_SIZE_M: 32
+      BLOCK_SIZE_N: 128
+      GROUP_SIZE_M: 1
+      cache_modifier: ".cg"
+      kpack: 1
+      matrix_instr_nonkdim: 16
+    varies_by_shape:
+      num_stages: "2: 2, 1: 1"
+      num_warps: "8: 2, 4: 1"
+      waves_per_eu: "2: 2, 6: 1"
   - config_id: "cfg_f10f24372b10fb51"
     gfx: "gfx950"
     tags: "BATCHED_GEMM AFP4WFP4"
@@ -3899,7 +2984,7 @@ tuned_configs:
       cache_modifier: ".cg"
       kpack: 1
       matrix_instr_nonkdim: 16
-      num_stages: 1
+      num_stages: 2
       num_warps: 8
       waves_per_eu: 3
   - config_id: "cfg_d6e7a9afe9f27192"
@@ -4361,7 +3446,7 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_128"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4369,27 +3454,26 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
     same_across_configs:
       matrix_instr_nonkdim: 16
+      num_stages: 3
     varies_by_shape:
-      BLOCK_SIZE_K: "256: 7, 128: 3"
-      BLOCK_SIZE_M: "64: 6, 32: 4"
-      BLOCK_SIZE_N: "32: 8, 64: 2"
-      GROUP_SIZE_M: "1: 9, 8: 1"
-      NUM_KSPLIT: "1: 6, 8: 2, 4: 1, 7: 1"
-      cache_modifier: "None: 9, .cg: 1"
-      num_stages: "3: 9, 2: 1"
-      num_warps: "8: 6, 4: 4"
-      waves_per_eu: "1: 3, 4: 3, 6: 2, 8: 2"
+      BLOCK_SIZE_K: "256: 6, 128: 3"
+      BLOCK_SIZE_M: "64: 5, 32: 4"
+      BLOCK_SIZE_N: "32: 7, 64: 2"
+      GROUP_SIZE_M: "1: 8, 8: 1"
+      NUM_KSPLIT: "1: 6, 8: 2, 4: 1"
+      cache_modifier: "None: 8, .cg: 1"
+      num_warps: "8: 5, 4: 4"
+      waves_per_eu: "4: 3, 6: 2, 8: 2, 1: 2"
   - config_id: "cfg_b7ed22d964ee5af3"
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_16"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4397,22 +3481,21 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
     same_across_configs:
       matrix_instr_nonkdim: 16
+      num_stages: 3
     varies_by_shape:
-      BLOCK_SIZE_K: "256: 7, 128: 2, 1024: 1"
-      BLOCK_SIZE_M: "32: 4, 8: 3, 16: 2, 4: 1"
-      BLOCK_SIZE_N: "16: 8, 32: 2"
-      GROUP_SIZE_M: "1: 9, 8: 1"
-      NUM_KSPLIT: "1: 5, 8: 2, 16: 1, 14: 1, 7: 1"
-      cache_modifier: ".cg: 6, None: 4"
-      num_stages: "3: 9, 1: 1"
-      num_warps: "4: 6, 1: 4"
-      waves_per_eu: "2: 4, 1: 4, 4: 1, 6: 1"
+      BLOCK_SIZE_K: "256: 7, 128: 2"
+      BLOCK_SIZE_M: "8: 3, 32: 3, 16: 2, 4: 1"
+      BLOCK_SIZE_N: "16: 7, 32: 2"
+      GROUP_SIZE_M: "1: 8, 8: 1"
+      NUM_KSPLIT: "1: 5, 8: 2, 16: 1, 14: 1"
+      cache_modifier: ".cg: 5, None: 4"
+      num_warps: "4: 5, 1: 4"
+      waves_per_eu: "1: 4, 2: 3, 4: 1, 6: 1"
   - config_id: "cfg_b470f107eed8b9b2"
     gfx: "gfx950"
     tags: "GEMM A16W16"
@@ -4441,7 +3524,7 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_256"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4449,27 +3532,26 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
     same_across_configs:
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_K: "128: 9, 512: 1"
-      BLOCK_SIZE_M: "64: 7, 128: 2, 16: 1"
-      BLOCK_SIZE_N: "64: 8, 16: 1, 128: 1"
-      GROUP_SIZE_M: "1: 9, 4: 1"
-      NUM_KSPLIT: "1: 5, 8: 3, 7: 1, 3: 1"
-      cache_modifier: "None: 9, .cg: 1"
-      num_stages: "3: 7, 2: 3"
-      num_warps: "8: 9, 4: 1"
-      waves_per_eu: "2: 3, 1: 3, 4: 2, 6: 2"
+      BLOCK_SIZE_K: "128: 8, 512: 1"
+      BLOCK_SIZE_M: "64: 6, 128: 2, 16: 1"
+      BLOCK_SIZE_N: "64: 7, 16: 1, 128: 1"
+      GROUP_SIZE_M: "1: 8, 4: 1"
+      NUM_KSPLIT: "1: 5, 8: 3, 3: 1"
+      cache_modifier: "None: 8, .cg: 1"
+      num_stages: "3: 7, 2: 2"
+      num_warps: "8: 8, 4: 1"
+      waves_per_eu: "2: 3, 1: 3, 4: 2, 6: 1"
   - config_id: "cfg_24bdc7e2b99f7d28"
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_32"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4477,7 +3559,6 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
@@ -4485,36 +3566,35 @@ tuned_configs:
       GROUP_SIZE_M: 1
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_K: "256: 8, 512: 2"
-      BLOCK_SIZE_M: "16: 6, 32: 3, 8: 1"
-      BLOCK_SIZE_N: "16: 8, 32: 2"
-      NUM_KSPLIT: "1: 6, 4: 2, 16: 1, 7: 1"
-      cache_modifier: "None: 7, .cg: 3"
-      num_stages: "3: 6, 2: 4"
-      num_warps: "4: 6, 8: 3, 1: 1"
-      waves_per_eu: "8: 4, 4: 2, 2: 2, 1: 1, 6: 1"
+      BLOCK_SIZE_K: "256: 8, 512: 1"
+      BLOCK_SIZE_M: "16: 6, 32: 2, 8: 1"
+      BLOCK_SIZE_N: "16: 7, 32: 2"
+      NUM_KSPLIT: "1: 6, 4: 2, 16: 1"
+      cache_modifier: "None: 7, .cg: 2"
+      num_stages: "3: 6, 2: 3"
+      num_warps: "4: 5, 8: 3, 1: 1"
+      waves_per_eu: "8: 4, 2: 2, 4: 1, 1: 1, 6: 1"
   - config_id: "cfg_99912b6b3b12007b"
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_4"
-    shape_configs: 4
+    shape_configs: 3
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
     same_across_configs:
+      BLOCK_SIZE_K: 512
       GROUP_SIZE_M: 1
+      NUM_KSPLIT: 1
       cache_modifier: ".cg"
       matrix_instr_nonkdim: 16
       num_stages: 2
+      num_warps: 8
     varies_by_shape:
-      BLOCK_SIZE_K: "512: 3, 256: 1"
-      BLOCK_SIZE_M: "16: 2, 32: 2"
-      BLOCK_SIZE_N: "16: 3, 32: 1"
-      NUM_KSPLIT: "1: 3, 7: 1"
-      num_warps: "8: 3, 4: 1"
-      waves_per_eu: "8: 2, 6: 1, 1: 1"
+      BLOCK_SIZE_M: "16: 2, 32: 1"
+      BLOCK_SIZE_N: "16: 2, 32: 1"
+      waves_per_eu: "8: 2, 1: 1"
   - config_id: "cfg_5efe7b2ba9b56b2c"
     gfx: "gfx950"
     tags: "GEMM A16W16"
@@ -4569,7 +3649,7 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_64"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4577,27 +3657,26 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
     same_across_configs:
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_K: "128: 6, 256: 3, 512: 1"
-      BLOCK_SIZE_M: "32: 7, 64: 2, 16: 1"
-      BLOCK_SIZE_N: "32: 8, 64: 1, 16: 1"
-      GROUP_SIZE_M: "1: 9, 4: 1"
-      NUM_KSPLIT: "1: 5, 8: 2, 7: 2, 16: 1"
-      cache_modifier: "None: 8, .cg: 2"
-      num_stages: "3: 8, 2: 2"
-      num_warps: "4: 7, 8: 3"
-      waves_per_eu: "1: 3, 4: 3, 2: 2, 8: 1, 6: 1"
+      BLOCK_SIZE_K: "128: 6, 256: 2, 512: 1"
+      BLOCK_SIZE_M: "32: 6, 64: 2, 16: 1"
+      BLOCK_SIZE_N: "32: 7, 64: 1, 16: 1"
+      GROUP_SIZE_M: "1: 8, 4: 1"
+      NUM_KSPLIT: "1: 5, 8: 2, 16: 1, 7: 1"
+      cache_modifier: "None: 7, .cg: 2"
+      num_stages: "3: 8, 2: 1"
+      num_warps: "4: 6, 8: 3"
+      waves_per_eu: "1: 3, 4: 3, 2: 1, 8: 1, 6: 1"
   - config_id: "cfg_f71fd98f79713f88"
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "M_LEQ_8"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4605,22 +3684,21 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
     same_across_configs:
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_K: "256: 9, 512: 1"
-      BLOCK_SIZE_M: "8: 4, 4: 3, 1: 1, 32: 1, 16: 1"
-      BLOCK_SIZE_N: "16: 7, 32: 2, 4: 1"
-      GROUP_SIZE_M: "1: 9, 8: 1"
-      NUM_KSPLIT: "1: 6, 8: 1, 4: 1, 14: 1, 7: 1"
-      cache_modifier: ".cg: 6, None: 4"
-      num_stages: "3: 8, 2: 2"
-      num_warps: "4: 6, 1: 3, 8: 1"
-      waves_per_eu: "8: 4, 1: 3, 4: 1, 6: 1, 2: 1"
+      BLOCK_SIZE_K: "256: 8, 512: 1"
+      BLOCK_SIZE_M: "8: 4, 4: 3, 1: 1, 16: 1"
+      BLOCK_SIZE_N: "16: 6, 32: 2, 4: 1"
+      GROUP_SIZE_M: "1: 8, 8: 1"
+      NUM_KSPLIT: "1: 6, 8: 1, 4: 1, 14: 1"
+      cache_modifier: ".cg: 5, None: 4"
+      num_stages: "3: 8, 2: 1"
+      num_warps: "4: 6, 1: 3"
+      waves_per_eu: "1: 3, 8: 3, 4: 1, 6: 1, 2: 1"
   - config_id: "cfg_bf6f4e95db577390"
     gfx: "gfx950"
     tags: "GEMM A16W16"
@@ -4648,7 +3726,7 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A16W16"
     m_bucket: "any"
-    shape_configs: 10
+    shape_configs: 9
     source_files:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=128-K=4096.json"
@@ -4656,7 +3734,6 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=256-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=4096.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=2880-K=512.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=384-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=5120-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16-N=640-K=2880.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A16W16.json"
@@ -4664,14 +3741,14 @@ tuned_configs:
       NUM_KSPLIT: 1
       cache_modifier: "None"
       matrix_instr_nonkdim: 16
+      num_stages: 3
     varies_by_shape:
-      BLOCK_SIZE_K: "128: 6, 64: 4"
-      BLOCK_SIZE_M: "64: 5, 128: 3, 256: 2"
-      BLOCK_SIZE_N: "128: 5, 64: 3, 256: 2"
-      GROUP_SIZE_M: "1: 5, 8: 3, 4: 2"
-      num_stages: "3: 9, 2: 1"
-      num_warps: "8: 9, 4: 1"
-      waves_per_eu: "2: 4, 4: 3, 1: 3"
+      BLOCK_SIZE_K: "128: 5, 64: 4"
+      BLOCK_SIZE_M: "64: 5, 256: 2, 128: 2"
+      BLOCK_SIZE_N: "128: 4, 64: 3, 256: 2"
+      GROUP_SIZE_M: "1: 4, 8: 3, 4: 2"
+      num_warps: "8: 8, 4: 1"
+      waves_per_eu: "2: 4, 1: 3, 4: 2"
   - config_id: "cfg_50866abdcb6827b2"
     gfx: "gfx950"
     tags: "GEMM A16W16 ATOMIC"
@@ -6160,10 +5237,8 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_128"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6181,22 +5256,20 @@ tuned_configs:
       BLOCK_SIZE_K: 128
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "64: 7, 128: 6, 32: 2"
-      BLOCK_SIZE_N: "64: 11, 16: 2, 128: 2"
-      GROUP_SIZE_M: "1: 9, 4: 4, 8: 2"
-      NUM_KSPLIT: "1: 8, 4: 4, 7: 3"
-      cache_modifier: ".cg: 8, None: 7"
-      num_stages: "3: 11, 2: 4"
-      num_warps: "4: 9, 1: 3, 8: 2, 2: 1"
-      waves_per_eu: "2: 8, 1: 6, 4: 1"
+      BLOCK_SIZE_M: "64: 6, 128: 6, 32: 1"
+      BLOCK_SIZE_N: "64: 10, 128: 2, 16: 1"
+      GROUP_SIZE_M: "1: 7, 4: 4, 8: 2"
+      NUM_KSPLIT: "1: 8, 4: 3, 7: 2"
+      cache_modifier: "None: 7, .cg: 6"
+      num_stages: "3: 11, 2: 2"
+      num_warps: "4: 8, 1: 2, 8: 2, 2: 1"
+      waves_per_eu: "2: 7, 1: 5, 4: 1"
   - config_id: "cfg_9e274bd9b6c46eaf"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_16"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6212,24 +5285,22 @@ tuned_configs:
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED.json"
     same_across_configs:
       BLOCK_SIZE_K: 128
+      BLOCK_SIZE_N: 16
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "16: 9, 8: 4, 4: 2"
-      BLOCK_SIZE_N: "16: 14, 32: 1"
-      GROUP_SIZE_M: "1: 10, 4: 4, 8: 1"
-      NUM_KSPLIT: "1: 8, 8: 5, 7: 1, 14: 1"
-      cache_modifier: ".cg: 11, None: 4"
-      num_stages: "3: 11, 2: 4"
-      num_warps: "1: 11, 2: 4"
-      waves_per_eu: "8: 4, 4: 4, 6: 3, 2: 2, 1: 2"
+      BLOCK_SIZE_M: "16: 9, 8: 4"
+      GROUP_SIZE_M: "1: 8, 4: 4, 8: 1"
+      NUM_KSPLIT: "1: 8, 8: 4, 14: 1"
+      cache_modifier: ".cg: 9, None: 4"
+      num_stages: "3: 11, 2: 2"
+      num_warps: "1: 9, 2: 4"
+      waves_per_eu: "8: 4, 4: 4, 6: 3, 1: 1, 2: 1"
   - config_id: "cfg_3883cf64563aaa1b"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_256"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6247,22 +5318,20 @@ tuned_configs:
       BLOCK_SIZE_K: 128
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "64: 6, 128: 6, 256: 2, 32: 1"
-      BLOCK_SIZE_N: "64: 10, 128: 3, 16: 2"
-      GROUP_SIZE_M: "1: 7, 8: 5, 4: 3"
-      NUM_KSPLIT: "1: 10, 4: 3, 7: 2"
-      cache_modifier: "None: 9, .cg: 6"
-      num_stages: "2: 8, 3: 7"
-      num_warps: "4: 7, 1: 4, 8: 3, 2: 1"
-      waves_per_eu: "1: 7, 2: 5, 4: 3"
+      BLOCK_SIZE_M: "128: 6, 64: 4, 256: 2, 32: 1"
+      BLOCK_SIZE_N: "64: 9, 128: 3, 16: 1"
+      GROUP_SIZE_M: "1: 6, 8: 4, 4: 3"
+      NUM_KSPLIT: "1: 9, 4: 3, 7: 1"
+      cache_modifier: "None: 8, .cg: 5"
+      num_stages: "3: 7, 2: 6"
+      num_warps: "4: 6, 8: 3, 1: 3, 2: 1"
+      waves_per_eu: "1: 6, 2: 4, 4: 3"
   - config_id: "cfg_2601a8a0628a409e"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_32"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6280,34 +5349,14 @@ tuned_configs:
       BLOCK_SIZE_K: 128
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "32: 9, 16: 4, 64: 2"
-      BLOCK_SIZE_N: "32: 7, 16: 5, 64: 3"
-      GROUP_SIZE_M: "1: 14, 4: 1"
-      NUM_KSPLIT: "1: 7, 8: 3, 7: 3, 3: 1, 4: 1"
-      cache_modifier: ".cg: 13, None: 2"
-      num_stages: "3: 9, 2: 6"
-      num_warps: "1: 7, 4: 6, 2: 2"
-      waves_per_eu: "4: 7, 2: 4, 6: 3, 1: 1"
-  - config_id: "cfg_954a94e823998c55"
-    gfx: "gfx950"
-    tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
-    m_bucket: "M_LEQ_4"
-    shape_configs: 2
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
-    same_across_configs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 4
-      BLOCK_SIZE_N: 16
-      GROUP_SIZE_M: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      NUM_KSPLIT: "8: 1, 7: 1"
-      cache_modifier: "None: 1, .cg: 1"
-      num_warps: "1: 1, 4: 1"
-      waves_per_eu: "2: 1, 4: 1"
+      BLOCK_SIZE_M: "32: 8, 16: 3, 64: 2"
+      BLOCK_SIZE_N: "32: 7, 16: 3, 64: 3"
+      GROUP_SIZE_M: "1: 12, 4: 1"
+      NUM_KSPLIT: "1: 7, 7: 2, 8: 2, 3: 1, 4: 1"
+      cache_modifier: ".cg: 11, None: 2"
+      num_stages: "3: 9, 2: 4"
+      num_warps: "1: 6, 4: 5, 2: 2"
+      waves_per_eu: "4: 7, 2: 3, 6: 2, 1: 1"
   - config_id: "cfg_f93524c0330d99bb"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
@@ -6343,10 +5392,8 @@ tuned_configs:
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_64"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6364,22 +5411,20 @@ tuned_configs:
       BLOCK_SIZE_K: 128
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "64: 10, 32: 3, 16: 2"
-      BLOCK_SIZE_N: "64: 8, 16: 4, 32: 3"
-      GROUP_SIZE_M: "1: 10, 4: 4, 8: 1"
-      NUM_KSPLIT: "1: 8, 7: 3, 8: 2, 4: 2"
-      cache_modifier: ".cg: 11, None: 4"
-      num_stages: "3: 10, 2: 5"
-      num_warps: "4: 10, 1: 3, 2: 2"
-      waves_per_eu: "2: 10, 4: 3, 6: 1, 1: 1"
+      BLOCK_SIZE_M: "64: 9, 32: 3, 16: 1"
+      BLOCK_SIZE_N: "64: 8, 32: 3, 16: 2"
+      GROUP_SIZE_M: "1: 8, 4: 4, 8: 1"
+      NUM_KSPLIT: "1: 8, 7: 2, 4: 2, 8: 1"
+      cache_modifier: ".cg: 9, None: 4"
+      num_stages: "3: 10, 2: 3"
+      num_warps: "4: 9, 2: 2, 1: 2"
+      waves_per_eu: "2: 8, 4: 3, 6: 1, 1: 1"
   - config_id: "cfg_bf91dceaa41422ca"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "M_LEQ_8"
-    shape_configs: 15
+    shape_configs: 13
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6397,22 +5442,20 @@ tuned_configs:
       BLOCK_SIZE_K: 128
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "8: 9, 4: 6"
-      BLOCK_SIZE_N: "16: 14, 32: 1"
-      GROUP_SIZE_M: "1: 10, 4: 4, 8: 1"
-      NUM_KSPLIT: "1: 8, 8: 4, 7: 1, 14: 1, 16: 1"
-      cache_modifier: ".cg: 11, None: 4"
-      num_stages: "2: 9, 3: 6"
-      num_warps: "1: 12, 2: 3"
-      waves_per_eu: "4: 5, 1: 3, 2: 3, 8: 2, 6: 2"
+      BLOCK_SIZE_M: "8: 9, 4: 4"
+      BLOCK_SIZE_N: "16: 12, 32: 1"
+      GROUP_SIZE_M: "1: 8, 4: 4, 8: 1"
+      NUM_KSPLIT: "1: 8, 8: 3, 14: 1, 16: 1"
+      cache_modifier: ".cg: 9, None: 4"
+      num_stages: "2: 7, 3: 6"
+      num_warps: "1: 10, 2: 3"
+      waves_per_eu: "4: 4, 2: 3, 8: 2, 6: 2, 1: 2"
   - config_id: "cfg_8b23ae88a4a42049"
     gfx: "gfx950"
     tags: "GEMM A8W8_BLOCKSCALE_PRESHUFFLED"
     m_bucket: "any"
-    shape_configs: 16
+    shape_configs: 14
     source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2048-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json"
       - "aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json"
@@ -6430,15 +5473,15 @@ tuned_configs:
     same_across_configs:
       BLOCK_SIZE_K: 128
       NUM_KSPLIT: 1
+      cache_modifier: "None"
       matrix_instr_nonkdim: 16
     varies_by_shape:
-      BLOCK_SIZE_M: "128: 11, 256: 3, 64: 2"
-      BLOCK_SIZE_N: "128: 13, 64: 2, 256: 1"
-      GROUP_SIZE_M: "4: 8, 1: 6, 8: 2"
-      cache_modifier: "None: 15, .cg: 1"
-      num_stages: "2: 15, 3: 1"
-      num_warps: "8: 11, 4: 3, 1: 2"
-      waves_per_eu: "4: 8, 2: 6, 1: 2"
+      BLOCK_SIZE_M: "128: 11, 256: 3"
+      BLOCK_SIZE_N: "128: 13, 256: 1"
+      GROUP_SIZE_M: "4: 7, 1: 5, 8: 2"
+      num_stages: "2: 13, 3: 1"
+      num_warps: "8: 11, 4: 3"
+      waves_per_eu: "4: 8, 2: 4, 1: 2"
   - config_id: "cfg_5585a593f8f102fe"
     gfx: "gfx950"
     tags: "GEMM A8W8_PER_TOKEN_SCALE"
@@ -7527,387 +6570,6 @@ tuned_configs:
       matrix_instr_nonkdim: "16: 25, 32: 1"
       num_warps: "4: 19, 2: 6, 8: 1"
       waves_per_eu: "2: 19, 4: 5, 1: 2"
-  - config_id: "cfg_6a0ae992990928e3"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8"
-    m_bucket: "any"
-    shape_configs: 1
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8.json"
-    knobs:
-      BLOCK_SIZE_K: 128
-      BLOCK_SIZE_M: 64
-      BLOCK_SIZE_N: 128
-      GROUP_SIZE_M: 8
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-      num_warps: 4
-      waves_per_eu: 0
-  - config_id: "cfg_4cf907437fb2bed3"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_GEQ_8192"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-      waves_per_eu: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "128: 3, 256: 2"
-      BLOCK_SIZE_M: "128: 4, 256: 1"
-      BLOCK_SIZE_N: "256: 3, 128: 2"
-      GROUP_SIZE_M: "4: 4, 8: 1"
-      matrix_instr_nonkdim: "32: 4, 16: 1"
-      num_warps: "4: 3, 8: 2"
-  - config_id: "cfg_0b4152b2531af2e7"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_1024"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-      num_warps: 4
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 4, 128: 1"
-      BLOCK_SIZE_M: "32: 2, 64: 2, 128: 1"
-      BLOCK_SIZE_N: "128: 3, 64: 2"
-      GROUP_SIZE_M: "8: 4, 4: 1"
-      matrix_instr_nonkdim: "32: 3, 16: 2"
-      waves_per_eu: "0: 4, 2: 1"
-  - config_id: "cfg_84e9f51bb0df0b38"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_128"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 7, 512: 3"
-      BLOCK_SIZE_M: "32: 8, 64: 2"
-      BLOCK_SIZE_N: "64: 7, 32: 2, 16: 1"
-      GROUP_SIZE_M: "1: 7, 4: 3"
-      num_warps: "4: 8, 8: 2"
-      waves_per_eu: "2: 5, 1: 4, 4: 1"
-  - config_id: "cfg_7ac489652a6dc632"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_16"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      matrix_instr_nonkdim: 16
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 6, 512: 4"
-      BLOCK_SIZE_M: "16: 8, 8: 2"
-      BLOCK_SIZE_N: "64: 6, 16: 2, 32: 2"
-      GROUP_SIZE_M: "1: 9, 4: 1"
-      NUM_KSPLIT: "1: 9, 7: 1"
-      cache_modifier: "None: 7, .cg: 3"
-      num_stages: "2: 9, 1: 1"
-      num_warps: "4: 6, 2: 4"
-      waves_per_eu: "2: 5, 0: 3, 1: 2"
-  - config_id: "cfg_f69eaddd51b9738b"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_2048"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "128: 4, 256: 1"
-      BLOCK_SIZE_M: "128: 2, 64: 2, 256: 1"
-      BLOCK_SIZE_N: "128: 4, 256: 1"
-      GROUP_SIZE_M: "4: 2, 8: 2, 16: 1"
-      matrix_instr_nonkdim: "32: 4, 16: 1"
-      num_warps: "4: 3, 8: 2"
-      waves_per_eu: "0: 3, 3: 1, 2: 1"
-  - config_id: "cfg_c4deb00d24be5f7f"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_256"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 6, 512: 3, 128: 1"
-      BLOCK_SIZE_M: "64: 4, 32: 3, 128: 3"
-      BLOCK_SIZE_N: "64: 6, 32: 3, 128: 1"
-      GROUP_SIZE_M: "4: 5, 1: 4, 8: 1"
-      matrix_instr_nonkdim: "16: 9, 32: 1"
-      num_warps: "4: 7, 8: 3"
-      waves_per_eu: "1: 4, 2: 3, 4: 2, 0: 1"
-  - config_id: "cfg_dfeca948c6ea261d"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_32"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 6, 512: 4"
-      BLOCK_SIZE_M: "32: 5, 16: 5"
-      BLOCK_SIZE_N: "64: 4, 32: 3, 16: 2, 128: 1"
-      GROUP_SIZE_M: "1: 6, 8: 3, 4: 1"
-      NUM_KSPLIT: "1: 9, 7: 1"
-      cache_modifier: "None: 6, .cg: 4"
-      num_warps: "4: 6, 2: 3, 8: 1"
-      waves_per_eu: "1: 4, 2: 4, 0: 2"
-  - config_id: "cfg_96d46eaf7caa69ad"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_4"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 6, 512: 4"
-      BLOCK_SIZE_M: "16: 5, 4: 3, 8: 2"
-      BLOCK_SIZE_N: "64: 5, 16: 4, 128: 1"
-      GROUP_SIZE_M: "1: 6, 8: 2, 4: 2"
-      NUM_KSPLIT: "1: 7, 7: 2, 4: 1"
-      cache_modifier: "None: 5, .cg: 5"
-      num_warps: "4: 9, 8: 1"
-      waves_per_eu: "2: 4, 0: 3, 4: 1, 6: 1, 8: 1"
-  - config_id: "cfg_7ac8e760fd1b087c"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_4096"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-      waves_per_eu: 0
-    varies_by_shape:
-      BLOCK_SIZE_K: "128: 4, 256: 1"
-      BLOCK_SIZE_M: "256: 3, 128: 1, 64: 1"
-      BLOCK_SIZE_N: "256: 3, 128: 1, 64: 1"
-      GROUP_SIZE_M: "4: 3, 8: 1, 1: 1"
-      matrix_instr_nonkdim: "32: 4, 16: 1"
-      num_warps: "8: 3, 4: 2"
-  - config_id: "cfg_6c1fece400554dc9"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_512"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-      num_warps: 4
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 4, 128: 1"
-      BLOCK_SIZE_M: "32: 2, 64: 2, 128: 1"
-      BLOCK_SIZE_N: "128: 3, 64: 2"
-      GROUP_SIZE_M: "8: 3, 4: 2"
-      matrix_instr_nonkdim: "32: 3, 16: 2"
-      waves_per_eu: "0: 3, 2: 2"
-  - config_id: "cfg_910113e7f5ba1d06"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_64"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 5, 512: 5"
-      BLOCK_SIZE_M: "32: 9, 16: 1"
-      BLOCK_SIZE_N: "64: 5, 32: 3, 128: 1, 16: 1"
-      GROUP_SIZE_M: "1: 7, 8: 3"
-      matrix_instr_nonkdim: "16: 9, 32: 1"
-      num_warps: "4: 9, 8: 1"
-      waves_per_eu: "2: 6, 0: 2, 4: 1, 1: 1"
-  - config_id: "cfg_4cc9c302df05a68c"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_8"
-    shape_configs: 10
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      matrix_instr_nonkdim: 16
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "256: 6, 512: 4"
-      BLOCK_SIZE_M: "16: 5, 4: 3, 8: 2"
-      BLOCK_SIZE_N: "64: 5, 16: 3, 128: 1, 32: 1"
-      GROUP_SIZE_M: "1: 7, 8: 2, 4: 1"
-      cache_modifier: "None: 7, .cg: 3"
-      num_warps: "4: 6, 2: 4"
-      waves_per_eu: "0: 3, 2: 3, 6: 2, 1: 2"
-  - config_id: "cfg_c8936a0a83660ccd"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "M_LEQ_8192"
-    shape_configs: 5
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      matrix_instr_nonkdim: 32
-    varies_by_shape:
-      BLOCK_SIZE_K: "128: 4, 256: 1"
-      BLOCK_SIZE_M: "128: 2, 256: 2, 64: 1"
-      BLOCK_SIZE_N: "128: 3, 256: 2"
-      GROUP_SIZE_M: "8: 2, 4: 2, 16: 1"
-      num_stages: "2: 4, 3: 1"
-      num_warps: "4: 3, 8: 2"
-      waves_per_eu: "0: 4, 2: 1"
-  - config_id: "cfg_ce2f1dc7a92b31f8"
-    gfx: "gfx950"
-    tags: "GEMM AFP8WFP8_PRESHUFFLED"
-    m_bucket: "any"
-    shape_configs: 11
-    source_files:
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=1536-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=2048-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=4096-K=256.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=512-K=4096.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=2048.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=7168-K=384.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=768-K=7168.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1024.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED-N=8192-K=1536.json"
-      - "aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP8WFP8_PRESHUFFLED.json"
-    same_across_configs:
-      NUM_KSPLIT: 1
-      cache_modifier: "None"
-      num_stages: 2
-    varies_by_shape:
-      BLOCK_SIZE_K: "128: 7, 256: 4"
-      BLOCK_SIZE_M: "128: 8, 256: 2, 32: 1"
-      BLOCK_SIZE_N: "256: 8, 128: 2, 64: 1"
-      GROUP_SIZE_M: "4: 6, 8: 5"
-      matrix_instr_nonkdim: "16: 7, 32: 4"
-      num_warps: "4: 8, 8: 3"
-      waves_per_eu: "2: 9, 1: 1, 0: 1"
   - config_id: "cfg_7d6ab7c4c6aa8141"
     gfx: "gfx950"
     tags: "GEMM_PREQUANT AFP4WFP4"

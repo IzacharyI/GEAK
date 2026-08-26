@@ -2,13 +2,58 @@
 
 This is the actionable layer. It does not dump regex matches and ask the reader to infer a recommendation. Every curated card states **when it applies, what to try, why, alternatives, evidence strength and limits**. The raw, reproducible source observations remain in [`gemm_source_evidence.md`](gemm_source_evidence.md).
 
-Source baseline: AITER `7a8ff7dd4ae3063ff1a18622a46460125c84370e` · 4 curated decision card(s) · 1189 source-evidence records · 357 shipped tuning groups.
+Source baseline: AITER `a6bb499375849eec45d68c5ccaebc8865fd422c0` · 8 curated decision card(s) · 1083 source-evidence records · 306 shipped tuning groups.
 
 Evidence levels:
 
 - `source_observed`: implementation precedent only; add a candidate and measure it.
 - `shipped_config`: parameter seed selected in AITER's source tree; alternatives and benchmark results are not attached, so vary and measure locally.
 - Measured guidance is deliberately not copied here: it stays in learned cards/expert skills behind their existing feature switches.
+
+## Which FlyDSL GEMM paths does gfx942 (MI300X) actually give you, and which does it silently switch or refuse?
+
+**Card:** `flydsl-gfx942-path-gates` · **evidence:** `source_observed` · **status:** `candidate_only`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Use when
+
+- operator_family=gemm
+- target_language=flydsl
+- target architecture is gfx942 — read this before costing any other card on this page
+
+### Try
+
+- Read the architecture gates before the tuning tables. Whether a path exists on your box outranks every fact about how to tune it, and four separate gates in this library key on gfx942 alone.
+- Do not fund async copy on gfx942. The library computes its async-copy flag as `architecture is not gfx942`, so the flag is already false here and the split-K kernel hard-codes async off on this branch. There is no knob to flip.
+- Do not fund the small-M kernel family on gfx942. Its compile entry point raises, and its config registry returns nothing. Port the design if you want it; you cannot call it.
+- Expect the m16n16k16 fragment with 4-byte DMA and two MFMA steps per warp-K, not the m16n16k32 / 16-byte / one-step bundle the other architectures get. The choice is made for you by one architecture test — see flydsl-half-mfma-call-forms.
+- Note that the preshuffle family does run here, but loads A four bytes at a time instead of sixteen; price that into any preshuffle comparison rather than assuming the gfx950 behaviour — see flydsl-preshuffle-b-layout-contract.
+- On any other architecture, invert all of the above: the wider fragment, the 16-byte DMA, async copy and the small-M family are all in play.
+
+### Why this is a candidate
+
+- Four independent gfx942 tests exist in the FlyDSL GEMM sources and they do different things: one switches the fragment/DMA/MFMA bundle, one disables async copy library-wide, two shut the small-M family, one narrows the preshuffle load width.
+- This is the cheapest knowledge on the page. A gate costs nothing to check and a whole round to discover, and none of it is visible from the tuning tables, which record what was selected on the architectures where the path was open.
+
+### Keep as alternatives
+
+- On gfx942, spend the search on what remains genuinely open — the tile geometry, split_k, B staging and the epilogue — rather than on the gated paths.
+- If a gated path is the real ceiling for your shape, vendor and port it deliberately as a structural change, and budget it as one.
+
+### Evidence
+
+- `src_c4c19187bcb7933c` — `arch_gate` `gfx942` at `aiter/ops/flydsl/gemm_kernels.py:41`
+- `src_e689c0cbe1b4f8e8` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:128`
+- `src_7eee3f6769348b4c` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:411`
+- `src_e04716b6d760605b` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:331`
+- `src_42146c2d073d655e` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/preshuffle_gemm.py:243`
+
+### Limits
+
+- These are the gates that name an architecture literally. A path can also be effectively closed by something this card does not see — a missing dtype, an LDS budget, a compiler version.
+- Gates move between releases. Every citation carries its file and line; re-read them against the checkout you are building on before trusting the list.
+- That a path is open says nothing about whether it is fast.
 
 ## Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?
 
@@ -25,11 +70,13 @@ Source-observed candidate — the cited implementation exists; no performance pr
 ### Try
 
 - For an m16n16k16 candidate, pair bf16 with mfma_f32_16x16x16bf16_1k and f16 with mfma_f32_16x16x16f16.
-- Also benchmark the m16n16k32 bf16/f16 forms when fragment shape and target architecture allow them.
+- Check the target architecture before treating the K shape as a free axis: the shipped split-K kernel does not let you pick it. On gfx942 it selects m16n16k16 with 4-byte DMA and two MFMA steps per warp-K; on every other architecture it selects m16n16k32 with 16-byte DMA and one. Benchmarking the K=32 form on gfx942 means rewriting that branch, not passing a flag.
+- Also benchmark the m16n16k32 bf16/f16 forms where the architecture branch does select them and the fragment shape and register budget allow.
 
 ### Why this is a candidate
 
 - AITER's FlyDSL split-K GEMM implements both K=16 and K=32 classes and branches explicitly on bf16 versus f16.
+- The two classes are not offered side by side at runtime: one architecture test picks the WMMA implementation, the DMA width and the MFMA-per-warp-K count together, as one bundle.
 - This establishes legal implementation precedents; it does not establish which form is faster for a new shape.
 
 ### Keep as alternatives
@@ -39,10 +86,11 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ### Evidence
 
-- `src_d7886e259f48714f` — `mfma_intrinsic` `mfma_f32_16x16x16bf16_1k` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:61`
-- `src_272e5086e9d474e5` — `mfma_intrinsic` `mfma_f32_16x16x16f16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:64`
-- `src_f094a4b92bc8637c` — `mfma_intrinsic` `mfma_f32_16x16x32_bf16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:82`
-- `src_b345f738f9e6911c` — `mfma_intrinsic` `mfma_f32_16x16x32_f16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:85`
+- `src_24517333d1cd6722` — `mfma_intrinsic` `mfma_f32_16x16x16bf16_1k` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:56`
+- `src_0ed3b5780c589479` — `mfma_intrinsic` `mfma_f32_16x16x16f16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:59`
+- `src_387e95ce58e0449b` — `mfma_intrinsic` `mfma_f32_16x16x32_bf16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:77`
+- `src_79cfb57473ed817f` — `mfma_intrinsic` `mfma_f32_16x16x32_f16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:80`
+- `src_e689c0cbe1b4f8e8` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:128`
 
 ### Limits
 
@@ -65,11 +113,12 @@ Source-observed candidate — the cited implementation exists; no performance pr
 ### Try
 
 - Define the byte-column transform once as col_in_bytes XOR ((row modulo k_blocks16) times 16).
-- Apply the identical transform on global-to-LDS stores and on LDS-to-fragment loads for both operands.
+- Apply the identical transform at all four sites: the global-to-LDS store and the LDS-to-fragment load, for A and for B.
 
 ### Why this is a candidate
 
-- The AITER implementation uses one helper at both write and read sites; copying only one side changes addressing semantics rather than performance.
+- The AITER implementation calls one helper at every write and read site; copying only one side changes addressing semantics rather than performance.
+- The cited sites are A store, A fragment load, B store and B fragment load — the set that has to move together.
 
 ### Keep as alternatives
 
@@ -78,19 +127,20 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ### Evidence
 
-- `src_e9874262aab7d3ff` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:32`
-- `src_dab8075058138ba2` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:460`
-- `src_5d47b878f8dd7567` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:601`
-- `src_094afa37825243db` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:621`
+- `src_2e329cfe46a52fb9` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:27`
+- `src_d1f233838e74f022` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:455`
+- `src_6f222b94149ab249` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:530`
+- `src_d2c808ad3cd9ce7c` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:625`
+- `src_0438c6e24a955ea2` — `lds_swizzle` `swizzle_xor16` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:675`
 
 ### Limits
 
 - The citations prove address consistency, not that XOR16 reduces bank conflicts on every tile.
 - Retain the unswizzled implementation and choose by target-box measurement.
 
-## Can B preshuffle be enabled as a flag on the generic FlyDSL HGEMM?
+## Which tile and split-K values will the FlyDSL HGEMM family actually accept, and how does a shape narrow them?
 
-**Card:** `flydsl-preshuffle-requires-specialized-family` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-hgemm-config-space` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
 
@@ -98,36 +148,187 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 - operator_family=gemm
 - target_language=flydsl
-- B preshuffle is being considered
+- a configuration is being chosen or searched for a known M, N, K
 
 ### Try
 
-- Keep b_preshuffle=false on the generic HGEMM and small-M families.
-- Route to a specialized preshuffle kernel family and transform B into that family's storage layout before launch.
-- Keep b_to_lds=false when the selected specialized family requires preshuffled B.
+- Search tile_m within (16, 32, 48, 64, 80, 96, 112, 128, 160, 256), tile_n within (64, 128, 160, 192, 256) and tile_k within (64, 96, 128, 160, 256) rather than treating the 128x128x64 default as the space.
+- Cap tile_m at max(96, align_up(2*M, 16)): a tile_m far above M pays for rows that do not exist, and the shipped derivation refuses those candidates outright.
+- Take split_k from 1..32, keeping only values that divide K and leave K/split_k divisible by tile_k; every candidate must clear that filter, including 1, 2, 4, 8 and 16. Those five need nothing further; any other divisor also has to leave between 2 and 8 block-K loops per split.
+- For a skinny M (a few rows against a deep K) start the search at small tile_m with a split_k above 1, not at the default.
 
 ### Why this is a candidate
 
-- AITER rejects b_preshuffle=true on generic and small-M FlyDSL HGEMM rather than treating it as an interchangeable tuning flag.
-- The dispatch validation also rejects combining b_preshuffle with b_to_lds in the current specialized path.
+- AITER states the space as module-level option tuples and two derivation helpers, not as one default; the default is one point inside it.
+- The derivations encode the shape-dependence directly — tile_m is bounded by M, and split_k by the divisibility of K — so the narrowing rule is readable rather than guessed.
+- This card says which candidates are legal and worth generating. It does not say which one wins; that is what the benchmark is for.
 
 ### Keep as alternatives
 
-- Use the generic unswizzled B path as the correctness and performance control.
-- Build a new specialized family only if no existing preshuffle contract matches the dtype and shape.
+- Keep the library default 128x128x64 with split_k=1 as the control arm to measure against.
+- Fix the tile and search only split_k when N or K constrain the tiling to one legal shape.
 
 ### Evidence
 
-- `src_3c13c906f1632f79` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:42`
-- `src_ed7afe4a3b63947d` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:44`
-- `src_4066d82b6c84c4bf` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:155`
-- `src_8079a8c47c603564` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:157`
-- `src_e4e5ee9af3744891` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:158`
+- `src_426b8960fb14a04f` — `config_space` `HGEMM_TILE_M_OPTIONS` at `aiter/ops/flydsl/gemm_kernels.py:74`
+- `src_62ce0ec6b152ecaa` — `config_space` `HGEMM_TILE_N_OPTIONS` at `aiter/ops/flydsl/gemm_kernels.py:72`
+- `src_3c72689d786ca8be` — `config_space` `HGEMM_TILE_K_OPTIONS` at `aiter/ops/flydsl/gemm_kernels.py:73`
+- `src_fce6be7eb6b247d6` — `config_space` `HGEMM_BASE_SPLIT_K_OPTIONS` at `aiter/ops/flydsl/gemm_kernels.py:75`
+- `src_96320a5bab17a8f5` — `config_limit` `HGEMM_MAX_SPLIT_K, 32` at `aiter/ops/flydsl/gemm_kernels.py:76`
+- `src_562e9940a52a202f` — `config_space` `_hgemm_tile_m_options` at `aiter/ops/flydsl/gemm_kernels.py:222`
+- `src_642476c9b693d5f1` — `config_space` `_hgemm_split_k_options` at `aiter/ops/flydsl/gemm_kernels.py:229`
 
 ### Limits
 
-- This is an API/layout compatibility rule, not evidence that preshuffle is profitable.
-- The specialized family's preprocessing cost and reuse count must be included in measurement.
+- These are the values the library is willing to compile, not values anybody measured as best; every candidate still has to be timed on the target box.
+- The option tuples are the generic HGEMM family's. The small-M family has its own, wider, N space — see flydsl-small-m-hgemm-family.
+- A candidate that is inside the space can still be rejected at compile time by the tiling and LDS rules — see flydsl-hgemm-tiling-validity.
+
+## Which FlyDSL HGEMM configurations will fail to build at all, before any of them can be slow?
+
+**Card:** `flydsl-hgemm-tiling-validity` · **evidence:** `source_observed` · **status:** `candidate_only`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Use when
+
+- operator_family=gemm
+- target_language=flydsl
+- candidate configurations are being generated automatically or swept
+
+### Try
+
+- Filter candidates before compiling them: N must satisfy N >= tile_n and N % tile_n == 0, and K/split_k must satisfy K/split_k >= tile_k and (K/split_k) % tile_k == 0.
+- Require tile_k >= 32 and tile_k % 32 == 0, tile_m % (block_m_warps*16) == 0 and tile_n % (block_n_warps*16) == 0.
+- Require each of tile_m*tile_k, tile_n*tile_k and tile_m*tile_n to be divisible by 8*64*block_m_warps*block_n_warps, the per-block vectorised load width.
+- Estimate LDS as a_lds = max(stages*tile_m*tile_k*2, tile_m*tile_n*2) when B is not staged through LDS; when it is, the estimate is not a_lds plus something, it becomes align_up(a_lds,16) + stages*tile_n*tile_k*2. Drop candidates over the block budget.
+- Do not spend a round on stages or pack_n in the generic family: the kernel compiles a fixed 2-stage pipeline and rejects any stages other than that, and rejects pack_n other than 1. They read like tuning knobs in the signature and are not.
+- Check the split-K reduction counter capacity separately; the shipped counter is sized for a bounded number of output tiles.
+
+### Why this is a candidate
+
+- AITER performs all of these checks in host code before the kernel is built, so they are the stated contract rather than an inference from a crash.
+- An optimizer that cannot separate 'illegal' from 'slow' spends its budget re-discovering the first, and a budgeted search has few rounds to spend.
+
+### Keep as alternatives
+
+- Let the compiler reject the configuration and catch the exception — acceptable only when the search is small, since each rejection still costs a compile.
+
+### Evidence
+
+- `src_9ae627bec0096537` — `config_validity` `_validate_hgemm_tiling` at `aiter/ops/flydsl/gemm_kernels.py:330`
+- `src_d3f3cb90295b0c40` — `config_validity` `_estimate_hgemm_lds_bytes` at `aiter/ops/flydsl/gemm_kernels.py:249`
+- `src_5c7e74ddb8a071de` — `config_validity` `_check_split_k_counter_capacity` at `aiter/ops/flydsl/gemm_kernels.py:695`
+- `src_7c7ddd401ff4aaeb` — `config_limit` `SPLIT_K_COUNTER_MAX_LEN, 128` at `aiter/ops/flydsl/gemm_kernels.py:37`
+- `src_c139f07a63569327` — `config_limit` `HGEMM_EXTRA_BLOCK_K_LOOPS_MIN, 2` at `aiter/ops/flydsl/gemm_kernels.py:77`
+- `src_539c4b7bf95dca07` — `config_limit` `HGEMM_EXTRA_BLOCK_K_LOOPS_MAX, 8` at `aiter/ops/flydsl/gemm_kernels.py:78`
+
+### Limits
+
+- The LDS formula is the library's own estimate for this kernel shape; a rewritten staging scheme changes it and the estimate stops applying.
+- Passing every check means the configuration builds, not that it is fast, and not that it is correct in a modified kernel.
+
+## What does AITER do differently when M is a handful of rows, and which knobs does that open?
+
+**Card:** `flydsl-small-m-hgemm-family` · **evidence:** `source_observed` · **status:** `candidate_only`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Use when
+
+- operator_family=gemm
+- target_language=flydsl
+- M is small — the shipped routing threshold is M < 17
+- dtype is bf16
+
+### Try
+
+- Check the architecture first, because on gfx942 this family is not available at all: the compile entry point raises outright, and the config registry returns an empty set before it even looks at the shape. On gfx942 read this card as a porting reference — the design is still the right one for a few rows against a deep K — but do not spend a round calling it, and do not read a shipped small-M config table as something you can pass to this box.
+- Treat small M as a different kernel family rather than the generic kernel with a smaller tile: AITER routes it to a separate implementation selected by an explicit kernel_family value.
+- In that family tile_m is fixed at 16 with block_m_warps=1 and 2 stages — the M dimension stops being a search axis, and the search moves entirely onto N and K.
+- Search tile_n far wider than the generic family allows — the shipped set runs (32, 64, 96, 128, 160, 192, 224, 256, 384, 512, 768, 1024) — with tile_k in (32, 64, 96, 128, 160, 192, 256) and split_k up to 32.
+- Consider the axes this family adds and the generic one does not: n_tile_repeat, persistent_n_tiles, waves_per_eu and a b_to_lds unroll factor.
+- Respect the combination rules: n_tile_repeat > 1 only without B-in-LDS and only for the two shipped shapes; persistent_n_tiles > 1 only with B-in-LDS, tile_n >= 128, block_n_warps >= 2 and no more persistent tiles than N/tile_n.
+
+### Why this is a candidate
+
+- A skinny-M GEMM is bounded by how much of the machine the few M tiles can occupy, and every axis this family adds — repeat, persistent tiles, waves per EU — is an occupancy axis rather than a tiling one.
+- The routing threshold, the fixed tile_m and the option sets are stated as named constants in the source, so the boundary between the two families is readable rather than folklore.
+
+### Keep as alternatives
+
+- Stay on the generic family with tile_m=16 when a second kernel cannot be written or maintained; that is inside the generic space and is the cheaper first move.
+- Keep the generic default configuration as the control arm regardless of which family is chosen.
+
+### Evidence
+
+- `src_38699a8ce57faf0c` — `kernel_family` `KERNEL_FAMILY_HGEMM, hgemm` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:8`
+- `src_8ffea30406cf0355` — `kernel_family` `KERNEL_FAMILY_SMALL_M, small_m` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:9`
+- `src_bca963564a69909c` — `kernel_family` `KERNEL_FAMILY_SMALL_M` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:56`
+- `src_b446c07f43b11542` — `config_limit` `SMALL_M_KERNEL_MAX, 17` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:69`
+- `src_034b3cc6e3fd6aa8` — `tile_shape` `TILE_M, 16` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:70`
+- `src_390ae8578e28ce34` — `config_space` `SMALL_M_TILE_N_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:83`
+- `src_60717171485c58f5` — `config_space` `SMALL_M_TILE_K_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:81`
+- `src_ee5e839c6374f38f` — `config_limit` `SMALL_M_MAX_SPLIT_K, 32` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:82`
+- `src_a7c0de9870934fc0` — `config_space` `SMALL_M_N_TILE_REPEAT_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:102`
+- `src_28936b493eeb6f6f` — `config_space` `SMALL_M_PERSISTENT_N_TILE_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:103`
+- `src_1dcdf9c7b6794c6e` — `config_space` `SMALL_M_NON_B_TO_LDS_WAVES_PER_EU_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:97`
+- `src_44b5602aacc7e7df` — `config_space` `SMALL_M_B_TO_LDS_UNROLL_OPTIONS` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:101`
+- `src_cceaeb92fb86b540` — `config_validity` `_validate_small_m_registry_config` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:172`
+- `src_bc6d04baf2182ba4` — `config_limit` `MAX_LDS_BYTES, 163840` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:76`
+- `src_7eee3f6769348b4c` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:411`
+- `src_e04716b6d760605b` — `arch_gate` `gfx942` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:331`
+
+### Limits
+
+- On gfx942 none of this is callable; see the first action. The rest of the card describes the gfx950 path.
+- That AITER maintains a separate family for small M is a design precedent, not a measurement that it beats a well-tuned generic configuration on your shape.
+- The option sets are what the shipped registry enumerates; they are candidates to search, and nothing here says which member wins.
+- The family is bf16-only and its LDS budget is its own; do not carry its constants into the generic kernel.
+
+## What does enabling B preshuffle on a FlyDSL HGEMM actually require?
+
+**Card:** `flydsl-preshuffle-b-layout-contract` · **evidence:** `source_observed` · **status:** `candidate_only`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Use when
+
+- operator_family=gemm
+- target_language=flydsl
+- B preshuffle is being considered as a candidate
+
+### Try
+
+- Treat b_preshuffle as a change of B's storage layout, not as a boolean tuning flag: the kernel expects B already permuted into the family's shuffle layout, and the host side must either shuffle it or be told it is pre-shuffled.
+- Keep b_to_lds=false whenever b_preshuffle=true; the current kernel rejects the combination.
+- Keep b_preshuffle=false on the small-M family, which rejects it outright.
+- Count the one-off shuffle cost against the number of launches that reuse the same B before claiming a win; for a weight matrix reused across many calls it amortises, for a single call it does not.
+
+### Why this is a candidate
+
+- The generic HGEMM path supports preshuffled B and its dispatch default is even b_preshuffle=true, so this is a supported layout rather than a forbidden one — but the guard rails around it are all layout guard rails.
+- The two rejections in the source are specific and different in kind: an unsupported combination (with b_to_lds) and an unsupported family (small-M). Neither is a statement about speed.
+
+### Keep as alternatives
+
+- Use the unshuffled B path as the correctness and performance control.
+- Shuffle B once at load time outside the timed region when the deployment allows it, and measure both accounting rules explicitly.
+
+### Evidence
+
+- `src_93c0f2962c52fdfb` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/kernels/hgemm_dispatch.py:32`
+- `src_4c74ced4671a1e5b` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:162`
+- `src_3ee379ecc88d0ad1` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:767`
+- `src_7b5432b56d9acd63` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:768`
+- `src_520242be3bd7400e` — `layout_preshuffle` `b_preshuffle` at `aiter/ops/flydsl/gemm_kernels.py:886`
+- `src_e7db1b030bf2e5c6` — `layout_preshuffle` `shuffle_weight` at `aiter/ops/flydsl/gemm_kernels.py:883`
+
+### Limits
+
+- This is an API/layout compatibility rule, not evidence that preshuffle is profitable on any shape.
+- A benchmark that reuses one pre-shuffled B across iterations measures the steady state, not the first call; state which one you are reporting.
+- The card is grounded in the vendored library's contract. A kernel copy that has been edited may have moved these checks.
 
 ## What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?
 
@@ -143,33 +344,39 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ### Try
 
-- Include the observed vmem(2), dsrd(2), dsrd(4), mfma(8) directive sequence as one candidate schedule bundle.
-- Move or retune the bundle only as a unit against the exact load/MFMA loop, then compare with the unscheduled control.
+- Copy the ORDER, not a set of magic numbers: A-fragment ds-reads, then B-fragment ds-reads, then the A and B global loads as vmem, then the MFMA issues, closed by a scheduling barrier.
+- Derive each group's count from the loop geometry that produces it — warp K steps times warp M or N steps for the ds-reads, the per-block LDG register counts for the vmem groups, and the full MFMA count for the mfma group — rather than hard-coding the counts observed here.
+- Move or retune the bundle as a unit against the exact load/MFMA loop, then compare with the unscheduled control.
 
 ### Why this is a candidate
 
-- The four directives are adjacent in AITER's hot-loop scheduler and describe one ordering pattern; copying one directive in isolation loses that context.
+- The directives are adjacent inside one scheduler function and describe a single ordering pattern; copying one directive in isolation loses that context.
+- An earlier version of this card recorded the literal group sizes vmem(2)/dsrd(2)/dsrd(4)/mfma(8). Upstream now emits unit-count directives inside geometry-derived loops, so those numbers described one build of one tile and expired quietly. The order survived the rewrite; the constants did not, which is the reason this card states a rule and not a bundle of integers.
 
 ### Keep as alternatives
 
-- Leave instruction ordering to the compiler.
-- Sweep different vmem, ds-read and MFMA group sizes when the tile or pipeline depth changes.
+- Leave instruction ordering to the compiler; that is the control arm and it is often the right answer.
+- Use the second shipped scheduler shape instead, which interleaves vmem and mfma through a running counter rather than emitting the groups back to back.
 
 ### Evidence
 
-- `src_e6e24f015d6a1411` — `scheduling` `sched_vmem` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:823`
-- `src_29e3a8349d05cc33` — `scheduling` `sched_dsrd` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:824`
-- `src_b7c9a5f1e1355a11` — `scheduling` `sched_dsrd` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:825`
-- `src_ee6fe2bcbd689094` — `scheduling` `sched_mfma` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:826`
+- `src_5da6811a509d9806` — `scheduling` `sched_dsrd` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:688`
+- `src_b0da890c19bc671e` — `scheduling` `sched_dsrd` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:690`
+- `src_ed1134f4e4cea08c` — `scheduling` `sched_vmem` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:694`
+- `src_86d7e5af1117454e` — `scheduling` `sched_vmem` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:698`
+- `src_0f18d7f50ce33cbb` — `scheduling` `sched_mfma` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:702`
+- `src_dca1b81d9d2b2edf` — `scheduling` `sched_barrier` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:703`
 
 ### Limits
 
-- The numeric group sizes are source-observed for one loop and are not portable performance constants.
+- Instruction scheduling is the most build-specific thing in this corpus; treat it as a candidate to try late, after tiling and split-K are settled.
 - Changing tile geometry, LDS stages or access width changes the schedule that must be re-measured.
 
 ## Shipped configuration seeds
 
 These rows are generated from AITER's shipped selected configs. Match all three condition columns before using a row. **Seed candidate** means every config in that group carries the value; **vary next** lists knobs that changed by shape. No benchmark archive or rejected alternatives are attached, so these are concrete candidates, not measured winners.
+
+**These are Triton knobs.** The shipped selected configs live under `aiter/ops/triton/configs/gemm`, so the names are Triton's — `BLOCK_SIZE_M/N/K`, `num_warps`, `num_stages`, `waves_per_eu`, `matrix_instr_nonkdim`, `kpack`, `cache_modifier`. Only the block tile carries over to another backend more or less directly; the rest have no one-to-one FlyDSL equivalent and several have none at all. If you are authoring FlyDSL, the cards above are the part of this file that applies to you, and a row here is at best a hint about which tile shapes somebody found worth shipping for a given M bucket.
 
 ### `gfx950`
 
@@ -177,25 +384,14 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 |---|---|---|---|---|---|
 | `cfg_a57a5cb4f0a527d8` | `BATCHED_GEMM A16W16` | `M_GEQ_4096` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=4`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_ecf596d3e577f90d` | `BATCHED_GEMM A16W16` | `any` | `BLOCK_SIZE_K=32`, `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_4efd38f867ee32e1` | `BATCHED_GEMM A16WFP4` | `M_LEQ_128` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_N=128`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `GROUP_SIZE_M`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_0671599e9fcebbcc` | `BATCHED_GEMM A16WFP4` | `M_LEQ_16` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=6` | no varying knob recorded | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_97d0676f1c8e8d42` | `BATCHED_GEMM A16WFP4` | `M_LEQ_256` | `BLOCK_SIZE_N=128`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `waves_per_eu=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `GROUP_SIZE_M`, `num_warps` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_0b024b61f91a281e` | `BATCHED_GEMM A16WFP4` | `M_LEQ_32` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=4` | no varying knob recorded | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_f9934e09ffe6e07e` | `BATCHED_GEMM A16WFP4` | `M_LEQ_64` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=64`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `waves_per_eu=4` | `num_warps` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_d80e8bad5029f0e3` | `BATCHED_GEMM A16WFP4` | `any` | `BLOCK_SIZE_K=256`, `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_5261f7f2c5f25018` | `BATCHED_GEMM A8W8` | `M_GEQ_4096` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_f06501e0e3535f11` | `BATCHED_GEMM A8W8` | `M_LEQ_1024` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_cb4ef3cc4aa50c23` | `BATCHED_GEMM A8W8` | `M_LEQ_128` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_b00e382b17e27d1e` | `BATCHED_GEMM A8W8` | `M_LEQ_2048` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_e6888d223643f543` | `BATCHED_GEMM A8W8` | `M_LEQ_256` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_cc88d402a0373a77` | `BATCHED_GEMM A8W8` | `M_LEQ_512` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
+| `cfg_5261f7f2c5f25018` | `BATCHED_GEMM A8W8` | `M_GEQ_4096` | `BLOCK_SIZE_K=64`, `BLOCK_SIZE_M=256`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=4`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_cfdc51455df2e87e` | `BATCHED_GEMM A8W8` | `any` | `BLOCK_SIZE_K=32`, `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_5ced01ef02696086` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_128` | `GROUP_SIZE_M=1`, `num_warps=8`, `waves_per_eu=1` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `cache_modifier`, `matrix_instr_nonkdim`, `num_stages` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_bc0272cd92f3b185` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_16` | `BLOCK_SIZE_M=16`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_N`, `num_warps`, `waves_per_eu` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_03bfe2299071dce1` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_256` | `GROUP_SIZE_M=1`, `num_warps=8`, `waves_per_eu=1` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `cache_modifier`, `matrix_instr_nonkdim`, `num_stages` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_fa1ae965db1a48b1` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_32` | `GROUP_SIZE_M=1`, `cache_modifier=.cg` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `matrix_instr_nonkdim`, `num_stages`, `num_warps`, `waves_per_eu` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_ed808d7d9d6d4ed7` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_64` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `num_warps=8`, `waves_per_eu=1` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `matrix_instr_nonkdim`, `num_stages` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_ca82327242a25cf4` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `any` | `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16` | `num_stages`, `num_warps`, `waves_per_eu` | 4 selected shape config(s) in 4 JSON file(s) |
+| `cfg_5ced01ef02696086` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_128` | `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16` | `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
+| `cfg_bc0272cd92f3b185` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_16` | `BLOCK_SIZE_M=16`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_N`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
+| `cfg_03bfe2299071dce1` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_256` | `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16` | `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
+| `cfg_fa1ae965db1a48b1` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_32` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
+| `cfg_ed808d7d9d6d4ed7` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_64` | `BLOCK_SIZE_M=32`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=8` | `BLOCK_SIZE_N`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
+| `cfg_ca82327242a25cf4` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `any` | `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16` | `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_f10f24372b10fb51` | `BATCHED_GEMM AFP4WFP4` | `M_LEQ_128` | `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=4` | `BLOCK_SIZE_K`, `GROUP_SIZE_M`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_d127d80b9f3a14d5` | `BATCHED_GEMM AFP4WFP4` | `M_LEQ_16` | `BLOCK_SIZE_M=16`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=6` | `BLOCK_SIZE_K`, `BLOCK_SIZE_N` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_da8a6b59be55236a` | `BATCHED_GEMM AFP4WFP4` | `M_LEQ_256` | `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=2`, `NUM_KSPLIT=1`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4` | `BLOCK_SIZE_K`, `cache_modifier`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
@@ -208,7 +404,7 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_502bb17ba8bb36a5` | `BATCHED_GEMM_PREQUANT AFP4WFP4` | `M_LEQ_32` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_388edc5997d185a5` | `BATCHED_GEMM_PREQUANT AFP4WFP4` | `M_LEQ_64` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_0ea6944810ece167` | `BATCHED_GEMM_PREQUANT AFP4WFP4` | `any` | `NUM_KSPLIT=1`, `kpack=1`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_93ea0c7b211220be` | `FF A16W16 fused` | `M_LEQ_4` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=4`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=3` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
+| `cfg_93ea0c7b211220be` | `FF A16W16 fused` | `M_LEQ_4` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=4`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8`, `waves_per_eu=3` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_d6e7a9afe9f27192` | `FF A16W16 fused` | `M_LEQ_64` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=64`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_6a0984dbc07e813e` | `FF A16W16 fused` | `M_LEQ_8` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=8`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_d909e533e711175b` | `FF A16W16 fused` | `any` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=64`, `BLOCK_SIZE_N=256`, `GROUP_SIZE_M=1`, `cache_modifier=None`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
@@ -234,18 +430,18 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_ffdbc0cd21ce9840` | `FUSED GEMM AFP4WFP4_PRESHUFFLED A16W16` | `M_LEQ_8` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=8`, `BLOCK_SIZE_N=16`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=2`, `waves_per_eu=1` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_b560da5877ad79ee` | `FUSED GEMM AFP4WFP4_PRESHUFFLED A16W16` | `any` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=4`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=2`, `waves_per_eu=1` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_6454fed977948ba6` | `GEMM A16W16` | `M_LEQ_1024` | `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_8e171982124777b2` | `GEMM A16W16` | `M_LEQ_128` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_b7ed22d964ee5af3` | `GEMM A16W16` | `M_LEQ_16` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
+| `cfg_8e171982124777b2` | `GEMM A16W16` | `M_LEQ_128` | `matrix_instr_nonkdim=16`, `num_stages=3` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
+| `cfg_b7ed22d964ee5af3` | `GEMM A16W16` | `M_LEQ_16` | `matrix_instr_nonkdim=16`, `num_stages=3` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
 | `cfg_b470f107eed8b9b2` | `GEMM A16W16` | `M_LEQ_2048` | `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `waves_per_eu` | 6 selected shape config(s) in 6 JSON file(s) |
-| `cfg_23f66c585b31f85d` | `GEMM A16W16` | `M_LEQ_256` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_24bdc7e2b99f7d28` | `GEMM A16W16` | `M_LEQ_32` | `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_99912b6b3b12007b` | `GEMM A16W16` | `M_LEQ_4` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `num_warps`, `waves_per_eu` | 4 selected shape config(s) in 4 JSON file(s) |
+| `cfg_23f66c585b31f85d` | `GEMM A16W16` | `M_LEQ_256` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
+| `cfg_24bdc7e2b99f7d28` | `GEMM A16W16` | `M_LEQ_32` | `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
+| `cfg_99912b6b3b12007b` | `GEMM A16W16` | `M_LEQ_4` | `BLOCK_SIZE_K=512`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_5efe7b2ba9b56b2c` | `GEMM A16W16` | `M_LEQ_4096` | `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
 | `cfg_2ebaf2f982bc72d4` | `GEMM A16W16` | `M_LEQ_512` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
-| `cfg_34329609765e0c35` | `GEMM A16W16` | `M_LEQ_64` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_f71fd98f79713f88` | `GEMM A16W16` | `M_LEQ_8` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
+| `cfg_34329609765e0c35` | `GEMM A16W16` | `M_LEQ_64` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
+| `cfg_f71fd98f79713f88` | `GEMM A16W16` | `M_LEQ_8` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
 | `cfg_bf6f4e95db577390` | `GEMM A16W16` | `M_LEQ_8192` | `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=8` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_7fa388e056024686` | `GEMM A16W16` | `any` | `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
+| `cfg_7fa388e056024686` | `GEMM A16W16` | `any` | `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=3` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
 | `cfg_50866abdcb6827b2` | `GEMM A16W16 ATOMIC` | `M_LEQ_1` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=4`, `BLOCK_SIZE_N=16`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=16`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=4`, `waves_per_eu=1` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_fa50b53a7156f918` | `GEMM A16W16 ATOMIC` | `M_LEQ_128` | `BLOCK_SIZE_K=128`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_73d2d9863ba7bd0f` | `GEMM A16W16 ATOMIC` | `M_LEQ_16` | `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `NUM_KSPLIT`, `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
@@ -314,15 +510,14 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_f3c8a2c89a3d1d60` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_64` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 18 selected shape config(s) in 18 JSON file(s) |
 | `cfg_d20ceac354b22aa4` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_8` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 18 selected shape config(s) in 18 JSON file(s) |
 | `cfg_cc3e0595aa865a63` | `GEMM A8W8_BLOCKSCALE` | `any` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `matrix_instr_nonkdim`, `num_stages`, `num_warps`, `waves_per_eu` | 18 selected shape config(s) in 18 JSON file(s) |
-| `cfg_deae58a34adb6258` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_128` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_9e274bd9b6c46eaf` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_16` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_3883cf64563aaa1b` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_256` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_2601a8a0628a409e` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_32` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_954a94e823998c55` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_4` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=4`, `BLOCK_SIZE_N=16`, `GROUP_SIZE_M=1`, `matrix_instr_nonkdim=16`, `num_stages=2` | `NUM_KSPLIT`, `cache_modifier`, `num_warps`, `waves_per_eu` | 2 selected shape config(s) in 2 JSON file(s) |
+| `cfg_deae58a34adb6258` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_128` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
+| `cfg_9e274bd9b6c46eaf` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_16` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_N=16`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
+| `cfg_3883cf64563aaa1b` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_256` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
+| `cfg_2601a8a0628a409e` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_32` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
 | `cfg_f93524c0330d99bb` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_512` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
-| `cfg_855cb543440bd0a8` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_64` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_bf91dceaa41422ca` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_8` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 15 selected shape config(s) in 15 JSON file(s) |
-| `cfg_8b23ae88a4a42049` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `any` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 16 selected shape config(s) in 16 JSON file(s) |
+| `cfg_855cb543440bd0a8` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_64` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
+| `cfg_bf91dceaa41422ca` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_8` | `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 13 selected shape config(s) in 13 JSON file(s) |
+| `cfg_8b23ae88a4a42049` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `any` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_stages`, `num_warps`, `waves_per_eu` | 14 selected shape config(s) in 14 JSON file(s) |
 | `cfg_5585a593f8f102fe` | `GEMM A8W8_PER_TOKEN_SCALE` | `M_LEQ_128` | `cache_modifier=.cg`, `num_stages=3`, `num_warps=8` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `matrix_instr_nonkdim`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_17116d8b599bdad3` | `GEMM A8W8_PER_TOKEN_SCALE` | `M_LEQ_16` | `BLOCK_SIZE_M=16`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=3`, `waves_per_eu=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_N`, `num_warps` | 3 selected shape config(s) in 3 JSON file(s) |
 | `cfg_8771dd977b4889c6` | `GEMM A8W8_PER_TOKEN_SCALE` | `M_LEQ_256` | `NUM_KSPLIT=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=32`, `num_stages=3`, `waves_per_eu=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_warps` | 3 selected shape config(s) in 3 JSON file(s) |
@@ -357,21 +552,6 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_db9580db9d05c211` | `GEMM AFP4WFP4_PRESHUFFLED` | `M_LEQ_64` | none shared by all configs | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `matrix_instr_nonkdim`, `num_stages`, `num_warps`, `waves_per_eu` | 26 selected shape config(s) in 26 JSON file(s) |
 | `cfg_98e147da67fe19a2` | `GEMM AFP4WFP4_PRESHUFFLED` | `M_LEQ_8` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 26 selected shape config(s) in 26 JSON file(s) |
 | `cfg_0f3bcc30969e9c45` | `GEMM AFP4WFP4_PRESHUFFLED` | `any` | `NUM_KSPLIT=1`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `matrix_instr_nonkdim`, `num_warps`, `waves_per_eu` | 26 selected shape config(s) in 26 JSON file(s) |
-| `cfg_6a0ae992990928e3` | `GEMM AFP8WFP8` | `any` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=64`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=8`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=0` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_4cf907437fb2bed3` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_GEQ_8192` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2`, `waves_per_eu=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_0b4152b2531af2e7` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_1024` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2`, `num_warps=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_84e9f51bb0df0b38` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_128` | `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_7ac489652a6dc632` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_16` | `matrix_instr_nonkdim=16` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_f69eaddd51b9738b` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_2048` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_c4deb00d24be5f7f` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_256` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_dfeca948c6ea261d` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_32` | `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_96d46eaf7caa69ad` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_4` | `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_7ac8e760fd1b087c` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_4096` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2`, `waves_per_eu=0` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_6c1fece400554dc9` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_512` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2`, `num_warps=4` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_910113e7f5ba1d06` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_64` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_4cc9c302df05a68c` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_8` | `NUM_KSPLIT=1`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
-| `cfg_c8936a0a83660ccd` | `GEMM AFP8WFP8_PRESHUFFLED` | `M_LEQ_8192` | `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=32` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_stages`, `num_warps`, `waves_per_eu` | 5 selected shape config(s) in 5 JSON file(s) |
-| `cfg_ce2f1dc7a92b31f8` | `GEMM AFP8WFP8_PRESHUFFLED` | `any` | `NUM_KSPLIT=1`, `cache_modifier=None`, `num_stages=2` | `BLOCK_SIZE_K`, `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `matrix_instr_nonkdim`, `num_warps`, `waves_per_eu` | 11 selected shape config(s) in 11 JSON file(s) |
 | `cfg_7d6ab7c4c6aa8141` | `GEMM_PREQUANT AFP4WFP4` | `M_LEQ_128` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=8`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | `NUM_KSPLIT` | 2 selected shape config(s) in 2 JSON file(s) |
 | `cfg_ddeca1e7c6324cb3` | `GEMM_PREQUANT AFP4WFP4` | `M_LEQ_256` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=8`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | `NUM_KSPLIT` | 2 selected shape config(s) in 2 JSON file(s) |
 | `cfg_1bf618ef86d9fa83` | `GEMM_PREQUANT AFP4WFP4` | `M_LEQ_32` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=8`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | `NUM_KSPLIT` | 2 selected shape config(s) in 2 JSON file(s) |
@@ -430,8 +610,6 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_3eff28954f18b5fe` | `GEMM A8W8_BLOCKSCALE` | `any` | `BLOCK_SIZE_K=128`, `GROUP_K=128`, `GROUP_N=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_warps`, `waves_per_eu` | 10 selected shape config(s) in 10 JSON file(s) |
 | `cfg_133b4f1fc4c41fa7` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `any` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_ccd5e6f3adbfd648` | `GEMM A8W8_PER_TOKEN_SCALE` | `any` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=128`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_cbf0aee3cde54c46` | `GEMM AFP8WFP8` | `any` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=64`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=8`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=0` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-| `cfg_0ef20a8eb2fe6e50` | `GEMM AFP8WFP8_PRESHUFFLED` | `any` | `BLOCK_SIZE_K=256`, `BLOCK_SIZE_M=32`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=8`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=0` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 
 ### `gfx1250`
 
@@ -520,33 +698,6 @@ These rows are generated from AITER's shipped selected configs. Match all three 
 | `cfg_d5573e6cf86e1a86` | `GEMM_PREQUANT AFP4WFP4` | `M_LEQ_64` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=4`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_7476f06bfb75b41c` | `GEMM_PREQUANT AFP4WFP4` | `M_LEQ_8` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=4`, `cache_modifier=.cg`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=4`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
 | `cfg_aa6fb77979236a11` | `GEMM_PREQUANT AFP4WFP4` | `any` | `BLOCK_SIZE_K=512`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=4`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=8`, `waves_per_eu=2` | all exposed knobs; one config cannot establish agreement | 1 selected shape config(s) in 1 JSON file(s) |
-
-### `gfx1201`
-
-| decision ref | variant | M bucket | seed candidate | vary next | shipped support |
-|---|---|---|---|---|---|
-| `cfg_f87e667c505bcc33` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_128` | `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=8` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_1a8a08ef9d02103e` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_16` | `BLOCK_SIZE_M=16`, `GROUP_SIZE_M=1`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_N`, `num_stages`, `num_warps`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_806fcc29f6f58170` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_256` | `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=8` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_7ab1a0b425acf6a7` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_32` | `BLOCK_SIZE_M=16`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `waves_per_eu=8` | `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_stages`, `num_warps` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_99711b6ae8b82530` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `M_LEQ_64` | `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=128`, `cache_modifier=.cg`, `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=8` | `GROUP_SIZE_M`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_610cb49904035b20` | `BATCHED_GEMM A8W8 A_PER_TOKEN_GROUP_PREQUANT_W_PER_BATCHED_TENSOR_QUANT` | `any` | `kpack=1`, `matrix_instr_nonkdim=16`, `num_warps=8` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `waves_per_eu` | 3 selected shape config(s) in 3 JSON file(s) |
-| `cfg_f244fcd1136938a5` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_1` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=16`, `cache_modifier=.cg`, `kpack=2`, `matrix_instr_nonkdim=16` | `GROUP_SIZE_M`, `NUM_KSPLIT`, `num_stages`, `num_warps`, `waves_per_eu` | 6 selected shape config(s) in 6 JSON file(s) |
-| `cfg_837d38fe7abe3552` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_1024` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_warps`, `waves_per_eu` | 6 selected shape config(s) in 6 JSON file(s) |
-| `cfg_55a23665a483a96c` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_128` | `BLOCK_SIZE_K=128`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_761f797d7f113645` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_16` | `BLOCK_SIZE_K=128`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_a4a4ae2757847a4e` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_2048` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `cache_modifier=None`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `num_warps`, `waves_per_eu` | 6 selected shape config(s) in 6 JSON file(s) |
-| `cfg_d430e5ccb9cccdf4` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_256` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_f4fbef612f8ee483` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_32` | `BLOCK_SIZE_K=128`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_dbdfeba6461d82d1` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_4` | `BLOCK_SIZE_K=128`, `cache_modifier=.cg`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `num_stages`, `num_warps`, `waves_per_eu` | 9 selected shape config(s) in 9 JSON file(s) |
-| `cfg_6dba506c59a44d3c` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_512` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_37c5c144bdfdd68f` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_64` | `BLOCK_SIZE_K=128`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 21 selected shape config(s) in 21 JSON file(s) |
-| `cfg_1327749e95bce0c2` | `GEMM A8W8_BLOCKSCALE` | `M_LEQ_8` | `BLOCK_SIZE_K=128`, `kpack=2`, `matrix_instr_nonkdim=16` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `NUM_KSPLIT`, `cache_modifier`, `num_stages`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_ec88624fb48fb25f` | `GEMM A8W8_BLOCKSCALE` | `any` | `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `GROUP_SIZE_M`, `cache_modifier`, `num_warps`, `waves_per_eu` | 27 selected shape config(s) in 27 JSON file(s) |
-| `cfg_8e491cac4305b42f` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_1024` | `BLOCK_SIZE_K=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=1`, `waves_per_eu=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N`, `num_warps` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_c63afec2ae30919d` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_512` | `BLOCK_SIZE_K=128`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=4`, `waves_per_eu=2` | `BLOCK_SIZE_M`, `BLOCK_SIZE_N` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_d0abfc1b537f05f8` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `M_LEQ_8` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=32`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=1`, `num_warps=2` | `waves_per_eu` | 4 selected shape config(s) in 4 JSON file(s) |
-| `cfg_1abb955bf19d0b38` | `GEMM A8W8_BLOCKSCALE_PRESHUFFLED` | `any` | `BLOCK_SIZE_K=128`, `BLOCK_SIZE_M=16`, `BLOCK_SIZE_N=64`, `GROUP_SIZE_M=1`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`, `num_stages=2`, `num_warps=4`, `waves_per_eu=2` | no varying knob recorded | 4 selected shape config(s) in 4 JSON file(s) |
 
 ## Sources
 

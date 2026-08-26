@@ -133,6 +133,15 @@ def render_tuning_table(tuned):
          "value; **vary next** lists knobs that changed by shape. No benchmark archive or rejected "
          "alternatives are attached, so these are concrete candidates, not measured winners."),
         "",
+        ("**These are Triton knobs.** The shipped selected configs live under "
+         "`aiter/ops/triton/configs/gemm`, so the names are Triton's — `BLOCK_SIZE_M/N/K`, "
+         "`num_warps`, `num_stages`, `waves_per_eu`, `matrix_instr_nonkdim`, `kpack`, "
+         "`cache_modifier`. Only the block tile carries over to another backend more or less "
+         "directly; the rest have no one-to-one FlyDSL equivalent and several have none at all. If "
+         "you are authoring FlyDSL, the cards above are the part of this file that applies to you, "
+         "and a row here is at best a hint about which tile shapes somebody found worth shipping "
+         "for a given M bucket."),
+        "",
     ]
     by_gfx = {}
     for group in tuned:

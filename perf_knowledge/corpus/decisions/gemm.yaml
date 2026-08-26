@@ -5,6 +5,16 @@
 # evidence level and limitations. `_render_decisions.py --check` verifies every content-bound source
 # ID against `evidence/gemm_source.yaml`. Measured guidance is deliberately kept out of this always-on
 # layer; it stays behind the learned-card and expert-skill switches.
+#
+# Two kinds of card live here, and the difference is worth stating because it decides what a card is
+# allowed to claim:
+#
+#   * PRECEDENT cards ("this construct exists, here are the four lines that write it") — copyable
+#     starting points, no claim about speed.
+#   * SPACE cards ("these are the values the library will accept, and this is the rule that narrows
+#     them for a shape") — these are the ones an optimizer actually needs, because a single observed
+#     value read as the whole space is worse than no value at all. A reader who learns only that the
+#     default tile_m is 128 has been taught the opposite of what a skinny-M shape needs.
 
 provenance:
   schema_version: 2
@@ -12,6 +22,39 @@ provenance:
   curator_contract: "candidate advice only; target-box correctness and benchmark remain the judge"
 
 cards:
+  - id: "flydsl-gfx942-path-gates"
+    question: "Which FlyDSL GEMM paths does gfx942 (MI300X) actually give you, and which does it silently switch or refuse?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "target architecture is gfx942 — read this before costing any other card on this page"
+    actions:
+      - "Read the architecture gates before the tuning tables. Whether a path exists on your box outranks every fact about how to tune it, and four separate gates in this library key on gfx942 alone."
+      - "Do not fund async copy on gfx942. The library computes its async-copy flag as `architecture is not gfx942`, so the flag is already false here and the split-K kernel hard-codes async off on this branch. There is no knob to flip."
+      - "Do not fund the small-M kernel family on gfx942. Its compile entry point raises, and its config registry returns nothing. Port the design if you want it; you cannot call it."
+      - "Expect the m16n16k16 fragment with 4-byte DMA and two MFMA steps per warp-K, not the m16n16k32 / 16-byte / one-step bundle the other architectures get. The choice is made for you by one architecture test — see flydsl-half-mfma-call-forms."
+      - "Note that the preshuffle family does run here, but loads A four bytes at a time instead of sixteen; price that into any preshuffle comparison rather than assuming the gfx950 behaviour — see flydsl-preshuffle-b-layout-contract."
+      - "On any other architecture, invert all of the above: the wider fragment, the 16-byte DMA, async copy and the small-M family are all in play."
+    alternatives:
+      - "On gfx942, spend the search on what remains genuinely open — the tile geometry, split_k, B staging and the epilogue — rather than on the gated paths."
+      - "If a gated path is the real ceiling for your shape, vendor and port it deliberately as a structural change, and budget it as one."
+    why:
+      - "Four independent gfx942 tests exist in the FlyDSL GEMM sources and they do different things: one switches the fragment/DMA/MFMA bundle, one disables async copy library-wide, two shut the small-M family, one narrows the preshuffle load width."
+      - "This is the cheapest knowledge on the page. A gate costs nothing to check and a whole round to discover, and none of it is visible from the tuning tables, which record what was selected on the architectures where the path was open."
+    source_evidence:
+      - "src_c4c19187bcb7933c"
+      - "src_e689c0cbe1b4f8e8"
+      - "src_7eee3f6769348b4c"
+      - "src_e04716b6d760605b"
+      - "src_42146c2d073d655e"
+    measurement_evidence: []
+    limitations:
+      - "These are the gates that name an architecture literally. A path can also be effectively closed by something this card does not see — a missing dtype, an LDS budget, a compiler version."
+      - "Gates move between releases. Every citation carries its file and line; re-read them against the checkout you are building on before trusting the list."
+      - "That a path is open says nothing about whether it is fast."
+
   - id: "flydsl-half-mfma-call-forms"
     question: "Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?"
     evidence_level: "source_observed"
@@ -22,18 +65,21 @@ cards:
       - "input_dtype in {f16,bf16}"
     actions:
       - "For an m16n16k16 candidate, pair bf16 with mfma_f32_16x16x16bf16_1k and f16 with mfma_f32_16x16x16f16."
-      - "Also benchmark the m16n16k32 bf16/f16 forms when fragment shape and target architecture allow them."
+      - "Check the target architecture before treating the K shape as a free axis: the shipped split-K kernel does not let you pick it. On gfx942 it selects m16n16k16 with 4-byte DMA and two MFMA steps per warp-K; on every other architecture it selects m16n16k32 with 16-byte DMA and one. Benchmarking the K=32 form on gfx942 means rewriting that branch, not passing a flag."
+      - "Also benchmark the m16n16k32 bf16/f16 forms where the architecture branch does select them and the fragment shape and register budget allow."
     alternatives:
       - "Use the m16n16k16 form when the larger-K fragment does not fit the surrounding tile or register budget."
       - "Let a higher-level backend select the instruction when direct MFMA control is not required."
     why:
       - "AITER's FlyDSL split-K GEMM implements both K=16 and K=32 classes and branches explicitly on bf16 versus f16."
+      - "The two classes are not offered side by side at runtime: one architecture test picks the WMMA implementation, the DMA width and the MFMA-per-warp-K count together, as one bundle."
       - "This establishes legal implementation precedents; it does not establish which form is faster for a new shape."
     source_evidence:
-      - "src_d7886e259f48714f"
-      - "src_272e5086e9d474e5"
-      - "src_f094a4b92bc8637c"
-      - "src_b345f738f9e6911c"
+      - "src_24517333d1cd6722"
+      - "src_0ed3b5780c589479"
+      - "src_387e95ce58e0449b"
+      - "src_79cfb57473ed817f"
+      - "src_e689c0cbe1b4f8e8"
     measurement_evidence: []
     limitations:
       - "No latency or occupancy comparison is attached; treat both K shapes as candidates and re-measure."
@@ -50,50 +96,167 @@ cards:
       - "XOR16 is included as a bank-conflict candidate"
     actions:
       - "Define the byte-column transform once as col_in_bytes XOR ((row modulo k_blocks16) times 16)."
-      - "Apply the identical transform on global-to-LDS stores and on LDS-to-fragment loads for both operands."
+      - "Apply the identical transform at all four sites: the global-to-LDS store and the LDS-to-fragment load, for A and for B."
     alternatives:
       - "Keep the unswizzled layout as the control arm."
       - "Benchmark a different padding or swizzle scheme when the tile geometry changes."
     why:
-      - "The AITER implementation uses one helper at both write and read sites; copying only one side changes addressing semantics rather than performance."
+      - "The AITER implementation calls one helper at every write and read site; copying only one side changes addressing semantics rather than performance."
+      - "The cited sites are A store, A fragment load, B store and B fragment load — the set that has to move together."
     source_evidence:
-      - "src_e9874262aab7d3ff"
-      - "src_dab8075058138ba2"
-      - "src_5d47b878f8dd7567"
-      - "src_094afa37825243db"
+      - "src_2e329cfe46a52fb9"
+      - "src_d1f233838e74f022"
+      - "src_6f222b94149ab249"
+      - "src_d2c808ad3cd9ce7c"
+      - "src_0438c6e24a955ea2"
     measurement_evidence: []
     limitations:
       - "The citations prove address consistency, not that XOR16 reduces bank conflicts on every tile."
       - "Retain the unswizzled implementation and choose by target-box measurement."
 
-  - id: "flydsl-preshuffle-requires-specialized-family"
-    question: "Can B preshuffle be enabled as a flag on the generic FlyDSL HGEMM?"
+  - id: "flydsl-hgemm-config-space"
+    question: "Which tile and split-K values will the FlyDSL HGEMM family actually accept, and how does a shape narrow them?"
     evidence_level: "source_observed"
     status: "candidate_only"
     conditions:
       - "operator_family=gemm"
       - "target_language=flydsl"
-      - "B preshuffle is being considered"
+      - "a configuration is being chosen or searched for a known M, N, K"
     actions:
-      - "Keep b_preshuffle=false on the generic HGEMM and small-M families."
-      - "Route to a specialized preshuffle kernel family and transform B into that family's storage layout before launch."
-      - "Keep b_to_lds=false when the selected specialized family requires preshuffled B."
+      - "Search tile_m within (16, 32, 48, 64, 80, 96, 112, 128, 160, 256), tile_n within (64, 128, 160, 192, 256) and tile_k within (64, 96, 128, 160, 256) rather than treating the 128x128x64 default as the space."
+      - "Cap tile_m at max(96, align_up(2*M, 16)): a tile_m far above M pays for rows that do not exist, and the shipped derivation refuses those candidates outright."
+      - "Take split_k from 1..32, keeping only values that divide K and leave K/split_k divisible by tile_k; every candidate must clear that filter, including 1, 2, 4, 8 and 16. Those five need nothing further; any other divisor also has to leave between 2 and 8 block-K loops per split."
+      - "For a skinny M (a few rows against a deep K) start the search at small tile_m with a split_k above 1, not at the default."
     alternatives:
-      - "Use the generic unswizzled B path as the correctness and performance control."
-      - "Build a new specialized family only if no existing preshuffle contract matches the dtype and shape."
+      - "Keep the library default 128x128x64 with split_k=1 as the control arm to measure against."
+      - "Fix the tile and search only split_k when N or K constrain the tiling to one legal shape."
     why:
-      - "AITER rejects b_preshuffle=true on generic and small-M FlyDSL HGEMM rather than treating it as an interchangeable tuning flag."
-      - "The dispatch validation also rejects combining b_preshuffle with b_to_lds in the current specialized path."
+      - "AITER states the space as module-level option tuples and two derivation helpers, not as one default; the default is one point inside it."
+      - "The derivations encode the shape-dependence directly — tile_m is bounded by M, and split_k by the divisibility of K — so the narrowing rule is readable rather than guessed."
+      - "This card says which candidates are legal and worth generating. It does not say which one wins; that is what the benchmark is for."
     source_evidence:
-      - "src_3c13c906f1632f79"
-      - "src_ed7afe4a3b63947d"
-      - "src_4066d82b6c84c4bf"
-      - "src_8079a8c47c603564"
-      - "src_e4e5ee9af3744891"
+      - "src_426b8960fb14a04f"
+      - "src_62ce0ec6b152ecaa"
+      - "src_3c72689d786ca8be"
+      - "src_fce6be7eb6b247d6"
+      - "src_96320a5bab17a8f5"
+      - "src_562e9940a52a202f"
+      - "src_642476c9b693d5f1"
     measurement_evidence: []
     limitations:
-      - "This is an API/layout compatibility rule, not evidence that preshuffle is profitable."
-      - "The specialized family's preprocessing cost and reuse count must be included in measurement."
+      - "These are the values the library is willing to compile, not values anybody measured as best; every candidate still has to be timed on the target box."
+      - "The option tuples are the generic HGEMM family's. The small-M family has its own, wider, N space — see flydsl-small-m-hgemm-family."
+      - "A candidate that is inside the space can still be rejected at compile time by the tiling and LDS rules — see flydsl-hgemm-tiling-validity."
+
+  - id: "flydsl-hgemm-tiling-validity"
+    question: "Which FlyDSL HGEMM configurations will fail to build at all, before any of them can be slow?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "candidate configurations are being generated automatically or swept"
+    actions:
+      - "Filter candidates before compiling them: N must satisfy N >= tile_n and N % tile_n == 0, and K/split_k must satisfy K/split_k >= tile_k and (K/split_k) % tile_k == 0."
+      - "Require tile_k >= 32 and tile_k % 32 == 0, tile_m % (block_m_warps*16) == 0 and tile_n % (block_n_warps*16) == 0."
+      - "Require each of tile_m*tile_k, tile_n*tile_k and tile_m*tile_n to be divisible by 8*64*block_m_warps*block_n_warps, the per-block vectorised load width."
+      - "Estimate LDS as a_lds = max(stages*tile_m*tile_k*2, tile_m*tile_n*2) when B is not staged through LDS; when it is, the estimate is not a_lds plus something, it becomes align_up(a_lds,16) + stages*tile_n*tile_k*2. Drop candidates over the block budget."
+      - "Do not spend a round on stages or pack_n in the generic family: the kernel compiles a fixed 2-stage pipeline and rejects any stages other than that, and rejects pack_n other than 1. They read like tuning knobs in the signature and are not."
+      - "Check the split-K reduction counter capacity separately; the shipped counter is sized for a bounded number of output tiles."
+    alternatives:
+      - "Let the compiler reject the configuration and catch the exception — acceptable only when the search is small, since each rejection still costs a compile."
+    why:
+      - "AITER performs all of these checks in host code before the kernel is built, so they are the stated contract rather than an inference from a crash."
+      - "An optimizer that cannot separate 'illegal' from 'slow' spends its budget re-discovering the first, and a budgeted search has few rounds to spend."
+    source_evidence:
+      - "src_9ae627bec0096537"
+      - "src_d3f3cb90295b0c40"
+      - "src_5c7e74ddb8a071de"
+      - "src_7c7ddd401ff4aaeb"
+      - "src_c139f07a63569327"
+      - "src_539c4b7bf95dca07"
+    measurement_evidence: []
+    limitations:
+      - "The LDS formula is the library's own estimate for this kernel shape; a rewritten staging scheme changes it and the estimate stops applying."
+      - "Passing every check means the configuration builds, not that it is fast, and not that it is correct in a modified kernel."
+
+  - id: "flydsl-small-m-hgemm-family"
+    question: "What does AITER do differently when M is a handful of rows, and which knobs does that open?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "M is small — the shipped routing threshold is M < 17"
+      - "dtype is bf16"
+    actions:
+      - "Check the architecture first, because on gfx942 this family is not available at all: the compile entry point raises outright, and the config registry returns an empty set before it even looks at the shape. On gfx942 read this card as a porting reference — the design is still the right one for a few rows against a deep K — but do not spend a round calling it, and do not read a shipped small-M config table as something you can pass to this box."
+      - "Treat small M as a different kernel family rather than the generic kernel with a smaller tile: AITER routes it to a separate implementation selected by an explicit kernel_family value."
+      - "In that family tile_m is fixed at 16 with block_m_warps=1 and 2 stages — the M dimension stops being a search axis, and the search moves entirely onto N and K."
+      - "Search tile_n far wider than the generic family allows — the shipped set runs (32, 64, 96, 128, 160, 192, 224, 256, 384, 512, 768, 1024) — with tile_k in (32, 64, 96, 128, 160, 192, 256) and split_k up to 32."
+      - "Consider the axes this family adds and the generic one does not: n_tile_repeat, persistent_n_tiles, waves_per_eu and a b_to_lds unroll factor."
+      - "Respect the combination rules: n_tile_repeat > 1 only without B-in-LDS and only for the two shipped shapes; persistent_n_tiles > 1 only with B-in-LDS, tile_n >= 128, block_n_warps >= 2 and no more persistent tiles than N/tile_n."
+    alternatives:
+      - "Stay on the generic family with tile_m=16 when a second kernel cannot be written or maintained; that is inside the generic space and is the cheaper first move."
+      - "Keep the generic default configuration as the control arm regardless of which family is chosen."
+    why:
+      - "A skinny-M GEMM is bounded by how much of the machine the few M tiles can occupy, and every axis this family adds — repeat, persistent tiles, waves per EU — is an occupancy axis rather than a tiling one."
+      - "The routing threshold, the fixed tile_m and the option sets are stated as named constants in the source, so the boundary between the two families is readable rather than folklore."
+    source_evidence:
+      - "src_38699a8ce57faf0c"
+      - "src_8ffea30406cf0355"
+      - "src_bca963564a69909c"
+      - "src_b446c07f43b11542"
+      - "src_034b3cc6e3fd6aa8"
+      - "src_390ae8578e28ce34"
+      - "src_60717171485c58f5"
+      - "src_ee5e839c6374f38f"
+      - "src_a7c0de9870934fc0"
+      - "src_28936b493eeb6f6f"
+      - "src_1dcdf9c7b6794c6e"
+      - "src_44b5602aacc7e7df"
+      - "src_cceaeb92fb86b540"
+      - "src_bc6d04baf2182ba4"
+      - "src_7eee3f6769348b4c"
+      - "src_e04716b6d760605b"
+    measurement_evidence: []
+    limitations:
+      - "On gfx942 none of this is callable; see the first action. The rest of the card describes the gfx950 path."
+      - "That AITER maintains a separate family for small M is a design precedent, not a measurement that it beats a well-tuned generic configuration on your shape."
+      - "The option sets are what the shipped registry enumerates; they are candidates to search, and nothing here says which member wins."
+      - "The family is bf16-only and its LDS budget is its own; do not carry its constants into the generic kernel."
+
+  - id: "flydsl-preshuffle-b-layout-contract"
+    question: "What does enabling B preshuffle on a FlyDSL HGEMM actually require?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "operator_family=gemm"
+      - "target_language=flydsl"
+      - "B preshuffle is being considered as a candidate"
+    actions:
+      - "Treat b_preshuffle as a change of B's storage layout, not as a boolean tuning flag: the kernel expects B already permuted into the family's shuffle layout, and the host side must either shuffle it or be told it is pre-shuffled."
+      - "Keep b_to_lds=false whenever b_preshuffle=true; the current kernel rejects the combination."
+      - "Keep b_preshuffle=false on the small-M family, which rejects it outright."
+      - "Count the one-off shuffle cost against the number of launches that reuse the same B before claiming a win; for a weight matrix reused across many calls it amortises, for a single call it does not."
+    alternatives:
+      - "Use the unshuffled B path as the correctness and performance control."
+      - "Shuffle B once at load time outside the timed region when the deployment allows it, and measure both accounting rules explicitly."
+    why:
+      - "The generic HGEMM path supports preshuffled B and its dispatch default is even b_preshuffle=true, so this is a supported layout rather than a forbidden one — but the guard rails around it are all layout guard rails."
+      - "The two rejections in the source are specific and different in kind: an unsupported combination (with b_to_lds) and an unsupported family (small-M). Neither is a statement about speed."
+    source_evidence:
+      - "src_93c0f2962c52fdfb"
+      - "src_4c74ced4671a1e5b"
+      - "src_3ee379ecc88d0ad1"
+      - "src_7b5432b56d9acd63"
+      - "src_520242be3bd7400e"
+      - "src_e7db1b030bf2e5c6"
+    measurement_evidence: []
+    limitations:
+      - "This is an API/layout compatibility rule, not evidence that preshuffle is profitable on any shape."
+      - "A benchmark that reuses one pre-shuffled B across iterations measures the steady state, not the first call; state which one you are reporting."
+      - "The card is grounded in the vendored library's contract. A kernel copy that has been edited may have moved these checks."
 
   - id: "flydsl-splitk-hot-loop-schedule-bundle"
     question: "What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?"
@@ -104,20 +267,23 @@ cards:
       - "target_language=flydsl"
       - "kernel uses a split-K hot loop with explicit ROCm scheduling directives"
     actions:
-      - "Include the observed vmem(2), dsrd(2), dsrd(4), mfma(8) directive sequence as one candidate schedule bundle."
-      - "Move or retune the bundle only as a unit against the exact load/MFMA loop, then compare with the unscheduled control."
+      - "Copy the ORDER, not a set of magic numbers: A-fragment ds-reads, then B-fragment ds-reads, then the A and B global loads as vmem, then the MFMA issues, closed by a scheduling barrier."
+      - "Derive each group's count from the loop geometry that produces it — warp K steps times warp M or N steps for the ds-reads, the per-block LDG register counts for the vmem groups, and the full MFMA count for the mfma group — rather than hard-coding the counts observed here."
+      - "Move or retune the bundle as a unit against the exact load/MFMA loop, then compare with the unscheduled control."
     alternatives:
-      - "Leave instruction ordering to the compiler."
-      - "Sweep different vmem, ds-read and MFMA group sizes when the tile or pipeline depth changes."
+      - "Leave instruction ordering to the compiler; that is the control arm and it is often the right answer."
+      - "Use the second shipped scheduler shape instead, which interleaves vmem and mfma through a running counter rather than emitting the groups back to back."
     why:
-      - "The four directives are adjacent in AITER's hot-loop scheduler and describe one ordering pattern; copying one directive in isolation loses that context."
+      - "The directives are adjacent inside one scheduler function and describe a single ordering pattern; copying one directive in isolation loses that context."
+      - "An earlier version of this card recorded the literal group sizes vmem(2)/dsrd(2)/dsrd(4)/mfma(8). Upstream now emits unit-count directives inside geometry-derived loops, so those numbers described one build of one tile and expired quietly. The order survived the rewrite; the constants did not, which is the reason this card states a rule and not a bundle of integers."
     source_evidence:
-      - "src_e6e24f015d6a1411"
-      - "src_29e3a8349d05cc33"
-      - "src_b7c9a5f1e1355a11"
-      - "src_ee6fe2bcbd689094"
+      - "src_5da6811a509d9806"
+      - "src_b0da890c19bc671e"
+      - "src_ed1134f4e4cea08c"
+      - "src_86d7e5af1117454e"
+      - "src_0f18d7f50ce33cbb"
+      - "src_dca1b81d9d2b2edf"
     measurement_evidence: []
     limitations:
-      - "The numeric group sizes are source-observed for one loop and are not portable performance constants."
+      - "Instruction scheduling is the most build-specific thing in this corpus; treat it as a candidate to try late, after tiling and split-K are settled."
       - "Changing tile geometry, LDS stages or access width changes the schedule that must be re-measured."
-

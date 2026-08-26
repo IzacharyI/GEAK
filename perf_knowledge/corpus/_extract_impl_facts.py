@@ -130,6 +130,42 @@ RULES = [
     ("split_k", r"\b(IS_SPLIT_K|IS_SLICE_K)\s*=\s*"),
     ("persistent", r"\b(persistent|PERSISTENT|NUM_XCDS|num_xcds)\w*\s*[=:]\s*"),
 
+    # --- the shipped search space, as opposed to one point in it -----------------------------------
+    # The rules above capture a tile VALUE: `TILE_M = 128` in some file. That answers "what did this
+    # kernel use", which is the wrong question for somebody choosing a configuration — they need the
+    # set the library is willing to compile, and the derivation that narrows it for a shape. AITER
+    # states both, as module-level option tuples and as the `*_options(...)` helpers that filter them.
+    # Missing this was a real gap and not a subtle one: a reader of the corpus could learn that the
+    # default tile_m is 128 without learning that tile_m 16 exists, which is precisely the knob a
+    # skinny-M shape needs. A single value read as the whole space is worse than no value.
+    # Anchored to column 0: a module-level constant is the library's declared space, an indented
+    # ALL-CAPS tuple is a local intermediate inside somebody's kernel body. The first is a fact about
+    # what can be configured; the second is arithmetic, and mixing them makes the space look larger
+    # and vaguer than it is.
+    ("config_space", r"^([A-Z][A-Z0-9_]{2,})\s*=\s*[\(\[]"),
+    ("config_space", r"\bdef\s+(\w*_options|iter_\w+_configs?|\w*_registry_variants)\s*\("),
+    # Caps and floors: the boundary of the space, which is a different fact from its members. Written
+    # as `HGEMM_MAX_SPLIT_K`, `MAX_LDS_BYTES`, `SMALL_M_KERNEL_MAX` — prefix optional, suffix optional.
+    ("config_limit", r"\b((?:[A-Z][A-Z0-9_]*_)?(?:MAX|MIN)(?:_[A-Z0-9_]+)?)\s*=\s*([0-9]+)"),
+    # What makes a configuration legal at all: LDS-budget estimators and the validators that reject a
+    # tiling before it reaches the compiler. An optimizer that cannot tell "slow" from "will not
+    # build" spends its budget on the second.
+    ("config_validity", r"\bdef\s+(\w*(?:validate|_check_)\w*)\s*\("),
+    ("config_validity", r"\bdef\s+(\w*estimate\w*|\w*lds_bytes\w*)\s*\("),
+    # Which kernel FAMILY a shape is routed to. Named constants rather than a comment, and the
+    # families do not share a config surface — a knob that exists in one is absent from the other.
+    ("kernel_family", r"\b(KERNEL_FAMILY_[A-Z0-9_]+)\s*=\s*['\"](\w+)['\"]"),
+    # The comparison sites only — those are the routing decision. The dozen places that merely pass
+    # `kernel_family=` through say the same thing a dozen times.
+    ("kernel_family", r"\bkernel_family\s+in\s+[\(\[]|\bkernel_family\s*==\s*(\w+)"),
+    # Architecture gates. Whether a code path exists on the box you are on outranks every tuning fact
+    # about it, and the corpus was silent on this: the small-M family raises outright on gfx942, and
+    # nothing in the extracted evidence said so. A card that recommends a path the target architecture
+    # refuses to compile does not cost a little accuracy, it costs a whole round. Match the comparison
+    # sites against an arch name, not every mention of one.
+    ("arch_gate", r"(?:gpu_arch|GPU_ARCH|arch|target_gfx|get_gfx\(\)|get_rocm_arch\(\))\s*[=!]=\s*['\"](gfx[0-9a-z]+)['\"]"),
+    ("arch_gate", r"['\"](gfx[0-9a-z]+)['\"]\s*(?:not\s+)?in\s+|\bin\s+\{?\(?\s*['\"](gfx[0-9a-z]+)['\"]"),
+
     # --- LDS ------------------------------------------------------------------------------------
     ("lds_stage", r"\b(STAGES|lds_stage|LDS_STAGE|num_stages|NUM_STAGES)\s*[=:]\s*([0-9]+)"),
     ("lds_swizzle", r"\bdef\s+(swizzle_\w+)\s*\("),
