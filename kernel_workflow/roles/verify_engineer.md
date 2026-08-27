@@ -207,12 +207,25 @@ absolute per-case latencies. The script trusts only your numbers.
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
   "reps": 5,
   "null_arm_pct": 0.0,
+  "paired_readings": [
+    {"guard": "8192_uniform", "base": 5.42, "cand": 5.19},
+    {"guard": "8192_uniform", "base": 5.44, "cand": 5.21}
+  ],
   "activation_confirmed": "yes|no|unknown",
   "activation_evidence": "the command you ran and the marker output it printed",
   "artifact_distinct": "yes|no|n/a|unknown  — n/a for a non-JIT candidate; unknown if you could not run the proof",
   "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
   "artifact_hash_candidate": "the same quantity for the candidate arm",
   "touched_files": ["aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py", "..."],
+  "accuracy": {
+    "metric": "relL2", "value": 0.0, "threshold": 0.10,
+    "guard": "8192_uniform", "method": "relative L2 of candidate vs reference output on the target route"
+  },
+  "launch_shape": {
+    "launches_base": 0, "launches_cand": 0, "per_rank": true, "target": 2,
+    "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
+    "how_counted": "rocprofv3 kernel-dispatch trace record count per EP rank for one operator call | launch-marker tally"
+  },
   "overlap": {
     "measured": "yes|no|unknown",
     "fraction": 0.0, "cu_fraction": 0.0,
@@ -224,6 +237,29 @@ absolute per-case latencies. The script trusts only your numbers.
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }
 ```
+
+**`paired_readings` are the RAW interleaved timings behind your number, one row per A,B pair, tagged
+with the route.** The driver classifies the bimodal 512 guards arm-blind and conditions on the state
+from these rows, and it checks the win came from a TARGET route (the uniform route on this campaign),
+not a skew rail. Report `base`/`cand` as the paired rank-max ms for each pair on each guard you ran.
+Omitting them leaves your aggregate `verified_geomean` in charge unchanged, but then the driver cannot
+tell an under-sampled bimodal guard or a skew-only reading from a clean one, and marks nothing.
+
+**`accuracy` carries acceptance criterion 4's NUMBER (relL2 < 0.10).** `correctness:"pass"` is a
+binary the script can only read as a string; the acceptance bar is a threshold, so report the actual
+relative-L2 error and the threshold it was checked against, measured on the target route. When you
+report it, functionalAcceptance holds the candidate to `value < threshold` mechanically — a "pass"
+sitting on top of a relL2 of 0.4 is refused. Omit it only when there is genuinely no reference output
+to compare against; a run that never reports it falls back to the `correctness` string unchanged.
+
+**`launch_shape` carries acceptance criterion 1 (fully fused, TWO launches).** Count the kernel
+launches per EP rank for ONE operator call, both arms, in the same collection: `launches_base` for
+the tree you started from, `launches_cand` for the candidate. The target is 2 — the fused megakernel
+plus the one separate pre-dispatch quant launch. A candidate that fused dispatch+gemm1 but still
+launches combine on its own is **three** launches and must report `launches_cand:3`, not omit the
+field: omitting it leaves criterion 1 unjudged, which reads the same as an unfused candidate slipping
+through. `how_counted` is the evidence — a trace record count or a launch-marker tally — because a
+count with no method is a guess.
 Be skeptical and exact. Your number becomes the official round result.
 
 **`reps` and `null_arm_pct` are how your number defends itself.** `reps` is the count of interleaved

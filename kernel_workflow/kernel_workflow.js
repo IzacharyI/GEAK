@@ -455,6 +455,10 @@ const SETUP_SCHEMA = obj({
       id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
       geomean: { type: 'number' }, patch: { type: 'string' },
       files: { type: 'array', items: { type: 'string' } },
+      // The fusion chain this entry belongs to, identified by its terminal rung. Carried across
+      // waves so a chain's own producer commit does not age its consumer half off the shelf. Empty
+      // for a standalone optimisation. See the candidate_shelf region.
+      chain_id: { type: 'string' },
       footprint: { type: 'string', enum: ['known', 'unknown'] },
       base_round: { type: 'number' }, shelved_round: { type: 'number' },
       absorbed: { type: 'boolean' },
@@ -792,6 +796,30 @@ const VERIFY_SCHEMA = obj({
   per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
   graph_safe: { type: 'string' },
   liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
+  // ACCURACY. Acceptance criterion 4 is "relL2 < 0.10", and until now nothing carried the number: a
+  // free-text `correctness` that the script only checks `startsWith('pass')` cannot be compared to a
+  // threshold, so "precision is fine" was an executor's judgement with no figure travelling behind
+  // it. Declared so functionalAcceptance can check `value < threshold` mechanically and the report
+  // can print it. `metric` is the name of the error measure (relL2 here); `guard`/`route` is which
+  // route it was measured on, because a relL2 read on one route says nothing about another. Absent
+  // fields degrade to the old string check rather than crashing a run that never reports them.
+  accuracy: obj({
+    metric: { type: 'string' }, value: { type: 'number' }, threshold: { type: 'number' },
+    guard: { type: 'string' }, method: { type: 'string' },
+  }, []),
+  // LAUNCH SHAPE. Acceptance criterion 1 is "fully fused, TWO launches": one megakernel per EP rank
+  // plus the one separate pre-dispatch quant launch. Nothing in the workflow counted launches, so a
+  // candidate that fused dispatch+gemm1 but still launched combine separately (three launches) was
+  // indistinguishable from a real two-launch fusion. `launches_base`/`launches_cand` are the kernel
+  // launch counts per EP rank for one operator call, read PAIRED in the same collection; `target` is
+  // the acceptance shape (2 for this campaign). `how_counted` is the evidence -- a trace record
+  // count, a launch-marker tally -- because a claimed count with no method is a guess. Absent fields
+  // do not crash a run; they leave criterion 1 UNJUDGED for that candidate, which the report says.
+  launch_shape: obj({
+    launches_base: { type: 'number' }, launches_cand: { type: 'number' },
+    per_rank: { type: 'boolean' }, target: { type: 'number' },
+    stages_fused: { type: 'array', items: { type: 'string' } }, how_counted: { type: 'string' },
+  }, []),
   // How the number above was actually obtained. `reps` = interleaved A,B,A,B pairs (NOT total runs);
   // `null_arm_pct` = the delta measured by an arm doing byte-identical work, i.e. this run's own
   // noise floor. A claimed win smaller than |null_arm_pct| is unreadable no matter how it was
@@ -799,6 +827,17 @@ const VERIFY_SCHEMA = obj({
   // surfaced in the log and report, because "1 rep, no null arm" has already produced a -0.44%
   // "win" that sat inside a 1.45% per-case spread.
   reps: { type: 'number' }, null_arm_pct: { type: 'number' },
+  // The RAW interleaved readings behind `reps`, one row per pair, tagged with the guard/route each
+  // was taken on. Declared so the driver can classify the bimodal 512 guards ARM-BLIND and condition
+  // on the state instead of averaging over two discrete ones -- the doctrine in benchmark_engineer.md
+  // that until now lived only as prose because nothing carried the raw pairs to the code that applies
+  // it (modeSplit/pairedModeAware). It also lets the driver check the number came from a TARGET route
+  // and not a skew rail: on this campaign the metric is the uniform route's own time, and a win read
+  // off `512_rank-mixed-skew` is out of scope. `base`/`cand` are the paired rank-max timings (ms) for
+  // one A,B pair. Absent leaves the aggregate `verified_geomean` in charge exactly as before.
+  paired_readings: { type: 'array', items: obj({
+    guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
+  }, ['guard', 'base', 'cand']) },
   // Did the patched code path actually EXECUTE during the measured run? `yes` requires the
   // path_marker to have been observed; `no` means the arm labelled "candidate" ran baseline code,
   // which makes the whole comparison void rather than negative. `unknown` is treated as `no` — an
@@ -1986,16 +2025,47 @@ function stepRoleOf(d) {
 // The four functional conditions, each reported by name. "It failed acceptance" and "it failed
 // acceptance because its path was never taken" are different findings and only the second is
 // actionable, so the caller gets the list rather than a boolean.
+// A verification that actually COMPLETED: the verifier ran and produced a correctness+timing result.
+// Shared by functionalAcceptance (the enabling path) and the candidate `verified` filter (the
+// terminal path) so the two cannot disagree about whether a run counts -- and they did. A terminal
+// fusion is CORRECT but SLOWER the first time it lands, which the verifier reports as
+// status:'regression' (see verify_engineer.md: "shows a regression ... Report it as
+// status:'regression' with the numbers anyway"). functionalAcceptance accepted that; the candidate
+// filter demanded status==='verified' exactly and dropped it -- so the consumer half of a fusion was
+// admitted on the enabling path and rejected on the terminal path for being exactly what it is.
+// Excludes only the states where the comparison never happened (apply_failed) or was tainted
+// (plagiarized, harness_modified, inactive/correctness handled separately by the callers).
+function verifyCompleted(ver) {
+  if (!ver) return false;
+  const s = String(ver.status == null ? '' : ver.status).toLowerCase();
+  return ['verified', 'regression', 'slower'].includes(s) || s.startsWith('verif');
+}
+
 function functionalAcceptance(ver) {
   const s = (v) => String(v == null ? '' : v).toLowerCase();
   const missing = [];
   if (!ver) return { pass: false, missing: ['no verify result at all'] };
-  if (!['verified', 'regression', 'slower'].includes(s(ver.status)) && !s(ver.status).startsWith('verif')) {
+  if (!verifyCompleted(ver)) {
     missing.push(`verify did not complete (status=${ver.status || 'none'})`);
   }
   if (!s(ver.correctness).startsWith('pass')) missing.push('correctness did not pass');
+  // Acceptance criterion 4 carries a NUMBER (relL2 < 0.10), and a free-text `correctness: 'pass'`
+  // cannot be compared to it. When the verifier reports `accuracy`, hold the candidate to the
+  // threshold mechanically -- a "pass" string sitting on top of a relL2 of 0.4 is not a pass. When
+  // it is not reported, the string check above stands, so a run that never wired accuracy is
+  // unchanged rather than crashed.
+  const acc = (ver && ver.accuracy) || {};
+  const accVal = Number(acc.value), accThr = Number(acc.threshold);
+  if (Number.isFinite(accVal) && Number.isFinite(accThr) && !(accVal < accThr)) {
+    missing.push(`accuracy ${acc.metric || 'error'}=${accVal} is not < threshold ${accThr}`);
+  }
   if (s(ver.activation_confirmed) !== 'yes') missing.push('the new path was not confirmed to run');
   if (!['pass', 'n/a', ''].includes(s(ver.liveness))) missing.push('liveness failed (hang or timeout)');
+  // Graph capture/replay safety is part of the same "does it run correctly under the real harness"
+  // bar as liveness: criterion 4 wants 1000 CUDA-Graph replays per route with no deadlock, and a
+  // kernel that captures then replays wrong has failed FUNCTION, not speed. Reported-and-bad fails;
+  // `n/a`/empty is the honest answer off the graph-captured path and stays a pass.
+  if (!['pass', 'n/a', ''].includes(s(ver.graph_safe))) missing.push('graph capture/replay is not safe');
   return { pass: missing.length === 0, missing };
 }
 
@@ -2056,13 +2126,80 @@ function chainDebtReport(debt, roundNow, ladderMeasured) {
 }
 // <</REPLAY:enabling_step>>
 
+// <<REPLAY:terminal_forcing>>
+// NEAR THE END OF THE BUDGET, FORCING REPLACES ADVISING.
+//
+// roadmapLadderGate is advisory: it prints "the terminal rung was not planned" and lets the round
+// proceed. That is correct while there is budget to both explore a lever AND still come back and
+// close the chain. It is wrong the moment there is not. A wave that commits three enabling steps,
+// leaves their terminal fusion rung unplanned every round because there is "one more round to
+// spare", and then runs out of budget ships a tree that is SLOWER than it found it and a fusion that
+// was never closed -- the exact half-fusion this project reached. The advisory never becomes an
+// action, so at the end nobody DECIDED to abandon the chain; each round independently decided it
+// could wait, and the sum was abandonment.
+//
+// So this converts the advisory into an action at the point it stops being safe to defer. Force the
+// round onto an owed terminal rung when EITHER a chain is overdue (a prerequisite has sat unpaid for
+// CHAIN_DEBT_MAX_ROUNDS) OR there is no longer slack to both explore and still pay every open chain
+// (remaining <= owed count + 1). Returns null when nothing is owed, or when the planner is already
+// taking one of the owed rungs -- forcing is the exception, and a planner closing the chain on its
+// own is never overridden.
+function terminalRungToForce(debtReport, ladder, plannedRungs, remaining) {
+  const open = (debtReport && Array.isArray(debtReport.open)) ? debtReport.open : [];
+  if (!open.length) return null;
+  const idOf = (c) => String((c && c.id) || String((c && c.title) || '').trim().split(/\s+/)[0] || '').trim();
+  const planned = new Set((Array.isArray(plannedRungs) ? plannedRungs : []).map((r) => String(r).trim()));
+  const owed = open
+    .map((r) => ({ rung: String(r.enables || '').trim(), oldest: Number(r.oldest_round) }))
+    .filter((r) => r.rung && !planned.has(r.rung));
+  if (!owed.length) return null;
+  const overdue = new Set(((debtReport && Array.isArray(debtReport.overdue)) ? debtReport.overdue : [])
+    .map((r) => String(r.enables || '').trim()));
+  const budgetTight = Number(remaining) <= owed.length + 1;
+  const anyOverdue = owed.some((r) => overdue.has(r.rung));
+  if (!budgetTight && !anyOverdue) return null;
+  // Oldest-owed (and overdue-first) is the chain closest to being abandoned, so close it first.
+  owed.sort((a, b) => {
+    const ao = overdue.has(a.rung) ? 0 : 1, bo = overdue.has(b.rung) ? 0 : 1;
+    if (ao !== bo) return ao - bo;
+    return (a.oldest || Infinity) - (b.oldest || Infinity);
+  });
+  const rungId = owed[0].rung;
+  const rung = (Array.isArray(ladder) ? ladder : []).find((c) => idOf(c) === rungId) || null;
+  return { rungId, rung, reason: overdue.has(rungId) ? 'overdue' : 'budget_tight' };
+}
+// <</REPLAY:terminal_forcing>>
+
 const CLAIM = claimBoundary(primSpeedup);
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
+// Acceptance criterion 1's target launch count per EP rank: the fused megakernel plus the one
+// separate pre-dispatch quant launch = 2. Configurable so a campaign with a different fusion target
+// can set it, but the default is the shape this project is judged against. See launchVerdict.
+const LAUNCH_TARGET = Number.isFinite(Number(A.launch_target)) && Number(A.launch_target) > 0
+  ? Number(A.launch_target) : 2;
+// The routes the promotion metric is allowed to come from. This is the uniform-route campaign; a
+// skew route is kept in the harness for do-no-harm but is out of scope AS A TARGET. Empty means "not
+// configured", and analyzeGuards then falls back to any guard named *uniform*, else all guards. See
+// analyzeGuards and knowledge/measurement scope.
+const TARGET_GUARDS = (Array.isArray(A.target_guards) ? A.target_guards
+  : String(A.target_guards || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
 // Overlap caveats, accumulated across rounds. They travel to the report for the same reason the
 // task-graph caveat does: the thing they qualify — whether a fused win was ever shown to BE an
 // overlap win — is invisible in the final number, and by report time nobody re-reads the log.
+// Set true the first time any verified candidate reports a launch count at or below the target: the
+// acceptance shape (criterion 1) was actually reached by something this wave, as opposed to merely
+// never checked. It only ratchets true; a later three-launch candidate does not unset it.
+let TWO_LAUNCH_REACHED = false;
 const OVERLAP_CAVEATS = [];
+// Launch-shape caveats: how many launches each candidate reached, and whether the two-launch fused
+// shape (acceptance criterion 1) was actually met. Carried for the same reason as the overlap
+// caveats -- an unfused candidate that reads like a fused one is invisible unless the count travels.
+const LAUNCH_CAVEATS = [];
+// Guard-conditioning caveats: a target-route reading that was under-sampled for its bimodal state, or
+// a wave whose only readings were on off-target (skew) rails. Carried to the report because "the win
+// was on a skew guard" is invisible in a single aggregate number.
+const GUARD_CAVEATS = [];
 // Withdrawn timing readings, same rationale: a number that was voided at round 2 is invisible in a
 // report that only prints what survived, and "no number" and "a number we refuse to read" are the
 // two states this project has most often confused.
@@ -2132,6 +2269,20 @@ function recordRungOutcome(id, outcome) {
   const lg0 = roadmapLadderGate(LADDER, [], dispatchedRungs);
   if (lg0.summary) log(lg0.summary);
   if (lg0.caveat) log(lg0.caveat);
+}
+// Under the fusion campaign (working_kernel) an empty ladder is not merely advisory: it makes the
+// rung / chain-debt / terminal-forcing machinery inert, so a staged fusion cannot be tracked to its
+// terminal rung and the run degrades into independent one-shot rounds -- the state this project
+// reached and then reported as 1.00x. It is not hard-failed here (a degraded Analyze may legitimately
+// return no directions and be re-requested by analyze_resume_fallback), but it is escalated into the
+// report so the absence is a decision on the record rather than a silence.
+if (WORKING_KERNEL && !LADDER.length) {
+  const msg = 'LADDER EMPTY under objective=working_kernel: Analyze returned no candidate_directions, ' +
+    'so there is no staged path to a fused terminal rung. The chain-debt and terminal-forcing ' +
+    'machinery has nothing to act on and every round will start from the profile. Re-run Analyze so ' +
+    'it emits the fusion ladder, or this wave cannot converge on the two-launch shape by construction.';
+  log(msg);
+  CHAIN_CAVEATS.push(`setup: ${msg}`);
 }
 
 // Surface prior art loudly. A direction that already exists somewhere is a measurement, not a round
@@ -2710,6 +2861,13 @@ function shelfAdd(shelf, entries, round, max) {
     const row = {
       id: e.id, title: e.title || '', specialty: e.specialty || '',
       geomean: Number(e.geomean) || 0, patch: e.patch || '', files,
+      // The fusion chain this entry belongs to, identified by the TERMINAL rung it closes on (both
+      // halves of a chain share it: an enabling step names it in `enables`, a terminal step in
+      // `roadmap_rung`). Carried so shelfEligible can tell "your own producer touched these files"
+      // -- which is expected, because the two halves of a fusion edit the same files by construction
+      // -- apart from "an unrelated winner touched these files", which is what actually staleness a
+      // patch. Empty for a standalone optimisation, which then ages against every absorption as before.
+      chain_id: String(e.chain_id || '').trim(),
       // Three-valued on purpose, same reason `artifact_distinct` is: "we could not tell" has to stay
       // sayable, or the only expressible answer is the one that flatters the candidate.
       footprint: files.length ? 'known' : 'unknown',
@@ -2722,15 +2880,28 @@ function shelfAdd(shelf, entries, round, max) {
   return { shelf: out.slice(0, max), evicted: out.slice(max) };
 }
 
-// `absorbedByRound` maps round number -> the files CANONICAL took on in that round.
+// `absorbedByRound` maps round number -> what CANONICAL took on in that round. Each value is EITHER a
+// plain file array (a standalone commit, no chain) OR `{files, chain_id}` (a commit that was part of
+// a fusion chain). The object form is what lets a chain's own producer commit stop aging the chain's
+// own consumer half off the shelf.
 function shelfEligible(shelf, absorbedByRound, k) {
+  const norm = (v) => Array.isArray(v)
+    ? { files: v, chain_id: '' }
+    : { files: (v && v.files) || [], chain_id: String((v && v.chain_id) || '').trim() };
   const eligible = [], stale = [], unknown = [];
   for (const e of shelf) {
     if (e.absorbed) continue;
     if (e.footprint !== 'known') { unknown.push(e); continue; }
     const moved = new Set();
     for (const r of Object.keys(absorbedByRound || {})) {
-      if (Number(r) > e.base_round) for (const f of absorbedByRound[r]) moved.add(shelfFile(f));
+      if (Number(r) <= e.base_round) continue;
+      const a = norm(absorbedByRound[r]);
+      // A commit on the SAME chain as this shelf entry does not age it. The producer and consumer
+      // halves of a fusion touch the same files by construction, so file-overlap with your own
+      // chain's earlier half is the intended relationship, not a conflict -- aging on it is exactly
+      // what left the consumer half permanently stale and the fusion permanently half-built.
+      if (a.chain_id && e.chain_id && a.chain_id === e.chain_id) continue;
+      for (const f of a.files) moved.add(shelfFile(f));
     }
     const clash = e.files.filter((f) => moved.has(f));
     if (clash.length) stale.push({ ...e, clash }); else eligible.push(e);
@@ -2888,6 +3059,45 @@ function attributionVerdict(ver, opts) {
 }
 // <</REPLAY:attribution_gate>>
 
+// <<REPLAY:launch_gate>>
+// IS THE FUSION ACTUALLY FUSED? See acceptance criterion 1: "fully fused, TWO launches" — one
+// megakernel per EP rank plus the one separate pre-dispatch quant launch. This is the criterion the
+// whole campaign exists to reach, and until now nothing in the workflow could see it: a candidate
+// that fused dispatch+gemm1 but still launched combine on its own ran three launches and read
+// exactly like a real two-launch fusion, because no field counted launches.
+//
+// Like the overlap gate and unlike the attribution gate, this NEVER rejects. A candidate can be a
+// correct, faster kernel and not yet be at the two-launch shape — that is a partial rung, not a
+// wrong result, and failing it would teach the loop to stop reporting how many launches it is at.
+// What it does is make the count a stated number that travels into the round log and the report, and
+// tell the ladder whether the TERMINAL fusion shape has actually been reached (`shape_met`), so a
+// wave cannot report "fusion rung closed" on a candidate that is still three launches.
+//
+// Three-valued on the same principle as overlap.measured: `unjudged` (no count reported) is a HOLE,
+// not a pass. Collapsing it into "met" is exactly how an unfused candidate would read as accepted.
+function launchVerdict(ver, target) {
+  const ls = (ver && ver.launch_shape) || {};
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
+  const cand = num(ls.launches_cand), base = num(ls.launches_base);
+  const tgt = num(ls.target) != null ? num(ls.target) : (num(target) != null ? num(target) : 2);
+  if (cand == null) {
+    return { state: 'unjudged', shape_met: false, caveat:
+      `Launch count NOT reported, so acceptance criterion 1 (two launches) is UNJUDGED for this ` +
+      `candidate. A fusion that collapsed dispatch+gemm1 but still launches combine separately is ` +
+      `three launches and reads identical to a real two-launch fusion here. Report ` +
+      `launch_shape.launches_cand (per EP rank, one operator call) with how_counted.` };
+  }
+  if (cand <= tgt) {
+    return { state: 'met', shape_met: true, caveat: base != null && base !== cand
+      ? `Launch count ${base} -> ${cand} (target ${tgt}); the two-launch fused shape is reached.` : '' };
+  }
+  return { state: 'above_target', shape_met: false, caveat:
+    `Launch count is ${cand}${base != null ? ` (from ${base})` : ''}, target ${tgt}. The stages are ` +
+    `not all fused yet -- this is a partial rung, not a wrong result, but the TERMINAL two-launch ` +
+    `shape has NOT been reached and the fusion rung must not be reported as closed on it.` };
+}
+// <</REPLAY:launch_gate>>
+
 // <<REPLAY:bimodal_split>>
 // THE 512 GUARDS ARE NOT NOISY, THEY ARE BIMODAL — and the escape hatch the doctrine prescribes for
 // them does not work on them.
@@ -2992,6 +3202,61 @@ function pairsNeeded(wantFastPairs, slowRatePct) {
   const s = Math.min(0.9, Math.max(0, (Number(slowRatePct) || 0) / 100));
   const usable = (1 - s) * (1 - s);
   return usable <= 0 ? null : Math.ceil(wantFastPairs / usable);
+}
+
+// THE CALL SITE the three functions above never had. It groups the verifier's raw interleaved
+// readings by guard, classifies each guard arm-blind, and reports the conditioned median plus whether
+// enough BOTH-fast pairs were collected -- turning the bimodal doctrine from prose the agent might
+// follow into arithmetic the driver applies. It also enforces the campaign's TARGET-route scope: the
+// promotion metric is the uniform route's own time, and a reading on a skew rail is reported for
+// do-no-harm but is not a number a win may be claimed on. Returns { available, guards, target_median,
+// off_target, caveats }; empty/absent readings leave the aggregate geomean in charge, unchanged.
+function analyzeGuards(pairedReadings, targetGuards, wantFastPairs) {
+  const rows = Array.isArray(pairedReadings) ? pairedReadings : [];
+  if (!rows.length) return { available: false, guards: [], target_median: null, off_target: [], caveats: [] };
+  const byGuard = new Map();
+  for (const r of rows) {
+    const g = String((r && r.guard) || '').trim() || '(unnamed)';
+    if (!byGuard.has(g)) byGuard.set(g, []);
+    byGuard.get(g).push({ base: Number(r.base), cand: Number(r.cand) });
+  }
+  // Target scope: the explicit set if configured; else any guard whose name says "uniform" (this
+  // campaign's target route); else, if none match, every guard is target and nothing is filtered.
+  let targets = new Set((Array.isArray(targetGuards) ? targetGuards : []).map((g) => String(g).trim()).filter(Boolean));
+  if (!targets.size) {
+    const uni = [...byGuard.keys()].filter((g) => /uniform/i.test(g));
+    if (uni.length) targets = new Set(uni);
+  }
+  const allTarget = targets.size === 0;
+  const want = Number.isFinite(Number(wantFastPairs)) && Number(wantFastPairs) > 0 ? Number(wantFastPairs) : 10;
+  const guards = [], caveats = [];
+  let targetMedian = null;
+  for (const [g, pairs] of byGuard) {
+    const analysis = pairedModeAware(pairs, undefined);
+    const isTarget = allTarget || targets.has(g);
+    const slow = analysis.conditioned && analysis.occupancy
+      ? Math.max(analysis.occupancy.base.pct || 0, analysis.occupancy.cand.pct || 0)
+      : 0;
+    const needed = pairsNeeded(want, slow);
+    const usableFast = analysis.conditioned ? (analysis.fast.n || 0) : (analysis.all.n || 0);
+    const median = analysis.conditioned ? analysis.fast.median : analysis.all.median;
+    guards.push({ guard: g, is_target: isTarget, conditioned: analysis.conditioned,
+      median, fast_pairs: usableFast, pairs_needed: needed, occupancy: analysis.occupancy || null });
+    if (isTarget && targetMedian == null && Number.isFinite(Number(median))) targetMedian = Number(median);
+    if (isTarget && needed != null && usableFast < want && Number(analysis.all.n) < needed) {
+      caveats.push(`${g}: ${usableFast} usable fast-state pair(s) of the ~${needed} needed at a ` +
+        `${Math.round(slow)}% slow-state rate; the mode-aware median is UNDER-SAMPLED, so any win on ` +
+        `this guard is PROVISIONAL until more pairs are collected.`);
+    }
+  }
+  const offTarget = guards.filter((r) => !r.is_target).map((r) => r.guard);
+  if (!allTarget && targetMedian == null && offTarget.length) {
+    caveats.push(`No reading on a TARGET route [${[...targets].join(', ')}]; the only readings are on ` +
+      `off-target guard(s) [${offTarget.join(', ')}], which are do-no-harm rails and NOT the metric. ` +
+      `This measured nothing it is allowed to claim a win on -- the exact state a wave once shipped a ` +
+      `number from a skew guard in.`);
+  }
+  return { available: true, guards, target_median: targetMedian, off_target: offTarget, caveats };
 }
 // <</REPLAY:bimodal_split>>
 
@@ -3100,6 +3365,44 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
     gpu_id: GPU_RESOURCE.specForIndex(i),
     out_dir: `${EVAL_DIR}/round_${round}/engineer_${i}`,
   }));
+  // Near the end of the budget, forcing replaces advising: if enabling steps are committed and their
+  // terminal fusion rung is still open, the remaining lease is spent CLOSING it rather than exploring
+  // a new lever. Runs before the deep/working clamps so the forced terminal is the direction that
+  // gets the lease. See terminalRungToForce and roadmapLadderGate (the advisory this makes actionable).
+  {
+    const debtReport = chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED);
+    const plannedRungs = directions.map((d) => String(d.roadmap_rung || '').trim()).filter(Boolean);
+    const force = terminalRungToForce(debtReport, LADDER, plannedRungs, remaining);
+    if (force) {
+      const c = force.rung || {};
+      const forced = {
+        idx: 0,
+        id: `r${round}_close_${force.rungId}`,
+        title: c.title || `close fusion rung ${force.rungId}`,
+        specialty: 'distributed',
+        focus_files: Array.isArray(c.focus_files) ? c.focus_files : [],
+        expected_speedup: Number(c.expected_speedup) || undefined,
+        roadmap_rung: force.rungId,
+        step_role: 'terminal',
+        rung_deviation: `forced onto terminal rung ${force.rungId} (${force.reason}): its enabling ` +
+          `steps are committed and this rung is the only thing that pays their debt, so the remaining ` +
+          `budget is spent closing the fusion rather than exploring.`,
+        prompt: `Close the fusion. Enabling/producer steps for terminal rung "${force.rungId}"` +
+          `${c.title ? ` (${c.title})` : ''} are already committed to the canonical tree: their ` +
+          `completion signalling and buffers exist but nothing consumes them yet. Write the CONSUMER ` +
+          `half that collapses the launches into the two-launch fused shape, and report launch_shape, ` +
+          `accuracy (relL2), overlap and attribution. This is step_role=terminal: it is judged on ` +
+          `FUNCTION and MEASUREMENT -- it may be slower than the tree the first time it lands and is ` +
+          `still committed on RUNNING -- not on beating the current best. ${c.rationale || c.prompt || ''}`,
+        gpu_id: GPU_RESOURCE.specForIndex(0),
+        out_dir: `${EVAL_DIR}/round_${round}/engineer_0`,
+      };
+      log(`Round ${round}: FORCING terminal rung ${force.rungId} (${force.reason}); ` +
+          `${directions.length} planned direction(s) deferred. The budget no longer has slack to both ` +
+          `explore and close every open chain, and an unclosed chain ships a tree slower than it started.`);
+      directions = [forced];
+    }
+  }
   // deep_explore is a DEDICATED-ROUND, heavyweight mandate: if the plan includes one, run ONLY it this
   // round (its broad ground-up rewrite touches many files and can't be merged with specialist patches),
   // and charge DEEP_COST against the budget. Otherwise each specialist direction costs 1.
@@ -3185,8 +3488,15 @@ ${readLine} If KK_OPERATOR is non-empty, also consult the operator/language SOTA
 KERNEL_KNOWLEDGE_DIR per your role's "operator/language SOTA knowledge (REFERENCE ONLY)" section
 (facts/how-to only; measure everything; never go below baseline).
 Save best_patch.diff via \`cd <KERNEL_PATH> && git add -A && git diff HEAD > ${d.out_dir}/best_patch.diff\`
-when geomean>1.0 (stage first: a plain \`git diff\` omits files you CREATED, and a patch missing a new
-file applies cleanly and then fails at import).
+whenever your implementation BUILDS and passes correctness -- NOT only when geomean>1.0. A step that
+is a prerequisite for a later fusion (step_role=enabling) and the final consumer half of a fusion are
+both SLOWER than the tree on their own, by construction, and the workflow decides their fate from the
+saved patch: an enabling step that leaves no patch cannot be committed on function, and a terminal
+fusion that leaves no patch cannot be committed on RUNNING. Withholding the diff because it is not yet
+faster is how this project shipped half a fusion nobody could carry forward. (Stage first: a plain
+\`git diff\` omits files you CREATED, and a patch missing a new file applies cleanly and then fails at
+import.) Report your measured geomean honestly whatever it is; do not suppress a patch to avoid a
+number below 1.0.
 
 ## Inputs
 ${cfg({
@@ -3412,7 +3722,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // passed verification, not only the ones that describe themselves as fusion: a direction's own
   // account of what it did is exactly the thing that must not decide whether the evidence is checked.
   for (const r of clean) {
-    if (!(r.ver && r.ver.status === 'verified' && r.ver.correctness === 'pass' && !r.inactive)) continue;
+    if (!(r.ver && verifyCompleted(r.ver) && r.ver.correctness === 'pass' && !r.inactive)) continue;
     // An enabling step makes no win claim, so there is no win to attribute to the wrong kernel. Its
     // bar is functional acceptance plus its cost budget, both applied below.
     if (stepRoleOf(r.d) === 'enabling') continue;
@@ -3440,8 +3750,17 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     }
   }
 
-  const verified = clean.filter(r => r.ver && r.ver.status === 'verified' &&
-    r.ver.correctness === 'pass' && primSpeedup(r.ver) > 1.0 && !r.inactive &&
+  const verified = clean.filter(r => r.ver && verifyCompleted(r.ver) &&
+    r.ver.correctness === 'pass' &&
+    // Under objective=working_kernel the commit gate is "does it RUN", not "is it faster" (see the
+    // commit block below and OBJECTIVE item 3). The TERMINAL step of a staged fusion is SLOWER than
+    // the tree the first time it is written -- it has only just acquired its consumer and still
+    // carries the signalling and the second buffer the enabling steps installed -- so gating
+    // `verified` on >1.0 here deletes the fused megakernel before it can ever be committed on
+    // RUNNING. That is precisely how this project stopped at half a fusion: the producer half was
+    // enabling (exempt from this filter) and the consumer half hit exactly this line. In speedup
+    // mode the >1.0 bar stays, because there a candidate that is not faster has nothing to offer.
+    (WORKING_KERNEL || primSpeedup(r.ver) > 1.0) && !r.inactive &&
     !r.attribution_rejected &&
     // An enabling step never competes for the round win: it is expected to be below 1.0 and it has
     // its own commit path below. One that happens to measure above 1.0 is still not a win claim --
@@ -3492,6 +3811,15 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     if (!Number.isFinite(reps) || reps < 5) reasons.push(`reps=${Number.isFinite(reps) ? reps : 'unreported'} (<5)`);
     if (!Number.isFinite(nullArm)) reasons.push('no null arm');
     else if (claimPct <= Math.abs(nullArm)) reasons.push(`claim ${claimPct.toFixed(2)}% <= null arm ${Math.abs(nullArm).toFixed(2)}%`);
+    // Mode-aware, target-scoped conditioning of the raw readings, when the verifier returned them.
+    // This is where modeSplit/pairedModeAware/pairsNeeded finally decide something: an under-sampled
+    // bimodal target guard, or a win read only off a skew rail, becomes a stated PROVISIONAL reason
+    // rather than a silent average. Never rejects -- like the rest of the provisional block, it marks.
+    const ga = analyzeGuards(r.ver.paired_readings, TARGET_GUARDS, 10);
+    if (ga.available) {
+      r.guard_analysis = ga;
+      for (const c of ga.caveats) { reasons.push(c); GUARD_CAVEATS.push(`${r.d.id}: ${c}`); }
+    }
     if (reasons.length) {
       r.provisional = reasons.join('; ');
       log(`PROVISIONAL ${r.d.id}: +${claimPct.toFixed(2)}% claimed but ${r.provisional}. ` +
@@ -3517,6 +3845,18 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
       log(`TIMING VOID ${r.d.id}: ${oj.caveat}`);
       OBJECTIVE_CAVEATS.push(`${r.d.id}: ${oj.caveat}`);
     }
+    // Launch shape — acceptance criterion 1. Judged for every verified direction; never rejects, but
+    // records the count and whether the two-launch fused shape was reached, so a fusion rung cannot
+    // be reported as closed on a candidate that is still three launches. See launchVerdict.
+    const lv = launchVerdict(r.ver, LAUNCH_TARGET);
+    r.launch_state = lv.state;
+    r.launch_shape_met = lv.shape_met;
+    if (lv.shape_met) TWO_LAUNCH_REACHED = true;
+    if (lv.caveat) {
+      r.launch_caveat = lv.caveat;
+      log(`LAUNCH ${lv.state.toUpperCase()} ${r.d.id}: ${lv.caveat}`);
+      if (lv.state !== 'met') LAUNCH_CAVEATS.push(`${r.d.id} [${lv.state}]: ${lv.caveat}`);
+    }
   }
 
   // --- (d) Build candidate list; integrate if >=2 verified --------------
@@ -3530,6 +3870,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     arithmetic: r.ver.verified_arithmetic || r.ver.verified_geomean,
     per_case: r.ver.per_case || [], patch: r.patch,
     touched_files: Array.isArray(r.ver.touched_files) ? r.ver.touched_files : [],
+    // The fusion chain this candidate belongs to, identified by its terminal rung (a terminal step's
+    // own rung, or the rung an enabling step enables). Carried onto the shelf so a later commit on
+    // the SAME chain does not age this candidate off it. Empty for a standalone optimisation.
+    chain_id: String((r.d && (r.d.enables || r.d.roadmap_rung)) || '').trim(),
   }));
 
   // What the shelf can offer this round, decided before the integrator is dispatched. `stale` and
@@ -3660,7 +4004,14 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
     // objective=working_kernel with no control there is no admissible speedup, so `cumulative` and
     // `bestPerCase` stay where they were and only the ARTIFACT advances.
     const winnerVoid = WORKING_KERNEL && !!(verified.find(r => r.d.id === winner.id) || {}).objective_void;
-    if (!winnerVoid) {
+    // In working_kernel mode the commit gate is RUNNING, so a committed winner can be SLOWER than the
+    // tree -- a terminal fusion is, the first time it lands (see the `verified` filter above). The
+    // ARTIFACT must advance so the next round builds on the fused shape, but the HEADLINE number must
+    // not ratchet DOWN: a regression installed as `cumulative` lets the following round "win" by
+    // reverting, and reports a not-yet-optimised fusion as if it were the deliverable. So under
+    // working_kernel cumulative only moves up. In speedup mode a winner cleared MIN_IMPROVE by
+    // construction, so `winner.geomean > cumulative` already holds and this guard is a no-op there.
+    if (!winnerVoid && (!WORKING_KERNEL || winner.geomean > cumulative)) {
       cumulative = winner.geomean;
       bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
     }
@@ -3736,6 +4087,8 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
         correctness_after: { type: 'string' }, note: { type: 'string' },
       }, ['committed']) });
     const landed = new Set(Array.isArray(res && res.committed) ? res.committed : []);
+    const enablingAbsorbed = [];
+    let enablingChain = '';
     for (const r of enablingKeeps) {
       if (!landed.has(r.patch)) {
         log(`ENABLING NOT LANDED ${r.d.id}: the patch did not apply to the canonical tree. It stays ` +
@@ -3747,6 +4100,20 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
       CHAIN_DEBT.push({ round, id: r.d.id, enables: r.enabling_verdict.enables,
         cost_pct: r.enabling_verdict.cost_pct });
       CHAIN_CAVEATS.push(`${r.d.id} [enabling, committed r${round}]: ${r.enabling_verdict.reason}`);
+      for (const f of (Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [])) {
+        const nf = shelfFile(f); if (nf) enablingAbsorbed.push(nf);
+      }
+      if (!enablingChain) enablingChain = String(r.enabling_verdict.enables || '').trim();
+    }
+    // Record what the enabling commits took on, TAGGED with the chain they belong to. This closes the
+    // blind spot the winner-only recording left -- a shelf entry on an UNRELATED chain is now aged
+    // against these files too -- while the chain tag keeps the SAME chain's consumer half from being
+    // aged off by its own producer. Merged with any winner absorption already recorded this round.
+    if (enablingAbsorbed.length) {
+      const prev = absorbedByRound[round];
+      const prevFiles = Array.isArray(prev) ? prev : (prev && prev.files) || [];
+      const prevChain = (prev && !Array.isArray(prev) && prev.chain_id) || enablingChain;
+      absorbedByRound[round] = { files: [...new Set([...prevFiles, ...enablingAbsorbed])], chain_id: prevChain };
     }
     // Committing these does NOT advance cumulative. They are known to be slower; recording them as
     // progress would make the run's headline number a measure of how much overhead it has installed.
@@ -3815,9 +4182,31 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
       source: `enabling ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
       geomean: primSpeedup(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
       touched_files: Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [],
+      // Chain tag: the terminal rung this producer half enables. On the shelf, the consumer half that
+      // eventually lands must not age this entry off -- they are two halves of the same fusion.
+      chain_id: String((r.enabling_verdict && r.enabling_verdict.enables) || (r.d && r.d.enables) || '').trim(),
     }));
+    // Correct, activated patches that verifyCompleted but were kept OUT of `candidates` only by the
+    // speed gate -- i.e. correct-but-slower results in speedup mode (a regression that composes with
+    // another patch is exactly what the shelf is for). Excluded FOR CAUSE stay excluded: an
+    // attribution-rejected gap-win must not be re-offered (the doctrine is to implement the barrier
+    // directly, not resurface a megakernel), an inactive patch never ran, and an enabling step has
+    // its own path. These would otherwise vanish -- correct work with a patch, lost to nothing.
+    const inVerified = new Set(verified.map((r) => r.d && r.d.id));
+    const slowLosers = clean.filter((r) => r.patch && !r.inactive && !r.attribution_rejected &&
+      stepRoleOf(r.d) !== 'enabling' && verifyCompleted(r.ver) && r.ver.correctness === 'pass' &&
+      !inVerified.has(r.d && r.d.id) && primSpeedup(r.ver) <= 1.0)
+      .map((r) => ({
+        source: `slow ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
+        geomean: primSpeedup(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
+        touched_files: Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [],
+        chain_id: String((r.d && (r.d.enables || r.d.roadmap_rung)) || '').trim(),
+      }));
+    if (slowLosers.length) log(`SHELF r${round}: keeping ${slowLosers.length} correct-but-slower ` +
+      `patch(es) [${slowLosers.map((c) => `${c.id}@${c.geomean.toFixed(3)}x`).join(', ')}] that lost only ` +
+      `on speed -- they may compose with a later patch, and re-deriving them costs a lease.`);
     const losers = candidates.filter((c) => c !== winner && c.source !== 'integrated' && c.patch)
-      .concat(unlandedEntries);
+      .concat(unlandedEntries).concat(slowLosers);
     if (losers.length) {
       const added = shelfAdd(shelf, losers, round, SHELF_MAX);
       shelf = added.shelf;
@@ -3834,8 +4223,19 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
     // did not clear MIN_IMPROVE changed nothing, so nothing aged.
     if (improved && winner) {
       const took = (winner.touched_files || []).map(shelfFile).filter(Boolean);
-      if (took.length) absorbedByRound[round] = [...new Set(took)];
-      else log(`SHELF WARN r${round}: the committed winner ${winner.id} reported no touched_files, so ` +
+      // Object form carries the winner's chain, so a shelved consumer half of the SAME chain is not
+      // aged off by its own producer/earlier-stage landing. A standalone winner has no chain_id and
+      // ages every unrelated shelf entry exactly as before. MERGED with any enabling-commit
+      // absorption already recorded this round (the enabling commit block runs first); if the two
+      // belong to different chains the tag is dropped, so the union ages conservatively.
+      if (took.length) {
+        const prev = absorbedByRound[round];
+        const prevFiles = Array.isArray(prev) ? prev : (prev && prev.files) || [];
+        const prevChain = (prev && !Array.isArray(prev) && prev.chain_id) || '';
+        const wChain = String(winner.chain_id || '').trim();
+        const chain_id = !prevChain ? wChain : (prevChain === wChain ? wChain : '');
+        absorbedByRound[round] = { files: [...new Set([...prevFiles, ...took])], chain_id };
+      } else log(`SHELF WARN r${round}: the committed winner ${winner.id} reported no touched_files, so ` +
         `nothing was recorded as absorbed and shelved patches will NOT be aged against it. Every ` +
         `offer from here on may be stale in a way this check cannot see.`);
     }
@@ -3988,6 +4388,15 @@ const report = await agentT(
     // can see it happened.
     ...(SHELF_STATS.rounds_offered || SHELF_STATS.shelved ? { SHELF_ACTIVITY: SHELF_STATS } : {}),
     ...(OVERLAP_CAVEATS.length ? { OVERLAP_CAVEATS } : {}),
+    // Acceptance criterion 1 (two launches). Present only when a candidate was NOT at the fused
+    // shape or did not report its count, so a wave that reached two launches on every measured
+    // candidate is byte-identical to before. TWO_LAUNCH_REACHED says whether any verified candidate
+    // this wave actually hit the two-launch shape, because "criterion 1 met" and "criterion 1 never
+    // checked" are the two states a reader must not confuse.
+    ...(LAUNCH_CAVEATS.length ? { LAUNCH_CAVEATS, TWO_LAUNCH_REACHED } : {}),
+    // Guard-scope caveats: an under-sampled bimodal target route, or a win read only off a skew rail.
+    // Present only when something was off, so a wave measured cleanly on target is unchanged.
+    ...(GUARD_CAVEATS.length ? { GUARD_CAVEATS } : {}),
     ...(ATTRIBUTION_CAVEATS.length ? { ATTRIBUTION_CAVEATS } : {}),
     // The half-built fusion, if there is one. A wave that committed prerequisites and never closed
     // the chain reports a cumulative speedup that is BELOW where it started, and the reason is not

@@ -98,8 +98,17 @@ console.log('\n# the three enforcement points are in the script, not in prose');
   ok(/const improved = WORKING_KERNEL\s*\n\s*\? winnerRuns/.test(src),
      'the commit gate switches to winnerRuns, so a still-crashing candidate is still committed once ' +
      'it runs, and the next round starts from it rather than from the unfused tree');
-  ok(/const winnerVoid = WORKING_KERNEL && /.test(src) && /if \(!winnerVoid\) \{/.test(src),
-     'and a voided reading never becomes `cumulative`: the artifact advances, the number does not');
+  ok(/\(WORKING_KERNEL \|\| primSpeedup\(r\.ver\) > 1\.0\) && !r\.inactive/.test(src),
+     'the >1.0 bar is lifted from the `verified` filter in this mode: the terminal half of a staged ' +
+     'fusion is slower than the tree the first time it lands, and gating verified on speed here ' +
+     'deletes the fused megakernel before winnerRuns can ever commit it — the exact line the consumer ' +
+     'half hit while the producer half (enabling) sailed past. In speedup mode the bar stays.');
+  ok(/const winnerVoid = WORKING_KERNEL && /.test(src) &&
+     /if \(!winnerVoid && \(!WORKING_KERNEL \|\| winner\.geomean > cumulative\)\) \{/.test(src),
+     'and a voided reading never becomes `cumulative`: the artifact advances, the number does not. ' +
+     'Under working_kernel the commit gate is RUNNING, so a committed winner may be SLOWER than the ' +
+     'tree (a terminal fusion is, the first time it lands); the guard makes cumulative ratchet UP ' +
+     'only, so a committed regression cannot become the number the next round beats by reverting');
 }
 {
   ok(/args\.objective must be 'speedup' or 'working_kernel'/.test(src),

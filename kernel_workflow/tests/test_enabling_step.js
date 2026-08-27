@@ -30,9 +30,20 @@ const ok = (cond, msg) => {
 
 const m = src.match(/\/\/ <<REPLAY:enabling_step>>([\s\S]*?)\/\/ <<\/REPLAY:enabling_step>>/);
 if (!m) { console.error('  FAIL: no <<REPLAY:enabling_step>> region — nothing to test'); process.exit(1); }
-const { stepRoleOf, functionalAcceptance, enablingVerdict, chainDebtReport, CHAIN_DEBT_MAX_ROUNDS } =
+const { stepRoleOf, functionalAcceptance, enablingVerdict, chainDebtReport, CHAIN_DEBT_MAX_ROUNDS, verifyCompleted } =
   // eslint-disable-next-line no-new-func
-  new Function(`${m[1]}\nreturn { stepRoleOf, functionalAcceptance, enablingVerdict, chainDebtReport, CHAIN_DEBT_MAX_ROUNDS };`)();
+  new Function(`${m[1]}\nreturn { stepRoleOf, functionalAcceptance, enablingVerdict, chainDebtReport, CHAIN_DEBT_MAX_ROUNDS, verifyCompleted };`)();
+
+console.log('\n# verifyCompleted is shared by the enabling and terminal paths so they cannot disagree');
+{
+  ok(verifyCompleted({ status: 'verified' }) && verifyCompleted({ status: 'regression' }) &&
+     verifyCompleted({ status: 'slower' }),
+     'a completed verification includes regression/slower — a terminal fusion is CORRECT but slower ' +
+     'the first time it lands, and the candidate filter must not drop it for reporting exactly that');
+  ok(!verifyCompleted({ status: 'apply_failed' }) && !verifyCompleted({ status: 'plagiarized' }) &&
+     !verifyCompleted({ status: 'harness_modified' }) && !verifyCompleted(null),
+     'the states where the comparison never happened or was tainted are not completions');
+}
 
 // A prerequisite that passed everything functional and, as expected, made the operator slower.
 const GOOD_VER = { status: 'verified', correctness: 'pass', activation_confirmed: 'yes', liveness: 'n/a' };
@@ -63,14 +74,24 @@ console.log('\n# exempt from the speed bar, and from nothing else');
     ['correctness did not pass', { ...GOOD_VER, correctness: 'fail' }],
     ['the new path was not confirmed to run', { ...GOOD_VER, activation_confirmed: 'no' }],
     ['liveness failed (hang or timeout)', { ...GOOD_VER, liveness: 'fail' }],
+    // Acceptance criterion 4 carries a NUMBER; a "pass" string over a relL2 above threshold is not a pass.
+    ['is not < threshold', { ...GOOD_VER, accuracy: { metric: 'relL2', value: 0.4, threshold: 0.10 } }],
+    // Criterion 4 also wants 1000 CUDA-Graph replays with no deadlock; a bad graph replay is a
+    // function failure, not a speed one.
+    ['graph capture/replay is not safe', { ...GOOD_VER, graph_safe: 'fail' }],
   ];
   for (const [needle, ver] of cases) {
     const v = enablingVerdict(PRODUCER, ver, 0.98);
     ok(v.commit === false && v.reason.includes(needle),
-       `refused when ${needle} — and the reason names which of the four conditions failed`);
+       `refused when ${needle} — and the reason names which condition failed`);
   }
   ok(enablingVerdict(PRODUCER, null, 0.98).commit === false,
      'and a step with no verify result at all is refused, not waved through for lack of evidence');
+  // The new fields DEGRADE rather than crash: a run that never wired accuracy/graph_safe is unchanged.
+  ok(enablingVerdict(PRODUCER, { ...GOOD_VER }, 0.98).commit === true,
+     'a producer with no accuracy and no graph_safe reported still commits on function — absence is not a failure');
+  ok(enablingVerdict(PRODUCER, { ...GOOD_VER, accuracy: { metric: 'relL2', value: 0.05, threshold: 0.10 } }, 0.98).commit === true,
+     'and a reported relL2 comfortably under threshold passes the accuracy check');
 }
 
 console.log('\n# the two ways `enabling` could become a blank cheque');

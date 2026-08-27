@@ -33,9 +33,9 @@ const ok = (cond, msg) => {
 
 const m = src.match(/\/\/ <<REPLAY:bimodal_split>>([\s\S]*?)\/\/ <<\/REPLAY:bimodal_split>>/);
 if (!m) { console.error('  FAIL: no <<REPLAY:bimodal_split>> region — nothing to test'); process.exit(1); }
-const { modeSplit, pairedModeAware, pairsNeeded } =
+const { modeSplit, pairedModeAware, pairsNeeded, analyzeGuards } =
   // eslint-disable-next-line no-new-func
-  new Function(`${m[1]}\nreturn { modeSplit, pairedModeAware, pairsNeeded };`)();
+  new Function(`${m[1]}\nreturn { modeSplit, pairedModeAware, pairsNeeded, analyzeGuards };`)();
 
 // Shapes taken from the measured 512_rank-mixed-skew guard: a tight cluster near 0.760 ms and a
 // reproducible slow state ~9% above it.
@@ -142,7 +142,39 @@ console.log('\n# the sample is sized for the usable pairs, not the collected one
   ok(pairsNeeded(10, 50) === 40, 'and a guard that is half slow costs 4x, which is worth knowing up front');
 }
 
+console.log('\n# analyzeGuards is the call site the three functions never had');
+{
+  // No readings -> not available, nothing asserted, the aggregate geomean stays in charge.
+  ok(analyzeGuards([], ['8192_uniform'], 10).available === false,
+     'with no paired_readings the analysis is unavailable and changes nothing');
+  // A clean, well-sampled unimodal target guard (arms overlap, small effect, no bimodal state) yields
+  // a target_median and no caveat. base/cand interleave so the pooled readings show no 3% gap.
+  const clean = [];
+  for (let i = 0; i < 12; i++) clean.push({ guard: '8192_uniform', base: 5.42 + (i % 4) * 2e-3, cand: 5.41 + (i % 4) * 2e-3 });
+  const cg = analyzeGuards(clean, ['8192_uniform'], 10);
+  ok(cg.available && cg.target_median != null && cg.caveats.length === 0,
+     'a well-sampled unimodal target route produces a conditioned median and no caveat');
+}
+{
+  // A win read ONLY off a skew rail: target set is uniform, but the only readings are skew. That is
+  // the exact w15 state — a number from 8192_rank-mixed-skew, out of scope.
+  const skewOnly = [];
+  for (let i = 0; i < 10; i++) skewOnly.push({ guard: '8192_rank-mixed-skew', base: 0.76, cand: 0.70 });
+  const sg = analyzeGuards(skewOnly, ['8192_uniform'], 10);
+  ok(sg.target_median === null && sg.off_target.join() === '8192_rank-mixed-skew' &&
+     sg.caveats.some((c) => /No reading on a TARGET route/.test(c)),
+     'a win read only off a skew rail has no target median and is called out — the out-of-scope state w15 shipped');
+}
+{
+  // With no target configured, a guard named *uniform* is treated as the target automatically.
+  const rows = [];
+  for (let i = 0; i < 12; i++) rows.push({ guard: '512_uniform', base: 0.76 + i * 1e-3, cand: 0.73 + i * 1e-3 });
+  const g = analyzeGuards(rows, [], 10);
+  ok(g.guards[0].is_target === true,
+     'with no explicit target set, a *uniform* guard is the target by default — the campaign\'s route');
+}
+
 console.log(failures === 0
-  ? '\nPASS: the 512 statistic conditions on the state, refuses when it cannot, and never hides occupancy.'
+  ? '\nPASS: the 512 statistic conditions on the state, refuses when it cannot, never hides occupancy, and is now WIRED.'
   : `\nFAIL: ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

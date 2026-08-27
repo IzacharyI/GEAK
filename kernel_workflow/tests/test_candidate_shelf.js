@@ -84,6 +84,29 @@ console.log('\n# a later winner ages out the patches it collides with, and only 
      'across a wave boundary, a prior wave\'s absorptions (round 0.5) still age a carried entry (round 0)');
 }
 
+console.log('\n# a fusion chain does not age its own halves off the shelf');
+{
+  // The consumer half of chain D3 is on the shelf, touching combine.py. Round 3 commits the producer
+  // half of the SAME chain (also combine.py, by construction). Under a file-set-only test this would
+  // stale the consumer and the fusion could never be closed. The chain tag is what prevents it.
+  const { shelf } = shelfAdd([], [cand('r2_consumer', 0.97, ['combine.py'], { chain_id: 'D3' })], 2, 10);
+  const sameChain = shelfEligible(shelf, { 3: { files: ['combine.py'], chain_id: 'D3' } }, 5);
+  ok(sameChain.eligible.length === 1 && sameChain.eligible[0].id === 'r2_consumer',
+     'a commit on the SAME chain (D3) that touches the shared file does NOT age the consumer half — ' +
+     'the two halves editing one file is the intended relationship, not a conflict');
+  // An UNRELATED chain (or a standalone winner) touching the same file still ages it.
+  const otherChain = shelfEligible(shelf, { 3: { files: ['combine.py'], chain_id: 'D9' } }, 5);
+  ok(otherChain.eligible.length === 0 && otherChain.stale.length === 1,
+     'a commit on a DIFFERENT chain touching the same file still stales it — chain-exemption is not a blanket pass');
+  const legacy = shelfEligible(shelf, { 3: ['combine.py'] }, 5);
+  ok(legacy.eligible.length === 0,
+     'a legacy array-form absorption (no chain) still ages the entry, so old callers behave unchanged');
+  // An entry with no chain_id is aged by everything, chain-tagged or not.
+  const { shelf: plain } = shelfAdd([], [cand('r2_plain', 1.02, ['combine.py'])], 2, 10);
+  ok(shelfEligible(plain, { 3: { files: ['combine.py'], chain_id: 'D3' } }, 5).eligible.length === 0,
+     'a standalone entry (no chain_id) is aged even by a chain-tagged absorption — exemption needs a tag on BOTH sides');
+}
+
 console.log('\n# aging does not depend on anyone reporting what the merge used');
 {
   // The integrator took r1_a and said nothing about it. The winner's own file list is what ages the
