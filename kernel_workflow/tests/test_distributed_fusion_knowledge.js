@@ -81,7 +81,8 @@ ok(/liveness: \{ type: 'string' \}/.test(src), 'VERIFY_SCHEMA carries a liveness
 
 const verify = read('roles', 'verify_engineer.md');
 ok(/`SPECIALTY` is `distributed`/.test(verify), 'verify gates the liveness stress on the specialty');
-ok(/≥1000 times/.test(verify), 'liveness stress is quantified');
+ok(/REQUIRED_REPLAYS/.test(verify) && /1000 by default/.test(verify) && /replay_count/.test(verify),
+   'liveness stress is quantified and the completed count is returned');
 ok(/two different problem sizes/.test(verify), 'liveness varies problem size (residency changes with it)');
 ok(/timeout here is a FAILURE, never a skip/.test(verify), 'a hang cannot be silently skipped');
 ok(/liveness.*only when SPECIALTY=distributed/.test(verify), 'return contract documents the field');

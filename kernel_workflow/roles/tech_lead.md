@@ -50,7 +50,10 @@ The fifth is the **open-ended deep optimizer** — use it differently (see the p
 
 ## PHASE=analyze
 
-Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`, `KERNEL_KNOWLEDGE_DIR` (may be empty), and optionally `STATE_DIR` and `INCREMENTAL_RESUME`.
+Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`, `KERNEL_KNOWLEDGE_DIR`
+(may be empty), and optionally `STATE_DIR`, `INCREMENTAL_RESUME`, `STRICT_AUTONOMY`,
+`TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`, `LAUNCH_TARGET`,
+`REQUIRE_OVERLAP`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
 
 **FAST PATH — if `INCREMENTAL_RESUME` is set** (a resumed deep wave: the roadmap was already built in a
 prior wave and persisted): do NOT re-derive the analysis from scratch. Read the existing
@@ -179,10 +182,11 @@ for three waves while every round re-planned from the profile.
    - quote reference source. Quote *mechanism* instead ("the cross-rank readiness edge is absent;
      the payload store's `cache_modifier` is a hint, not a release") and let the engineer write it.
 
-   Put the paths and hashes in `prior_art[].implemented_at` — that field is consumed by the
-   orchestrator and the human reader, and is NOT forwarded to engineers in this mode. This is the
-   one place they may appear. Everything an engineer sees must be a claim about the machine, not a
-   pointer to an existing patch.
+   In `CAPABILITY_EVAL`, write `prior_art[].implemented_at: "HIDDEN_REFERENCE"` and keep hashes,
+   branch names and filesystem paths out of every EVAL_DIR artifact. The verifier receives hidden
+   reference paths directly from the orchestrator; an engineer can browse `analysis.json`, so a
+   supposedly private field in that file is not private. Everything an engineer sees must be a
+   claim about the machine, not a pointer to an existing patch.
 
    Note that the two situations above are *production* doctrine, where re-deriving working code is
    pure waste. Capability evaluation inverts it. Check `CAPABILITY_EVAL` before you decide which
@@ -218,6 +222,11 @@ for three waves while every round re-planned from the profile.
    was never proposed at all. Six directions, and the top of the ladder was never reached. Rungs
    are how the next phase knows what it still owes.
 
+   Under `STRICT_AUTONOMY`, at least one terminal rung must also carry
+   `target_shape: {launches: LAUNCH_TARGET, stages_fused:[...], require_overlap:REQUIRE_OVERLAP}`.
+   The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
+   two-launch terminal have the same machine state.
+
 Return JSON:
 ```json
 {
@@ -232,7 +241,12 @@ Return JSON:
      "why": "...",
      "gated_on": ["<rung ids that must have RUN TO SPEC before this one is interpretable>"],
      "mandatory_arms": ["<arm without which this rung's result cannot be read, e.g. a publish-only arm>"],
-     "is_positive_control": false}
+     "is_positive_control": false,
+     "step_role": "terminal|enabling", "enables": "<terminal rung when enabling>",
+     "cost_budget_pct": 3.0,
+     "target_shape": {"launches": 2,
+       "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
+       "require_overlap": true}}
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",
@@ -258,7 +272,7 @@ Return JSON:
     "unknowns": [{"what": "...", "why": "...", "what_would_settle_it": "..."}]
   },
   "resource_timeline": {
-    "pipes": [{"stage": "<stage>", "pipe": "valu|mfma|lds|hbm|scalar",
+    "pipes": [{"stage": "<stage>", "pipe": "valu|mfma|vmem|lds|hbm|interconnect|scalar",
                "utilization_pct": 0.0, "source": "<the counter expression, so it can be recomputed>"}],
     "interkernel_gap_us": {"median": 0.0, "max": 0.0, "n_boundaries": 0},
     "class": "throughput_bound|latency_bound|launch_bound|mixed",
@@ -275,6 +289,12 @@ Return JSON:
   }
 }
 ```
+
+Treat `resource_timeline.pipes` as a demand vector, not one utilization scalar. A shader-issued P2P
+store can consume resident waves, VMEM issue and interconnect together; a reduce can consume both
+VALU/VMEM and the link. Report each measured engine separately. One saturated MFMA row plus an idle
+interconnect row is `mixed`, not globally throughput-bound, and must not close a compute/communication
+overlap before the consumer's actual engine demands are measured.
 
 **`task_graph` is required when `REQUIRE_TASK_GRAPH` is set** (multi-stage or multi-rank operators);
 omit it for a kernel that has no interesting graph rather than filling in a form. Read
@@ -373,14 +393,22 @@ is a guess wearing a schema field, and the orchestrator will log it as one.
 ## PHASE=plan_round
 
 Inputs: `EVAL_DIR`, `ROUND` (1-based), `BUDGET_REMAINING` (hard cap on directions this round),
-`CUMULATIVE_SPEEDUP` (best verified geomean so far, 1.0 at start), `BASELINE_GEOMEAN_MS`, the latest
+`CUMULATIVE_SPEEDUP` (best verified primary/target score so far, 1.0 at start), `BASELINE_GEOMEAN_MS`, the latest
 `PROFILE_SUMMARY` (path + inline), and `HISTORY` (the insight blackboard + hypothesis ledger from
 prior rounds — see below). Also the current best per-case table. Plus `KERNEL_KNOWLEDGE_DIR`,
 `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` (the kk pointer resolved in analyze; may be empty).
 And **`ROADMAP_LADDER`** (the `candidate_directions` you ranked in `analyze`, inline) +
-**`LADDER_DISPATCHED`** (the rung ids taken so far, across all rounds) + `ROADMAP` (the path).
+**`LADDER_DISPATCHED`** (attempted rung ids), **`LADDER_COMPLETED`** (rungs whose required evidence
+passed), **`OPEN_RUNGS`**, and `ROADMAP` (the path). A prerequisite is satisfied only by
+`LADDER_COMPLETED`; dispatching an arm that faults or omits a mandatory control does not unlock the
+next rung.
 Plus **`CHAIN_DEBT`** and **`CHAIN_BASELINE`**, present only when a fusion chain is open (see
 "Multi-step fusions" below).
+Strict runs also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
+`LAUNCH_TARGET`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
+`REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`, and
+`REQUIRED_PAIRS_BY_GUARD`. Only target guards create credit; regression guards can
+only veto.
 Plus **`TASK_GRAPH`** and **`RESOURCE_TIMELINE`** (present only when the run requires a task graph) —
 the dependency graph you built in `analyze` and the per-pipe busy/idle table. These are not
 background reading:
@@ -669,7 +697,10 @@ Return JSON:
       "fills_hole": "<idle_pipe_opportunities id this direction collects; omit if it fills none>",
       "step_role": "terminal|enabling",
       "enables": "<rung id — REQUIRED when step_role is enabling, omit otherwise>",
-      "cost_budget_pct": 3.0
+      "cost_budget_pct": 3.0,
+      "gated_on": ["completed prerequisite rung"],
+      "mandatory_arms": ["exact arm names copied from ROADMAP_LADDER"],
+      "target_shape": {"launches": 2, "stages_fused": ["..."], "require_overlap": true}
     }
   ]
 }
@@ -682,7 +713,8 @@ Return JSON:
 Inputs: `ROUND`, the round's per-direction verified results (id, title, specialty, claimed vs
 verified geomean, status, the engineer's notes, **and the `roadmap_rung` each was dispatched
 under**), the integrate result, the round winner, the re-profile shift (if any), and the prior
-`HISTORY`. Also **`ROADMAP_LADDER`**, **`LADDER_DISPATCHED`** and **`OPEN_RUNGS`**.
+`HISTORY`. Also **`ROADMAP_LADDER`**, **`LADDER_DISPATCHED`**, **`LADDER_COMPLETED`** and
+**`OPEN_RUNGS`**.
 
 **Write the unspent rungs down.** You are the only phase whose output the *next wave* reads.
 `OPEN_RUNGS` is that list already computed — the ladder minus every rung that produced a verified
@@ -826,7 +858,11 @@ Return JSON:
 
 Inputs: `EVAL_DIR`, `WORKSPACE`, full `HISTORY` (all rounds), the final winner's verified per-case
 table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), `BASELINE_GEOMEAN_MS`, and
-`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent).
+`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent). Strict runs
+also receive `STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION_GUARDS`,
+`LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`,
+`REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`,
+`AUTONOMY_ACCEPTANCE_REACHED`, and any `ACCEPTANCE_CAVEATS`.
 
 1. Write the cumulative final patch:
    ```bash
@@ -840,6 +876,11 @@ table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), `BASELINE_G
      workload-aligned (COMMANDMENT METRIC = time-weighted ratio-of-sums), report the **time-weighted
      speedup as the headline** with the unweighted geomean & arithmetic alongside; otherwise the
      geomean is the headline (unchanged).
+   - **Autonomy acceptance** — required when `STRICT_AUTONOMY` is true. State
+     `AUTONOMY_ACCEPTANCE_REACHED` verbatim. If false, headline status is
+     `autonomy_incomplete` regardless of any partial speedup, and list every `ACCEPTANCE_CAVEATS`
+     entry. Report target guards separately from regression-only guards; never let a regression
+     guard create positive credit.
    - **Round-by-round**: for EACH round list EVERY engineer individually (id, specialty, strategy,
      verified speedup, success/fail + one-line reason), the integrate result, the round winner, and
      the bottleneck shift. This is the "round 1 optimized a, b, c — what were the results, what after merging; round 2 …" narrative.

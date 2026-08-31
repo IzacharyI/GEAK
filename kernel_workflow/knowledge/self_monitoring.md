@@ -53,14 +53,17 @@ When choosing what to try next, follow this order based on the profiling data:
 
 ## Patch Save Rules
 
-1. **ALWAYS save a patch when speedup > 1.0x**. Run `git diff` and save to `best_patch.diff`.
-2. **Update patch when you beat your previous best**. Overwrite `best_patch.diff`.
-3. **Never submit without a patch file** if you achieved any speedup.
+1. **ALWAYS save a patch when the source builds and correctness passes**, even below 1.0x. A staged
+   prerequisite or first working terminal is expected to regress before its consumer/tuning lands.
+2. **Update the patch after every newer correct milestone**. For speedup-only work keep the fastest;
+   for `working_kernel`/`enabling` keep the artifact the next step must consume.
+3. **Never submit a buildable, correct source change without a patch file.**
 4. Before saving: verify correctness passes. A fast-but-wrong kernel is worth 0x.
 
 ## Benchmark Discipline
 
-1. Always clear build cache before benchmarking: `rm -rf build/ __pycache__/ *.so`
+1. Work from the isolated artifact-free copy. If a cache is suspect, move it aside; never use
+   `rm -rf`, which triggers approval and blocks autonomous runs.
 2. Always run correctness test BEFORE benchmarking. Don't waste time benchmarking broken code.
 3. Use the COMMANDMENT commands exactly. Don't invent your own benchmark.
 4. Run benchmark at least 2 times if the result seems surprisingly good or bad.

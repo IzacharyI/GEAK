@@ -30,9 +30,11 @@ const ok = (cond, msg) => {
 
 const m = src.match(/\/\/ <<REPLAY:objective_gate>>([\s\S]*?)\/\/ <<\/REPLAY:objective_gate>>/);
 if (!m) { console.error('  FAIL: no <<REPLAY:objective_gate>> region — nothing to test'); process.exit(1); }
+const e = src.match(/\/\/ <<REPLAY:enabling_step>>([\s\S]*?)\/\/ <<\/REPLAY:enabling_step>>/);
+if (!e) { console.error('  FAIL: no <<REPLAY:enabling_step>> region'); process.exit(1); }
 const { objectiveVerdict, runsCleanly } =
   // eslint-disable-next-line no-new-func
-  new Function(`${m[1]}\nreturn { objectiveVerdict, runsCleanly };`)();
+  new Function(`${m[1]}\n${e[1]}\nreturn { objectiveVerdict, runsCleanly };`)();
 
 console.log('\n# a speedup wave is untouched');
 {
@@ -70,7 +72,7 @@ console.log('\n# an uncontrolled working_kernel wave may not ship ANY number');
 
 console.log('\n# the commit gate is "does it run"');
 {
-  const good = { correctness: 'pass', activation_confirmed: 'yes', liveness: 'pass' };
+  const good = { status: 'verified', correctness: 'pass', activation_confirmed: 'yes', liveness: 'pass' };
   ok(runsCleanly(good), 'correctness pass + activation confirmed + liveness pass runs');
   ok(runsCleanly({ ...good, liveness: 'n/a' }),
      "liveness n/a is accepted — it is the honest answer for a non-distributed candidate and forcing " +
@@ -95,14 +97,17 @@ console.log('\n# the three enforcement points are in the script, not in prose');
      'and every other part of the mode is decoration');
   ok(/if \(WORKING_KERNEL && directions\.length > 1\)/.test(src),
      'the one-direction rule is a clamp on the planner output, not an instruction to the planner');
-  ok(/const improved = WORKING_KERNEL\s*\n\s*\? winnerRuns/.test(src),
+  ok(/let improved = WORKING_KERNEL\s*\n\s*\? winnerRuns/.test(src),
      'the commit gate switches to winnerRuns, so a still-crashing candidate is still committed once ' +
      'it runs, and the next round starts from it rather than from the unfused tree');
-  ok(/\(WORKING_KERNEL \|\| primSpeedup\(r\.ver\) > 1\.0\) && !r\.inactive/.test(src),
+  ok(/\(WORKING_KERNEL \|\| metricScore\(r\.ver\) > 1\.0\) && !r\.inactive/.test(src),
      'the >1.0 bar is lifted from the `verified` filter in this mode: the terminal half of a staged ' +
      'fusion is slower than the tree the first time it lands, and gating verified on speed here ' +
      'deletes the fused megakernel before winnerRuns can ever commit it — the exact line the consumer ' +
      'half hit while the producer half (enabling) sailed past. In speedup mode the bar stays.');
+  ok(/WORKING_KERNEL \|\| PROMOTION_METRIC === 'changed_kernel'/.test(src),
+     'the earlier engineer-to-verify boundary is lifted for working and verifier-scored candidates — fixing only the later verified filter ' +
+     'leaves ver=null and makes commit-on-running unreachable');
   ok(/const winnerVoid = WORKING_KERNEL && /.test(src) &&
      /if \(!winnerVoid && \(!WORKING_KERNEL \|\| winner\.geomean > cumulative\)\) \{/.test(src),
      'and a voided reading never becomes `cumulative`: the artifact advances, the number does not. ' +

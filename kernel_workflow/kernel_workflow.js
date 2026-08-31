@@ -208,6 +208,26 @@ const WORKLOAD_SPEC = (OP_SPEC && OP_SPEC.workload) || A.workload || null;
 const HAS_WORKLOAD = !!(WORKLOAD_SPEC_PATH ||
   (Array.isArray(WORKLOAD_SPEC) && WORKLOAD_SPEC.length) ||
   (WORKLOAD_SPEC && Array.isArray(WORKLOAD_SPEC.kernels) && WORKLOAD_SPEC.kernels.length));
+const argList = (value) => (Array.isArray(value) ? value : String(value || '').split(','))
+  .map((s) => String(s).trim()).filter(Boolean);
+// A scoped campaign must name the guards that can CREATE credit separately from guards that can
+// only VETO a candidate. Without this split a skew-only win was folded into the global geomean and
+// promoted as the current best while the requested uniform guard executed the baseline path.
+const TARGET_GUARDS = argList(A.target_guards);
+const REGRESSION_GUARDS = argList(A.regression_guards);
+// `operator_e2e` is the only generally comparable metric across a launch-structure change. Per-stage
+// timers collected in separate graphs/rank reductions are diagnostics; summing them is not a fused
+// kernel time. `changed_kernel` remains available for tasks that provide a genuinely comparable
+// same-timeline changed_us/replaced_sum_us measurement. `legacy` preserves the pre-feature global
+// score and its attribution behavior for callers that did not opt into a scoped contract.
+const PROMOTION_METRIC = String(A.promotion_metric || 'legacy').trim();
+if (!['legacy', 'operator_e2e', 'changed_kernel'].includes(PROMOTION_METRIC)) {
+  throw new Error(`args.promotion_metric must be 'legacy', 'operator_e2e' or 'changed_kernel', got ${PROMOTION_METRIC}`);
+}
+// Strict proof runs must state the metric; inheriting historical mixed behavior is not auditable.
+if (String(A.strict_autonomy || 'false') === 'true' && PROMOTION_METRIC === 'legacy') {
+  throw new Error('args.strict_autonomy requires an explicit promotion_metric');
+}
 // PRIMARY-metric selector: prefer the time-weighted number when a workload spec is in play and the
 // agent reported one; otherwise fall back to the geomean (unweighted runs => unchanged behavior).
 const primSpeedup = (o) => {
@@ -243,14 +263,73 @@ const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 
 // no paths/hashes/source — see tech_lead.md 4d), and verify gains a byte-identity provenance check
 // against known_reference_paths that returns status:"plagiarized" (verify_engineer.md 5b).
 const CAPABILITY_EVAL = String(A.capability_eval != null ? A.capability_eval : 'false') === 'true';
+// Strict autonomy is stronger than capability_eval. Capability mode hides known implementations;
+// strict mode additionally refuses inherited code/state and turns the final-shape evidence into
+// load-bearing gates. It is opt-in so ordinary kernel workflows remain backward compatible.
+const STRICT_AUTONOMY = String(A.strict_autonomy != null ? A.strict_autonomy : 'false') === 'true';
+if (STRICT_AUTONOMY && !CAPABILITY_EVAL) {
+  throw new Error('args.strict_autonomy requires capability_eval=true');
+}
+if (STRICT_AUTONOMY && TARGET_GUARDS.length === 0) {
+  throw new Error('args.strict_autonomy requires at least one explicit target_guards entry');
+}
+const positiveIntArg = (name, value, fallback) => {
+  const n = Number(value == null ? fallback : value);
+  if (Number.isSafeInteger(n) && n > 0) return n;
+  if (STRICT_AUTONOMY) throw new Error(`args.${name} must be a positive integer`);
+  return fallback;
+};
+const REQUIRED_REPLAYS = positiveIntArg('required_replays', A.required_replays, 1000);
+const REQUIRED_PAIRS = positiveIntArg('required_pairs', A.required_pairs, 5);
+const REQUIRED_PAIRS_BY_GUARD = (A.required_pairs_by_guard &&
+  typeof A.required_pairs_by_guard === 'object') ? A.required_pairs_by_guard : {};
+if (STRICT_AUTONOMY) {
+  for (const [guard, count] of Object.entries(REQUIRED_PAIRS_BY_GUARD)) {
+    if (!(Number.isSafeInteger(Number(count)) && Number(count) > 0)) {
+      throw new Error(`args.required_pairs_by_guard[${guard}] must be a positive integer`);
+    }
+  }
+}
+const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : 'false') === 'true';
+const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
+const REQUIRE_ARTIFACT_DISTINCT = String(
+  A.require_artifact_distinct != null ? A.require_artifact_distinct : 'false') === 'true';
+const ACCURACY_METRIC = String(A.accuracy_metric || 'relL2');
+const ACCURACY_THRESHOLD = Number(A.accuracy_threshold != null ? A.accuracy_threshold : 0.10);
+if (STRICT_AUTONOMY && (!(ACCURACY_THRESHOLD > 0) || !Number.isFinite(ACCURACY_THRESHOLD))) {
+  throw new Error('args.accuracy_threshold must be a positive finite number');
+}
+const launchTargetArg = Number(A.launch_target != null ? A.launch_target : 2);
+if (STRICT_AUTONOMY && !(Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0)) {
+  throw new Error('args.launch_target must be a positive integer');
+}
+const LAUNCH_TARGET = Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0
+  ? launchTargetArg : 2;
+const CONTAINMENT_PREFLIGHT = (A.containment_preflight &&
+  typeof A.containment_preflight === 'object') ? A.containment_preflight : {};
+if (STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean !== true) {
+  throw new Error(
+    'args.strict_autonomy requires a clean containment_preflight emitted by trusted bootstrap_task.sh');
+}
 // Trees whose contents would constitute an imported answer. Given to VERIFY (to compare against) and
 // deliberately NOT to engineers — handing them the list would be handing them the location.
 const KNOWN_REFERENCE_PATHS = (Array.isArray(A.known_reference_paths) ? A.known_reference_paths
   : String(A.known_reference_paths || '').split(',')).map(s => String(s).trim()).filter(Boolean);
+const KNOWN_REFERENCE_HASHES = Array.isArray(A.known_reference_hashes)
+  ? A.known_reference_hashes.filter((r) => r && r.path_sha256 &&
+    (r.sha256 || r.normalized_sha256)) : [];
+if (STRICT_AUTONOMY && KNOWN_REFERENCE_PATHS.length) {
+  throw new Error(
+    'args.strict_autonomy refuses known_reference_paths in workflow args; supply ' +
+    'known_reference_hashes generated out of band so no agent-readable address is published.');
+}
 if (CAPABILITY_EVAL) {
   log(`CAPABILITY EVAL mode: prior art is advisory CONCLUSIONS only; engineers get no reference ` +
       `paths, and verify rejects byte-identical files as status:"plagiarized". ` +
-      `known_reference_paths=${KNOWN_REFERENCE_PATHS.length ? KNOWN_REFERENCE_PATHS.join(' ') : '(none given — provenance check DISABLED)'}`);
+      `reference evidence=${KNOWN_REFERENCE_HASHES.length
+        ? `${KNOWN_REFERENCE_HASHES.length} out-of-band file hash(es)`
+        : (KNOWN_REFERENCE_PATHS.length ? `${KNOWN_REFERENCE_PATHS.length} hidden path(s)` :
+          '(none given — provenance check DISABLED)')}`);
 }
 
 // REFERENCE CONTAINMENT. Withholding the location does not make the tree unreachable. Engineers run
@@ -265,7 +344,7 @@ if (CAPABILITY_EVAL) {
 //
 // Set by this block and consumed by the post-Setup enforcement gate, which sweeps the same ancestor.
 let RUN_TREE_ANCESTOR = '';
-if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
+if (CAPABILITY_EVAL) {
   // Normalized by hand: workflow scripts run without Node's `path`/`fs`, so require() would throw
   // here at runtime and turn a safety check into a crash.
   const abs = (p) => {
@@ -397,12 +476,10 @@ const perCase = {
   },
 };
 const obj = (props, required) => ({ type: 'object', properties: props, required: required || [], additionalProperties: true });
-
-// Verdict vocabulary is three-valued on purpose. `skipped` exists so that "the scanner could not run"
-// can never be reported as `clean` — that collapse is the exact failure this whole subsystem exists
-// to prevent, and a two-valued schema would force the agent to lie.
+// Verdict vocabulary keeps clean/leak/skipped/unknown distinct. "The scanner could not run" can
+// never be reported as clean — that collapse is the exact failure this subsystem exists to prevent.
 const CONTAINMENT_GATE_SCHEMA = obj({
-  verdict: { type: 'string', enum: ['clean', 'leak', 'skipped'] },
+  verdict: { type: 'string', enum: ['clean', 'leak', 'skipped', 'unknown'] },
   findings: { type: 'array', items: { type: 'string' } },
   note: { type: 'string' },
 }, ['verdict']);
@@ -431,6 +508,8 @@ const SETUP_SCHEMA = obj({
   // exists there. Lets a continued wave restore its cumulative speedup + insight/ledger history so it
   // does not re-explore dead directions. Absent (undefined) on a fresh run -> no behavior change.
   resumed: { type: 'boolean' },
+  workflow_revision: { type: 'string' },
+  workflow_clean: { type: 'boolean' },
   prior_state: obj({
     cumulative: { type: 'number' }, insights: { type: 'array', items: { type: 'string' } },
     // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
@@ -511,6 +590,19 @@ const ANALYZE_SCHEMA = obj({
     // demanding one is what leaves a fusion permanently half-built. See stepRoleOf below.
     step_role: { type: 'string', enum: ['enabling', 'terminal'] },
     enables: { type: 'string' },
+    cost_budget_pct: { type: 'number' },
+    // A terminal rung must say what shape closes it. Without this a three-launch partial fusion and
+    // the requested two-launch terminal are indistinguishable to the rung tracker.
+    target_shape: {
+      type: 'object',
+      properties: {
+        launches: { type: 'number' },
+        stages_fused: { type: 'array', items: { type: 'string' } },
+        require_overlap: { type: 'boolean' },
+      },
+      required: ['launches'],
+      additionalProperties: true,
+    },
   }, ['id', 'title', 'gated_on']) },
   // perf_knowledge resolution (REFERENCE ONLY): the operator/language this kernel maps to in the
   // AMD perf_knowledge base, plus the most relevant card paths, so engineers read focused context
@@ -591,7 +683,7 @@ const ANALYZE_SCHEMA = obj({
   // reclaim a launch gap that measures zero. This artifact answers the complementary question:
   // which functional unit is idle, when, and what dependency-free work could be issued into it.
   //
-  //   {pipes: [{stage, pipe, utilization_pct, source}],   // pipe: valu|mfma|lds|hbm|scalar
+  //   {pipes: [{stage, pipe, utilization_pct, source}],   // pipe: valu|mfma|vmem|lds|hbm|interconnect|scalar
   //    interkernel_gap_us: {median, max, n_boundaries},
   //    class: throughput_bound|latency_bound|launch_bound|mixed,
   //    stall_reason: [{stage, waiting_on, counter}],
@@ -619,7 +711,7 @@ const ANALYZE_SCHEMA = obj({
     properties: {
       pipes: { type: 'array', items: obj({
         stage: { type: 'string' },
-        pipe: { type: 'string' },   // valu|mfma|lds|hbm|scalar
+        pipe: { type: 'string' },   // valu|mfma|vmem|lds|hbm|interconnect|scalar
         utilization_pct: { type: 'number' },
         source: { type: 'string' },
       }, ['stage', 'pipe', 'utilization_pct']) },
@@ -765,6 +857,18 @@ const PLAN_SCHEMA = obj({
       step_role: { type: 'string', enum: ['enabling', 'terminal'] },
       enables: { type: 'string' },
       cost_budget_pct: { type: 'number' },
+      gated_on: { type: 'array', items: { type: 'string' } },
+      mandatory_arms: { type: 'array', items: { type: 'string' } },
+      target_shape: {
+        type: 'object',
+        properties: {
+          launches: { type: 'number' },
+          stages_fused: { type: 'array', items: { type: 'string' } },
+          require_overlap: { type: 'boolean' },
+        },
+        required: ['launches'],
+        additionalProperties: true,
+      },
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -776,6 +880,9 @@ const ENG_SCHEMA = obj({
   // = Σ weight_i / Σ (weight_i / speedup_i). Omitted on unweighted runs.
   speedup_weighted: { type: 'number' },
   per_case: perCase, status: { type: 'string' }, patch_file: { type: 'string' },
+  // Concrete arms completed by the engineer. Verify independently reports its own list; a rung
+  // whose mandatory control arm was omitted stays open even if the candidate produced a number.
+  arms_run: { type: 'array', items: { type: 'string' } },
   strategies_tried: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
   // How the new code is TURNED ON, and how an independent party can prove it ran. A patch whose
   // fast path is gated behind an env var that nobody sets benchmarks as byte-identical to the
@@ -796,6 +903,12 @@ const VERIFY_SCHEMA = obj({
   per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
   graph_safe: { type: 'string' },
   liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
+  replay_count: { type: 'number' },
+  replay_results: { type: 'array', items: obj({
+    guard: { type: 'string' }, count: { type: 'number' },
+    status: { type: 'string' }, graph_safe: { type: 'string' },
+  }, ['guard', 'count', 'status']) },
+  arms_run: { type: 'array', items: { type: 'string' } },
   // ACCURACY. Acceptance criterion 4 is "relL2 < 0.10", and until now nothing carried the number: a
   // free-text `correctness` that the script only checks `startsWith('pass')` cannot be compared to a
   // threshold, so "precision is fine" was an executor's judgement with no figure travelling behind
@@ -804,9 +917,15 @@ const VERIFY_SCHEMA = obj({
   // route it was measured on, because a relL2 read on one route says nothing about another. Absent
   // fields degrade to the old string check rather than crashing a run that never reports them.
   accuracy: obj({
-    metric: { type: 'string' }, value: { type: 'number' }, threshold: { type: 'number' },
+    metric: { type: 'string' }, value: { type: 'number', minimum: 0 },
+    threshold: { type: 'number', exclusiveMinimum: 0 },
     guard: { type: 'string' }, method: { type: 'string' },
   }, []),
+  accuracy_results: { type: 'array', items: obj({
+    metric: { type: 'string' }, value: { type: 'number', minimum: 0 },
+    threshold: { type: 'number', exclusiveMinimum: 0 },
+    guard: { type: 'string' }, method: { type: 'string' },
+  }, ['metric', 'value', 'threshold', 'guard']) },
   // LAUNCH SHAPE. Acceptance criterion 1 is "fully fused, TWO launches": one megakernel per EP rank
   // plus the one separate pre-dispatch quant launch. Nothing in the workflow counted launches, so a
   // candidate that fused dispatch+gemm1 but still launched combine separately (three launches) was
@@ -891,9 +1010,8 @@ const VERIFY_SCHEMA = obj({
     note: { type: 'string' },
   }, ['measured']),
   // ATTRIBUTION. See knowledge/fusion_preconditions.md, "Three ways a fusion result gets accepted
-  // for the wrong reason". This is a KERNEL workflow: the thing being optimised is the kernel, so
-  // the number that decides a win must be the CHANGED KERNEL's own time against the time of the
-  // kernels it replaced. End-to-end is a do-no-harm guard rail, not a source of credit.
+  // for the wrong reason". It explains a launch-structure win; PROMOTION_METRIC decides whether the
+  // operator span or a genuinely comparable changed-kernel measurement creates credit.
   //
   // The two diverge exactly when a patch changes launch structure, and the divergence is not small.
   // Measured on this campaign: a fused candidate whose kernel ran 4878us against the 4774us of the
@@ -906,7 +1024,8 @@ const VERIFY_SCHEMA = obj({
   // Report it whenever the patch adds, removes or merges a launch. `changed_us` is the patched
   // kernel; `replaced_sum_us` is the sum of the kernels it stands in for, read PAIRED in the same
   // collection at the same guard. When the two disagree in sign with the end-to-end claim, the
-  // candidate is not promoted -- see attributionVerdict.
+  // mismatch rejects only when promotion_metric=changed_kernel; under operator_e2e it withholds the
+  // mechanism claim while retaining the measured operator result.
   attribution: obj({
     changed_us: { type: 'number' },
     replaced_sum_us: { type: 'number' },
@@ -914,6 +1033,8 @@ const VERIFY_SCHEMA = obj({
     // e2e minus the sum of all kernel times, both arms. Where a gap-win hides.
     residual_ms_base: { type: 'number' },
     residual_ms_cand: { type: 'number' },
+    method: { type: 'string' },
+    absolute_to_frozen: { type: 'boolean' },
     note: { type: 'string' },
   }, []),
 }, ['status', 'verified_geomean', 'touched_files']);
@@ -989,6 +1110,8 @@ const MEMORY_SCHEMA = obj({
 
 const COMMIT_SCHEMA = obj({
   committed: { type: 'boolean' }, current_best_diff: { type: 'string' }, note: { type: 'string' },
+  head_before: { type: 'string' }, head_after: { type: 'string' },
+  exact_patch: { type: 'boolean' }, transaction_valid: { type: 'boolean' },
 }, ['committed']);
 
 const REPORT_SCHEMA = obj({
@@ -1005,6 +1128,15 @@ const VALIDATE_SCHEMA = obj({
   director_verified_speedup_weighted: { type: 'number' }, // PRIMARY when workload_aligned
   tech_lead_reported_speedup_geomean: { type: 'number' },
   validation_status: { type: 'string' }, correctness: { type: 'string' },
+  autonomy_acceptance_confirmed: { type: 'boolean' },
+  workflow_unchanged: { type: 'boolean' },
+  workflow_revision_end: { type: 'string' },
+  attribution: obj({
+    changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
+    guard: { type: 'string' }, residual_ms_base: { type: 'number' },
+    residual_ms_cand: { type: 'number' }, method: { type: 'string' },
+    absolute_to_frozen: { type: 'boolean' },
+  }, []),
   per_case: perCase, applied_to_original: { type: 'string' },
   // Count of GPU-lease jobs still alive for this EVAL_DIR when validation finished. Non-zero means
   // some direction backgrounded a lease and produced a measurement that is NOT in the report.
@@ -1138,6 +1270,7 @@ const setup = await agentT(
   roleAgent('director', 'setup', 'Build the isolated evaluation environment.', {
     KERNEL_PATH_ORIG, EXP_ROOT, EVAL_DIR_OVERRIDE, KERNEL_NAME_HINT, TASK, SKILL_DIR: WORKFLOW_DIR,
     MODE, TARGET_LANGUAGE, OP_SPEC,
+    ...(STRICT_AUTONOMY ? { STRICT_AUTONOMY: '1' } : {}),
     ...(STATE_DIR ? { STATE_DIR } : {}),
   }),
   { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA });
@@ -1147,6 +1280,35 @@ const CANONICAL = setup.workspace;       // canonical current-best workspace (ad
 const KERNEL_NAME = setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
 log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
+if (STRICT_AUTONOMY && setup.resumed) {
+  throw new Error(
+    'STRICT AUTONOMY REFUSED: director seeded this run from STATE_DIR/best. A proof run must start ' +
+    'from the frozen input tree with an empty/fresh state directory; otherwise inherited code and ' +
+    'manual state edits cannot be distinguished from work derived in this run.');
+}
+if (STRICT_AUTONOMY && (setup.workflow_clean !== true ||
+    !String(setup.workflow_revision || '').trim())) {
+  throw new Error(
+    'STRICT AUTONOMY REFUSED: GEAK workflow/knowledge must be a clean, committed revision before ' +
+    'launch. Mid-wave or uncommitted instructions make the run non-reproducible.');
+}
+const WORKFLOW_REVISION_START = String(setup.workflow_revision || '');
+if (STRICT_AUTONOMY) {
+  const roots = new Set(Array.isArray(CONTAINMENT_PREFLIGHT.roots)
+    ? CONTAINMENT_PREFLIGHT.roots.map((r) => String(r).replace(/\/+$/, '')) : []);
+  const expectedRoots = [KERNEL_PATH_ORIG, EXP_ROOT, STATE_DIR, WORKFLOW_DIR]
+    .filter(Boolean).map((r) => String(r).replace(/\/+$/, ''));
+  const missingRoots = expectedRoots.filter((r) => !roots.has(r));
+  if (CONTAINMENT_PREFLIGHT.content_scan !== 'clean' ||
+      CONTAINMENT_PREFLIGHT.skill_address_scan !== 'clean' ||
+      String(CONTAINMENT_PREFLIGHT.workflow_revision || '') !== WORKFLOW_REVISION_START ||
+      Number(CONTAINMENT_PREFLIGHT.reference_hash_count || 0) !== KNOWN_REFERENCE_HASHES.length ||
+      missingRoots.length) {
+    throw new Error(
+      `STRICT AUTONOMY REFUSED: containment attestation is not bound to this workflow/roots ` +
+      `(missing roots: ${missingRoots.join(', ') || 'none'}).`);
+  }
+}
 
 // CONTAINMENT ENFORCEMENT — the startup check above is a path filter and it missed the two leaks that
 // actually happened. Both were CONTENT: a control workspace holding the applied reference patch left
@@ -1156,7 +1318,13 @@ log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
 // the baseline copy and the inherited assets — sweeping before them scans an empty tree and passes.
 // It is an agent because workflow scripts have no fs/child_process: the check has to be executed by
 // something with a shell, and one cheap agent beats a comment asking a human to remember.
-if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR) {
+if (STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean === true) {
+  log(`CONTAINMENT PREFLIGHT clean: trusted bootstrap scanned the run tree before agent startup ` +
+      `(marker manifest ${String(CONTAINMENT_PREFLIGHT.marker_manifest_sha256 || '').slice(0, 12)}…, ` +
+      `${Number(CONTAINMENT_PREFLIGHT.reference_hash_count || 0)} opaque reference hashes).`);
+}
+if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR &&
+    !(STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean === true)) {
   const gate = await agentT(
     `Run two containment scanners and report their exit codes verbatim. Do not fix anything, do not ` +
     `read any file they flag, do not summarise the flagged content — reporting the paths is the whole job.\n\n` +
@@ -1168,27 +1336,24 @@ if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR) {
     // time. The full sweep costs roughly five minutes once, before any lease is taken.
     `1. REF_SCAN_MAX_TREES=100000 bash ${WORKFLOW_DIR}/scripts/reference_leak_sweep.sh --tree ${RUN_TREE_ANCESTOR}\n` +
     `   If its output still contains a REF_SCAN_MAX_TREES coverage NOTE, the scan is PARTIAL: say so\n` +
-    `   in your note and return verdict UNKNOWN rather than clean, whatever the exit code was.\n` +
+    `   in your note and return verdict "unknown" rather than clean, whatever the exit code was.\n` +
     `2. bash ${WORKFLOW_DIR}/scripts/skill_address_scan.sh --skills-dir ${EXPERT_SKILLS_DIR || '(skip: expert skills off)'} ` +
     `--scan-root ${RUN_TREE_ANCESTOR}\n\n` +
     `If a script is missing or its --skills-dir is empty, record that step as "skipped" with the reason ` +
     `and do NOT call it clean. "The scanner did not run" and "the scanner found nothing" are different ` +
     `results and this run has already been damaged twice by conflating them.`,
     { phase: 'Setup', label: 'containment gate', schema: CONTAINMENT_GATE_SCHEMA });
-  if (!gate) {
-    log('CONTAINMENT GATE: the gate agent returned nothing. Treating as UNKNOWN, not clean — the run ' +
-        'continues, but any capability claim from it is unsupported until the scanners are run by hand.');
-  } else if (gate.verdict === 'leak') {
-    throw new Error(
-      `CONTAINMENT GATE FAILED: a copy of the answer is reachable inside ${RUN_TREE_ANCESTOR}.\n` +
-      `${(gate.findings || []).join('\n')}\n` +
-      `The run is stopped before any budget is spent, because a candidate derived here cannot be ` +
-      `distinguished from a candidate copied here. Move the offending artifact outside the tree (mv, ` +
-      `not rm, so it stays available to verify) and relaunch. Set capability_eval=false if the port ` +
-      `is what you actually want.`);
-  } else {
-    log(`CONTAINMENT GATE ${gate.verdict}: ${gate.note || ''}`);
-  }
+  if (!gate || gate.verdict !== 'clean') {
+    const verdict = gate ? gate.verdict : 'unknown';
+    if (STRICT_AUTONOMY || verdict === 'leak') {
+      throw new Error(
+        `CONTAINMENT GATE FAILED (${verdict}): strict/capability evidence requires an explicit clean ` +
+        `scan of ${RUN_TREE_ANCESTOR} before budget is spent.\n` +
+        `${gate ? (gate.findings || []).join('\n') : 'gate agent returned nothing'}\n` +
+        `${gate ? gate.note || '' : ''}`);
+    }
+    log(`CONTAINMENT GATE ${verdict}: scanner did not establish clean. ${gate ? gate.note || '' : ''}`);
+  } else log(`CONTAINMENT GATE clean: ${gate.note || ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,6 +1508,11 @@ let analysis = await agentT(
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
+    ...(STRICT_AUTONOMY ? {
+      STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
+      PROMOTION_METRIC, LAUNCH_TARGET: Number(A.launch_target || 2),
+      REQUIRE_OVERLAP, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+    } : {}),
     // The resume flag says "a prior wave already built the roadmap"; STATE_DIR is the only place
     // that roadmap and the open-rung list actually survive between waves, because EVAL_DIR is
     // rebuilt from scratch by bootstrap_task.sh. roles/tech_lead.md's fast path already instructs
@@ -1403,6 +1573,11 @@ function analyzeResumeDegenerate(incremental, ver) {
         GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
         ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
+        ...(STRICT_AUTONOMY ? {
+          STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
+          PROMOTION_METRIC, LAUNCH_TARGET: Number(A.launch_target || 2),
+          REQUIRE_OVERLAP, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+        } : {}),
         // Kept on the recovery call too: the full analysis re-derives the ladder from the source,
         // but the rungs a prior wave already spent, and the ones it left owed, exist only here.
         ...(STATE_DIR ? { STATE_DIR } : {}),
@@ -1575,7 +1750,11 @@ function pipeOccupancyGate(rt, directions) {
   // failure this catches: `class` drives which levers are even candidates, so a wrong one is worse
   // than an absent one.
   let derived = 'mixed';
-  if (satur.length) derived = 'throughput_bound';
+  // One saturated engine does not make every producer/consumer overlap throughput-bound. If MFMA
+  // is full while VMEM/interconnect are idle, the operator is mixed and cross-engine work may still
+  // fit. Call it throughput-bound only when every measured binding engine is saturated (or only one
+  // engine was measured); otherwise retain the vector nature in `mixed`.
+  if (satur.length && satur.length === pipes.length) derived = 'throughput_bound';
   else if (maxUtil < PIPE_LOW_PCT && gap !== null && gap > GAP_NEGLIGIBLE_US) derived = 'launch_bound';
   else if (maxUtil < PIPE_LOW_PCT) derived = 'latency_bound';
 
@@ -1729,11 +1908,12 @@ function rungOutcomeOf(res, role) {
   if (!res) return 'unmeasured';
   const engFailed = !res.eng || /fail|error|crash/i.test(String(res.eng.status || ''));
   if (engFailed) return 'faulted';
+  if (res.inactive || res.unbacked || res.same_artifact) return 'unmeasured';
   if (role === 'enabling') {
     return functionalAcceptance(res.ver).pass ? 'measured' : 'unmeasured';
   }
-  const v = res.ver && Number(res.ver.verified_geomean);
-  return Number.isFinite(v) && v > 0 ? 'measured' : 'unmeasured';
+  return verifyCompleted(res.ver) && Number(res.ver && res.ver.verified_geomean) > 0
+    ? 'measured' : 'unmeasured';
 }
 // tally: Map<rungId, {attempts, last_outcome}>. Returns the entries the next wave still owes,
 // strongest-evidence-last so `measured` can never be reintroduced by a later weaker grade.
@@ -1750,19 +1930,155 @@ function openRungs(ladder, tally) {
         // Carried so the next wave knows what closing this rung would even mean. A prerequisite
         // re-planned as a speed experiment is a prerequisite that gets rejected again.
         step_role: stepRoleOf(c), enables: String(c.enables || '') || undefined,
+        mandatory_arms: Array.isArray(c.mandatory_arms) ? c.mandatory_arms : [],
+        target_shape: c.target_shape || undefined,
         attempts: Number(e.attempts) || 0, last_outcome: outcome };
     })
     .filter((c) => c.last_outcome !== 'measured');
 }
 // <</REPLAY:open_rungs>>
 
+// <<REPLAY:direction_contract>>
+// Join the planner's direction back to Analyze's rung. A planner routinely returns only the fields
+// it needs to describe the immediate experiment; silently dropping step_role/mandatory_arms here
+// changes how the experiment is judged and is how a prerequisite becomes a terminal speed test.
+function enrichDirection(direction, ladder) {
+  const d = direction || {};
+  const idOf = (c) => String((c && (c.id || c.title)) || '').trim().split(/\s+/)[0];
+  const rungId = String(d.roadmap_rung || '').trim();
+  const rung = (Array.isArray(ladder) ? ladder : []).find((c) => idOf(c) === rungId) || {};
+  const pickArray = (a, b) => Array.isArray(a) ? a : (Array.isArray(b) ? b : []);
+  return {
+    ...d,
+    gated_on: pickArray(d.gated_on, rung.gated_on),
+    mandatory_arms: pickArray(d.mandatory_arms, rung.mandatory_arms),
+    step_role: d.step_role || rung.step_role || 'terminal',
+    enables: d.enables || rung.enables || undefined,
+    cost_budget_pct: d.cost_budget_pct != null ? d.cost_budget_pct : rung.cost_budget_pct,
+    target_shape: d.target_shape || rung.target_shape || undefined,
+  };
+}
+
+function mandatoryArmsVerdict(direction, ver, strict) {
+  const expected = Array.isArray(direction && direction.mandatory_arms)
+    ? [...new Set(direction.mandatory_arms.map(String).filter(Boolean))] : [];
+  if (!expected.length) return { pass: true, expected, actual: [], missing: [] };
+  const actual = Array.isArray(ver && ver.arms_run)
+    ? [...new Set(ver.arms_run.map(String).filter(Boolean))] : [];
+  const have = new Set(actual);
+  const missing = expected.filter((a) => !have.has(a));
+  return {
+    pass: missing.length === 0 && (!strict || actual.length > 0),
+    expected, actual, missing,
+    caveat: missing.length
+      ? `mandatory arm(s) not independently verified: ${missing.join(', ')}`
+      : '',
+  };
+}
+
+function shouldVerifyDirection(direction, eng, forceVerify, score) {
+  if (!eng || /fail|error|crash/i.test(String(eng.status || ''))) return false;
+  if (forceVerify || String((direction && direction.step_role) || '').toLowerCase() === 'enabling') {
+    return true;
+  }
+  return Number(score) > 1.0;
+}
+
+function strictDirectionVerdict(direction, ladder, completedRungs) {
+  const d = direction || {};
+  const rungId = String(d.roadmap_rung || '').trim();
+  if (!rungId || rungId === 'off_ladder') {
+    return { pass: false, reason: 'strict autonomy direction must name a ladder rung' };
+  }
+  const idOf = (c) => String((c && (c.id || c.title)) || '').trim().split(/\s+/)[0];
+  const rung = (Array.isArray(ladder) ? ladder : []).find((c) => idOf(c) === rungId);
+  if (!rung) return { pass: false, reason: `unknown roadmap rung ${rungId}` };
+  const done = new Set(Array.isArray(completedRungs) ? completedRungs
+    : (completedRungs instanceof Set ? [...completedRungs] : []));
+  const unmet = (Array.isArray(rung.gated_on) ? rung.gated_on : []).filter((g) => !done.has(String(g)));
+  if (unmet.length) {
+    return { pass: false, reason: `${rungId} prerequisite(s) not completed to spec: ${unmet.join(', ')}` };
+  }
+  if (String(d.step_role || '') === 'enabling' && !String(d.enables || '').trim()) {
+    return { pass: false, reason: `${rungId} is enabling but names no terminal rung` };
+  }
+  const rungRole = String(rung.step_role || 'terminal');
+  if (String(d.step_role || 'terminal') !== rungRole ||
+      (rungRole === 'enabling' && String(d.enables || '') !== String(rung.enables || ''))) {
+    return { pass: false, reason: `${rungId} changed its Analyze step_role/enables contract` };
+  }
+  const expected = Array.isArray(rung.mandatory_arms) ? rung.mandatory_arms : [];
+  const supplied = new Set(Array.isArray(d.mandatory_arms) ? d.mandatory_arms.map(String) : []);
+  const missing = expected.filter((a) => !supplied.has(String(a)));
+  if (missing.length) {
+    return { pass: false, reason: `${rungId} dropped mandatory arm(s): ${missing.join(', ')}` };
+  }
+  if (rung.target_shape) {
+    const planned = d.target_shape || {};
+    const expectedStages = [...new Set((rung.target_shape.stages_fused || []).map(String))].sort();
+    const plannedStages = [...new Set((planned.stages_fused || []).map(String))].sort();
+    if (Number(planned.launches) !== Number(rung.target_shape.launches) ||
+        (!!rung.target_shape.require_overlap && planned.require_overlap !== true) ||
+        expectedStages.join('\0') !== plannedStages.join('\0')) {
+      return { pass: false, reason: `${rungId} changed its Analyze target_shape` };
+    }
+  }
+  return { pass: true, reason: '' };
+}
+// <</REPLAY:direction_contract>>
+
+// <<REPLAY:autonomy_transition>>
+function winnerCommitTransition(requested, commitResult, winner, winnerResult, strict) {
+  const strictProof = !strict || (commitResult && commitResult.transaction_valid === true &&
+    commitResult.exact_patch === true && String(commitResult.head_before || '').trim() &&
+    String(commitResult.head_after || '').trim() &&
+    commitResult.head_before !== commitResult.head_after);
+  const committed = !!(requested && commitResult && commitResult.committed === true && winner && strictProof);
+  const acceptanceReached = !!(committed && winnerResult && winnerResult.autonomy_contract &&
+    winnerResult.autonomy_contract.accepted === true);
+  return { committed, acceptanceReached };
+}
+
+function landedRungOutcome(baseOutcome, role, hasTargetShape, evidencePass,
+                           winnerCommitted, winnerMatches, enablingLanded) {
+  if (role === 'enabling') return enablingLanded ? baseOutcome : 'unmeasured';
+  if (hasTargetShape) {
+    return evidencePass && winnerCommitted && winnerMatches ? baseOutcome : 'unmeasured';
+  }
+  return baseOutcome;
+}
+
+function finalStatusVerdict(directorStatus, scopedGuardFailure, strictProofFailure) {
+  if (directorStatus === 'flagged' || scopedGuardFailure) return 'flagged';
+  if (strictProofFailure) return 'autonomy_incomplete';
+  return directorStatus || 'unknown';
+}
+
+function finalMetricFailure(metric, targetGuards, primary, guards, attribution) {
+  const scoped = Array.isArray(targetGuards) && targetGuards.length > 0;
+  if ((scoped || metric === 'changed_kernel') && !(Number(primary) > 1.0)) return true;
+  if (scoped && (!guards || !guards.complete || !guards.regression_pass)) return true;
+  if (metric === 'changed_kernel') {
+    const a = attribution || {};
+    if (!(a.absolute_to_frozen === true && Number(a.changed_us) > 0 &&
+          Number(a.replaced_sum_us) > 0)) return true;
+  }
+  return false;
+}
+
+function integrationEligible(integrate, score, bestIndividual, guards) {
+  return !!(integrate && integrate.conclusion === 'improved' && integrate.best &&
+    guards && guards.complete && guards.regression_pass && Number(score) > Number(bestIndividual));
+}
+// <</REPLAY:autonomy_transition>>
+
 // Deliberately advisory, like its siblings. The ladder is Analyze's plan, and a round with better
 // evidence SHOULD leave it — `rung_deviation` exists to make that a statement rather than a
 // silence. The gate never blocks a direction; it refuses to let a skip be invisible.
-function roadmapLadderGate(ladder, directions, dispatchedRungs) {
+function roadmapLadderGate(ladder, directions, completedRungs) {
   const rungs = (Array.isArray(ladder) ? ladder : []).filter((c) => c && (c.id || c.title));
   const dirs = Array.isArray(directions) ? directions : [];
-  const done = new Set(Array.isArray(dispatchedRungs) ? dispatchedRungs : dispatchedRungs instanceof Set ? [...dispatchedRungs] : []);
+  const done = new Set(Array.isArray(completedRungs) ? completedRungs : completedRungs instanceof Set ? [...completedRungs] : []);
   if (!rungs.length) {
     return { verdict: 'MISSING', summary: '', planned: [], caveat:
       'LADDER MISSING: Analyze returned no candidate_directions, so there is no recorded ordering ' +
@@ -1809,7 +2125,7 @@ function roadmapLadderGate(ladder, directions, dispatchedRungs) {
   });
 
   const summary = `Ladder: ${rungs.length} rung(s) [${rungs.map(idOf).join(', ')}]; ` +
-    `dispatched so far [${[...done].join(', ') || 'none'}]; ` +
+    `completed to spec [${[...done].join(', ') || 'none'}]; ` +
     `this round [${planned.join(', ') || 'none on ladder'}]; ` +
     `${never.length} never reached.`;
 
@@ -1964,12 +2280,8 @@ function objectiveVerdict(objective, pcRan, geomean) {
 // activation for the usual reason: an unexercised patch reads as a clean pass on every other field.
 // `liveness: 'n/a'` is accepted because it is the honest answer for a non-distributed candidate,
 // while 'fail' is a timeout, which this workflow has always counted as a failure and never a skip.
-function runsCleanly(ver) {
-  if (!ver) return false;
-  const s = (v) => String(v == null ? '' : v).toLowerCase();
-  return s(ver.correctness).startsWith('pass') &&
-         s(ver.activation_confirmed) === 'yes' &&
-         ['pass', 'n/a', ''].includes(s(ver.liveness));
+function runsCleanly(ver, requirements) {
+  return functionalAcceptance(ver, requirements).pass;
 }
 // <</REPLAY:objective_gate>>
 
@@ -2041,7 +2353,8 @@ function verifyCompleted(ver) {
   return ['verified', 'regression', 'slower'].includes(s) || s.startsWith('verif');
 }
 
-function functionalAcceptance(ver) {
+function functionalAcceptance(ver, requirements) {
+  const req = requirements || {};
   const s = (v) => String(v == null ? '' : v).toLowerCase();
   const missing = [];
   if (!ver) return { pass: false, missing: ['no verify result at all'] };
@@ -2052,27 +2365,92 @@ function functionalAcceptance(ver) {
   // Acceptance criterion 4 carries a NUMBER (relL2 < 0.10), and a free-text `correctness: 'pass'`
   // cannot be compared to it. When the verifier reports `accuracy`, hold the candidate to the
   // threshold mechanically -- a "pass" string sitting on top of a relL2 of 0.4 is not a pass. When
-  // it is not reported, the string check above stands, so a run that never wired accuracy is
-  // unchanged rather than crashed.
+  // Outside strict mode, absence preserves the historical string check. Under strict autonomy the
+  // numeric evidence is required and absence fails explicitly.
   const acc = (ver && ver.accuracy) || {};
-  const accVal = Number(acc.value), accThr = Number(acc.threshold);
-  if (Number.isFinite(accVal) && Number.isFinite(accThr) && !(accVal < accThr)) {
-    missing.push(`accuracy ${acc.metric || 'error'}=${accVal} is not < threshold ${accThr}`);
+  const accRows = Array.isArray(ver && ver.accuracy_results) && ver.accuracy_results.length
+    ? ver.accuracy_results : (Object.keys(acc).length ? [acc] : []);
+  const accuracyGuards = Array.isArray(req.accuracyGuards) ? req.accuracyGuards.map(String) : [];
+  const validateAccuracy = (row, guard) => {
+    const val = Number(row && row.value), threshold = Number(row && row.threshold);
+    if (!row || String(row.metric || '') !== String(req.accuracyMetric || 'relL2')) {
+      return `${guard || 'accuracy'} missing metric ${req.accuracyMetric || 'relL2'}`;
+    }
+    if (!(Number.isFinite(val) && val >= 0 && Number.isFinite(threshold) && threshold > 0 &&
+          threshold <= Number(req.accuracyThreshold || threshold) &&
+          val < threshold && val < Number(req.accuracyThreshold || threshold) &&
+          String(row.method || '').trim())) {
+      return `${guard || row.guard || 'accuracy'} has invalid value/threshold/method`;
+    }
+    return '';
+  };
+  if (req.requireAccuracy) {
+    const guards = accuracyGuards.length ? accuracyGuards : [''];
+    for (const guard of guards) {
+      const row = guard ? accRows.find((r) => String(r.guard || '') === guard) : accRows[0];
+      const gap = validateAccuracy(row, guard);
+      if (gap) missing.push(gap);
+    }
+  } else {
+    const accVal = Number(acc.value), accThr = Number(acc.threshold);
+    if (Number.isFinite(accVal) && Number.isFinite(accThr) && !(accVal < accThr)) {
+      missing.push(`accuracy ${acc.metric || 'error'}=${accVal} is not < threshold ${accThr}`);
+    }
   }
   if (s(ver.activation_confirmed) !== 'yes') missing.push('the new path was not confirmed to run');
-  if (!['pass', 'n/a', ''].includes(s(ver.liveness))) missing.push('liveness failed (hang or timeout)');
+  if (req.requireLiveness) {
+    if (s(ver.liveness) !== 'pass') missing.push('liveness pass is required and was not reported');
+    const requiredReplays = Number(req.requiredReplays || 0);
+    const replayGuards = Array.isArray(req.replayGuards) ? req.replayGuards.map(String) : [];
+    const replayRows = Array.isArray(ver.replay_results) ? ver.replay_results : [];
+    if (replayGuards.length) {
+      for (const guard of replayGuards) {
+        const row = replayRows.find((r) => String(r.guard || '') === guard);
+        if (!row || String(row.status || '').toLowerCase() !== 'pass' ||
+            Number(row.count) < requiredReplays ||
+            (req.requireGraphSafe && String(row.graph_safe || '').toLowerCase() !== 'pass')) {
+          missing.push(`${guard} replay evidence is missing or below ${requiredReplays}`);
+        }
+      }
+    } else {
+      const replayCount = Number(ver.replay_count);
+      if (requiredReplays > 0 && (!Number.isFinite(replayCount) || replayCount < requiredReplays)) {
+        missing.push(`replay_count ${Number.isFinite(replayCount) ? replayCount : 'missing'} < required ${requiredReplays}`);
+      }
+    }
+  } else if (!['pass', 'n/a', ''].includes(s(ver.liveness))) {
+    missing.push('liveness failed (hang or timeout)');
+  }
   // Graph capture/replay safety is part of the same "does it run correctly under the real harness"
   // bar as liveness: criterion 4 wants 1000 CUDA-Graph replays per route with no deadlock, and a
   // kernel that captures then replays wrong has failed FUNCTION, not speed. Reported-and-bad fails;
   // `n/a`/empty is the honest answer off the graph-captured path and stays a pass.
-  if (!['pass', 'n/a', ''].includes(s(ver.graph_safe))) missing.push('graph capture/replay is not safe');
+  if (req.requireGraphSafe) {
+    if (s(ver.graph_safe) !== 'pass') missing.push('graph capture/replay pass is required and was not reported');
+  } else if (!['pass', 'n/a', ''].includes(s(ver.graph_safe))) {
+    missing.push('graph capture/replay is not safe');
+  }
+  if (req.requireArtifactDistinct && s(ver.artifact_distinct) !== 'yes') {
+    missing.push('JIT artifact distinctness proof is required and was not reported');
+  } else if (req.requireArtifactDistinct &&
+      (!String(ver.artifact_hash_base || '').trim() ||
+       !String(ver.artifact_hash_candidate || '').trim() ||
+       String(ver.artifact_hash_base) === String(ver.artifact_hash_candidate))) {
+    missing.push('JIT artifact hashes are missing or identical');
+  }
+  const requiredArms = Array.isArray(req.requiredArms) ? req.requiredArms.map(String).filter(Boolean) : [];
+  if (requiredArms.length) {
+    const actualArms = new Set(Array.isArray(ver.arms_run) ? ver.arms_run.map(String) : []);
+    const missingArms = requiredArms.filter((a) => !actualArms.has(a));
+    if (missingArms.length) missing.push(`mandatory arm(s) not independently verified: ${missingArms.join(', ')}`);
+  }
   return { pass: missing.length === 0, missing };
 }
 
 // The verdict for ONE enabling direction. `geomean` is its measured speedup, which is expected to be
 // below 1 and is not a reason to reject.
-function enablingVerdict(d, ver, geomean) {
-  const fa = functionalAcceptance(ver);
+function enablingVerdict(d, ver, geomean, requirements) {
+  const fa = functionalAcceptance(ver, requirements);
   const enables = String((d && d.enables) || '').trim();
   const budget = Number((d && d.cost_budget_pct) != null ? d.cost_budget_pct : ENABLING_DEFAULT_BUDGET_PCT);
   const g = Number(geomean);
@@ -2176,14 +2554,27 @@ const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
 // Acceptance criterion 1's target launch count per EP rank: the fused megakernel plus the one
 // separate pre-dispatch quant launch = 2. Configurable so a campaign with a different fusion target
 // can set it, but the default is the shape this project is judged against. See launchVerdict.
-const LAUNCH_TARGET = Number.isFinite(Number(A.launch_target)) && Number(A.launch_target) > 0
-  ? Number(A.launch_target) : 2;
-// The routes the promotion metric is allowed to come from. This is the uniform-route campaign; a
-// skew route is kept in the harness for do-no-harm but is out of scope AS A TARGET. Empty means "not
-// configured", and analyzeGuards then falls back to any guard named *uniform*, else all guards. See
-// analyzeGuards and knowledge/measurement scope.
-const TARGET_GUARDS = (Array.isArray(A.target_guards) ? A.target_guards
-  : String(A.target_guards || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
+function functionalRequirementsFor(direction, purpose) {
+  const distributed = String((direction && direction.specialty) || '') === 'distributed';
+  const shapeChanging = !!(direction && direction.target_shape);
+  const strictPath = STRICT_AUTONOMY && (distributed || shapeChanging);
+  const runtimeCommit = purpose === 'commit' && stepRoleOf(direction) === 'terminal';
+  return {
+    requireAccuracy: strictPath,
+    requireLiveness: strictPath,
+    requireGraphSafe: strictPath,
+    requireArtifactDistinct: strictPath && REQUIRE_ARTIFACT_DISTINCT,
+    requiredReplays: strictPath ? REQUIRED_REPLAYS : 0,
+    replayGuards: strictPath ? [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])] : [],
+    accuracyMetric: ACCURACY_METRIC,
+    accuracyThreshold: ACCURACY_THRESHOLD,
+    accuracyGuards: strictPath ? TARGET_GUARDS : [],
+    // Null/attribution/overlap arms decide final acceptance, not whether a correct running terminal
+    // artifact is preserved for the next round. Enabling arms remain part of functional acceptance.
+    requiredArms: runtimeCommit ? [] : ((direction && direction.mandatory_arms) || []),
+    strict: STRICT_AUTONOMY,
+  };
+}
 // Overlap caveats, accumulated across rounds. They travel to the report for the same reason the
 // task-graph caveat does: the thing they qualify — whether a fused win was ever shown to BE an
 // overlap win — is invisible in the final number, and by report time nobody re-reads the log.
@@ -2191,6 +2582,8 @@ const TARGET_GUARDS = (Array.isArray(A.target_guards) ? A.target_guards
 // acceptance shape (criterion 1) was actually reached by something this wave, as opposed to merely
 // never checked. It only ratchets true; a later three-launch candidate does not unset it.
 let TWO_LAUNCH_REACHED = false;
+let AUTONOMY_ACCEPTANCE_REACHED = false;
+const ACCEPTANCE_CAVEATS = [];
 const OVERLAP_CAVEATS = [];
 // Launch-shape caveats: how many launches each candidate reached, and whether the two-launch fused
 // shape (acceptance criterion 1) was actually met. Carried for the same reason as the overlap
@@ -2265,8 +2658,31 @@ function recordRungOutcome(id, outcome) {
   if (e.last_outcome !== 'measured') e.last_outcome = outcome;
   rungTally.set(key, e);
 }
+if (STRICT_AUTONOMY) {
+  if (!LADDER.length) {
+    throw new Error(
+      'STRICT AUTONOMY REFUSED: Analyze returned no candidate_directions. A proof run with no ' +
+      'machine-readable ladder cannot show that the two-launch terminal was derived.');
+  }
+  const terminalTargets = LADDER.filter((c) => c && c.target_shape &&
+    Number(c.target_shape.launches) <= LAUNCH_TARGET);
+  if (!terminalTargets.length) {
+    throw new Error(
+      `STRICT AUTONOMY REFUSED: no ladder rung declares target_shape.launches <= ${LAUNCH_TARGET}. ` +
+      'A prose promise to fuse the operator cannot close the machine-tracked acceptance shape.');
+  }
+  const incompleteTargets = terminalTargets.filter((c) =>
+    !Array.isArray(c.mandatory_arms) || c.mandatory_arms.length === 0 ||
+    !Array.isArray(c.target_shape.stages_fused) || c.target_shape.stages_fused.length === 0 ||
+    (REQUIRE_OVERLAP && c.target_shape.require_overlap !== true));
+  if (incompleteTargets.length) {
+    throw new Error(
+      'STRICT AUTONOMY REFUSED: terminal target rung(s) must declare mandatory_arms and the required ' +
+      `overlap shape: ${incompleteTargets.map((c) => c.id || c.title).join(', ')}`);
+  }
+}
 {
-  const lg0 = roadmapLadderGate(LADDER, [], dispatchedRungs);
+  const lg0 = roadmapLadderGate(LADDER, [], new Set());
   if (lg0.summary) log(lg0.summary);
   if (lg0.caveat) log(lg0.caveat);
 }
@@ -2304,7 +2720,7 @@ if (!PRIOR_ART_RECORDED) {
   log(`PRIOR ART: none — the sweep ran and reported an empty result.`);
 }
 for (const pa of PRIOR_ART) {
-  const where = pa.implemented_at || '?';
+  const where = CAPABILITY_EVAL ? 'HIDDEN_REFERENCE' : (pa.implemented_at || '?');
   const eff = pa.measured_effect ? ` (measured ${pa.measured_effect})` : '';
   if (pa.in_baseline === false && CAPABILITY_EVAL) {
     // Same finding, opposite instruction. Here the absent implementation is the ANSWER KEY: it
@@ -2391,6 +2807,8 @@ const bench = await agentT(
   roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
+    TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -2419,6 +2837,8 @@ if (!benchR || !benchR.baseline_per_case) {
       'control result — report its measured median and null arm rather than re-running it. If the ' +
       'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes.',
       { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+        STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
     { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA });
   if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
@@ -2991,23 +3411,21 @@ function overlapVerdict(ver, opts) {
 // <<REPLAY:attribution_gate>>
 // IS THE WIN INSIDE THE KERNEL THAT WAS CHANGED? See knowledge/fusion_preconditions.md.
 //
-// This is the kernel workflow. Its subject is a kernel, so its verdict must be that kernel's own
-// time against the time of the kernels it replaced. End-to-end is the guard rail: it may veto (a
-// candidate that wins on kernel time and loses end-to-end has moved the cost somewhere else), but
-// it may not grant credit on its own, because everything between two launches -- inter-rank arrival
-// skew, launch overhead, L2 residency across a boundary, host-side gaps -- moves it without any
-// kernel getting faster.
+// A launch-structure change can move both the fused body and the waits around it. The task declares
+// which one is the score. `operator_e2e` owns the complete operator span and uses attribution to
+// explain it; `changed_kernel` is valid only when both arms provide a comparable same-timeline
+// kernel measure. Independently rank-reduced stage timers are never silently promoted into that role.
 //
-// Unlike the overlap gate, this one CAN reject, and the difference is deliberate. An unmeasured
-// overlap claim is a good result with a hole in it. A kernel-time regression promoted on an
-// end-to-end reading is not a result with a hole; it is the wrong kernel winning, and every round
-// built on top of it inherits the wrong cause. It rejects only on a REPORTED regression, never on a
-// missing field -- a run whose engineers do not report attribution behaves exactly as before.
+// Whether a mismatch rejects depends on the declared promotion metric. For `operator_e2e`, launch
+// alignment and downstream wait changes are part of the operator result; attribution is mandatory
+// evidence about WHY it won, not a replacement score. For `changed_kernel`, the task explicitly
+// owns a comparable same-timeline kernel measure and the mismatch rejects.
 const ATTRIBUTION_EPS_PCT = 0.5;  // below this the two readings are the same number
 
 function attributionVerdict(ver, opts) {
   const a = (ver && ver.attribution) || {};
   const won = Number((opts && opts.geomean) || 0) > 1.0;
+  const metric = String((opts && opts.metric) || 'changed_kernel');
   const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
   const chg = num(a.changed_us), rep = num(a.replaced_sum_us);
   const e2ePct = ((Number((opts && opts.geomean) || 1)) - 1) * 100;
@@ -3032,13 +3450,15 @@ function attributionVerdict(ver, opts) {
     : '';
 
   if (won && kPct < -ATTRIBUTION_EPS_PCT) {
-    return { state: 'gap_win', reject: true, caveat:
-      `REJECTED as a win. End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% but the ` +
+    const reject = metric === 'changed_kernel';
+    return { state: reject ? 'gap_win' : 'mechanism_mismatch', reject, caveat:
+      `${reject ? 'REJECTED as a changed-kernel win.' : 'Operator win retained, mechanism claim withheld.'} ` +
+      `End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% but the ` +
       `kernel that was changed is SLOWER than the kernels it replaced: ${chg.toFixed(1)}us against ` +
       `${rep.toFixed(1)}us, ${kPct.toFixed(2)}%.${gapNote} The win is not inside the code under ` +
-      `test. Find the mechanism and, if it is worth having, implement it directly -- a barrier that ` +
-      `aligns ranks is far cheaper than a megakernel, and it can be measured honestly. Promoting ` +
-      `this makes the next round optimise a kernel that is not the one that got faster.` };
+      `test. Find and measure the mechanism before calling it overlap. Under operator_e2e that ` +
+      `cross-launch/cross-rank effect remains part of the product metric; under changed_kernel it is ` +
+      `outside the declared score.` };
   }
   if (!won && kPct > ATTRIBUTION_EPS_PCT) {
     return { state: 'kernel_win_e2e_loss', reject: false, caveat:
@@ -3048,11 +3468,13 @@ function attributionVerdict(ver, opts) {
       `regression attached; locate it before shipping.` };
   }
   if (won && Math.abs(kPct) <= ATTRIBUTION_EPS_PCT) {
-    return { state: 'gap_win', reject: true, caveat:
-      `REJECTED as a win. End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% while the ` +
+    const reject = metric === 'changed_kernel';
+    return { state: reject ? 'gap_win' : 'mechanism_mismatch', reject, caveat:
+      `${reject ? 'REJECTED as a changed-kernel win.' : 'Operator win retained, mechanism claim withheld.'} ` +
+      `End-to-end reads ${e2ePct >= 0 ? '+' : ''}${e2ePct.toFixed(2)}% while the ` +
       `changed kernel is flat against the kernels it replaced (${chg.toFixed(1)}us vs ` +
       `${rep.toFixed(1)}us, ${kPct >= 0 ? '+' : ''}${kPct.toFixed(2)}%).${gapNote} A flat kernel ` +
-      `cannot produce an end-to-end win; whatever did is outside this workflow's subject.` };
+      `cannot explain the end-to-end win; report the operator result and withhold the claimed mechanism.` };
   }
   return { state: 'attributed', reject: false, caveat: won
     ? '' : `Kernel time ${kPct >= 0 ? '+' : ''}${kPct.toFixed(2)}%, consistent with the end-to-end reading.` };
@@ -3075,17 +3497,29 @@ function attributionVerdict(ver, opts) {
 //
 // Three-valued on the same principle as overlap.measured: `unjudged` (no count reported) is a HOLE,
 // not a pass. Collapsing it into "met" is exactly how an unfused candidate would read as accepted.
-function launchVerdict(ver, target) {
+function launchVerdict(ver, target, expectedStages) {
   const ls = (ver && ver.launch_shape) || {};
   const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
   const cand = num(ls.launches_cand), base = num(ls.launches_base);
-  const tgt = num(ls.target) != null ? num(ls.target) : (num(target) != null ? num(target) : 2);
-  if (cand == null) {
+  // The orchestrator/ladder owns the target. A verifier reports what ran; it cannot move the goal
+  // from 2 to 3 and make the same observation pass.
+  const tgt = num(target) != null ? num(target) : (num(ls.target) != null ? num(ls.target) : 2);
+  const stages = Array.isArray(ls.stages_fused) ? ls.stages_fused.map(String) : [];
+  const expected = Array.isArray(expectedStages) ? expectedStages.map(String) : [];
+  const missingStages = expected.filter((s) => !stages.includes(s));
+  const proofMissing = ls.per_rank !== true || !String(ls.how_counted || '').trim() ||
+    missingStages.length > 0;
+  if (cand == null || !Number.isInteger(cand) || cand <= 0) {
     return { state: 'unjudged', shape_met: false, caveat:
       `Launch count NOT reported, so acceptance criterion 1 (two launches) is UNJUDGED for this ` +
       `candidate. A fusion that collapsed dispatch+gemm1 but still launches combine separately is ` +
       `three launches and reads identical to a real two-launch fusion here. Report ` +
       `launch_shape.launches_cand (per EP rank, one operator call) with how_counted.` };
+  }
+  if (expected.length && proofMissing) {
+    return { state: 'unjudged', shape_met: false, caveat:
+      `Launch count ${cand} was reported without a complete proof: per_rank must be true, ` +
+      `how_counted must be non-empty, and stages_fused is missing [${missingStages.join(', ') || 'none'}].` };
   }
   if (cand <= tgt) {
     return { state: 'met', shape_met: true, caveat: base != null && base !== cand
@@ -3258,7 +3692,167 @@ function analyzeGuards(pairedReadings, targetGuards, wantFastPairs) {
   }
   return { available: true, guards, target_median: targetMedian, off_target: offTarget, caveats };
 }
+
+// The score that can create credit is computed only from explicit TARGET guards. Regression guards
+// are vetoes, never positive weight. This is intentionally based on per_case (the verifier's folded,
+// noise-aware result); paired_readings are separately required by the strict terminal contract.
+function guardContract(result, targetGuards, regressionGuards, fallbackScore) {
+  const rows = Array.isArray(result && result.per_case) ? result.per_case : [];
+  const byName = new Map(rows.map((r) => [String(r.name || '').trim(), r]));
+  const targets = (Array.isArray(targetGuards) ? targetGuards : []).map(String).filter(Boolean);
+  const regressions = (Array.isArray(regressionGuards) ? regressionGuards : []).map(String).filter(Boolean);
+  const missingTargets = targets.filter((g) => !byName.has(g));
+  const missingRegressions = regressions.filter((g) => !byName.has(g));
+  const targetValues = targets.map((g) => Number((byName.get(g) || {}).speedup))
+    .filter((v) => Number.isFinite(v) && v > 0);
+  const score = targets.length
+    ? (targetValues.length === targets.length
+      ? Math.exp(targetValues.reduce((s, v) => s + Math.log(v), 0) / targetValues.length)
+      : 0)
+    : Number(fallbackScore || 0);
+  const regressed = regressions.filter((g) => {
+    const v = Number((byName.get(g) || {}).speedup);
+    return Number.isFinite(v) && v < 1.0;
+  });
+  return {
+    score,
+    complete: missingTargets.length === 0 && missingRegressions.length === 0,
+    regression_pass: missingRegressions.length === 0 && regressed.length === 0,
+    missing_targets: missingTargets,
+    missing_regressions: missingRegressions,
+    regressed,
+  };
+}
+
+function promotionScore(result, metric, targetGuards, regressionGuards, fallbackScore) {
+  if (!result) return 0;
+  if (metric === 'changed_kernel') {
+    const a = result.attribution || {};
+    const changed = Number(a.changed_us), replaced = Number(a.replaced_sum_us);
+    return a.absolute_to_frozen === true &&
+      Number.isFinite(changed) && changed > 0 && Number.isFinite(replaced) && replaced > 0
+      ? replaced / changed : 0;
+  }
+  return guardContract(result, targetGuards, regressionGuards, fallbackScore).score;
+}
 // <</REPLAY:bimodal_split>>
+
+const metricScore = (result) =>
+  promotionScore(result, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS, primSpeedup(result));
+const ATTRIBUTION_METRIC = PROMOTION_METRIC === 'legacy' ? 'changed_kernel' : PROMOTION_METRIC;
+
+// <<REPLAY:autonomy_acceptance>>
+// Completion and acceptance are deliberately separate. A correct two-launch artifact that is still
+// slow is progress under objective=working_kernel and must be commit-able, but it is not proof that
+// the autonomous optimization succeeded.
+function autonomyAcceptanceVerdict(direction, ver, opts) {
+  const o = opts || {};
+  const shape = (direction && direction.target_shape) || null;
+  if (!shape) return { applicable: false, complete: true, accepted: false, reasons: [] };
+  const reasons = [];
+  const scoreReasons = [];
+  const fa = functionalAcceptance(ver, o.functionalRequirements || {});
+  if (!fa.pass) reasons.push(...fa.missing);
+
+  const lv = launchVerdict(ver, Number(shape.launches || o.launchTarget || 2), shape.stages_fused || []);
+  if (!lv.shape_met) reasons.push(lv.caveat || 'launch target was not met');
+
+  const gc = guardContract(ver, o.targetGuards || [], o.regressionGuards || [], o.fallbackScore);
+  const declaredScore = promotionScore(ver, o.promotionMetric || 'operator_e2e',
+    o.targetGuards || [], o.regressionGuards || [], gc.score);
+  if (!gc.complete) {
+    if (gc.missing_targets.length) reasons.push(`missing target guard(s): ${gc.missing_targets.join(', ')}`);
+    if (gc.missing_regressions.length) reasons.push(`missing regression guard(s): ${gc.missing_regressions.join(', ')}`);
+  }
+  if (!gc.regression_pass && gc.regressed.length) {
+    reasons.push(`regression guard(s) below baseline: ${gc.regressed.join(', ')}`);
+  }
+
+  const allGuards = [...new Set([...(o.targetGuards || []), ...(o.regressionGuards || [])])];
+  if (o.requirePaired && allGuards.length) {
+    const pairs = Array.isArray(ver && ver.paired_readings) ? ver.paired_readings : [];
+    if (!Number.isFinite(Number(ver && ver.null_arm_pct))) {
+      reasons.push('same-session byte-identical null_arm_pct is required');
+    } else if ((declaredScore - 1) * 100 <= Math.abs(Number(ver.null_arm_pct))) {
+      scoreReasons.push(`target claim ${((declaredScore - 1) * 100).toFixed(3)}% does not clear null ` +
+        `${Math.abs(Number(ver.null_arm_pct)).toFixed(3)}%`);
+    }
+    for (const guard of allGuards) {
+      const n = pairs.filter((p) => String(p.guard || '') === String(guard)).length;
+      const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
+      if (n < needed) {
+        reasons.push(`${guard} has ${n} paired reading(s), requires ${needed}`);
+      }
+    }
+    const targetNeed = Math.max(Number(o.requiredPairs || 1),
+      ...(o.targetGuards || []).map((g) => Number((o.requiredPairsByGuard || {})[g] || 0)));
+    const ga = analyzeGuards(pairs, o.targetGuards || [], targetNeed);
+    if (!ga.available || !Number.isFinite(Number(ga.target_median))) {
+      reasons.push('target guard has no readable paired result');
+    }
+    reasons.push(...ga.caveats);
+    const choose = (n, k) => {
+      let out = 1;
+      for (let i = 1; i <= k; i++) out = out * (n - k + i) / i;
+      return out;
+    };
+    for (const guard of (o.targetGuards || [])) {
+      const gp = pairs.filter((p) => String(p.guard || '') === String(guard));
+      const wins = gp.filter((p) => Number(p.base) > Number(p.cand)).length;
+      let tail = 0;
+      for (let k = wins; k <= gp.length; k++) tail += choose(gp.length, k);
+      const p = gp.length ? tail / Math.pow(2, gp.length) : 1;
+      if (p > 0.05) scoreReasons.push(`${guard} paired sign test p=${p.toFixed(4)} > 0.05`);
+    }
+  }
+
+  const needsOverlap = !!(shape.require_overlap || o.requireOverlap);
+  if (needsOverlap) {
+    const ov = overlapVerdict(ver, { geomean: gc.score });
+    const frac = Number(ver && ver.overlap && ver.overlap.fraction);
+    const cuFrac = Number(ver && ver.overlap && ver.overlap.cu_fraction);
+    const scattered = Number(ver && ver.overlap && ver.overlap.scattered_reading);
+    const forced = Number(ver && ver.overlap && ver.overlap.forced_reading);
+    if (ver && ver.overlap && ver.overlap.measured !== 'yes') {
+      reasons.push('controlled overlap evidence measured=yes is required');
+    } else if (!Number.isFinite(scattered) || scattered > 0.05 ||
+               !Number.isFinite(forced) || forced <= 0.05) {
+      reasons.push('overlap meter requires passing scattered and forced-concurrency controls');
+    } else if (!['measured', 'contention'].includes(ov.state)) {
+      reasons.push(ov.caveat || `overlap meter state is ${ov.state}`);
+    } else if (!(frac > 0.05) || !(cuFrac > 0.05)) {
+      reasons.push('on-edge wall-clock and CU-weighted overlap must both exceed instrument slop');
+    }
+  }
+
+  if (o.requireAttribution) {
+    const a = (ver && ver.attribution) || {};
+    if (!(Number(a.changed_us) > 0 && Number(a.replaced_sum_us) > 0 &&
+          (o.targetGuards || []).includes(String(a.guard || '')) &&
+          String(a.method || '').trim() &&
+          Number.isFinite(Number(a.residual_ms_base)) &&
+          Number.isFinite(Number(a.residual_ms_cand)) &&
+          (o.promotionMetric !== 'changed_kernel' || a.absolute_to_frozen === true))) {
+      reasons.push('launch-changing terminal has invalid attribution values/guard/method/residuals');
+    } else {
+      const at = attributionVerdict(ver, {
+        geomean: declaredScore, metric: o.promotionMetric || 'operator_e2e',
+      });
+      if (at.reject) reasons.push(at.caveat);
+    }
+  }
+
+  const complete = reasons.length === 0;
+  const accepted = complete && scoreReasons.length === 0 && declaredScore > 1.0 && !!o.positiveControlRan;
+  const acceptanceReasons = [...reasons, ...scoreReasons];
+  if (complete && !(declaredScore > 1.0)) {
+    acceptanceReasons.push(`declared target score ${declaredScore.toFixed(4)}x is not > 1.0`);
+  }
+  if (complete && !o.positiveControlRan) acceptanceReasons.push('positive control did not pass in this wave');
+  return { applicable: true, complete, accepted, score: declaredScore, launch: lv, guards: gc,
+    reasons: acceptanceReasons };
+}
+// <</REPLAY:autonomy_acceptance>>
 
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
@@ -3328,6 +3922,11 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
       ROADMAP: `${EVAL_DIR}/roadmap.md`,
       ROADMAP_LADDER: LADDER,
       LADDER_DISPATCHED: [...dispatchedRungs],
+      LADDER_COMPLETED: [...LADDER_MEASURED],
+      OPEN_RUNGS: openRungs(LADDER, rungTally),
+      TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
+      STRICT_AUTONOMY, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+      REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
       // What the tree currently owes. Enabling steps are committed on function and make the tree
       // slower; only their terminal rung can pay that back. A planner that is not shown the balance
       // plans the next round as if the tree were where it started, and the half-built chain stays
@@ -3358,13 +3957,16 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
     break;
   }
 
-  let directions = plan.directions.slice(0, remaining).map((d, i) => ({
-    ...d,
-    idx: i,
-    id: d.id || `r${round}_d${i}`,
-    gpu_id: GPU_RESOURCE.specForIndex(i),
-    out_dir: `${EVAL_DIR}/round_${round}/engineer_${i}`,
-  }));
+  let directions = plan.directions.slice(0, remaining).map((d, i) => {
+    const enriched = enrichDirection(d, LADDER);
+    return {
+      ...enriched,
+      idx: i,
+      id: enriched.id || `r${round}_d${i}`,
+      gpu_id: GPU_RESOURCE.specForIndex(i),
+      out_dir: `${EVAL_DIR}/round_${round}/engineer_${i}`,
+    };
+  });
   // Near the end of the budget, forcing replaces advising: if enabling steps are committed and their
   // terminal fusion rung is still open, the remaining lease is spent CLOSING it rather than exploring
   // a new lever. Runs before the deep/working clamps so the forced terminal is the direction that
@@ -3384,6 +3986,9 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
         expected_speedup: Number(c.expected_speedup) || undefined,
         roadmap_rung: force.rungId,
         step_role: 'terminal',
+        gated_on: Array.isArray(c.gated_on) ? c.gated_on : [],
+        mandatory_arms: Array.isArray(c.mandatory_arms) ? c.mandatory_arms : [],
+        target_shape: c.target_shape || { launches: LAUNCH_TARGET, require_overlap: REQUIRE_OVERLAP },
         rung_deviation: `forced onto terminal rung ${force.rungId} (${force.reason}): its enabling ` +
           `steps are committed and this rung is the only thing that pays their debt, so the remaining ` +
           `budget is spent closing the fusion rather than exploring.`,
@@ -3430,9 +4035,18 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
   // problem. Runs BEFORE the directions are charged to the budget, so the skip is on the record at
   // the moment it is still cheap to change.
   {
-    const lg = roadmapLadderGate(LADDER, directions, dispatchedRungs);
+    const lg = roadmapLadderGate(LADDER, directions, LADDER_MEASURED);
     log(`Round ${round}: ${lg.summary}`);
     if (lg.caveat) log(`Round ${round}: ${lg.caveat}`);
+    if (STRICT_AUTONOMY) {
+      const invalid = directions.map((d) => ({ d, v: strictDirectionVerdict(d, LADDER, LADDER_MEASURED) }))
+        .filter((x) => !x.v.pass);
+      if (invalid.length) {
+        throw new Error(
+          'STRICT AUTONOMY PLAN REFUSED before budget charge: ' +
+          invalid.map((x) => `${x.d.id}: ${x.v.reason}`).join('; '));
+      }
+    }
     for (const r of lg.planned) {
       dispatchedRungs.add(r);
       const e = rungTally.get(r) || { attempts: 0, last_outcome: 'never_planned' };
@@ -3501,7 +4115,17 @@ number below 1.0.
 ## Inputs
 ${cfg({
         SPECIALTY: d.specialty,
-        DIRECTION: { id: d.id, title: d.title, focus_files: d.focus_files || [], expected_speedup: d.expected_speedup, prompt: d.prompt },
+        DIRECTION: {
+          id: d.id, title: d.title, focus_files: d.focus_files || [],
+          expected_speedup: d.expected_speedup, prompt: d.prompt,
+          roadmap_rung: d.roadmap_rung, gated_on: d.gated_on || [],
+          mandatory_arms: d.mandatory_arms || [], step_role: d.step_role,
+          enables: d.enables, cost_budget_pct: d.cost_budget_pct,
+          target_shape: d.target_shape,
+          target_guards: TARGET_GUARDS, regression_guards: REGRESSION_GUARDS,
+          promotion_metric: PROMOTION_METRIC, required_pairs: REQUIRED_PAIRS,
+          required_pairs_by_guard: REQUIRED_PAIRS_BY_GUARD,
+        },
         ...(isDeep ? { TARGET: d.expected_speedup ? `reach ${d.expected_speedup}x (or ~90% of the roofline ceiling), whichever is the harder bar` : 'reach ~90% of the roofline ceiling' } : {}),
         KERNEL_PATH: `${d.out_dir}/workspace`,
         OUTPUT_DIR: d.out_dir,
@@ -3562,8 +4186,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           // Wave 13 hit this in three consecutive rounds before the report named it.
           roleAgent('engineer', 'recover',
             `The engineer for ${d.out_dir} did not return a usable claim. RECOVER ONLY: read ` +
-            `${d.out_dir}/worker_result.json (and, only if that is absent or truncated, the ab_driver ` +
-            'JSON and logs beside it) and return the claim it already contains. Do NOT run any GPU ' +
+            `${d.out_dir}/worker_result.json AND compare it with the mtimes/claim_complete fields of ` +
+            'ab_*.json aggregates beside it. If a completed aggregate is newer, the declaration is stale: ' +
+            'recover from that aggregate and name it. Use raw logs only if both are absent/truncated. ' +
+            'Return the claim already on disk. Do NOT run any GPU ' +
             'command, do NOT take a lease, do NOT re-measure and do NOT improve the result: a fresh ' +
             'measurement here is a failure, not a fallback. Report per_case EXACTLY as recorded, ' +
             'including guards the engineer marked UNRESOLVED. If no claim is on disk, return ' +
@@ -3579,13 +4205,18 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           log(`${d.id}: no StructuredOutput and nothing recoverable from ${d.out_dir}.`);
         }
       }
-      if (!eng || eng.status === 'failed' || !(primSpeedup(eng) > 1.0)) {
+      // Verification is the trust boundary. A working-kernel round and an enabling prerequisite
+      // must reach it even when the engineer honestly reports a regression; filtering them here
+      // made every later commit-on-function/commit-on-running rule unreachable.
+      if (!shouldVerifyDirection(
+        d, eng, WORKING_KERNEL || PROMOTION_METRIC === 'changed_kernel', metricScore(eng))) {
         return { d, eng, ver: null };
       }
       return agentT(
         roleAgent('verify_engineer', 'verify', 'Independently re-measure this candidate patch.', {
           CANONICAL, PATCH: patch, VERIFY_DIR: `${d.out_dir}/verify`,
           GPU_ID: d.gpu_id, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+          FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           // The file whitelist Analyze declared. verify_engineer.md step 5 says to diff the patch's
           // file list against it and fail anything outside — a patch that edits the instrument and
           // the subject in the same diff has no readable result. Analyze has produced
@@ -3600,15 +4231,25 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
           // Verify applies specialty-specific gates (see verify_engineer.md step 4c: a
           // `distributed` patch can be numerically correct and still deadlock).
           ...(d.specialty ? { SPECIALTY: d.specialty } : {}),
+          MANDATORY_ARMS: d.mandatory_arms || [],
+          ENGINEER_ARMS_RUN: (eng && eng.arms_run) || [],
+          TARGET_SHAPE: d.target_shape || null,
+          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+          STRICT_AUTONOMY, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+          REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
+          ACCURACY_METRIC, ACCURACY_THRESHOLD,
           // What the engineer says turns its code ON, verbatim. If it declared nothing, verify is
           // told so explicitly rather than being left to assume default-ON — the assumption is the
           // bug: an undeclared switch and a genuinely default-ON patch look identical from here.
           ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
           ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
           ...(REQUIRE_GRAPH_CAPTURE ? { REQUIRE_GRAPH_CAPTURE: '1' } : {}),
-          // Verify is the ONLY role that learns where the reference trees are. It needs the
-          // locations to compare against them; engineers must not have them at all.
-          ...(CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length
+          // Strict Verify sees only out-of-band file hashes, never a filesystem address. This still
+          // catches an exact/comment-only copy before it can be changed in a later round and
+          // laundered past final comparison. Non-strict capability mode keeps the legacy path input.
+          ...(CAPABILITY_EVAL && KNOWN_REFERENCE_HASHES.length
+            ? { KNOWN_REFERENCE_HASHES } : {}),
+          ...(CAPABILITY_EVAL && !STRICT_AUTONOMY && KNOWN_REFERENCE_PATHS.length
             ? { KNOWN_REFERENCE_PATHS: KNOWN_REFERENCE_PATHS.join(' ') } : {}),
         }),
         { phase: 'Verify', label: `verify ${d.id}`, schema: VERIFY_SCHEMA }
@@ -3617,28 +4258,6 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   );
 
   const clean = results.filter(Boolean);
-
-  // Grade each rung this round took. Done here, before any of the promotion filters, because a rung
-  // is closed by a MEASUREMENT and not by a win: a rung that ran and lost is settled and must not
-  // come back, a rung that ran and produced nothing is still owed.
-  for (const r of clean) {
-    if (r.d && r.d.roadmap_rung && r.d.roadmap_rung !== 'off_ladder') {
-      const outcome = rungOutcomeOf(r, stepRoleOf(r.d));
-      recordRungOutcome(r.d.roadmap_rung, outcome);
-      // A measured terminal rung is what pays the debt its prerequisites ran up. Recorded here
-      // rather than at the commit, because the debt is settled by the MEASUREMENT existing, not by
-      // the candidate winning: a chain that closed and lost is a chain that closed.
-      if (outcome === 'measured') LADDER_MEASURED.add(r.d.roadmap_rung);
-    }
-  }
-  {
-    const owed = openRungs(LADDER, rungTally);
-    if (owed.length) {
-      log(`Round ${round}: rungs still owed after grading: ` +
-        owed.map((c) => `${c.id}(${c.last_outcome}, ${c.attempts} attempt(s))`).join(', ') +
-        '. A rung is closed by a verified number, not by having been planned.');
-    }
-  }
 
   // --- UNBACKED CLAIM: the engineer measured a win it cannot hand over ----
   // The other half of the 2026-08-23 claim-boundary loss. An engineer returned a well-formed claim
@@ -3670,7 +4289,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     const act = String(r.ver.activation_confirmed || 'unknown').toLowerCase();
     if (act === 'yes') continue;
     r.inactive = act;
-    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    const pct = ((metricScore(r.ver) - 1) * 100);
     log(`INACTIVE ${r.d.id}: the patched code path was ${act === 'no' ? 'NOT executed' : 'NOT PROVEN to execute'} ` +
         `during the measured run, so its ${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'result'} ` +
         `is VOID — not a negative result. Do NOT record this direction as tried-and-failed; it has ` +
@@ -3708,7 +4327,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     }
     r.inactive = 'no';
     r.same_artifact = true;
-    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    const pct = ((metricScore(r.ver) - 1) * 100);
     log(`SAME BINARY ${r.d.id}: base and candidate resolved to the SAME compiled artifact` +
         `${sameHash ? ` (${hb})` : ''}, so its ` +
         `${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'result'} measures ` +
@@ -3722,14 +4341,44 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // passed verification, not only the ones that describe themselves as fusion: a direction's own
   // account of what it did is exactly the thing that must not decide whether the evidence is checked.
   for (const r of clean) {
-    if (!(r.ver && verifyCompleted(r.ver) && r.ver.correctness === 'pass' && !r.inactive)) continue;
+    if (!(r.ver && verifyCompleted(r.ver) &&
+      String(r.ver.correctness || '').toLowerCase().startsWith('pass') && !r.inactive)) continue;
     // An enabling step makes no win claim, so there is no win to attribute to the wrong kernel. Its
     // bar is functional acceptance plus its cost budget, both applied below.
     if (stepRoleOf(r.d) === 'enabling') continue;
-    const at = attributionVerdict(r.ver, { geomean: primSpeedup(r.ver) });
+    const at = attributionVerdict(r.ver, { geomean: metricScore(r.ver), metric: ATTRIBUTION_METRIC });
     r.attribution_state = at.state;
     if (at.caveat) r.attribution_caveat = at.caveat;
     if (at.reject) r.attribution_rejected = at.state;
+  }
+
+  // Evaluate the complete terminal contract after activation/artifact/attribution processing and
+  // before promotion. In working-kernel mode an incomplete-but-functional artifact may still be
+  // committed so the next round can build on it; it cannot close its rung or satisfy autonomy.
+  for (const r of clean) {
+    if (stepRoleOf(r.d) !== 'terminal' || !r.d.target_shape) continue;
+    const av = autonomyAcceptanceVerdict(r.d, r.ver, {
+      functionalRequirements: functionalRequirementsFor(r.d),
+      launchTarget: LAUNCH_TARGET,
+      targetGuards: TARGET_GUARDS,
+      regressionGuards: REGRESSION_GUARDS,
+      promotionMetric: PROMOTION_METRIC,
+      fallbackScore: metricScore(r.ver),
+      requirePaired: STRICT_AUTONOMY,
+      requiredPairs: REQUIRED_PAIRS, requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
+      requireOverlap: REQUIRE_OVERLAP,
+      requireAttribution: REQUIRE_ATTRIBUTION,
+      positiveControlRan: PC_RAN,
+    });
+    r.autonomy_contract = av;
+    if (av.accepted) {
+      log(`AUTONOMY CANDIDATE ${r.d.id}: evidence clears the contract at ${av.score.toFixed(4)}x; ` +
+          `acceptance remains pending until this exact patch is committed to canonical.`);
+    } else if (av.applicable) {
+      const msg = `${r.d.id}: ${av.reasons.join('; ') || 'terminal did not clear the acceptance score'}`;
+      ACCEPTANCE_CAVEATS.push(msg);
+      log(`AUTONOMY INCOMPLETE ${msg}`);
+    }
   }
 
   // ENABLING STEPS ARE JUDGED BEFORE THE SPEED FILTER, because the speed filter is what they cannot
@@ -3739,7 +4388,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   const enablingKeeps = [];
   for (const r of clean) {
     if (stepRoleOf(r.d) !== 'enabling' || r.inactive) continue;
-    const ev = enablingVerdict(r.d, r.ver, primSpeedup(r.ver));
+    const ev = enablingVerdict(r.d, r.ver, primSpeedup(r.ver), functionalRequirementsFor(r.d));
     r.enabling_verdict = ev;
     if (ev.commit && r.patch) {
       enablingKeeps.push(r);
@@ -3751,7 +4400,8 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   }
 
   const verified = clean.filter(r => r.ver && verifyCompleted(r.ver) &&
-    r.ver.correctness === 'pass' &&
+    functionalAcceptance(r.ver, functionalRequirementsFor(
+      r.d, WORKING_KERNEL ? 'commit' : 'acceptance')).pass &&
     // Under objective=working_kernel the commit gate is "does it RUN", not "is it faster" (see the
     // commit block below and OBJECTIVE item 3). The TERMINAL step of a staged fusion is SLOWER than
     // the tree the first time it is written -- it has only just acquired its consumer and still
@@ -3760,8 +4410,14 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     // RUNNING. That is precisely how this project stopped at half a fusion: the producer half was
     // enabling (exempt from this filter) and the consumer half hit exactly this line. In speedup
     // mode the >1.0 bar stays, because there a candidate that is not faster has nothing to offer.
-    (WORKING_KERNEL || primSpeedup(r.ver) > 1.0) && !r.inactive &&
+    (WORKING_KERNEL || metricScore(r.ver) > 1.0) && !r.inactive &&
     !r.attribution_rejected &&
+    (WORKING_KERNEL || (guardContract(r.ver, TARGET_GUARDS, REGRESSION_GUARDS, primSpeedup(r.ver)).complete &&
+      guardContract(r.ver, TARGET_GUARDS, REGRESSION_GUARDS, primSpeedup(r.ver)).regression_pass)) &&
+    // A strict speedup wave may not promote an acceptance-terminal whose launch/overlap/guard
+    // contract is incomplete. A working-kernel wave still keeps a functional partial artifact.
+    (WORKING_KERNEL || !STRICT_AUTONOMY || !r.d.target_shape ||
+      (r.autonomy_contract && r.autonomy_contract.complete)) &&
     // An enabling step never competes for the round win: it is expected to be below 1.0 and it has
     // its own commit path below. One that happens to measure above 1.0 is still not a win claim --
     // the fusion it enables has not been closed yet, so there is nothing yet to attribute.
@@ -3790,7 +4446,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   for (const r of clean) {
     const st = r.ver && r.ver.status;
     if (st !== 'plagiarized' && st !== 'harness_modified') continue;
-    const pct = ((primSpeedup(r.ver) - 1) * 100);
+    const pct = ((metricScore(r.ver) - 1) * 100);
     log(`${st.toUpperCase()} ${r.d.id}: REJECTED as a win despite ` +
         `${Number.isFinite(pct) ? (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%' : 'an unreadable number'}. ` +
         `${st === 'plagiarized'
@@ -3804,7 +4460,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // this check exists to catch. It marks the result PROVISIONAL so the number travels with the
   // conditions it was taken under, all the way into the report.
   for (const r of verified) {
-    const claimPct = (primSpeedup(r.ver) - 1) * 100;
+    const claimPct = (metricScore(r.ver) - 1) * 100;
     const reps = Number(r.ver.reps);
     const nullArm = Number(r.ver.null_arm_pct);
     const reasons = [];
@@ -3829,7 +4485,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     // Overlap. Judged for every verified direction, not only the ones that claim fusion: a
     // direction's own account of what it did is exactly the thing that must not decide whether the
     // evidence is checked. Never rejects — see overlapVerdict.
-    const ov = overlapVerdict(r.ver, { geomean: primSpeedup(r.ver) });
+    const ov = overlapVerdict(r.ver, { geomean: metricScore(r.ver) });
     r.overlap_state = ov.state;
     if (ov.caveat) {
       r.overlap_caveat = ov.caveat;
@@ -3837,7 +4493,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
       if (ov.state !== 'measured_none') OVERLAP_CAVEATS.push(`${r.d.id} [${ov.state}]: ${ov.caveat}`);
     }
     // And the objective. In a controlled wave this is a no-op on every result.
-    const oj = objectiveVerdict(OBJECTIVE, PC_RAN, primSpeedup(r.ver));
+    const oj = objectiveVerdict(OBJECTIVE, PC_RAN, metricScore(r.ver));
     r.objective_state = oj.state;
     if (oj.caveat) {
       r.objective_void = true;
@@ -3848,10 +4504,15 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     // Launch shape — acceptance criterion 1. Judged for every verified direction; never rejects, but
     // records the count and whether the two-launch fused shape was reached, so a fusion rung cannot
     // be reported as closed on a candidate that is still three launches. See launchVerdict.
-    const lv = launchVerdict(r.ver, LAUNCH_TARGET);
+    const directionLaunchTarget = Number(r.d && r.d.target_shape && r.d.target_shape.launches);
+    const lv = launchVerdict(r.ver,
+      Number.isFinite(directionLaunchTarget) ? directionLaunchTarget : LAUNCH_TARGET,
+      (r.d && r.d.target_shape && r.d.target_shape.stages_fused) || []);
     r.launch_state = lv.state;
     r.launch_shape_met = lv.shape_met;
-    if (lv.shape_met) TWO_LAUNCH_REACHED = true;
+    if (Number(r.ver && r.ver.launch_shape && r.ver.launch_shape.launches_cand) <= LAUNCH_TARGET) {
+      TWO_LAUNCH_REACHED = true;
+    }
     if (lv.caveat) {
       r.launch_caveat = lv.caveat;
       log(`LAUNCH ${lv.state.toUpperCase()} ${r.d.id}: ${lv.caveat}`);
@@ -3865,7 +4526,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // The raw unweighted geomean is retained separately for the report.
   let candidates = verified.map(r => ({
     source: `engineer ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
-    geomean: primSpeedup(r.ver), geomean_unweighted: r.ver.verified_geomean,
+    geomean: metricScore(r.ver), geomean_unweighted: r.ver.verified_geomean,
     weighted: r.ver.verified_weighted != null ? r.ver.verified_weighted : null,
     arithmetic: r.ver.verified_arithmetic || r.ver.verified_geomean,
     per_case: r.ver.per_case || [], patch: r.patch,
@@ -3895,12 +4556,14 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   let integrate = null;
   // One verified direction plus a shelved offer is a real merge opportunity — historically this
   // round would have skipped the merge phase entirely and the shelved work would age out unused.
-  if (verified.length >= 2 || (verified.length >= 1 && shelfPick.offer.length > 0)) {
+  if (!STRICT_AUTONOMY &&
+      (verified.length >= 2 || (verified.length >= 1 && shelfPick.offer.length > 0))) {
     phase('Merge');
     integrate = await agentT(
       roleAgent('integrator', 'integrate', 'Combine this round\'s verified patches into one best implementation.', {
         CANONICAL, INTEGRATE_DIR: `${EVAL_DIR}/round_${round}/integrate`,
         GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, STRICT_AUTONOMY,
         BEST_INDIVIDUAL: Math.max(...candidates.map(c => c.geomean)),
         PATCHES: verified.map(r => ({ id: r.d.id, specialty: r.d.specialty, title: r.d.title,
           strategy: r.eng ? r.eng.strategy : '', verified_geomean: r.ver.verified_geomean,
@@ -3925,11 +4588,16 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
         INSIGHTS: history.insights,
       }),
       { phase: 'Merge', label: `integrate r${round}`, schema: INTEGRATE_SCHEMA });
-    const integPrim = integrate && integrate.best ? primSpeedup({
+    const integPrim = integrate && integrate.best ? promotionScore({
       verified_weighted: integrate.best.weighted, verified_geomean: integrate.best.geomean,
-    }) : 0;
-    if (integrate && integrate.conclusion === 'improved' && integrate.best &&
-      integPrim > Math.max(...candidates.map(c => c.geomean))) {
+      per_case: integrate.best.per_case || [],
+    }, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
+    primSpeedup({ verified_weighted: integrate.best.weighted, verified_geomean: integrate.best.geomean })) : 0;
+    const integGuards = integrate && integrate.best
+      ? guardContract(integrate.best, TARGET_GUARDS, REGRESSION_GUARDS, integPrim)
+      : { complete: false, regression_pass: false };
+    if (integrationEligible(integrate, integPrim,
+      Math.max(...candidates.map(c => c.geomean)), integGuards)) {
       candidates.push({
         source: 'integrated', id: `r${round}_integrated`, title: 'integrated', specialty: 'integrate',
         geomean: integPrim, geomean_unweighted: integrate.best.geomean,
@@ -3965,11 +4633,14 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
   // megakernel this project has ever produced (wave 3, 727 lines, on hardware, crashing) came to be
   // dropped after wave 4 and to no longer exist on disk. Committing on RUNNING is what makes the
   // debug loop cumulative instead of 15 independent first attempts.
-  const winnerVer = winner ? (verified.find(r => r.d.id === winner.id) || {}).ver : null;
-  const winnerRuns = !!(winner && runsCleanly(winnerVer));
-  const improved = WORKING_KERNEL
+  const winnerResult = winner ? (verified.find(r => r.d.id === winner.id) || null) : null;
+  const winnerVer = winnerResult && winnerResult.ver;
+  const winnerRuns = !!(winner && runsCleanly(
+    winnerVer, functionalRequirementsFor(winnerResult && winnerResult.d, 'commit')));
+  let improved = WORKING_KERNEL
     ? winnerRuns
     : !!(winner && winner.geomean > cumulative * (1 + MIN_IMPROVE));
+  let winnerCommitted = false;
   if (WORKING_KERNEL) {
     log(`Round ${round}: objective=working_kernel — commit gate is "does it run", not speed. ` +
         `${winner ? (winnerRuns ? `${winner.id} RUNS (correctness pass, activation confirmed, liveness not failing) ` +
@@ -3979,12 +4650,13 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
 
   // --- (e) Commit the winner into the canonical workspace ---------------
   if (improved) {
-    await agentT(
+    let commitResult = await agentT(
       `You are the TechLead committing round ${round}'s winning patch into the canonical workspace.
 \`\`\`bash
 export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
 cd ${CANONICAL}
 git checkout -- .
+git rev-parse HEAD > ${EVAL_DIR}/round_${round}/winner_precommit_head.txt
 # Try a plain apply first, then a 3-way apply (auto-reconciles context-line drift against the blobs)
 # before falling back to a manual reconstruction. --3way resolves most "patch does not apply" cases
 # that are just context offsets, so the manual path is only hit on a genuine semantic conflict.
@@ -3993,13 +4665,55 @@ git -c user.email=team@workflow -c user.name=team add -A
 git -c user.email=team@workflow -c user.name=team commit -q -m "round ${round} winner: ${winner.source} (${winner.geomean.toFixed(2)}x)"
 git --no-pager diff "$(git rev-list --max-parents=0 HEAD)..HEAD" > ${EVAL_DIR}/current_best.diff
 \`\`\`
-If BOTH \`git apply\` and \`git apply --3way\` fail, inspect the patch and apply it manually (edit the
+${STRICT_AUTONOMY
+  ? 'If the patch does not apply exactly, return committed=false. Do NOT hand-merge in strict autonomy.'
+  : 'If BOTH `git apply` and `git apply --3way` fail, inspect the patch and apply it manually (edit the'}
+${STRICT_AUTONOMY ? '' : `
 files to match the patch's intent), then \`add -A\` + commit. The applied source is NOT guaranteed to
 match the patch verbatim after a hand-merge, so after committing, RE-RUN the COMMANDMENT correctness
 check (cd ${CANONICAL} && the COMMANDMENT CORRECTNESS cmd via gpu_lock); only report committed=true if
 it still passes. (When a clean \`git apply\`/\`--3way\` succeeds, correctness was already verified and a
-re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
+re-check is not required.)`}
+Return JSON {committed, current_best_diff, head_before, head_after, exact_patch,
+ transaction_valid, note}.`,
       { phase: 'Merge', label: `commit r${round}`, schema: COMMIT_SCHEMA });
+    if (STRICT_AUTONOMY) {
+      commitResult = await agentT(
+        `Independently verify the canonical commit transaction for round ${round}. Do not edit files.
+Read ${EVAL_DIR}/round_${round}/winner_precommit_head.txt as head_before and run
+\`git -C ${CANONICAL} rev-parse HEAD\` as head_after. Require exactly one commit in
+\`head_before..head_after\`. Compute stable patch ids for ${winner.patch} and for
+\`git -C ${CANONICAL} diff head_before..head_after\`; they must match. Also require the commit
+subject to start with "round ${round} winner:". Return committed=true and exact_patch=true only if
+all checks pass. If HEAD is unchanged, return transaction_valid=true, committed=false and
+exact_patch=false only when \`git status --porcelain\` is also empty. A missing pre-head, dirty
+working tree, multi-commit HEAD, or patch mismatch is
+transaction_valid=false. Return JSON
+{committed, head_before, head_after, exact_patch, transaction_valid, current_best_diff, note}.`,
+        { phase: 'Merge', label: `commit transaction check r${round}`, schema: COMMIT_SCHEMA });
+      if (!(commitResult && commitResult.transaction_valid === true &&
+            commitResult.committed === true && commitResult.exact_patch === true &&
+            String(commitResult.head_before || '').trim() &&
+            String(commitResult.head_after || '').trim() &&
+            commitResult.head_before !== commitResult.head_after)) {
+        throw new Error(
+          `STRICT AUTONOMY ABORT: winner commit transaction for round ${round} could not be ` +
+          'independently matched to the verified patch. Canonical may have changed; do not continue.');
+      }
+    }
+    const transition = winnerCommitTransition(
+      improved, commitResult, winner, winnerResult, STRICT_AUTONOMY);
+    winnerCommitted = transition.committed;
+    if (!winnerCommitted) {
+      improved = false;
+      const msg = `WINNER NOT COMMITTED r${round}: ${winner.id} passed selection but the canonical commit ` +
+        `did not report committed=true. Cumulative, rung completion and autonomy acceptance stay unchanged.`;
+      log(msg);
+      if (winnerResult && winnerResult.autonomy_contract && winnerResult.autonomy_contract.accepted) {
+        ACCEPTANCE_CAVEATS.push(msg);
+      }
+    }
+    if (winnerCommitted) {
     // A voided reading must not become the number the next round is measured against. Under
     // objective=working_kernel with no control there is no admissible speedup, so `cumulative` and
     // `bestPerCase` stay where they were and only the ARTIFACT advances.
@@ -4016,6 +4730,11 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
     }
     finalWinner = winner;
+    if (transition.acceptanceReached) {
+      AUTONOMY_ACCEPTANCE_REACHED = true;
+      log(`AUTONOMY ACCEPTANCE COMMITTED ${winner.id}: the exact contract-clearing patch now ` +
+          `exists in canonical at target score ${winner.geomean.toFixed(4)}x.`);
+    }
     noImprove = 0;
 
     // --- (f) Re-profile the new best ------------------------------------
@@ -4036,6 +4755,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
         analysis_result: reprofileAnalysisResult,
       };
     }
+    }
   }
 
   // --- (e2) Commit the enabling steps ------------------------------------
@@ -4047,16 +4767,9 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
   // exist. Applied AFTER the winner so the winner's patch still applies against the tree it was cut
   // from; one that then conflicts is logged and shelved rather than forced.
   const enablingUnlanded = [];
+  const enablingLandedIds = new Set();
   if (enablingKeeps.length) {
-    if (CHAIN_BASELINE == null) {
-      CHAIN_BASELINE = { round, cumulative, note:
-        'Pinned at the first enabling commit. Every enabling step below makes the canonical tree ' +
-        'slower, so the terminal step must state its claim against THIS number, not against the ' +
-        'canonical it will actually be measured on.' };
-      log(`CHAIN BASELINE PINNED at round ${round}, cumulative=${cumulative.toFixed(4)}x. ` +
-          CHAIN_BASELINE.note);
-    }
-    const res = await agentT(
+    let res = await agentT(
       `You are the TechLead committing round ${round}'s ENABLING steps into the canonical workspace.
 
 These are NOT round winners. Each one passed functional acceptance — it builds, its path is
@@ -4068,6 +4781,7 @@ them so the next round has something to build the consumer half against.
 export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
 cd ${CANONICAL}
 git checkout -- .
+git rev-parse HEAD > ${EVAL_DIR}/round_${round}/enabling_precommit_head.txt
 \`\`\`
 Then, for EACH patch below IN ORDER, run \`git apply <patch> || git apply --3way <patch>\` and commit
 it on its own with the message shown. If a patch fails BOTH plain and --3way apply, do NOT hand-merge
@@ -4080,13 +4794,60 @@ ${enablingKeeps.map((r) => `- patch: ${r.patch}\n  message: "round ${round} enab
 
 Finally: \`git --no-pager diff "$(git rev-list --max-parents=0 HEAD)..HEAD" > ${EVAL_DIR}/current_best.diff\`
 and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Report JSON
-{committed: [<patch paths that landed>], skipped: [{patch, reason}], correctness_after, note}.`,
+{committed: [<patch paths that landed>], skipped: [{patch, reason}], correctness_after,
+ head_before, head_after, exact_patch, transaction_valid, note}.`,
       { phase: 'Merge', label: `commit enabling r${round}`, schema: obj({
         committed: { type: 'array', items: { type: 'string' } },
         skipped: { type: 'array', items: { type: 'object', additionalProperties: true } },
         correctness_after: { type: 'string' }, note: { type: 'string' },
+        head_before: { type: 'string' }, head_after: { type: 'string' },
+        exact_patch: { type: 'boolean' }, transaction_valid: { type: 'boolean' },
       }, ['committed']) });
-    const landed = new Set(Array.isArray(res && res.committed) ? res.committed : []);
+    if (STRICT_AUTONOMY) {
+      res = await agentT(
+        `Independently verify the enabling commit transaction for round ${round}. Do not edit files.
+Read ${EVAL_DIR}/round_${round}/enabling_precommit_head.txt and compare it with
+\`git -C ${CANONICAL} rev-parse HEAD\`. If unchanged, report committed:[]; the orchestrator stops so
+the patch can be retried. If changed, strict mode has exactly one direction: require exactly one
+commit, subject starting "round ${round} enabling:", and a stable patch-id equal to
+${enablingKeeps[0].patch}. Then run the COMMANDMENT correctness entry on ${CANONICAL}; only a pass
+may return transaction_valid=true, exact_patch=true and
+committed:["${enablingKeeps[0].patch}"]. Any missing pre-head,
+dirty working tree, unexpected/multiple commit, patch mismatch or correctness failure is transaction_valid=false.
+Return {committed, skipped:[], correctness_after, head_before, head_after,
+exact_patch, transaction_valid, note}.`,
+        { phase: 'Merge', label: `enabling transaction check r${round}`, schema: obj({
+          committed: { type: 'array', items: { type: 'string' } },
+          skipped: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          correctness_after: { type: 'string' }, note: { type: 'string' },
+          head_before: { type: 'string' }, head_after: { type: 'string' },
+          exact_patch: { type: 'boolean' }, transaction_valid: { type: 'boolean' },
+        }, ['committed', 'transaction_valid']) });
+      if (!(res && res.transaction_valid === true && res.exact_patch === true &&
+            Array.isArray(res.committed) && res.committed.includes(enablingKeeps[0].patch) &&
+            String(res.head_before || '').trim() && String(res.head_after || '').trim() &&
+            res.head_before !== res.head_after)) {
+        throw new Error(
+          `STRICT AUTONOMY ABORT: enabling commit transaction for round ${round} is not ` +
+          'independently accounted. Canonical may have changed; do not continue.');
+      }
+    }
+    const reportedLanded = new Set(Array.isArray(res && res.committed) ? res.committed : []);
+    const enablingCommitCorrect = !!(res && String(res.correctness_after || '').toLowerCase().startsWith('pass'));
+    const landed = enablingCommitCorrect ? reportedLanded : new Set();
+    if (reportedLanded.size && !enablingCommitCorrect) {
+      const msg = `r${round} enabling commits changed canonical but correctness_after did not pass`;
+      CHAIN_CAVEATS.push(msg);
+      if (STRICT_AUTONOMY) throw new Error(`STRICT AUTONOMY ABORT: ${msg}`);
+    }
+    if (landed.size && CHAIN_BASELINE == null) {
+      CHAIN_BASELINE = { round, cumulative, note:
+        'Pinned at the first enabling commit. Every enabling step below makes the canonical tree ' +
+        'slower, so the terminal step must state its claim against THIS number, not against the ' +
+        'canonical it will actually be measured on.' };
+      log(`CHAIN BASELINE PINNED at round ${round}, cumulative=${cumulative.toFixed(4)}x. ` +
+          CHAIN_BASELINE.note);
+    }
     const enablingAbsorbed = [];
     let enablingChain = '';
     for (const r of enablingKeeps) {
@@ -4097,6 +4858,7 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
         enablingUnlanded.push(r);
         continue;
       }
+      enablingLandedIds.add(r.d.id);
       CHAIN_DEBT.push({ round, id: r.d.id, enables: r.enabling_verdict.enables,
         cost_pct: r.enabling_verdict.cost_pct });
       CHAIN_CAVEATS.push(`${r.d.id} [enabling, committed r${round}]: ${r.enabling_verdict.reason}`);
@@ -4124,6 +4886,31 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
           `"${res.correctness_after}". The canonical tree is the input to every later round; a chain ` +
           'that lands broken is worse than a chain that never lands.');
       CHAIN_CAVEATS.push(`r${round} enabling commit: correctness_after=${res.correctness_after}`);
+    }
+  }
+
+  // Only landed state can close a staged rung. Evidence is evaluated earlier, but a commit agent
+  // can fail or skip the patch; marking the rung before that transaction is how the workflow
+  // previously declared success on code absent from canonical.
+  for (const r of clean) {
+    if (!(r.d && r.d.roadmap_rung) || r.d.roadmap_rung === 'off_ladder') continue;
+    const role = stepRoleOf(r.d);
+    let outcome = rungOutcomeOf(r, role);
+    const contract = r.autonomy_contract;
+    const evidencePass = !r.d.target_shape ? true
+      : (STRICT_AUTONOMY ? !!(contract && contract.accepted) : !!(contract && contract.complete));
+    outcome = landedRungOutcome(outcome, role, !!r.d.target_shape, evidencePass,
+      winnerCommitted, !!(winner && winner.id === r.d.id), enablingLandedIds.has(r.d.id));
+    r.rung_outcome = outcome;
+    recordRungOutcome(r.d.roadmap_rung, outcome);
+    if (outcome === 'measured') LADDER_MEASURED.add(r.d.roadmap_rung);
+  }
+  {
+    const owed = openRungs(LADDER, rungTally);
+    if (owed.length) {
+      log(`Round ${round}: rungs still owed after evidence + commit gates: ` +
+        owed.map((c) => `${c.id}(${c.last_outcome}, ${c.attempts} attempt(s))`).join(', ') +
+        '. A staged rung closes only when its exact verified patch exists in canonical.');
     }
   }
 
@@ -4180,7 +4967,7 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
     // next round should be offered the work rather than made to re-derive it.
     const unlandedEntries = enablingUnlanded.map((r) => ({
       source: `enabling ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
-      geomean: primSpeedup(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
+      geomean: metricScore(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
       touched_files: Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [],
       // Chain tag: the terminal rung this producer half enables. On the shelf, the consumer half that
       // eventually lands must not age this entry off -- they are two halves of the same fusion.
@@ -4194,11 +4981,12 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
     // its own path. These would otherwise vanish -- correct work with a patch, lost to nothing.
     const inVerified = new Set(verified.map((r) => r.d && r.d.id));
     const slowLosers = clean.filter((r) => r.patch && !r.inactive && !r.attribution_rejected &&
-      stepRoleOf(r.d) !== 'enabling' && verifyCompleted(r.ver) && r.ver.correctness === 'pass' &&
-      !inVerified.has(r.d && r.d.id) && primSpeedup(r.ver) <= 1.0)
+      stepRoleOf(r.d) !== 'enabling' && verifyCompleted(r.ver) &&
+      String(r.ver.correctness || '').toLowerCase().startsWith('pass') &&
+      !inVerified.has(r.d && r.d.id) && metricScore(r.ver) <= 1.0)
       .map((r) => ({
         source: `slow ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
-        geomean: primSpeedup(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
+        geomean: metricScore(r.ver) || 1.0, per_case: (r.ver && r.ver.per_case) || [], patch: r.patch,
         touched_files: Array.isArray(r.ver && r.ver.touched_files) ? r.ver.touched_files : [],
         chain_id: String((r.d && (r.d.enables || r.d.roadmap_rung)) || '').trim(),
       }));
@@ -4264,6 +5052,7 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
       // reads; an unreached rung that is not written down here is a rung the next wave re-derives
       // from scratch or never sees. This is the only phase positioned to carry it across waves.
       ROADMAP_LADDER: LADDER, LADDER_DISPATCHED: [...dispatchedRungs],
+      LADDER_COMPLETED: [...LADDER_MEASURED],
       // The ladder minus what actually produced a number, with each rung's attempt count and last
       // outcome. This is the entry the role writes into STATE.json as `open_rungs` and the next
       // wave's analyze fast path rebuilds its ladder from. LADDER_DISPATCHED cannot serve: it says
@@ -4329,6 +5118,11 @@ and re-run the COMMANDMENT CORRECTNESS check on ${CANONICAL} via gpu_lock. Repor
       `cumulative=${cumulative.toFixed(2)}x, measured ${ev.measured}/${ev.total} direction(s), ` +
       `noImprove=${noImprove}/${MAX_NO_IMPROVE}, noEvidence=${noEvidence}/${MAX_NO_IMPROVE}, ` +
       `budget=${dispatched}/${BUDGET}`);
+  if (STRICT_AUTONOMY && AUTONOMY_ACCEPTANCE_REACHED) {
+    stopReason = `strict autonomy acceptance was reached in round ${round}; the accepted terminal ` +
+      `artifact is committed and ${BUDGET - dispatched} of ${BUDGET} budget unit(s) remain unspent.`;
+    break;
+  }
 }
 
 // Which of the four stops fired, in the loop's own order of evaluation. Recorded rather than
@@ -4366,6 +5160,11 @@ const report = await agentT(
   roleAgent('tech_lead', 'report', 'Write the final report and the cumulative final patch.', {
     EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR,
     HISTORY: history, FINAL_WINNER: finalWinner, BASELINE_PER_CASE,
+    STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
+    LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+    REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+    ACCURACY_METRIC, ACCURACY_THRESHOLD, AUTONOMY_ACCEPTANCE_REACHED,
+    ...(ACCEPTANCE_CAVEATS.length ? { ACCEPTANCE_CAVEATS } : {}),
     // Why the loop ended, and what was left on the table when it did. The report is where the next
     // wave reads its starting conditions from; "the run finished" and "the run ran out of things
     // to try" are different facts and only one of them is usually true.
@@ -4442,7 +5241,7 @@ const report = await agentT(
     // A wave that stops with its highest rung unproposed has produced a number and not an answer,
     // and that fact belongs next to the number rather than in a log nobody re-reads.
     ...(LADDER.length ? { ROADMAP_LADDER_FINAL: JSON.stringify(
-      roadmapLadderGate(LADDER, [], dispatchedRungs)).slice(0, 3000) } : {}),
+      roadmapLadderGate(LADDER, [], LADDER_MEASURED)).slice(0, 3000) } : {}),
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.task_graph
       ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 4000) } : {}),
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.resource_timeline
@@ -4460,6 +5259,13 @@ const validation = await agentT(
     APPLY_TO_ORIGINAL, COMMANDMENT,
     FINAL_PATCH: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
     TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,
+    STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
+    LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+    REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+    ACCURACY_METRIC, ACCURACY_THRESHOLD, AUTONOMY_ACCEPTANCE_REACHED,
+    WORKFLOW_REVISION_START,
+    ...(STRICT_AUTONOMY && KNOWN_REFERENCE_HASHES.length
+      ? { KNOWN_REFERENCE_HASHES } : {}),
     ...(HAS_WORKLOAD && report && report.final_speedup_weighted != null
         ? { TECH_LEAD_REPORTED_WEIGHTED: report.final_speedup_weighted } : {}),
     BASELINE_TIMING: BASELINE_PER_CASE,
@@ -4470,7 +5276,22 @@ const finalGeomean = validation ? validation.director_verified_speedup_geomean :
 // PRIMARY headline: the time-weighted speedup when workload-aligned, else the geomean (unchanged).
 const finalWeighted = validation && validation.director_verified_speedup_weighted != null
   ? validation.director_verified_speedup_weighted : null;
-const finalPrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
+const aggregatePrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
+const finalPrimary = (TARGET_GUARDS.length || PROMOTION_METRIC === 'changed_kernel')
+  ? promotionScore(validation || {}, PROMOTION_METRIC, TARGET_GUARDS,
+    REGRESSION_GUARDS, aggregatePrimary)
+  : aggregatePrimary;
+const finalGuards = guardContract(validation || {}, TARGET_GUARDS, REGRESSION_GUARDS, aggregatePrimary);
+const directorStatus = validation ? validation.validation_status : 'unknown';
+const finalAttribution = (validation && validation.attribution) || {};
+const scopedGuardFailure = finalMetricFailure(
+  PROMOTION_METRIC, TARGET_GUARDS, finalPrimary, finalGuards, finalAttribution);
+const strictProofFailure = STRICT_AUTONOMY &&
+  (!AUTONOMY_ACCEPTANCE_REACHED || !(validation && validation.autonomy_acceptance_confirmed === true) ||
+   !(validation && validation.workflow_unchanged === true));
+// Correctness/apply failures outrank the more specific autonomy label; never soften `flagged` into
+// `autonomy_incomplete`. Scoped regression guards are vetoes in every mode, not only strict mode.
+const finalValidationStatus = finalStatusVerdict(directorStatus, scopedGuardFailure, strictProofFailure);
 // A leaked lease is not a cosmetic problem: the orphan runs unread AFTER the report is filed, and
 // while it runs it contends with whatever measured the numbers we just accepted. Surface it in the
 // completion line so it is not buried in the validation JSON.
@@ -4480,9 +5301,10 @@ if (validation && validation.orphan_leases_swept > 0) {
       `the report, and it may have contended with the validated numbers.`);
 }
 
-log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
+log(`COMPLETE. ${KERNEL_NAME}: verified ${TARGET_GUARDS.length ? `target-guard ${PROMOTION_METRIC}` :
+    (HAS_WORKLOAD ? 'time-weighted' : 'geomean')} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
     `${HAS_WORKLOAD && Number.isFinite(finalGeomean) ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
-    ` (status ${validation ? validation.validation_status : '?'}). Results in ${EVAL_DIR}`);
+    ` (status ${finalValidationStatus}). Results in ${EVAL_DIR}`);
 
 return {
   mode: MODE,
@@ -4496,7 +5318,12 @@ return {
   final_geomean: finalGeomean,
   final_arithmetic: validation ? validation.director_verified_speedup_arithmetic : null,
   tech_lead_reported_geomean: report ? report.final_speedup_geomean : cumulative,
-  validation_status: validation ? validation.validation_status : 'unknown',
+  validation_status: finalValidationStatus,
+  autonomy_acceptance_reached: AUTONOMY_ACCEPTANCE_REACHED,
+  autonomy_acceptance_confirmed: !!(validation && validation.autonomy_acceptance_confirmed === true &&
+    validation.workflow_unchanged === true && directorStatus !== 'flagged' &&
+    !scopedGuardFailure && !strictProofFailure),
+  acceptance_caveats: ACCEPTANCE_CAVEATS,
   rounds: report ? report.rounds : round,
   budget_used: dispatched,
   budget_total: BUDGET,

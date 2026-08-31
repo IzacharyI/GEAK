@@ -130,10 +130,10 @@ console.log('\n# 7. the gate is wired in, and the ladder actually reaches plan_r
      'plan_round is handed the ladder as DATA, not just a path it might read');
   ok(/roleAgent\('tech_lead', 'plan_round'[\s\S]{0,900}?LADDER_DISPATCHED/.test(src),
      'and the cross-round record of what has already been taken off it');
-  ok(/roadmapLadderGate\(LADDER, directions, dispatchedRungs\)/.test(src),
-     'the gate runs against each round\'s directions');
+  ok(/roadmapLadderGate\(LADDER, directions, LADDER_MEASURED\)/.test(src),
+     'the gate runs against each round\'s directions and completed-to-spec prerequisites');
   // Before the budget is charged: a skip flagged after the spend is a post-mortem, not a gate.
-  const gateAt = src.indexOf('roadmapLadderGate(LADDER, directions, dispatchedRungs)');
+  const gateAt = src.indexOf('roadmapLadderGate(LADDER, directions, LADDER_MEASURED)');
   const chargeAt = src.indexOf('dispatched += roundCost');
   ok(gateAt > 0 && chargeAt > gateAt, 'and it runs BEFORE the round is charged to the budget');
   ok(/ROADMAP_LADDER_FINAL/.test(src),

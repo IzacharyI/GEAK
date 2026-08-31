@@ -93,6 +93,15 @@ console.log('\n# the class is DERIVED from the numbers, not taken on trust');
     class: 'throughput_bound',
   }), []);
   ok(sat.class_derived === 'throughput_bound', 'a saturated pipe -> throughput_bound');
+  const crossEngine = pipeOccupancyGate(LATENT({
+    pipes: [
+      { stage: 'producer', pipe: 'mfma', utilization_pct: 93.0, source: 'x' },
+      { stage: 'consumer', pipe: 'interconnect', utilization_pct: 18.0, source: 'y' },
+    ],
+    class: 'mixed',
+  }), []);
+  ok(crossEngine.class_derived === 'mixed',
+     'a saturated MFMA engine plus idle interconnect is mixed, not globally throughput-bound');
   const hostb = pipeOccupancyGate(LATENT({
     interkernel_gap_us: { median: 12.0, max: 20, n_boundaries: 72 }, class: 'launch_bound',
   }), []);

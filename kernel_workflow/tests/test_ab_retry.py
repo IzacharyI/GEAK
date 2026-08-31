@@ -111,6 +111,7 @@ def _run(tmp, env_extra=None, attempts=1):
     env.update(env_extra or {})
     p = subprocess.run([sys.executable, TOOL, "--plan", plan, "--out", out,
                         "--fake-cmd", f"bash {fake}", "--expect-markers", "2",
+                        "--expect-path", "MEGA",
                         "--attempts", str(attempts), "--retry-sleep", "0"],
                        capture_output=True, text=True, env=env, timeout=180)
     return p, json.load(open(out))
@@ -141,7 +142,7 @@ def test_a_leg_that_never_succeeds_is_dropped_loudly_not_omitted():
 
 
 def test_marker_count_violation_voids_the_leg():
-    """A run that silently fell back to the scattered path is not a measurement."""
+    """An incomplete marker set is not a measurement."""
     with tempfile.TemporaryDirectory() as tmp:
         fake = os.path.join(tmp, "fake.sh")
         open(fake, "w").write(FAKE)
@@ -155,6 +156,27 @@ def test_marker_count_violation_voids_the_leg():
         doc = json.load(open(out))
         assert doc["n_dropped"] == 4
         assert "marker count 2 != 8" in doc["dropped_legs"][0]["reason"]
+
+
+def test_marker_value_violation_voids_the_leg():
+    """Eight plausible markers are still void when the intended arm fell back."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = os.path.join(tmp, "fake.sh")
+        open(fake, "w").write(FAKE)
+        plan_data = json.loads(json.dumps(PLAN))
+        for arm in plan_data["arms"]:
+            arm["expect_paths"] = ["SCATTERED"]
+        plan = os.path.join(tmp, "plan.json")
+        json.dump(plan_data, open(plan, "w"))
+        out = os.path.join(tmp, "out.json")
+        subprocess.run([sys.executable, TOOL, "--plan", plan, "--out", out,
+                        "--fake-cmd", f"bash {fake}", "--expect-markers", "2",
+                        "--attempts", "1", "--retry-sleep", "0"],
+                       capture_output=True, text=True, timeout=180)
+        doc = json.load(open(out))
+        assert doc["n_dropped"] == 4
+        assert "path markers ['MEGA'] != expected ['SCATTERED']" in \
+            doc["dropped_legs"][0]["reason"]
 
 
 def test_rotation_changes_arm_position_between_blocks():

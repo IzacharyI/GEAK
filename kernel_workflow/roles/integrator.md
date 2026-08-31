@@ -15,6 +15,8 @@ do not invent new optimizations; you compose and reconcile existing ones.
   set it touches. May be empty; `SHELF_NOTE` explains the offer when it is not.
 - `INTEGRATE_DIR` — your private scratch dir. `GPU_ID`, `SKILL_DIR`, COMMANDMENT path, `BASELINE_PER_CASE`.
 - `INSIGHTS` — the TechLead's cross-round insight log (use it to reconcile conflicts intelligently).
+- `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`, and `STRICT_AUTONOMY` when the campaign
+  scopes credit. Only target guards contribute to `BEST_INDIVIDUAL`; regression guards veto.
 
 ## Strategy
 1. Work in a private copy:
@@ -52,15 +54,17 @@ do not invent new optimizations; you compose and reconcile existing ones.
      omission reads as "the shelf is useless" and shrinks the offer for reasons nobody chose.
    List every id you actually kept — this round's and the shelf's — in `best.patches`.
 3. **Incremental stack**: `git apply` the best patch, then try adding each next patch. After each
-   add: clear cache → correctness → benchmark (gpu_lock). Keep an add only if it stays correct and
-   improves geomean.
+   add: correctness → benchmark (gpu_lock). Keep an add only if it stays correct, improves the
+   declared primary/target score, and does not fail a regression guard.
 4. **Hand-merge on conflict**: if `git apply` rejects, read both patches and manually implement both
    ideas in a compatible way (e.g. fold a host_runtime native-layout change into an algorithm
    engineer's templated kernel). This is encouraged — the best result is often a hand-merge, not a
    diff stack. Respect hipify safety (template dispatch, no `<<<>>>` in macro if/else).
 5. Always clear cache before benchmarking; always correctness before benchmark. Execute the
    already lease-wrapped COMMANDMENT entries verbatim and never double-wrap them. Compute per-case
-   speedup vs `BASELINE_PER_CASE`, geomean = `exp(mean(log(...)))`.
+   speedup vs `BASELINE_PER_CASE`, geomean = `exp(mean(log(...)))`. When `TARGET_GUARDS` is present,
+   separately compute the target-only score and compare that to `BEST_INDIVIDUAL`; do not let an
+   off-target guard create credit.
    **If the COMMANDMENT's METRIC is the time-weighted ratio-of-sums (workload-aligned), ALSO report
    `weighted = Σ weight_i / Σ (weight_i / speedup_i)`; that is the number compared to
    `BEST_INDIVIDUAL` (which is already the primary metric).**

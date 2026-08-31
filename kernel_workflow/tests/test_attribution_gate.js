@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// This is the KERNEL workflow. Its subject is a kernel, so the number that decides a win has to be
-// that kernel's own time against the time of the kernels it replaced. For a single-kernel patch the
-// distinction is empty and the workflow was written as if it always were. It is not empty the
-// moment a patch changes launch structure, and that is exactly the shape this campaign is chasing.
+// A launch-structure change needs attribution, but the task decides which metric creates credit.
+// changed_kernel rejects a win outside the changed body; operator_e2e retains the operator result
+// and withholds only the mechanism claim. Independently rank-reduced stage timers must not silently
+// replace the operator span.
 //
 // What went wrong, concretely: a fused candidate ran 4878us against the 4774us of the two kernels
 // it replaced -- 2.18% SLOWER -- and was promoted to current best on a +4.24% end-to-end reading.
@@ -56,8 +56,20 @@ console.log('\n# the wave-15 round-3 case: an end-to-end win on a kernel that go
   ok(/-2\.18%/.test(v.caveat), 'and states the kernel-time delta with the correct sign');
   ok(/298us of the claim is in the gaps/.test(v.caveat),
      'and converts the residual swing into the microseconds it accounts for');
-  ok(/barrier/.test(v.caveat),
-     'and names the cheaper thing to build instead, so the finding is actionable rather than only a refusal');
+  ok(/changed.kernel|outside the declared score/.test(v.caveat),
+     'and says why it is outside a changed-kernel score rather than guessing a cheaper implementation');
+}
+
+console.log('\n# operator-e2e keeps the real operator result while withholding the mechanism claim');
+{
+  const v = attributionVerdict({ attribution: {
+    changed_us: 4878.0, replaced_sum_us: 4774.0,
+    residual_ms_base: 0.0799, residual_ms_cand: -0.2178,
+  } }, { ...WON, metric: 'operator_e2e' });
+  ok(v.state === 'mechanism_mismatch' && v.reject === false,
+     'the same reading is not rejected when the declared score owns the complete operator span');
+  ok(/mechanism claim withheld/.test(v.caveat),
+     'but it cannot be reported as overlap or as a faster fused body');
 }
 
 console.log('\n# the sign convention is not inverted');

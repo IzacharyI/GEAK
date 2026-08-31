@@ -79,6 +79,8 @@ bound this task:
   (e.g. `[megamoe] path=MEGA` vs `path=SCATTERED`) once per process. An opt-in path that fails its
   predicate falls back silently and produces a plausible wrong number. A benchmark log without the
   marker is void, not zero.
+  Bind each A/B arm to its expected marker value (`expect_paths` in `tools/ab_retry.py`), not only
+  the count: eight `SCATTERED` markers on an intended fused arm are eight proofs of fallback.
 
 ## Hard constraints
 
@@ -96,6 +98,28 @@ bound this task:
 3. **Residency**: any grid-wide wait requires all blocks co-resident. Blocks must not exceed the CU
    budget; `_check_block_num_resident` is the existing check.
 4. Never modify anything outside this workspace.
+
+## Strict autonomy proof
+
+This task's launch template sets `strict_autonomy=true`. A proof run starts from the frozen public
+AITER tree and a **new empty state directory**. Do not seed it from `STATE_DIR/best`, a prior patch,
+or a manually edited shelf. Freeze the GEAK commit, task text and knowledge cards before launch and
+do not edit them while the wave runs. Prior GEAK runs may be inspected only after closeout as
+evaluation evidence, not used as source input. The hand-authored M2.5 implementation is a hidden
+post-run oracle; no path, source, patch or design-specific answer from it enters an engineer prompt.
+
+The final status is `autonomy_incomplete` unless the same independently verified terminal candidate
+has: at most two launches per rank; a positive `8192_uniform` operator rank-max result; no regression
+on the other three guards; numeric relL2 evidence; distinct JIT artifact hashes; graph-safe
+liveness over at least 1000 replays;
+every mandatory arm; controlled, non-zero on-edge overlap; and launch-change attribution. A working
+but slower/intermediate artifact is preserved for the next round and is not a successful proof.
+
+Run `bootstrap_task.sh` from a trusted shell with `MARKER_FILE` pointing at the out-of-band marker
+list. Bootstrap performs the content/ref sweep before any agent starts and records only its manifest
+digest. If `--known-reference` is supplied, bootstrap converts reference files that differ from the
+baseline into opaque path/content hashes and removes the address from launch args; round verifiers
+can reject exact/comment-only copies without learning a reference location or filename.
 
 ## How to run it
 
@@ -117,12 +141,15 @@ point it at a fresh directory (that triggers a full C++ rebuild) and do not writ
 **Correctness** (`<script> <args>`):
 
 ```
-op_tests/multigpu_tests/test_mega_moe_v2.py --network v4_pro --bs-list 128,512 \
-  --iters 10 --accuracy-max-bs 512 --rtol 0.10
+op_tests/multigpu_tests/test_mega_moe_v2.py --network v4_pro --bs-list 128,512,8192 \
+  --iters 10 --accuracy-max-bs 8192 --rtol 0.10
 ```
 Prints one line per batch size:
 `[MEGA-V2] bs=128 relL2=0.069100 path=fixed ... e2e=0.3821/0.3832ms mean/max`
-Both `path=fixed` (bs=128) and `path=compact` (bs=512) must appear and both `relL2` must be < 0.10.
+`path=fixed` (bs=128), the small compact path (bs=512), and the large 8192 configuration used by
+the target benchmark must all appear and have `relL2 < 0.10`. For a terminal fusion, force its
+candidate path on the 8192 case and require the candidate path marker; a correctness pass obtained
+through SCATTERED fallback is activation failure, not fusion correctness.
 
 **Performance**:
 
@@ -134,16 +161,18 @@ Prints `[RESULT] route=... tokens=... mega_e2e=<rank-mean>/<rank-max>ms speedup=
 **The metric is the rank-MAX** (the second number). A collective is gated by its slowest rank;
 rank-mean can improve while the operator gets slower. Rank-mean is diagnostic only.
 
-## The four route guards — all four must hold
+## Target and regression guards
 
-| tokens | route            | why it is in the set                                  |
+| tokens | route            | role                                                   |
 |--------|------------------|-------------------------------------------------------|
-| 8192   | `uniform`        | large, balanced — the compute-bound case               |
-| 8192   | `rank-mixed-skew`| large, hot-expert skew — where the barrier cost lives  |
-| 512    | `uniform`        | small — launch/latency dominated                       |
-| 512    | `rank-mixed-skew`| small + skew — the most drift-prone, guard against regression |
+| 8192   | `uniform`        | **target** — the only route allowed to create credit   |
+| 8192   | `rank-mixed-skew`| regression guard — preserve skew capability            |
+| 512    | `uniform`        | regression guard — small-shape safety                  |
+| 512    | `rank-mixed-skew`| regression guard — small + skew safety                 |
 
-A candidate must be **at or above baseline rank-max on all four**, not on average.
+A final candidate must beat baseline rank-max on `8192_uniform` and be **at or above baseline on
+all three regression guards**. Regression guards are vetoes, never positive weight: a skew-only win
+cannot compensate for a uniform loss or become the current-best score.
 
 ## Profiling / multi-rank evidence — what this frozen tree can and cannot give you
 
@@ -181,7 +210,7 @@ state is real and currently unattributed. A 5-pair sample of `512_skew` the day 
 worst pair as 1.93% and missed the tail entirely. Therefore:
 
 - Run baseline and candidate **alternately** (A,B,A,B,A,B) and report the **per-pair** delta plus the
-  median. Never compare two independently collected medians. **At least 3 pairs on the 8192 guards
+  median. Never compare two independently collected medians. **At least 5 pairs on the 8192 guards
   and at least 10 on the 512 guards** — fewer than 10 there does not sample the slow state.
 - Report the raw per-run readings for the 512 guards, not only the pair deltas. A ratio against a
   fat-tailed worst pair understates a real effect badly — but **do not reach for complete separation
@@ -208,6 +237,11 @@ worst pair as 1.93% and missed the tail entirely. Therefore:
   *evidence of overlap* (a stage timer that inflates while `mega_e2e` falls is a positive signal),
   never as an objective, and never sum them. This also changes the residual's meaning — see above —
   so re-derive it rather than carrying an interpretation across the fusion.
+- **The promotion metric is operator `mega_e2e` rank-max on the target guard.** Do not replace it
+  with `stage1_max + stage2_combine_max`: those timers are captured in separate graphs and reduced
+  independently across ranks, so their sum is not the time of either the scattered operator or the
+  fused kernel. When a same-timeline changed-kernel measurement exists, report it in `attribution`
+  to explain the mechanism; it does not override a real operator result in this task.
 - A latency win with no measured change in overlap is **suspicious, not accepted** — find the
   mechanism or discard the result. That sentence was unenforceable for several waves because there
   was no instrument behind it: once the stages fuse there is one kernel record and latency is

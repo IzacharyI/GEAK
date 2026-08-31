@@ -58,8 +58,23 @@ console.log('\n# the target falls back sensibly');
   const v = launchVerdict({ launch_shape: { launches_cand: 2 } }, undefined);
   ok(v.state === 'met', 'with no target reported and none passed, the default of 2 is used (this campaign\'s shape)');
   const v3 = launchVerdict({ launch_shape: { launches_cand: 3, target: 2 } }, 5);
-  ok(v3.state === 'above_target',
-     'a target embedded in the verifier output wins over the argument, so a mis-passed target cannot flatter the candidate');
+  ok(v3.state === 'met',
+     'an explicit orchestrator target wins over the verifier field; the verifier reports evidence, not policy');
+}
+
+console.log('\n# the verifier cannot move the target or omit the proof');
+{
+  const moved = launchVerdict({ launch_shape: {
+    launches_cand: 3, target: 3, per_rank: true, how_counted: 'trace',
+    stages_fused: ['dispatch', 'gemm1', 'gemm2', 'combine'],
+  } }, 2, ['dispatch', 'gemm1', 'gemm2', 'combine']);
+  ok(moved.state === 'above_target' && !moved.shape_met,
+     'an orchestrator target of 2 outranks a verifier-reported target of 3');
+  const guessed = launchVerdict({ launch_shape: {
+    launches_cand: 2, target: 2,
+  } }, 2, ['dispatch', 'gemm1', 'gemm2', 'combine']);
+  ok(guessed.state === 'unjudged' && !guessed.shape_met,
+     'a bare number without per-rank method and fused-stage evidence is unjudged');
 }
 
 if (failures) { console.error(`\nFAIL: ${failures} assertion(s) failed.`); process.exit(1); }

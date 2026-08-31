@@ -6,9 +6,34 @@
   "exp_root": "${EXP_ROOT}",
   "state_dir": "${STATE_DIR}",
 
-  "budget": 8,
+  "budget": 15,
   "max_no_improve": 3,
   "min_improve": 0.01,
+  "objective": "working_kernel",
+  "strict_autonomy": "true",
+  "promotion_metric": "operator_e2e",
+  "target_guards": ["8192_uniform"],
+  "regression_guards": [
+    "8192_rank-mixed-skew",
+    "512_uniform",
+    "512_rank-mixed-skew"
+  ],
+  "launch_target": 2,
+  "require_overlap": "true",
+  "require_attribution": "true",
+  "require_artifact_distinct": "true",
+  "accuracy_metric": "relL2",
+  "accuracy_threshold": 0.10,
+  "required_replays": 1000,
+  "required_pairs": 5,
+  "required_pairs_by_guard": {
+    "8192_uniform": 5,
+    "8192_rank-mixed-skew": 5,
+    "512_uniform": 16,
+    "512_rank-mixed-skew": 16
+  },
+  "_acceptance_comment": "This is a strict autonomous derivation run. Only 8192_uniform creates positive credit; the other guards can only veto. The operator rank-max e2e is the promotion metric across a launch-structure change. A terminal rung must reach two launches, controlled non-zero on-edge overlap, numeric accuracy, graph-safe 1000-replay liveness, complete attribution, and all guard evidence. objective=working_kernel keeps slower intermediate artifacts alive; it does not relax final acceptance.",
+  "_state_comment": "Pass --state-dir pointing at a NEW empty directory for every strict proof run. The workflow refuses STATE_DIR/best inheritance because inherited code or manually edited state cannot prove derivation in this run.",
 
   "gpu_ids": "0,1,2,3,4,5,6,7",
   "gpus_per_job": 8,
@@ -16,8 +41,10 @@
   "gpu_min_free_gib": 150,
 
   "use_expert_skills": "true",
+  "analysis_skill": "none",
+  "_analysis_skill_comment": "Deliberately none for the blind proof: the checked-in MoE analysis skill contains prior MegaMoE-specific post-mortem facts. The generic task-graph/resource-vector method remains available without pre-supplying this operator's conclusions.",
   "capability_eval": "true",
-  "_capability_eval_comment": "Leave this true unless you are running the task for its output rather than to evaluate the loop. With it on, an engineer that discovers a finished implementation must report FOUND EXISTING IMPLEMENTATION instead of copying it, and known_reference_paths is refused rather than read.",
+  "_capability_eval_comment": "Leave this true unless you are running the task for its output rather than evaluating the loop. Trusted bootstrap converts any --known-reference path to opaque path/content hashes and clears this field before agent startup.",
   "known_reference_paths": "${KNOWN_REFERENCE_PATHS}",
 
   "positive_control": {

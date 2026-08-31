@@ -17,6 +17,7 @@
 //   4. HONEST SCOPE   — the pass log admits a path check cannot cover git-reachable copies.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -68,7 +69,7 @@ if (src) {
   // The real incident: a sibling of the task dir, one level up from the workspace.
   ok(run(['/proj/app/AITER-candidate']).inside.length === 1,
      'a sibling reference checkout inside the run tree is caught (the actual incident)');
-  ok(run(['/root/geak_reference/AITER-candidate']).inside.length === 0,
+  ok(run(['/outside/hidden-reference']).inside.length === 0,
      'a relocated reference passes — the fix has to be usable, not just diagnostic');
   ok(run(['/proj/app/tasks/megamoe/ref']).inside.length === 1,
      'a reference nested inside the task dir itself is caught');
@@ -79,7 +80,7 @@ if (src) {
      'a sibling whose name merely starts with the ancestor string is NOT flagged');
   ok(run(['/proj/app/../app/AITER-candidate']).inside.length === 1,
      'a path that only escapes via .. is resolved first, then caught');
-  ok(run(['/root/ref-a', '/proj/app/ref-b']).inside.length === 1,
+  ok(run(['/outside/ref-a', '/proj/app/ref-b']).inside.length === 1,
      'a mixed list reports only the offending tree');
 }
 
@@ -110,12 +111,20 @@ const sweep = read('scripts/reference_leak_sweep.sh');
 // under scripts/ it sat one `ls` away from every engineer the workflow runs, which turns the leak
 // detector into a leak. The test follows it rather than pinning it back, and asserts below that no
 // copy has reappeared inside SKILL_DIR.
-const MARKER_PATH = process.env.MARKER_FILE || '/root/geak_verify/reference_leak_markers.txt';
+const markerTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'geak-markers-'));
+process.on('exit', () => { try { fs.rmSync(markerTmp, { recursive: true, force: true }); } catch {} });
+const MARKER_PATH = path.join(markerTmp, 'reference_leak_markers.txt');
+fs.writeFileSync(MARKER_PATH, [
+  '# Deliberately EXCLUDED task knob: AITER_MEGAMOE_FUSE_ALL',
+  ...Array.from({ length: 60 }, (_, i) => `SYNTHETIC_REFERENCE_MARKER_${String(i).padStart(3, '0')}`),
+].join('\n') + '\n');
 const markers = fs.readFileSync(MARKER_PATH, 'utf8');
 ok(!fs.existsSync(path.join(ROOT, 'scripts', 'reference_leak_markers.txt')),
    'the marker list is NOT inside SKILL_DIR, where engineers can read the reference vocabulary');
 ok(/refusing to use/.test(sweep),
    'the sweep refuses to run against a SKILL_DIR copy rather than silently preferring it');
+ok(!/\/root\/|\/sgl-workspace\//.test(sweep),
+   'the sweep source contains no real machine path to the hidden marker vocabulary');
 ok(/--derive/.test(sweep), 'the marker list can be regenerated from the two trees, not hand-maintained');
 ok(/EXTS:=/.test(sweep),
    'the sweep is scoped to files a leak can be copied out of, not every file that names a counter');
@@ -226,10 +235,11 @@ ok(iGate > 0 && iGate < wf.indexOf('while (dispatched < BUDGET'),
    'the gate runs BEFORE the optimize loop spends budget');
 ok(/reference_leak_sweep\.sh --tree/.test(wf) && /skill_address_scan\.sh --skills-dir/.test(wf),
    'the gate invokes both scanners, not just the one that existed first');
-ok(/'clean', 'leak', 'skipped'/.test(wf),
-   'the verdict is three-valued: "could not run" must not be expressible as "found nothing"');
-ok(/returned nothing[\s\S]{0,200}UNKNOWN, not clean/.test(wf),
-   'a dead gate agent degrades to UNKNOWN — a silent pass would restore the exact hole');
+ok(/'clean', 'leak', 'skipped', 'unknown'/.test(wf),
+   'the verdict keeps "could not run" distinct from "found nothing"');
+ok(/STRICT_AUTONOMY \|\| verdict === 'leak'/.test(wf) &&
+   /strict\/capability evidence requires an explicit clean/.test(wf),
+   'a dead/skipped strict gate aborts rather than failing open');
 // Wrap-tolerant: the sentence spans two `+`-joined literals (same reason as the section-4 note).
 ok(/do not\s*`? ?\+?\s*`?\s*read any file they flag/.test(wf),
    'the gate agent is told not to read what it finds — the checker must not become the next leak');
@@ -266,12 +276,11 @@ ok(/not a tree audit/.test(addr),
    'the header scopes the scanner to injected knowledge and points elsewhere for tree-level leaks');
 
 // --- 8b. the same rule applied to filesystem paths, tested by RUNNING it --
-// A git sha was never the only kind of address. `/root/geak_reference/.../reference.patch` in a card
+// A git sha was never the only kind of address. `/outside/hidden-reference/reference.patch` in a card
 // is the same door with a shorter walk, and pass 1 cannot see it. These assertions execute the
 // scanner against a synthetic card, because the failure being guarded is a match that silently
 // stopped happening — which is exactly what a source-grep assertion cannot distinguish from a pass.
 console.log('\n# the scanner resolves filesystem paths, not just git addresses');
-const os = require('os');
 const { execFileSync } = require('child_process');
 const SCAN = path.join(ROOT, 'scripts', 'skill_address_scan.sh');
 const box = fs.mkdtempSync(path.join(os.tmpdir(), 'gk_addr_'));
@@ -329,7 +338,6 @@ ok(/Not an exit: the filesystem pass below needs no repository/.test(addr) &&
 console.log('\n# the ref pass, executed against a real branch-only leak');
 {
   const { execFileSync } = require('child_process');
-  const os = require('os');
   const marker = fs.readFileSync(MARKER_PATH, 'utf8')
     .split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'))[0];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'refleak-'));
@@ -347,7 +355,7 @@ console.log('\n# the ref pass, executed against a real branch-only leak');
     let code = 0;
     try {
       execFileSync('bash', [path.join(ROOT, 'scripts/reference_leak_sweep.sh'), '--tree', tmp],
-                   { stdio: 'pipe' });
+                   { stdio: 'pipe', env: { ...process.env, MARKER_FILE: MARKER_PATH } });
     } catch (e) { code = e.status; }
     ok(code === 1,
        `a marker reachable only via \`git checkout\` is a LEAK (exit ${code}, want 1)`);

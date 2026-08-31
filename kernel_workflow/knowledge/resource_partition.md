@@ -115,6 +115,34 @@ Each of these is a reason fusion might pay that is *independent of launch overhe
 argument rests only on launch count (`fusion_preconditions.md`, rung 4), these are the arguments you
 should be making instead — and they are testable: measure the HBM traffic the round-trip costs.
 
+## The floor is per engine, not a scalar
+
+A device has several execution resources — MFMA/VALU issue, VMEM/LDS issue, HBM and, on a multi-GPU
+rank, the interconnect. Their use can overlap, but they are not automatically independent. Represent
+each stage as a demand vector over those resources; the lower bound is the maximum load on any
+binding engine, plus dependencies that prohibit overlap. This distinction decides whether a fusion
+can pay:
+
+- **Same engine** (two GEMMs, both MFMA-bound). A static `f/(1-f)` CU split of two throughput-limited
+  stages of durations A and B runs in `max(A/f, B/(1-f))`, minimized at `A+B` — exactly the serial
+  time. Overlap buys *nothing*; the only lever is raising one stage's throughput. Say this plainly
+  when it is the case, and do not confuse it for the next case.
+- **Different binding engines.** If measured counters show the stages do not contend on any binding
+  resource, summing their times overstates the floor: the smaller engine's work may hide under the
+  larger's. The prize is `serial − max_engine_floor`, and it is captured only if the consumer really
+  runs during the producer. Relocating it into the same launch behind a whole-grid join preserves
+  the serial order and overlaps nothing.
+
+The failure mode this prevents: computing one scalar floor by summing every stage's time, proving
+`overlap = A+B` against it, and reporting "fusion does not pay" — when the two stages were on
+different binding engines and the real floor was closer to a maximum than a sum.
+
+The inverse failure is just as costly: calling a shader-issued P2P store "DMA" and treating it as
+free overlap. Such a store still needs resident waves, issue/VMEM capacity, registers and usually a
+CU-side epilogue; a cross-rank reduce also contains local loads and arithmetic. Measure those
+components before assigning them to an engine. Report the floor as a vector backed by counters or
+controlled arms, not as one scalar guessed from stage names.
+
 ## The moving bottleneck
 
 State this in every proposal that changes an allocation:

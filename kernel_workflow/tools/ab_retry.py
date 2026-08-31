@@ -2,10 +2,9 @@
 """Retrying interleaved A/B runner for MegaMoE V2 EP8.
 
 Written by wave 15 round 3's engineer, merged into the workflow repo unchanged in
-behaviour so that later waves do not have to rediscover it. Three things were
-generalised on the way in and nothing else: the hardcoded PYTHONPATH / AITER_JIT_DIR /
-interface defaults are now environment overrides, and build_doc() additionally emits
-the per-kernel times the attribution gate needs (see the kernel_time block below).
+behaviour so that later waves do not have to rediscover it. Machine paths are
+environment overrides, build_doc() emits attribution diagnostics, and marker checks
+bind both count and expected path value.
 
 Why this exists (w15 r2 post-mortem): the frozen EVAL_DIR/tools/ab_runner.py records
 rc!=0 and ADVANCES. Six verify legs died on transient
@@ -23,7 +22,8 @@ comparable to the baseline table:
   2. DROPPED LEGS ARE VISIBLE: a leg that exhausts its attempts is appended to
      doc["dropped_legs"] with every attempt's rc and error tail. Never silently absent.
   3. MARKER GATE: --expect-markers N asserts N '[megamoe] path=...' lines per leg
-     (one per rank). A leg with the wrong count is VOID -> retried -> dropped.
+     (one per rank); --expect-path / arm.expect_paths asserts their exact values.
+     A FUSED arm that prints eight SCATTERED markers is VOID, not a valid count.
   4. INCREMENTAL: the full aggregate doc (records + pairs + dropped legs +
      claim_complete) is rewritten after EVERY leg, so a kill at any point leaves a
      complete, readable claim rather than a fragment.
@@ -142,7 +142,8 @@ def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, time
 
 
 def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
-            expect_markers, fake_cmd, timeout, min_free_gib=0, pool_wait_s=0):
+            expect_markers, fake_cmd, timeout, min_free_gib=0, pool_wait_s=0,
+            expect_paths=None):
     """Return (record_or_None, dropped_or_None). A leg counts only if an attempt succeeded."""
     tries = []
     for k in range(1, attempts + 1):
@@ -165,6 +166,12 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
             void = "no [RESULT] line"
         elif expect_markers is not None and len(paths) != expect_markers:
             void = f"marker count {len(paths)} != {expect_markers}"
+        expected_paths = ({str(expect_paths)} if isinstance(expect_paths, str)
+                          else {str(v) for v in (expect_paths or [])})
+        actual_paths = {p[0] for p in paths}
+        if void is None and expected_paths and actual_paths != expected_paths:
+            void = (f"path markers {sorted(actual_paths)} != expected "
+                    f"{sorted(expected_paths)}")
         tries.append({"attempt": k, "rc": rc, "wall_s": wall, "void": void,
                       "tail": out[-800:] if void else ""})
         if void is None:
@@ -208,11 +215,11 @@ def kernel_time_block(g, base, cand):
     """The numbers the attribution gate needs, next to the e2e numbers it must not be
     confused with.
 
-    This is the KERNEL workflow, so a win has to be visible in the time of the kernels
-    the patch changed -- not in the wall time of the operator around them. Wave 15
-    round 3 promoted a candidate on +4.24% e2e whose fused kernel ran 4878us against
-    the 4774us of the two kernels it replaced (2.18% SLOWER); the whole claim was in
-    the gaps between launches. So this block reports, per arm:
+    A launch-structure change needs mechanism attribution next to its operator result.
+    Wave 15 round 3 reported +4.24% e2e while the separately captured/rank-reduced
+    stage timers summed to 4878us against 4774us. That disagreement must be visible,
+    but the sum is diagnostic rather than a generally valid fused-kernel score: the
+    timers may come from separate graphs and different rank maxima. This block reports:
 
       stage1_ms / stage2_combine_ms   the two per-kernel timers, rank-max, median over pairs
       kernel_sum_ms                   their sum -- for a stage1+stage2 fusion this is the
@@ -220,9 +227,9 @@ def kernel_time_block(g, base, cand):
       residual_ms                     e2e minus the two timers, i.e. the launch gaps
 
     It deliberately does NOT decide which kernel is "the changed one": only the patch
-    author knows that. Fill verify's `attribution.changed_us` / `replaced_sum_us` from
-    these, and if the candidate's residual moved while its kernel sum did not, the gate
-    will reject the candidate and it is right to.
+    author knows that. Fill verify's `attribution.changed_us` / `replaced_sum_us` only
+    when the collection makes them genuinely comparable on the same timeline/rank.
+    Otherwise retain the operator e2e score and report this block as a mechanism caveat.
     """
     out = {}
     for arm in (base, cand):
@@ -240,9 +247,10 @@ def kernel_time_block(g, base, cand):
     # rewritten after EVERY leg on purpose, so this function must survive a half-filled
     # record set rather than take the whole run down with it.
     out["kernel_sum_pct"] = round((b - c) / b * 100, 4) if b and c else None
-    out["_note"] = ("kernel_sum_pct is positive when the candidate's kernels are FASTER. "
-                    "If it is <= 0 while the e2e pairs are positive, the win is in the "
-                    "launch gaps and does not belong to this workflow.")
+    out["_note"] = ("kernel_sum_pct is positive when the separately reported kernel timers are "
+                    "smaller. A disagreement with e2e requires mechanism investigation; this sum "
+                    "is not a promotion metric unless both arms were measured on one comparable "
+                    "timeline and rank.")
     return out
 
 
@@ -298,6 +306,8 @@ def main():
     ap.add_argument("--attempts", type=int, default=3)
     ap.add_argument("--retry-sleep", type=int, default=15)
     ap.add_argument("--expect-markers", type=int, default=None)
+    ap.add_argument("--expect-path", action="append", default=[],
+                    help="exact allowed [megamoe] path value; repeat for multiple")
     ap.add_argument("--fake-cmd", default="",
                     help="self-test only: run this shell command instead of the bench")
     ap.add_argument("--timeout", type=int, default=1200)
@@ -322,9 +332,10 @@ def main():
         tag = f"{i:03d}_{guard}_{armname}"
         print(f"[ab_retry] {tag} ({i+1}/{n}) ...", flush=True)
         em = arm.get("expect_markers", a.expect_markers)
+        ep = arm.get("expect_paths", a.expect_path)
         rec, drop = run_leg(arm["tree"], arm.get("env", {}), guard, iters, a.logdir,
                             tag, a.attempts, a.retry_sleep, em, a.fake_cmd, a.timeout,
-                            a.min_free_gib, a.pool_wait_s)
+                            a.min_free_gib, a.pool_wait_s, ep)
         if rec is not None:
             rec["arm"] = armname
             rec["tag"] = tag

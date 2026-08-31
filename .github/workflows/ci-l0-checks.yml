@@ -73,10 +73,8 @@ jobs:
         run: node kernel_workflow/tests/test_moe_advisory_skill_off_identical.js
       - name: distributed specialty wiring
         run: node kernel_workflow/tests/test_distributed_fusion_knowledge.js
-      # This is the KERNEL workflow: a win has to be visible in the changed kernel's own
-      # time, not in the wall time around it. The gate that enforces that REJECTS
-      # candidates, so it is the one place where a silent regression in the workflow
-      # turns straight back into a promoted regression in the kernel.
+      # Launch-changing candidates must report attribution. A changed-kernel task rejects a
+      # mismatch; an operator-e2e task retains the product result and withholds only the mechanism.
       - name: attribution gate
         run: node kernel_workflow/tests/test_attribution_gate.js
       # A resumed wave whose analyze fast path finds no prior roadmap must re-analyse rather than
@@ -96,6 +94,14 @@ jobs:
       - name: enabling steps judged on function
         run: node kernel_workflow/tests/test_enabling_step.js
 
+      # Composes the staged-fusion predicates at their real call boundaries: a slower enabling or
+      # working terminal reaches verify, only target guards create credit, and a three-launch or
+      # uncontrolled-overlap result cannot close strict autonomy acceptance.
+      - name: strict autonomy state machine
+        run: |
+          node kernel_workflow/tests/test_autonomy_contract.js
+          node kernel_workflow/tests/test_task_bootstrap.js
+
       # max_no_improve stops a search that has stopped finding things. A round that never got the
       # lease found nothing because it never looked, and charging it ended one wave a round early
       # with hardware still in the budget.
@@ -109,6 +115,14 @@ jobs:
         run: |
           node kernel_workflow/tests/test_task_graph_gate.js
           node kernel_workflow/tests/test_pipe_occupancy_gate.js
+
+      # Keep the explicit high-signal names above, then discover the full CPU-only kernel suite so
+      # a newly added state-machine test cannot exist locally without entering CI.
+      - name: full kernel workflow Node regression
+        run: |
+          for t in kernel_workflow/tests/test_*.js; do
+            node "$t"
+          done
 
   secrets:
     name: Secret scan (gitleaks)

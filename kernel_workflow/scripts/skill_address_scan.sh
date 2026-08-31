@@ -33,7 +33,7 @@
 #
 # THE SAME RULE, APPLIED TO FILESYSTEM PATHS
 # ------------------------------------------
-# A git sha is not the only kind of address. `/root/geak_reference/control/m25_fusion_reference.patch`
+# A git sha is not the only kind of address. `/outside/hidden-reference/reference.patch`
 # in a card is the same door with a shorter walk, and the git pass cannot see it. So the second pass
 # asks the identical question of every absolute path a card names:
 #

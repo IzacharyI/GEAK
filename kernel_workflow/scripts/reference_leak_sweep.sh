@@ -15,7 +15,7 @@
 #      one directory every engineer is given by name
 #   4. artifacts/geak_state/<task>/patches/*.diff + best/  -- the durable ledger, handed over by design
 #   5. portable/megamoe-v2-candidate.bundle          -- a git bundle of the candidate branch
-#   6. a branch in a DIFFERENT repo the run can read (here /sgl-workspace/aiter_main/aiter via
+#   6. a branch in a DIFFERENT repo the run can read (for example an external JIT checkout via
 #      AITER_JIT_DIR) -- outside the tree, so no path check can see it at all
 #
 # Five of those six are inside the tree and none of them is a `known_reference_paths` entry. A run can
@@ -72,14 +72,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # engineer the workflow runs, which makes the leak detector into a leak: an engineer who reads it is
 # handed the design as a vocabulary list, and no amount of "do not read this" in a header survives
 # curiosity. Distance is the only thing that contains it (uid 0 makes chmod inert; see handoff
-# §14z-35). So it lives outside the walk path and the sweep reaches for it by absolute path.
-#
-# Naming the path here is safe in a way that shipping the file is not: the sweep must name what it
-# reads, and a path an engineer cannot open tells them a list exists -- not what is on it.
+# §14z-35). So it lives outside the walk path and a trusted launcher supplies MARKER_FILE out of
+# band. Do not write that path into this script or launch_args.json: same-UID agents can read both.
 #
 # Fails CLOSED. If the file is absent the sweep exits 2 rather than scanning with an empty list, so a
 # lost marker file is a loud abort and never a clean-looking zero-hit run.
-: "${MARKER_FILE:=/root/geak_verify/reference_leak_markers.txt}"
+: "${MARKER_FILE:?set MARKER_FILE to the out-of-band reference marker list}"
 # Unconditional: a copy under scripts/ is the leak whether or not the verify-only path also exists.
 # Gating this on "$MARKER_FILE is missing" would have made the common case -- someone restores the old
 # file while the new one is still in place -- pass silently, which is the exact failure being guarded.
@@ -245,7 +243,7 @@ done <<< "$hits"
 # A `find`-based sweep greps FILES. A branch that is not checked out has no files, so a repository can
 # carry the entire reference on a second branch and still be walked and pronounced clean. That is not
 # an exotic case; it is the default state of any repo with more than one branch, and on 2026-08-22 it
-# was the actual state of THE FROZEN BASELINE THIS SWEEP WAS POINTED AT. `/sgl-workspace/megamoe/aiter`
+# was the actual state of THE FROZEN BASELINE THIS SWEEP WAS POINTED AT. A frozen baseline
 # held a local branch `mega` -- 15 files, +3906 lines, 140 of 140 markers -- one `git checkout` away
 # inside the directory the task text hands to every engineer. The sweep read it and reported clean, and
 # I relayed that clean result to the user. A checker that answers the wrong question confidently is

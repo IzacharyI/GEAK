@@ -73,9 +73,13 @@ console.log('\n# what closes a rung');
 
 console.log('\n# grading a round result');
 {
-  ok(rungOutcomeOf({ eng: { status: 'ok' }, ver: { verified_geomean: 0.97 } }) === 'measured',
+  ok(rungOutcomeOf({ eng: { status: 'ok' }, ver: {
+    status: 'regression', correctness: 'pass', verified_geomean: 0.97,
+  } }) === 'measured',
      'a rung that ran and LOST is measured and closed — otherwise the ladder never terminates');
-  ok(rungOutcomeOf({ eng: { status: 'ok' }, ver: { verified_geomean: 1.04 } }) === 'measured',
+  ok(rungOutcomeOf({ eng: { status: 'ok' }, ver: {
+    status: 'verified', correctness: 'pass', verified_geomean: 1.04,
+  } }) === 'measured',
      'and so is a rung that won');
   ok(rungOutcomeOf({ eng: { status: 'failed' }, ver: null }) === 'faulted',
      'an engineer failure is faulted, not measured');
@@ -111,8 +115,8 @@ console.log('\n# wired in');
 {
   ok(/OPEN_RUNGS: openRungs\(LADDER, rungTally\)/.test(src),
      'the owed list is threaded to update_memory — the only phase whose output the next wave reads');
-  ok(/const outcome = rungOutcomeOf\(r, stepRoleOf\(r\.d\)\);\n\s*recordRungOutcome\(r\.d\.roadmap_rung, outcome\);/.test(src),
-     'and it is fed from the round results and the step role, not from what was planned');
+  ok(/let outcome = rungOutcomeOf\(r, role\);[\s\S]{0,700}recordRungOutcome\(r\.d\.roadmap_rung, outcome\);/.test(src),
+     'and it is fed from post-gate round evidence, not from what was merely planned');
   ok(/if \(e\.last_outcome !== 'measured'\) e\.last_outcome = outcome;/.test(src),
      "`measured` is absorbing: a later round that retakes a closed rung and faults must not reopen it");
 }

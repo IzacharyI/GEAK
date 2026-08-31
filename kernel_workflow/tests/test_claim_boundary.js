@@ -126,7 +126,7 @@ ok(/if \(!CLAIM\.unbacked\(r\)\) continue/.test(src), 'the post-verify sweep con
 // Recovery must not be allowed to become a second measurement. That instruction lives in the prompt,
 // and the prompt is the only thing standing between "read the bytes" and "take a lease and re-run",
 // so its load-bearing clauses are asserted here.
-const recoverPrompt = (src.match(/did not return a usable claim\.[\s\S]{0,700}?\}\),/) || [''])[0];
+const recoverPrompt = (src.match(/did not return a usable claim\.[\s\S]{0,1400}?\}\),/) || [''])[0];
 ok(/RECOVER ONLY/.test(recoverPrompt), 'the recovery agent is told RECOVER ONLY');
 ok(/do NOT take a lease/i.test(recoverPrompt), 'the recovery agent is forbidden a GPU lease');
 ok(/do NOT re-measure/i.test(recoverPrompt), 'the recovery agent is forbidden a fresh measurement');
@@ -134,6 +134,8 @@ ok(/UNRESOLVED/.test(recoverPrompt),
    'recovery must carry UNRESOLVED guards through -- laundering them into wins is the obvious abuse');
 ok(/per_case: \[\]/.test(recoverPrompt),
    'the agent is given a way to say "nothing on disk" that is not a fabricated claim');
+ok(/mtimes\/claim_complete/.test(recoverPrompt) && /declaration is stale/.test(recoverPrompt),
+   'a newer completed aggregate supersedes a stale worker_result instead of being ignored');
 
 // And the unbacked log line must say what to DO, since its whole purpose is to stop the direction
 // being filed as tried-and-failed.

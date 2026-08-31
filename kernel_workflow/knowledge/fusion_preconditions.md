@@ -22,6 +22,21 @@ by other means. So the fine-grained dependency pays **only if all three hold**:
 2. **There is idle hardware for the consumer to run on while the producer is still running.** If the
    producer already saturates the machine, starting the consumer early does not make it finish
    earlier; it just interleaves. Check occupancy and CU utilization during the producer, not after.
+   **But "the machine" is not one scalar resource.** Model the producer and consumer as demand
+   vectors over MFMA/VALU issue, VMEM/LDS issue, HBM and the interconnect, then ask whether the
+   *consumer's required resources* have headroom while the producer runs. When both stages demand
+   the same saturated engine (two throughput-limited GEMMs both wanting MFMA), a static `f/(1-f)`
+   split runs in `max(A/f, B/(1-f))`, minimized at `A+B`: exactly the serial time, before overhead.
+   When their binding resources differ, the lower bound may instead be a per-engine maximum and a
+   real overlap prize can exist (see `resource_partition.md`).
+
+   Do not turn that distinction into the opposite shortcut. A GPU P2P operation issued by shader
+   `buffer_store` is not a free DMA copy: it still consumes resident waves, issue slots, VMEM
+   resources, registers and often a compute tail before bytes reach the interconnect. Likewise a
+   "communication" reduce normally contains CU-side loads and arithmetic. Split each stage by
+   engine from counters or controlled arms; do not label the whole stage `comm` from its name and
+   assume `floor = max(compute_us, comm_us)`. The useful test is measured headroom on every engine
+   the consumer actually needs, plus a controlled in-kernel overlap reading.
 3. **The producer does not complete in a single wave.** This is the condition that is skipped most
    often and kills the most proposals. If the producer's grid fits in one wave, its first output
    tile becomes ready at almost exactly the moment the whole producer finishes — the early-start
@@ -192,20 +207,23 @@ routes with load imbalance and *lose* on balanced routes. Imbalance leaves idle 
 the unification cost; a balanced route has none, so the cost is fully exposed. That asymmetry is
 evidence the arm is the control arm. It is not evidence that fusion is route-dependent.
 
-**2. Attribute the win before you claim it.** Compute, at the same guard, in the same trace:
+**2. Attribute the win before you claim its mechanism.** Compute, at the same guard and on one
+comparable timeline/rank when the harness can provide it:
 
 ```
 fused_kernel_us   vs   sum of the kernels it replaced
 residual_us = e2e - sum(all kernel_us)   for BOTH arms
 ```
 
-If the fused kernel is *slower* than the kernels it replaced while e2e is faster, the win is not
-inside the code you changed, and the difference in `residual` will tell you how much of it lives in
-the gaps. Locate it before writing it into a speedup claim. A grid-wide join is an unintended
+Do not synthesize this comparison by summing timers captured in separate graphs or independently
+reduced across ranks: `max(sum)` and `sum(max)` are different quantities, and their residual can be
+negative. If a valid fused-kernel measure is slower while operator e2e is faster, the fused body
+does not explain the win; locate the mechanism before calling it overlap. A grid-wide join can be an unintended
 cross-rank synchroniser: it aligns every rank's role-B start, which tightens the arrival window of
 whatever comes next and can shrink a downstream peer-wait by more than the fusion itself costs.
-That is a real effect and possibly worth shipping — as a barrier, which is far cheaper than a
-megakernel — but it is not the mechanism the wave set out to test, and recording it as one poisons
+That is a real operator effect and possibly worth shipping, but it is not evidence that the target
+edge overlapped. Under an operator-e2e contract keep the result and withhold the mechanism claim;
+under a changed-kernel contract reject it from that score. Mixing those contracts mid-run poisons
 the next wave's priors.
 
 **3. A route gate resolved once and cached is not shippable.** Under graph capture you cannot branch

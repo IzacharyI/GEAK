@@ -27,8 +27,18 @@ filesystem and shell work yourself with Bash/Read/Write. Return ONLY the request
 Inputs in your prompt: `KERNEL_PATH_ORIG`, `EXP_ROOT` (base dir for timestamped runs),
 `EVAL_DIR_OVERRIDE` (may be empty), `KERNEL_NAME_HINT` (basename), `TASK` (may be empty), and
 `MODE` (`optimize` default | `author`). In `author` mode you also get `TARGET_LANGUAGE` and `OP_SPEC`.
+`STRICT_AUTONOMY` is present only for a proof run.
+
+When `STRICT_AUTONOMY` is present, before copying anything run
+`git -C "$SKILL_DIR/.." rev-parse HEAD` and `git -C "$SKILL_DIR/.." status --porcelain`.
+Return the hash as `workflow_revision` and set `workflow_clean:true` only for empty status output.
+The orchestrator refuses an uncommitted proof run; this prevents knowledge or role edits from
+changing the instructions between rounds.
 
 ### DEEP-MODE resume (ONLY when `STATE_DIR` is in your inputs — otherwise ignore this entire section)
+If `STRICT_AUTONOMY` is present, **do not resume even when `$STATE_DIR/best` exists**. Return
+`resumed:true` with a note that inherited state was found so the orchestrator can refuse the run;
+do not silently seed from it. A proof run must use a fresh/empty state directory.
 `STATE_DIR` is a stable per-(kernel,backend) directory carried ACROSS deep-mode waves. It lets a
 continued wave build on the cumulative best instead of restarting. Handle it as follows:
 - **If `STATE_DIR` is set AND `$STATE_DIR/best/` exists and is non-empty** (a prior wave's cumulative-best
@@ -164,6 +174,8 @@ Return JSON:
   "source_files": ["<relative paths under workspace>"],
   "baseline_frozen": true,
   "baseline_callable": "<module:attr of the frozen real online kernel, or '' if the pristine EVAL_DIR/baseline is the anchor>",
+  "workflow_revision": "<GEAK git HEAD when STRICT_AUTONOMY is set>",
+  "workflow_clean": true,
   "notes": "anything unusual about the layout"
 }
 ```
@@ -180,7 +192,13 @@ on a normal/first run. `shelf`/`absorbed_files` are pass-through JSON — do not
 Inputs: `KERNEL_PATH_ORIG`, `EVAL_DIR`, `WORKSPACE` (=EVAL_DIR/workspace), `SKILL_DIR`, `GPU_ID`,
 `APPLY_TO_ORIGINAL`, and the COMMANDMENT path `EVAL_DIR/COMMANDMENT.md`, the final patch
 `EVAL_DIR/final_patch.diff`, the TechLead's claimed numbers, and `BASELINE_TIMING` (the per-case
-baseline latencies recorded at benchmark setup).
+baseline latencies recorded at benchmark setup). Strict proof runs additionally provide
+`STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION_GUARDS`,
+`LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`,
+`REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, `AUTONOMY_ACCEPTANCE_REACHED`, and
+`ACCURACY_METRIC`, `ACCURACY_THRESHOLD`, `WORKFLOW_REVISION_START`.
+`KNOWN_REFERENCE_HASHES` may be present for strict provenance checks. It contains only path digests
+and raw/normalized content digests, never a filesystem address or reference-only filename.
 
 **Do NOT trust the TechLead's reported speedup — reproduce it from the TRUE baseline.**
 
@@ -240,7 +258,29 @@ baseline latencies recorded at benchmark setup).
    - Within 10%, or Director higher → `accepted`.
    - Director LOWER than claim by >10% → `flagged` (use Director's measured numbers as official).
    - Correctness fail / patch fails to apply → `flagged`.
-7. If `APPLY_TO_ORIGINAL=true` AND status is `accepted`:
+6b. **Strict autonomy arbitration.** When `STRICT_AUTONOMY` is present, set
+   `autonomy_acceptance_confirmed:true` only if all of these are independently present in the final
+   tree/evidence: the final patch applies to the frozen original; exact `TARGET_GUARDS` are faster
+   and every `REGRESSION_GUARDS` entry is at least baseline; per-rank launch count is at most
+   `LAUNCH_TARGET`; numeric accuracy passes; graph/liveness evidence reports at least
+   `REQUIRED_REPLAYS`; JIT artifact hashes prove base and candidate differ; every required paired
+   guard has its `REQUIRED_PAIRS_BY_GUARD` count (or `REQUIRED_PAIRS` fallback); controlled on-edge
+   overlap passes when `REQUIRE_OVERLAP`; attribution is present when `REQUIRE_ATTRIBUTION`; and the
+   orchestrator reported `AUTONOMY_ACCEPTANCE_REACHED:true`. Missing evidence is false, never an
+   inferred pass. A false value forces the orchestrator's final status to `autonomy_incomplete`.
+   For `PROMOTION_METRIC=changed_kernel`, independently measure against the frozen original and set
+   `attribution.absolute_to_frozen:true`; a round-local ratio is not a final/cumulative score.
+   When `KNOWN_REFERENCE_HASHES` is present, compare every final-patch file's raw and normalized
+   digest (UTF-8 ignoring decode errors; remove full `#`/`//` comment lines and `/*...*/` blocks,
+   then all whitespace) against rows with the same repo-relative path digest. Any identity
+   makes `autonomy_acceptance_confirmed:false`. Persist only `HIDDEN_REFERENCE`, never a digest
+   manifest, because validation artifacts remain browsable.
+   Re-run `git -C "$SKILL_DIR/.." rev-parse HEAD` and `status --porcelain` as the last proof check.
+   Return `workflow_revision_end` and set `workflow_unchanged:true` only when the hash equals
+   `WORKFLOW_REVISION_START` and the tree is clean. A role/knowledge edit during the wave invalidates
+   autonomy even when the resulting kernel is good.
+7. If `APPLY_TO_ORIGINAL=true` AND status is `accepted`, and when strict autonomy is enabled
+   `autonomy_acceptance_confirmed=true` plus `workflow_unchanged=true`:
    ```bash
    cd "$KERNEL_PATH_ORIG"
    export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
@@ -276,8 +316,14 @@ Return JSON:
   "director_verified_speedup_weighted": 0.0,
   "tech_lead_reported_speedup_geomean": 0.0,
   "validation_status": "accepted|flagged",
+  "autonomy_acceptance_confirmed": false,
+  "workflow_unchanged": true,
+  "workflow_revision_end": "<GEAK git HEAD at validation>",
   "correctness": "pass|fail",
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0}],
+  "attribution": {"changed_us": 0.0, "replaced_sum_us": 0.0, "guard": "...",
+                  "residual_ms_base": 0.0, "residual_ms_cand": 0.0,
+                  "method": "same-timeline same-rank evidence", "absolute_to_frozen": true},
   "applied_to_original": "true|false",
   "orphan_leases_swept": 0,
   "arbitration_note": "accept reason, or what to re-task if flagged",

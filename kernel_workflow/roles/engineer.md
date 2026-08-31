@@ -7,6 +7,10 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 ## Inputs (in your prompt)
 - `SPECIALTY` — one of `algorithm | memory | compute | host_runtime | distributed`.
 - `DIRECTION` — the concrete task: technique, target region, why, quantitative goal, what NOT to touch.
+  It also carries `roadmap_rung`, `step_role`, `enables`, `cost_budget_pct`, `mandatory_arms`,
+  `target_shape`, `target_guards`, `regression_guards`, and `promotion_metric` when the campaign
+  uses a staged/strict contract, plus `required_pairs` / `required_pairs_by_guard`. These are
+  executable requirements, not prose hints.
 - `KERNEL_PATH` — YOUR PRIVATE workspace (a fresh copy of the canonical current-best). Operate ONLY here.
 - `OUTPUT_DIR` — where to write `best_patch.diff`, `worker_result.json`, `report.md`.
 - `GPU_ID`, `SKILL_DIR`, the `COMMANDMENT` path, `codebase_context`, `profiling_summary`,
@@ -119,6 +123,10 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    above 1.0** — both destroy the thing the next round has to build on, which is the only reason
    your step exists. If the cost is far over the declared budget, say so and say why; that is a
    finding about the design, and it is the one case where being slower is a real result.
+5c. **Run every `DIRECTION.mandatory_arms` entry and report the exact completed names in
+   `arms_run`.** A publish-only cost arm, byte-identical null, or whole-join control is part of the
+   experiment that makes the candidate interpretable. Dropping one does not make the experiment
+   cheaper; it makes it a different experiment, and the rung remains open.
 6. Preserve the kernel's external interface (signature, semantics) so the wrapper/tests still work.
 7. Hipify safety (HIP): never put `<<<>>>` launches inside a macro if/else or ternary — use template
    dispatch functions. See `hip_optimization.md` → Hipify Safety Rules.
@@ -133,12 +141,15 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    METRIC is the time-weighted ratio-of-sums (workload-aligned), ALSO compute and report
    `speedup_weighted = Σ_i weight_i / Σ_i (weight_i / speedup_i)` using each case's `weight` from
    `baseline_per_case` — that is the PRIMARY number you optimize toward; the geomean is secondary.
-5. **Save patch** when geomean > 1.0:
+5. **Save every buildable, correctness-passing patch, regardless of speed:**
    `cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`.
    Your workspace is a fresh one-commit git repo created when it was copied, so HEAD *is* the
    baseline you started from. Stage first: a plain `git diff` omits files you CREATED, and a patch
    missing a new file applies cleanly and then fails at import. Regenerate the patch this way rather
    than hand-editing it — a hand-maintained diff is a second source of truth for your own change.
+   An enabling step is expected to be slower, and the first complete terminal can be slower while it
+   is brought up. Withholding either patch makes independent verification and the next round
+   impossible; the orchestrator, not you, decides whether it is committed.
 5b. **Your patch must be ON by default.** Ship it so that applying the diff and running the
    benchmark, with no environment variable set and no config edited, exercises your new code. Do not
    hide it behind an opt-in flag "for safety" — the person who measures it is not you, does not know
@@ -165,9 +176,12 @@ You are occasionally spawned with `PHASE=recover` instead of a direction. This i
 optimization run. The engineer that held `OUT_DIR` finished or was killed without returning a usable
 claim, and your entire job is to **recover a claim that already exists on disk**.
 
-Read `OUT_DIR/worker_result.json`. Only if it is absent or truncated, fall back to the ab_driver JSON
-and the logs beside it. Return the `per_case` it already contains, **exactly as recorded** — including
-every guard the engineer marked `UNRESOLVED`, which is a result and not a gap to fill.
+Read `OUT_DIR/worker_result.json`, then compare its mtime and `claim_complete` state with every
+`ab_*.json` / driver aggregate beside it. If a completed evidence file is newer, the declaration is
+stale: reconstruct from the newest complete aggregate and say which file superseded it. This is
+recovery of bytes already measured, not re-measurement. Return `per_case` **exactly as recorded** —
+including every guard marked `UNRESOLVED`, which is a result and not a gap to fill. Only fall back to
+raw logs when both declaration and aggregate are absent/truncated.
 
 The prohibitions are the whole point of the phase, so they are absolute:
 
@@ -202,7 +216,7 @@ logs. The same wave lost a full benchmark phase the same way. So:
 ```json
 {
   "engineer_id": "r{ROUND}_d{N}",
-  "specialty": "algorithm|memory|compute|host_runtime",
+  "specialty": "algorithm|memory|compute|host_runtime|distributed",
   "task": "the assigned direction",
   "strategy": "what you actually implemented (specific)",
   "speedup_geomean": 0.0,
@@ -211,6 +225,7 @@ logs. The same wave lost a full benchmark phase the same way. So:
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0, "weight": 0.0}],
   "status": "success|partial|failed",
   "patch_file": "best_patch.diff",
+  "arms_run": ["every mandatory arm actually executed, by its exact DIRECTION name"],
   "activation": {
     "mode": "default_on|switch",
     "switch_name": "only if mode=switch — the exact env var / config key",
@@ -225,8 +240,10 @@ logs. The same wave lost a full benchmark phase the same way. So:
 `OUTPUT_DIR/report.md` — brief: task, approach, per-case results table, geomean, what worked, what
 didn't. (This is your required mini-report.)
 
-If you achieved no speedup (or correctness could not be fixed), still submit with `status` =
-`failed`/`partial`, NO patch_file, and notes explaining why — that is valuable signal for the ledger.
+If you achieved no speedup but produced a buildable, correct implementation, still submit its patch
+and the measured regression honestly. Omit `patch_file` only when no buildable/correct source change
+exists. A correctness failure still returns `failed`/`partial` with notes — that is valuable signal
+for the ledger.
 
 **`ALREADY_TRIED` and `NOT_YET_ACTUALLY_TESTED` (when present) are round history, not advice.**
 `ALREADY_TRIED` lists directions earlier rounds actually measured, with their verified speedup — the

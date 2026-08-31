@@ -100,11 +100,13 @@ Your target may be expressed as "% of roofline". Estimate the ceiling, then driv
    per-case latencies you start from, and estimate the roofline ceiling (above).
 2. **Plan a stack**: pick a primary lever from the dominant bottleneck, plus 1–2 compounding levers
    from other categories (e.g. warp-cooperative rewrite + native output layout + dispatch fusion).
-3. **Implement → correctness → benchmark** the change. Keep it only if correct AND faster than your
-   current best. Save `best_patch.diff`
-   (`cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`) whenever you set
-   a new best with geomean > 1.0. Your workspace is a fresh one-commit repo, so HEAD is your
-   baseline; stage first or files you CREATED are silently left out of the patch.
+3. **Implement → correctness → benchmark** the change. Keep the fastest correct version for a normal
+   speedup direction. For `working_kernel`, `enabling`, or a staged terminal, also keep the newest
+   correct artifact even when it is slower: it is the state the next iteration must build on. Save
+   `best_patch.diff` after every buildable, correctness-passing milestone with
+   `cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`.
+   Your workspace is a fresh one-commit repo, so HEAD is your baseline; stage first or files you
+   CREATED are silently left out of the patch.
 4. **Self-profile to re-steer**: every few accepted changes, re-run
    `bash $SKILL_DIR/scripts/profile_kernel.sh $GPU_ID "<benchmark cmd that cd's into $KERNEL_PATH>" $OUTPUT_DIR/profile_rN`
    to find the NEW dominant bottleneck, and attack that next. This is the core of going deep.
@@ -117,8 +119,9 @@ Your target may be expressed as "% of roofline". Estimate the ceiling, then driv
    try ONE more radically different approach, then stop); OR
    (c) a hard cap of ~40 measured iterations.
    On a 3-identical-error crash loop, reset to your best saved patch and change approach (don't grind).
-6. If your best correct version regresses vs baseline (it shouldn't), submit `status:"failed"` with no
-   patch and explain — that is signal for the ledger.
+6. If your best correct version regresses vs baseline, report the regression and still submit the
+   patch when the direction is `working_kernel`, `enabling`, or a staged terminal. For an ordinary
+   speedup-only direction it may remain an uncommitted ledger result.
 
 ## Outputs
 `OUTPUT_DIR/worker_result.json` (same schema as the specialist engineer):
@@ -132,7 +135,8 @@ Your target may be expressed as "% of roofline". Estimate the ceiling, then driv
   "speedup_arithmetic": 0.0,
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0}],
   "status": "success|partial|failed",
-  "patch_file": "best_patch.diff",
+  "patch_file": "best_patch.diff when a buildable, correct source change exists",
+  "arms_run": ["every mandatory arm actually executed"],
   "strategies_tried": ["the full exploration trace — what worked AND what didn't"],
   "notes": "roofline % achieved per representative case, where the remaining wall-clock sits (kernel vs floor), and what a follow-up could still attack — written for the TechLead's insight log"
 }

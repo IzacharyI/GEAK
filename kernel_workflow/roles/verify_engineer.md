@@ -7,11 +7,23 @@ absolute per-case latencies. The script trusts only your numbers.
 
 ## Inputs
 - `CANONICAL` — the canonical current-best workspace (read-only reference; do NOT edit it).
+- `FROZEN_KERNEL_PATH` — the immutable original denominator. Use it, not current canonical, when
+  `PROMOTION_METRIC=changed_kernel` requires an absolute-to-frozen score.
 - `PATCH` — path to the candidate's `best_patch.diff` (generated relative to `CANONICAL`'s git HEAD).
 - `VERIFY_DIR` — your private scratch dir.
 - `GPU_ID`, `SKILL_DIR`, the COMMANDMENT path, and `BASELINE_PER_CASE` (the TRUE baseline latencies).
 - `SPECIALTY` (optional) — the direction's specialty. `distributed` activates the liveness gate
   in step 4c; any other value or absent leaves verification exactly as it was.
+- `MANDATORY_ARMS`, `ENGINEER_ARMS_RUN`, `TARGET_SHAPE`, `TARGET_GUARDS`,
+  `REGRESSION_GUARDS`, `PROMOTION_METRIC`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`,
+  `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`,
+  `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`, and
+  `LAUNCH_TARGET` carry the
+  machine-enforced campaign contract. When `STRICT_AUTONOMY` is true, missing evidence is a failed
+  terminal contract, not a benign default.
+- `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
+  provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
+  content digests and reveal neither source location nor reference-only filenames.
 - **DEEP-MODE (optional — only if `HARNESS_ADDENDUM` is present; a normal run omits it):** in addition to
   the oracle correctness + unweighted geomean, also re-measure and report the addendum's e2e-aligned
   weighted geomean and ENFORCE its hard gates (decode-no-regress, memory-footprint cap, cudagraph-safe);
@@ -46,7 +58,7 @@ absolute per-case latencies. The script trusts only your numbers.
 4. Run the already lease-wrapped FULL_BENCHMARK entry verbatim. Parse per-case
    latency using the parse hint. Run it **twice** and keep the better/median if the two disagree by
    >5% (note the variance).
-4b. **(ONLY if `REQUIRE_GRAPH_CAPTURE` is set) CUDA/HIP-graph capture-safety smoke.** This op will be
+4b. **(If `REQUIRE_GRAPH_CAPTURE` or `STRICT_AUTONOMY` is set) CUDA/HIP-graph capture-safety smoke.** This op will be
    overlaid on the graph-captured decode path, so a kernel that passes iso but host-syncs or lazily
    compiles UNDER CAPTURE passes here yet CRASHES the live TP>1 server. Catch it now (cheap), in `$WS`
    via `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID python3 -c '<smoke>'`. The smoke (use the optimized
@@ -75,15 +87,17 @@ absolute per-case latencies. The script trusts only your numbers.
      smallest and largest the harness offers. Residency and grid shape change with size, so a
      participant count that is legal at one size deadlocks at another. This is the single highest-yield
      check and it is cheap.
-   - Then a **repeat-iteration stress**: the same call ≥1000 times back-to-back (graph replay if the
+   - Then a **repeat-iteration stress**: the same call at least `REQUIRED_REPLAYS` times back-to-back
+     (1000 by default; graph replay if the
      harness supports capture, otherwise a plain loop) with a **wall-clock timeout**, comparing the
      LAST iteration's output to the first. A first-iteration-only comparison cannot catch a counter
      that desyncs on generation 2.
    - **FAIL → `status:"correctness_failed"`, `liveness:"fail"`**, and in `notes` record which size and
      which iteration, plus whether it hung (timeout) or returned wrong data (stale read) — the two have
      different causes and the engineer needs to know which.
-   - **PASS → `liveness:"pass"`.** Set `liveness:"n/a"` only if the patch touches no readiness/
-     synchronization code at all; say so in `notes`.
+   - **PASS → `liveness:"pass"`, `replay_count:<minimum actual count>`, and one
+     `replay_results:{guard,count,status,graph_safe}` row for every target/regression route.** Set `liveness:"n/a"` only if the
+     patch touches no readiness/synchronization code and strict autonomy is off; say so in `notes`.
    A timeout here is a FAILURE, never a skip. Budget for it: this gate is why a `distributed`
    direction costs more to verify than a normal one.
 4d. **ACTIVATION — prove the patched code actually ran.** Input `ACTIVATION` is the engineer's own
@@ -131,6 +145,11 @@ absolute per-case latencies. The script trusts only your numbers.
    - **Not confirmed → `status:"inactive"`, `activation_confirmed:"no"|"unknown"`, and report the
      measured numbers anyway** so the direction can be re-run cleanly. Do NOT report it as
      `regression` and do NOT report it as a 1.000x null: both file a void experiment as a finding.
+4e. **MANDATORY ARMS.** Independently execute every exact name in `MANDATORY_ARMS` using the
+   direction's prescribed interleave, including its null/control arms. Return only arms that
+   actually completed in `arms_run`; do not copy `ENGINEER_ARMS_RUN`. If any mandatory arm cannot be
+   run, keep its evidence and explain the failure, but do not substitute a similar arm or rename it:
+   the orchestrator keeps the rung open.
 5. Reject if a patch modified the harness/COMMANDMENT/files outside the workspace, or the benchmark
    shows a regression (the PRIMARY metric ≤ 1.0). Report it as `status:"regression"` with the numbers anyway.
    **A harness edit is its own rejection, independent of the speedup.** Diff the patch's file list
@@ -152,16 +171,25 @@ absolute per-case latencies. The script trusts only your numbers.
    whatever the status is — a `regression` or a `harness_modified` patch still has a footprint, and
    `harness_modified` is in fact the case where the list matters most.
 
-5b. **Provenance check (only when `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
+5b. **Provenance check (when `KNOWN_REFERENCE_HASHES` or `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
    rewrites, compare it against the same-named file under each reference path. If any file is
    **byte-identical**, or differs only in whitespace/comments, the direction did not derive its
-   result — it imported it. Return `status:"plagiarized"`, name the file and the reference in
+   result — it imported it. Return `status:"plagiarized"`, name the candidate file but identify the
+   reference only as `HIDDEN_REFERENCE` in every persisted artifact; never copy the reference path,
+   branch or hash into `VERIFY_DIR`, `notes`, or logs. Return the finding in
    `notes`, and report the measured numbers anyway (they are true about the code and false about the
    run). Do not treat a high speedup as mitigating: in a capability evaluation an imported win is a
    *negative* result, because it means the run's own reasoning produced nothing. Partial overlap is
    not plagiarism — a patch that independently arrives at the same 10-line fence sequence is a
    convergent derivation. The trigger is whole-file identity, especially of a file that does not
    exist in the baseline at all.
+   When `KNOWN_REFERENCE_HASHES` is set, perform the same check without opening a reference tree:
+   hash each touched repo-relative path, compute its raw sha256 and the documented
+   comments/whitespace-normalized sha256 (UTF-8 with decode errors ignored; remove full `#`/`//`
+   comment lines and `/*...*/` blocks, then all whitespace), and compare with every manifest row for
+   that path digest. A hit
+   is `plagiarized` and is permanently rejected in that round. Do not write the digest list into the
+   workspace; it already exists in the structured input.
 6. Compute per-case speedup = `BASELINE_PER_CASE.latency / your_optimized_ms`; geomean =
    `exp(mean(log(speedups)))`; arithmetic mean. **If the COMMANDMENT's METRIC is the time-weighted
    ratio-of-sums (workload-aligned), ALSO compute `verified_weighted = Σ weight_i /
@@ -193,6 +221,19 @@ absolute per-case latencies. The script trusts only your numbers.
    with a named hole in it; the hole is written down, not papered over. Omit the block entirely only
    when the candidate fuses nothing.
 
+8. **Attribution and scoped score whenever launches change.** Return `attribution.changed_us` and
+   `replaced_sum_us` from a genuinely comparable same-guard collection, plus both residuals. Do not
+   manufacture them by summing stage timers that the harness captures in separate graphs or reduces
+   on different ranks; in that case say the comparable kernel measure is unavailable. Under
+   `PROMOTION_METRIC=operator_e2e`, the exact `TARGET_GUARDS` per-case rank-max result creates credit
+   and every `REGRESSION_GUARDS` entry is a veto; attribution explains the mechanism but does not
+   replace the operator score. Under `changed_kernel`, attribution is the score and is therefore
+   mandatory and must be measured directly against the frozen original, not the current canonical;
+   set `absolute_to_frozen:true`. A round-local ratio cannot be compared to the prior round's
+   cumulative score. In strict autonomy, cover every named guard with at least `REQUIRED_PAIRS` raw
+   `paired_readings`, using `REQUIRED_PAIRS_BY_GUARD[guard]` when present and `REQUIRED_PAIRS`
+   otherwise.
+
 ## Return JSON
 ```json
 {
@@ -203,8 +244,13 @@ absolute per-case latencies. The script trusts only your numbers.
   "verified_weighted": 0.0,
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0, "weight": 0.0}],
   "variance_note": "e.g. run-to-run within 3%",
-  "graph_safe": "pass|fail|n/a (only when REQUIRE_GRAPH_CAPTURE was set; omit otherwise)",
+  "graph_safe": "pass|fail|n/a (required when REQUIRE_GRAPH_CAPTURE or STRICT_AUTONOMY is set)",
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
+  "replay_count": 1000,
+  "replay_results": [
+    {"guard": "8192_uniform", "count": 1000, "status": "pass", "graph_safe": "pass"}
+  ],
+  "arms_run": ["exact mandatory arm names independently completed"],
   "reps": 5,
   "null_arm_pct": 0.0,
   "paired_readings": [
@@ -221,6 +267,10 @@ absolute per-case latencies. The script trusts only your numbers.
     "metric": "relL2", "value": 0.0, "threshold": 0.10,
     "guard": "8192_uniform", "method": "relative L2 of candidate vs reference output on the target route"
   },
+  "accuracy_results": [
+    {"metric": "relL2", "value": 0.0, "threshold": 0.10,
+     "guard": "8192_uniform", "method": "candidate vs frozen reference"}
+  ],
   "launch_shape": {
     "launches_base": 0, "launches_cand": 0, "per_rank": true, "target": 2,
     "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
@@ -233,6 +283,13 @@ absolute per-case latencies. The script trusts only your numbers.
     "scattered_reading": 0.0, "forced_reading": 0.0,
     "clock_skew_ns": 0, "meter_overhead_pct": 0.0,
     "note": "what could not be measured and why"
+  },
+  "attribution": {
+    "changed_us": 0.0, "replaced_sum_us": 0.0, "guard": "8192_uniform",
+    "residual_ms_base": 0.0, "residual_ms_cand": 0.0,
+    "method": "same-timeline and same-rank collection",
+    "absolute_to_frozen": true,
+    "note": "or why no comparable kernel measure exists"
   },
   "notes": "anything suspicious (overfit special-casing, narrow correctness, graph-capture host-sync, etc.)"
 }

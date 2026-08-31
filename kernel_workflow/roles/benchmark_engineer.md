@@ -5,6 +5,8 @@ the whole workflow depends on this being correct and stable. Operate on the cano
 
 ## Inputs
 `WORKSPACE`, `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, and `ANALYSIS` (kernel type, files, existing tests).
+Scoped campaigns also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
+`STRICT_AUTONOMY`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
 
 **WORKLOAD ALIGNMENT.** The real-workload shape/dtype distribution is handled by the immutable
 `unittest.py` oracle itself — the Kernel Extractor bakes the weighted cases (`meta.workload.cases[]`)
@@ -141,6 +143,11 @@ The COMMANDMENT MUST contain, with concrete commands (not placeholders):
     geomean as a secondary diagnostic. List each case's `weight` and `weight_source` so every
     downstream agent computes the SAME number. State that this primary number is what the round winner
     gate and the final result use. If the baseline is the flagged naive fallback, say so here.
+  - **TARGET_GUARDS present**: only those exact case ids create positive credit. Every
+    `REGRESSION_GUARDS` case is measured and may veto, but is excluded from the positive aggregate.
+    Write both lists and `PROMOTION_METRIC` verbatim into COMMANDMENT. Under strict autonomy collect
+    `REQUIRED_PAIRS_BY_GUARD[guard]` raw interleaved pairs when present, otherwise at least
+    `REQUIRED_PAIRS`.
 - **If the harness reports per-stage / per-kernel sub-timers, `METRIC` must say they are diagnostic
   and are never summed.** Sub-timers are only additive while the stages are serialized. Any change
   that makes two stages run concurrently — fusion, streams, a dependent-launch mechanism — makes each

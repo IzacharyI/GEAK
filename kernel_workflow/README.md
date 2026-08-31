@@ -10,9 +10,10 @@ by an agent returning **structured JSON**.
 ## Key properties
 1. **Deterministic orchestration** — the budget loop / parallelism / verification live in
    `kernel_workflow.js`, not in LLM-interpreted prose. The TechLead returns structured decisions.
-2. **Independent verification of every claimed speedup** — each engineer's patch is re-benchmarked
-   by a separate `verify_engineer` in a clean workspace *as soon as it finishes* (pipelined). The
-   script trusts only verified, absolute-latency numbers → the winner is genuinely the fastest.
+2. **Independent verification at the trust boundary** — every claimed speedup is re-benchmarked;
+   `working_kernel` and staged `enabling` artifacts are also verified when slower, because function
+   is the evidence that lets the next stage build on them. The script never promotes self-reported
+   numbers.
 3. **Specialist engineers (A)** — `algorithm | memory | compute | host_runtime`; each loads only its
    relevant knowledge → focused context, sharper results, naturally orthogonal & mergeable. Plus a
    fifth **`deep_explore`** track: an open-ended deep optimizer the TechLead hands a high target (Nx
@@ -41,8 +42,9 @@ by an agent returning **structured JSON**.
 `Final Report → Director Validation`.
 
 Each round's winner is committed into the canonical workspace, so the next round builds on the
-cumulative best. Speedup is always measured in **absolute latency vs the true baseline**:
-`geomean( baseline_ms / optimized_ms )`.
+cumulative best. Speedup is measured in **absolute latency vs the true baseline**. The default is
+`geomean(baseline_ms / optimized_ms)`; a scoped task may name target guards that alone create
+credit, with separate regression-only guards that can only veto.
 
 ## Budget
 `budget` = the **total number of optimization directions** the TechLead may dispatch to engineers
@@ -73,6 +75,10 @@ previous run's artifacts: analyses, logs and accumulated patches are the workflo
 task that needs them as input is a task that has been solved elsewhere and is now being replayed.
 
 Available: `tasks/megamoe_v2_ep8` (MegaMoE V2, 8-rank expert-parallel fusion + compute/comm overlap).
+That task is a strict autonomy proof: use a new empty `--state-dir`, freeze a clean GEAK commit, and
+let its machine-readable two-launch/overlap/accuracy/liveness/guard contract decide success. Run
+bootstrap from a trusted shell with `MARKER_FILE` set; reference paths supplied there are converted
+to opaque hashes and are not persisted in launch args.
 
 ### Validating a change to the workflow itself
 `scripts/replay_runs.js` re-decides finished runs with today's decision logic, on no GPU:
@@ -118,6 +124,16 @@ Workflow({
     gpus_per_job: 1,           // optional, default 1; >1 atomically leases a group from gpu_ids
     job_gpu_ids: "",           // optional fixed group; when set, its size must match gpus_per_job
     task: "focus on ...",      // optional natural-language steer
+    objective: "speedup",      // "working_kernel" preserves correct slower staged artifacts
+    target_guards: [],         // exact case ids allowed to create positive credit
+    regression_guards: [],     // measured veto-only cases
+    promotion_metric: "legacy", // set operator_e2e or changed_kernel explicitly for strict tasks
+    strict_autonomy: "false",  // requires capability_eval, fresh state, clean immutable workflow
+    launch_target: 2,          // strict terminal launch ceiling
+    require_overlap: "false",
+    require_attribution: "false",
+    required_replays: 1000,
+    required_pairs_by_guard: {},
     exp_root: "",              // optional, output root; default = sibling "exp/" next to workflow_dir
     eval_dir: "",              // optional, override the output dir for this single run
     apply_to_original: "false",// optional; if "true", write the validated patch back to kernel_path

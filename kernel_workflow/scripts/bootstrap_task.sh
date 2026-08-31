@@ -129,7 +129,7 @@ fi
 # (4) JIT cache. A fresh directory here is not an error — it is a full C++ rebuild inside your
 #     first lease, which is a worse outcome than a clear warning now.
 if [ -z "$JIT_DIR_IN" ]; then
-  for c in /sgl-workspace/aiter_main/aiter/aiter/jit "$HOME/.aiter/jit"; do
+  for c in "$HOME/.aiter/jit" /opt/aiter/jit; do
     [ -d "$c" ] && { JIT_DIR_IN="$c"; break; }
   done
 fi
@@ -154,8 +154,18 @@ fi
 [ -n "$OUT" ] || die "--out <workspace> is required (or use --check)"
 [ -d "$BASELINE" ] || die "--baseline $BASELINE is not a directory"
 [ -d "$BASELINE/aiter/ops/flydsl" ] || die "--baseline $BASELINE does not look like an AITER checkout (no aiter/ops/flydsl)"
-if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ] && [ "$FORCE" != 1 ]; then
-  die "--out $OUT exists and is not empty; pass --force to overwrite"
+STRICT_TASK="$(python3 - "$TASK_DIR/launch_args.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    v = json.load(f).get("strict_autonomy", False)
+print("1" if str(v).lower() == "true" else "0")
+PY
+)"
+if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
+  if [ "$STRICT_TASK" = 1 ]; then
+    die "strict_autonomy task refuses non-empty --out $OUT; use a NEW empty workspace (strict mode ignores --force)" 1
+  fi
+  [ "$FORCE" = 1 ] || die "--out $OUT exists and is not empty; pass --force to overwrite"
 fi
 
 BASELINE="$(cd "$BASELINE" && pwd)"
@@ -163,6 +173,12 @@ mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 PARENT="$(dirname "$OUT")"
 EXP_ROOT="${EXP_ROOT:-$PARENT/geak_runs}"
 STATE_DIR="${STATE_DIR:-$PARENT/geak_state/$TASK}"
+
+# A strict capability proof cannot inherit any code, patch, note or hand-edited state. Check the
+# whole state directory, not only STATE.json/best; an old patch elsewhere is still browseable.
+if [ "$STRICT_TASK" = 1 ] && [ -d "$STATE_DIR" ] && [ -n "$(ls -A "$STATE_DIR" 2>/dev/null)" ]; then
+  die "strict_autonomy task refuses inherited state at $STATE_DIR; pass --state-dir pointing at a NEW empty directory" 1
+fi
 
 # WHERE THE LAUNCH ARGS LAND, and why it is not next to the workspace.
 #
@@ -195,6 +211,8 @@ echo "assembling '$TASK' into $OUT"
 # able to reach back and mutate the denominator.
 tar -C "$BASELINE" -cf - --exclude=.git . | tar -C "$OUT" -xf -
 
+ARGS_KNOWN_REF="$KNOWN_REF"
+[ "$STRICT_TASK" = 1 ] && ARGS_KNOWN_REF=""
 subst() {
   sed -e "s|\${MORI_ROOT}|$MORI_ROOT_IN|g" \
       -e "s|\${AITER_JIT_DIR}|$JIT_DIR_IN|g" \
@@ -202,7 +220,7 @@ subst() {
       -e "s|\${SKILL_DIR}|$SKILL_DIR|g" \
       -e "s|\${EXP_ROOT}|$EXP_ROOT|g" \
       -e "s|\${STATE_DIR}|$STATE_DIR|g" \
-      -e "s|\${KNOWN_REFERENCE_PATHS}|$KNOWN_REF|g" "$1"
+      -e "s|\${KNOWN_REFERENCE_PATHS}|$ARGS_KNOWN_REF|g" "$1"
 }
 subst "$TASK_DIR/GEAK_TASK.md" > "$OUT/GEAK_TASK.md"
 subst "$TASK_DIR/launch_args.json" > "$ARGS_OUT"
@@ -236,6 +254,119 @@ args["_task_comment"] = (
     "GEAK_TASK.md, so a launch_args.json without this field runs the wave with an empty task.")
 with open(args_path, "w") as f: json.dump(args, f, indent=2); f.write("\n")
 PY
+
+# Strict runs never persist a reference address. The trusted bootstrap process converts each
+# reference file that differs from the frozen baseline into an opaque manifest:
+#   hash(relative path), raw content hash, comments/whitespace-normalized content hash.
+# A verifier can reject exact/comment-only copies from those values without learning where the
+# reference lives or even the name of a reference-only file.
+if [ "$STRICT_TASK" = 1 ] && [ -n "$KNOWN_REF" ]; then
+python3 - "$ARGS_OUT" "$BASELINE" "$KNOWN_REF" <<'PY' || die "failed to build opaque reference hash manifest" 2
+import hashlib, json, os, re, sys
+
+args_path, baseline, refs_csv = sys.argv[1:4]
+refs = [p.strip() for p in refs_csv.split(",") if p.strip()]
+exts = {".py", ".cpp", ".cc", ".c", ".h", ".hpp", ".hip", ".cu", ".cuh", ".mlir", ".s"}
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+def normalized(data):
+    text = data.decode("utf-8", "ignore")
+    text = re.sub(r"(?m)^\s*(?:#|//).*$", "", text)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return digest(re.sub(r"\s+", "", text).encode())
+
+rows = []
+seen = set()
+for root in refs:
+    if not os.path.isdir(root):
+        raise SystemExit(f"known reference is not a directory: {root}")
+    for base_dir, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in files:
+            if os.path.splitext(name)[1].lower() not in exts:
+                continue
+            path = os.path.join(base_dir, name)
+            if os.path.islink(path):
+                continue
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            data = open(path, "rb").read()
+            baseline_path = os.path.join(baseline, rel)
+            if os.path.isfile(baseline_path) and open(baseline_path, "rb").read() == data:
+                continue
+            row = (digest(rel.encode()), digest(data), normalized(data))
+            if row in seen:
+                continue
+            seen.add(row)
+            rows.append({"path_sha256": row[0], "sha256": row[1], "normalized_sha256": row[2]})
+
+with open(args_path) as f:
+    args = json.load(f)
+args["known_reference_paths"] = ""
+args["known_reference_hashes"] = rows
+args["_reference_hash_comment"] = (
+    "Generated out of band by bootstrap_task.sh. Contains only path/content digests for reference "
+    "files that differ from the frozen baseline; no reference address or filename is persisted.")
+with open(args_path, "w") as f:
+    json.dump(args, f, indent=2)
+    f.write("\n")
+PY
+fi
+
+# Run the content/ref sweep in this trusted bootstrap process, before any agent starts. The marker
+# path is supplied out of band through the environment and is never written to launch args.
+if [ "$STRICT_TASK" = 1 ]; then
+  [ -n "${MARKER_FILE:-}" ] && [ -f "$MARKER_FILE" ] ||
+    die "strict_autonomy requires MARKER_FILE in the trusted bootstrap environment" 1
+  scan_roots=("$PARENT" "$OUT" "$EXP_ROOT" "$STATE_DIR" "$SKILL_DIR" "$SKILL_DIR/../perf_knowledge")
+  for scan_root in "${scan_roots[@]}"; do
+    [ -d "$scan_root" ] || continue
+    set +e
+    MARKER_FILE="$MARKER_FILE" REF_SCAN_MAX_TREES=100000 \
+      bash "$SKILL_DIR/scripts/reference_leak_sweep.sh" --tree "$scan_root"
+    scan_rc=$?
+    set -e
+    [ "$scan_rc" = 0 ] ||
+      die "strict_autonomy containment preflight failed for $scan_root (exit $scan_rc)" 1
+  done
+  for scan_root in "${scan_roots[@]}"; do
+    [ -d "$scan_root" ] || continue
+    set +e
+    bash "$SKILL_DIR/scripts/skill_address_scan.sh" \
+      --skills-dir "$SKILL_DIR/../perf_knowledge/expert_skills" \
+      --scan-root "$scan_root" --repo "$SKILL_DIR/.."
+    address_rc=$?
+    set -e
+    [ "$address_rc" = 0 ] ||
+      die "strict_autonomy skill-address preflight failed for $scan_root (exit $address_rc)" 1
+  done
+  workflow_revision="$(git -C "$SKILL_DIR/.." rev-parse HEAD 2>/dev/null)" ||
+    die "strict_autonomy requires GEAK to be a git checkout" 1
+  if ! python3 - "$ARGS_OUT" "$MARKER_FILE" "$workflow_revision" "${scan_roots[@]}" <<'PY'
+import hashlib, json, sys
+args_path, marker_path, workflow_revision, *roots = sys.argv[1:]
+with open(args_path) as f:
+    args = json.load(f)
+with open(marker_path, "rb") as f:
+    marker_sha = hashlib.sha256(f.read()).hexdigest()
+args["containment_preflight"] = {
+    "clean": True,
+    "marker_manifest_sha256": marker_sha,
+    "reference_hash_count": len(args.get("known_reference_hashes", [])),
+    "workflow_revision": workflow_revision,
+    "roots": sorted(set(roots)),
+    "content_scan": "clean",
+    "skill_address_scan": "clean",
+}
+with open(args_path, "w") as f:
+    json.dump(args, f, indent=2)
+    f.write("\n")
+PY
+  then
+    die "failed to record containment attestation" 2
+  fi
+fi
 
 # A placeholder that survived substitution is a silent misconfiguration: the run starts, the path
 # does not resolve, and the failure surfaces an hour later as an import error inside a lease.
