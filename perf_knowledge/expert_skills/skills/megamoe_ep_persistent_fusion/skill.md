@@ -180,9 +180,10 @@ one-flag A/B on the candidate tree only, and encodes the five acceptance checks 
 5. **Paired performance.** A,B,A,B ×3 interleaved pairs per guard, rank-max `mega_e2e`, on the four
    guards; report medians and per-pair ranges. `uniform` guards gate; `skew` is reported, not gated.
 
-Run it as `bash verify.sh --tree <candidate_aiter> --world-size 8`. It writes a JSON verdict and
-exits non-zero if any *gating* check fails. See `megamoe_ep_persistent_fusion.validation.yaml` for the
-shapes/routes the on-box validator feeds it.
+Run it as `bash verify.sh --tree <candidate_aiter> --world-size 8 [--incumbent <m2.5_aiter>]`. It
+writes a JSON verdict (`selected`, `decision`, `vs_incumbent_pct`) and exits non-zero if any *gating*
+check fails. See `megamoe_ep_persistent_fusion.validation.yaml` for the shapes/routes the on-box
+validator feeds it.
 
 ## Three-way comparison (Baseline / M2.5 incumbent / new candidate)
 
@@ -195,11 +196,23 @@ denominator (the **frozen public-AITER baseline**):
 | **M2.5 (incumbent)** | this skill's persistent megakernel; `source=validated_skill` | **known-good floor (保底)**, not the ceiling |
 | **New candidate** | whatever the current run produced | must clear Baseline; **is allowed to beat M2.5** |
 
-M2.5 is the incumbent to **match-or-beat**, not a target to converge to. The gate is: candidate must
-beat Baseline on the `uniform` guards *and* hold parity; if it additionally beats M2.5 on the same
-A/B against the immutable oracle, it **supersedes** this incumbent (bump `incumbent.label`, re-record
-the measured gains, keep `is_ceiling: false`). A candidate that merely ties M2.5 is not a regression —
-it reproduces the validated capability, which is the production-mode goal.
+M2.5 is the incumbent to **match-or-beat**, not a target to converge to. Pass `--incumbent <m2.5_aiter>`
+and the floor is **enforced**, not merely reported: the candidate's fused path is paired against the
+incumbent's fused path (A,B,A,B ×3, rank-max, on the decisive `8192_uniform` guard) and the selection
+is **`max(candidate, M2.5)`**:
+
+- candidate beats M2.5 **past the noise floor** (`NOISE_PCT`, default 1.45%) → `decision: supersede`,
+  `selected: candidate` — ship it, bump `incumbent.label`, re-record gains, keep `is_ceiling: false`.
+- within noise → `decision: tie_keep_incumbent`, `selected: M2.5_incumbent` — the capability is
+  reproduced (not a regression), but deployment keeps the known-good incumbent.
+- candidate slower → `decision: regress_keep_incumbent` — **the floor holds; M2.5 ships, never the
+  slower candidate.**
+
+So the floor guarantees deployment is **never below M2.5**, while a real win is always allowed to
+supersede it. The base gate (beat Baseline + parity + marker + 1000-replay) still decides whether the
+candidate is *valid at all*; the floor rule decides *what ships* among the valid arms. Add
+`--require-improvement` to make a tie/regress (no gain over the incumbent) a non-zero gate exit for
+callers that specifically want an improvement, not just a safe reproduction.
 
 ## Knobs & pitfalls
 

@@ -10,7 +10,14 @@
 # (scripts/skill_address_scan.sh enforces this.)
 #
 # Usage:
-#   bash verify.sh --tree <candidate_aiter> --world-size 8 [--three-way] [--out <dir>]
+#   bash verify.sh --tree <candidate_aiter> --world-size 8 \
+#        [--incumbent <m2.5_aiter>] [--require-improvement] [--three-way] [--out <dir>]
+#
+# --incumbent turns M2.5 from a printed reference into an ENFORCED FLOOR: the candidate's fused path
+# is paired against the incumbent's fused path and the selection is max(candidate, M2.5). A candidate
+# that does not strictly beat M2.5 past the noise floor does NOT ship — the incumbent is kept. This is
+# the "保底 / incumbent, not ceiling" rule: never deploy below M2.5, but a real win supersedes it.
+# Without --incumbent the M2.5 arm cannot be measured, so the floor is report-only (Baseline gate only).
 #
 # Env the run command is parameterized through (set to your box's MegaMoE_v2 EP8 a8w4 bench):
 #   BENCH_CMD   command that runs ONE measured route and prints a line "mega_e2e_us=<float>" per rank
@@ -19,13 +26,16 @@
 #   ROUTES      uniform             (uniform gates; add "skew" to report it, it never gates)
 #   REPLAYS     1000                (>=1000 CUDA-graph replays for the stress check)
 #   RELL2_MAX   0.10                (parity tolerance at the largest bucket)
+#   NOISE_PCT   1.45                (measured per-case noise floor; |gain| within this = a tie)
 set -euo pipefail
 
-TREE=""; WORLD=8; THREEWAY=0; OUT="./verify_out"
+TREE=""; WORLD=8; THREEWAY=0; OUT="./verify_out"; INCUMBENT=""; REQUIRE_IMPROVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tree) TREE="$2"; shift 2;;
     --world-size) WORLD="$2"; shift 2;;
+    --incumbent) INCUMBENT="$2"; shift 2;;
+    --require-improvement) REQUIRE_IMPROVE=1; shift;;
     --three-way) THREEWAY=1; shift;;
     --out) OUT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
@@ -33,8 +43,9 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$TREE" ] || { echo "ERROR: --tree <candidate_aiter> required" >&2; exit 2; }
 [ -d "$TREE" ] || { echo "ERROR: tree not found: $TREE" >&2; exit 2; }
+[ -z "$INCUMBENT" ] || [ -d "$INCUMBENT" ] || { echo "ERROR: incumbent tree not found: $INCUMBENT" >&2; exit 2; }
 [ -n "${BENCH_CMD:-}" ] || { echo "ERROR: set BENCH_CMD (see header)" >&2; exit 2; }
-TOKENS="${TOKENS:-512 8192}"; ROUTES="${ROUTES:-uniform}"; REPLAYS="${REPLAYS:-1000}"; RELL2_MAX="${RELL2_MAX:-0.10}"
+TOKENS="${TOKENS:-512 8192}"; ROUTES="${ROUTES:-uniform}"; REPLAYS="${REPLAYS:-1000}"; RELL2_MAX="${RELL2_MAX:-0.10}"; NOISE_PCT="${NOISE_PCT:-1.45}"
 mkdir -p "$OUT"
 FAIL=0; note(){ echo "[verify] $*"; }
 
@@ -48,6 +59,14 @@ run_arm(){
     echo "$mk" > "$OUT/.marker_${tok}_${route}"
   fi
   # rank-max across ranks
+  awk -F= '/mega_e2e_us=/{v=$2+0; if(v>m)m=v} END{printf "%.4f", m}' "$log"
+}
+
+# incumbent M2.5 fused arm on ITS OWN tree (path given at runtime, never baked into this card)
+# $1=tree $2=tok $3=route -> rank-max mega_e2e_us (fused)
+run_fused_on(){
+  local tr="$1" tok="$2" route="$3" log="$OUT/incumbent_${tok}_${route}.log"
+  ( cd "$tr" && AITER_MEGAMOE_FUSE_ALL=1 TOKENS="$tok" ROUTE="$route" bash -c "$BENCH_CMD" ) >"$log" 2>&1 || true
   awk -F= '/mega_e2e_us=/{v=$2+0; if(v>m)m=v} END{printf "%.4f", m}' "$log"
 }
 
@@ -101,14 +120,48 @@ else awk -v d="$d" 'BEGIN{exit !(d<=0)}' && note "stress ${REPLAYS} replays drif
 launches=$(grep -oE 'launch=[a-zA-Z0-9_]+' "$OUT/graph.log" | sort -u | wc -l || echo 0)
 note "captured distinct launches/rank=$launches (expect 2: quant, megakernel)"
 
-if [ "$THREEWAY" = "1" ]; then
-  note "three-way arms measured under one denominator (frozen public-AITER baseline):"
-  note "  Baseline = four serialized launches | M2.5 incumbent = fused (source=validated_skill) | candidate = this tree"
-  note "  M2.5 is the known-good floor, not the ceiling; a candidate beating it supersedes the incumbent."
+# ---- Floor / three-way selection: M2.5 is the incumbent FLOOR, not the ceiling. -------------------
+# Ship max(candidate, M2.5). A candidate that does not strictly beat M2.5 past the noise floor keeps
+# the incumbent; the floor guarantees deployment is never below M2.5. A real win supersedes it.
+SELECTED="candidate"; VS_INC="not_measured"; DECISION="baseline_gate_only"
+if [ -n "$INCUMBENT" ]; then
+  note "floor check: candidate vs M2.5 incumbent on ${big}_uniform (A,B,A,B x3, rank-max, noise=${NOISE_PCT}%)"
+  declare -a C=(); declare -a I=()
+  for i in 1 2 3; do
+    C+=("$(run_arm megakernel 1 "$big" uniform)"); I+=("$(run_fused_on "$INCUMBENT" "$big" uniform)")
+    C+=("$(run_arm megakernel 1 "$big" uniform)"); I+=("$(run_fused_on "$INCUMBENT" "$big" uniform)")
+  done
+  read -r VS_INC lo hi <<PYOUT
+$(python3 - "${C[@]}" ::: "${I[@]}" <<'PY'
+import sys, statistics as st
+r = sys.argv[1:]; k = r.index(':::'); C = list(map(float, r[:k])); I = list(map(float, r[k+1:]))
+p = [(i - c) / i * 100 for c, i in zip(C, I)]   # + = candidate faster than incumbent M2.5
+print(f"{st.median(p):.2f} {min(p):.2f} {max(p):.2f}")
+PY
+)
+PYOUT
+  note "  candidate vs M2.5: median=${VS_INC}%  per-pair=[${lo} .. ${hi}]%"
+  if awk -v g="$VS_INC" -v n="$NOISE_PCT" 'BEGIN{exit !(g>n)}'; then
+    SELECTED="candidate"; DECISION="supersede"
+    note "  -> candidate SUPERSEDES M2.5 past noise; ship candidate, bump incumbent.label + re-record gains"
+  elif awk -v g="$VS_INC" -v n="$NOISE_PCT" 'BEGIN{exit !(g < -n)}'; then
+    SELECTED="M2.5_incumbent"; DECISION="regress_keep_incumbent"
+    note "  -> candidate SLOWER than M2.5; FLOOR HOLDS, keep & ship M2.5 (never deploy below incumbent)"
+    [ "$REQUIRE_IMPROVE" = "1" ] && { note "  --require-improvement: no gain over incumbent -> gate fail"; FAIL=1; }
+  else
+    SELECTED="M2.5_incumbent"; DECISION="tie_keep_incumbent"
+    note "  -> tie within noise; capability reproduced (not a regression), keep incumbent M2.5"
+    [ "$REQUIRE_IMPROVE" = "1" ] && { note "  --require-improvement: a tie is not an improvement -> gate fail"; FAIL=1; }
+  fi
+elif [ "$THREEWAY" = "1" ]; then
+  note "three-way requested but no --incumbent tree: M2.5 arm NOT measured, floor is report-only."
+  note "  Baseline = four serialized launches | M2.5 incumbent = a kept fused build (source=validated_skill) | candidate = this tree"
+  note "  pass --incumbent <m2.5_aiter> to enforce the floor (ship max(candidate, M2.5))."
 fi
 
 verdict=$([ "$FAIL" = "0" ] && echo pass || echo fail)
-printf '{"skill":"megamoe_ep_persistent_fusion","source":"validated_skill","verdict":"%s","world_size":%s,"tokens":"%s","routes":"%s"}\n' \
-  "$verdict" "$WORLD" "$TOKENS" "$ROUTES" | tee "$OUT/verdict.json"
+printf '{"skill":"megamoe_ep_persistent_fusion","source":"validated_skill","verdict":"%s","selected":"%s","decision":"%s","vs_incumbent_pct":"%s","world_size":%s,"tokens":"%s","routes":"%s"}\n' \
+  "$verdict" "$SELECTED" "$DECISION" "$VS_INC" "$WORLD" "$TOKENS" "$ROUTES" | tee "$OUT/verdict.json"
 [ "$FAIL" = "0" ] || { echo "[verify] GATE FAILED" >&2; exit 1; }
+note "selected=$SELECTED decision=$DECISION (floor: never below M2.5)"
 echo "[verify] all gating checks passed"
