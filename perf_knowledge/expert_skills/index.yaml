@@ -63,8 +63,8 @@ skills:
     gens:
     - gfx950
     dtypes:
-    - fp8_e4m3_fnuz
-    - bf16
+    - mxfp8_e4m3
+    - mxfp4
     regimes:
     - prefill
     - decode
@@ -73,6 +73,20 @@ skills:
     profile_signature:
       op_name_regex: mega_moe|dispatch_combine|p2p_scatter
       min_pct_gpu: 20.0
+    config:
+      framework: MegaMoE_v2
+      parallel: EP8
+      arch: gfx950
+      precision: a8w4
+      graph: cuda_graph_captured
+      shapes:
+        tokens_per_rank:
+        - 512
+        - 8192
+        routes:
+        - uniform
+        - skew
+        topk: measured_per_config
   expects:
     isolated_speedup_min: 1.01
     e2e_delta_min_pct: 1.0

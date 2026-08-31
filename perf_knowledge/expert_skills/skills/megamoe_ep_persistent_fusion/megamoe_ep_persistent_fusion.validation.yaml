@@ -1,0 +1,30 @@
+# validation_manifest for expert_skill:megamoe_ep_persistent_fusion — consumed by
+# _contribute/validate_skill.py (kernel scope). Non-default because the gate is a multi-route MegaMoE
+# EP8 a8w4 A/B, not a single isolated GEMM shape. No reference source here — mechanism, never a copy.
+skill_id: megamoe_ep_persistent_fusion
+harness: kernel_workflow
+
+efficacy:
+  # kernel scope: shapes drive the isolated A/B; no serving model.
+  model_path: ""
+  gpu: gfx950/MI355X
+  shapes:
+    framework: MegaMoE_v2
+    parallel: EP8
+    precision: a8w4          # A=MXFP8(e4m3,1x32), W=MXFP4(e2m1,1x32)
+    tokens_per_rank: [512, 8192]
+    routes: [uniform]        # the gating route; skew is reported, never gated
+  expect_min: auto           # = expects.isolated_speedup_min (1.01); incumbent floor is +4.71% at 8192_uniform
+  gate: verify.sh            # bash verify.sh --tree <candidate_aiter> --world-size 8
+
+do_no_harm:
+  # the control the megakernel must NOT degrade: quant folded INTO the kernel (retired, +0.15..+1.2% slower).
+  control: fused_quant_ingress_role
+  noise_band_pct: 1.45       # measured per-case noise floor at 1 rep on this harness
+  boundary_checks:
+    - name: skew_not_gated
+      assert: skew route is reported but never gates (uniform is the target route)
+    - name: marker_required
+      assert: a run without the once-per-process path=MEGA marker is VOID, not zero
+    - name: replay_stress
+      assert: >=1000 CUDA-graph replays, last iteration == first (arrival-counter desync guard)

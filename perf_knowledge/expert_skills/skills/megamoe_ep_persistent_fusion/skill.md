@@ -13,8 +13,8 @@ match:
   gens:
   - gfx950
   dtypes:
-  - fp8_e4m3_fnuz
-  - bf16
+  - mxfp8_e4m3   # a8w4: A = MXFP8 (e4m3, 1x32 block scale)
+  - mxfp4        # a8w4: W = MXFP4 (e2m1, 1x32 block scale)
   regimes:
   - prefill
   - decode
@@ -23,10 +23,39 @@ match:
   profile_signature:
     op_name_regex: mega_moe|dispatch_combine|p2p_scatter
     min_pct_gpu: 20.0
+  # Precise applicability. All must hold for this card to apply; a route/precision/parallel
+  # outside this envelope is a different problem and the numbers below do not transfer.
+  config:
+    framework: MegaMoE_v2
+    parallel: EP8              # expert-parallel, 8 ranks, one intranode XGMI group
+    arch: gfx950               # CDNA4 / MI355X
+    precision: a8w4            # A=MXFP8(e4m3,1x32), W=MXFP4(e2m1,1x32); f32 accum; scaled-MFMA
+    graph: cuda_graph_captured
+    shapes:
+      tokens_per_rank: [512, 8192]
+      routes: [uniform, skew]  # uniform is the TARGET route; skew is diagnostic-only, out of scope
+      topk: measured_per_config
 expects:
   isolated_speedup_min: 1.01
   e2e_delta_min_pct: 1.0
   parity: required
+# Provenance — this card is a REUSE of a human-validated capability, not an autonomous finding.
+provenance:
+  source: validated_skill
+  origin: human_validated_capability   # hand-built persistent megakernel ("M2.5" / version D), measured on-box
+  reuse_mode: production_optimization
+  reporting_rule: >
+    A candidate reproduced FROM this skill MUST be reported with source=validated_skill and MUST NOT
+    be presented as an autonomous derivation ("GEAK discovered M2.5"). The blind autonomy proof runs
+    with use_expert_skills=OFF and never reads this card; the two ledgers stay separate.
+# Incumbent, not ceiling. M2.5 is the known-good performance FLOOR (保底). A candidate that beats
+# these numbers on the same A/B against the immutable oracle wins and supersedes this incumbent.
+incumbent:
+  label: M2.5_persistent_megakernel
+  is_ceiling: false
+  measured_gain_vs_baseline_pct:
+    tokens512_uniform: 1.49
+    tokens8192_uniform: 4.71   # target route, tightest spread -> the positive control
 validation:
   status: draft
   last_verified: ''
@@ -42,6 +71,12 @@ supersedes: []
 ---
 
 ## When to use
+
+**Applies exactly when:** `MegaMoE_v2`, expert-parallel `EP8` on one intranode XGMI group, `gfx950`
+(CDNA4 / MI355X), precision `a8w4` (A = MXFP8 e4m3 1×32, W = MXFP4 e2m1 1×32), CUDA-graph captured,
+at `tokens_per_rank ∈ {512, 8192}` on the **uniform** route (skew is diagnostic-only, out of scope).
+A route/precision/parallel-degree outside that envelope is a different problem and the numbers here
+do not transfer — re-measure before reusing.
 
 An expert-parallel MoE layer on a single intranode group (measured on 8×MI355X / gfx950, EP8) whose
 dispatch → GEMM1 → GEMM2 → combine stages run as **separate kernel launches** with **zero measured
@@ -128,6 +163,44 @@ on all 24 runs):
 Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive control; 512-skew is
 **not** — one of its three pairs came back negative.
 
+## Executable verification
+
+The procedure above is the apply-template; **`verify.sh` (next to this card) is the executable gate**
+that decides whether a candidate reproduces the skill. It takes no reference source — it drives the
+one-flag A/B on the candidate tree only, and encodes the five acceptance checks as pass/fail:
+
+1. **Two-launch shape.** Assert the terminal form is exactly *quant, then one megakernel* — grep the
+   captured graph for two ops per rank, fail on a fused-quant regression.
+2. **Path marker.** `AITER_MEGAMOE_FUSE_ALL=1` must print the once-per-process fusion marker; a run
+   without the marker is **void, not zero** (`grep -c 'path=MEGA'`, expected == world_size).
+3. **relL2 parity.** Fused vs scattered output, `relL2 ≤ 0.10` at `tokens=8192`; parity is `required`.
+4. **1000-replay stress.** ≥1000 CUDA-graph replays with a wall-clock timeout, comparing the *last*
+   iteration to the first — catches an arrival counter that desyncs on generation 2 (invisible to a
+   single-shot check).
+5. **Paired performance.** A,B,A,B ×3 interleaved pairs per guard, rank-max `mega_e2e`, on the four
+   guards; report medians and per-pair ranges. `uniform` guards gate; `skew` is reported, not gated.
+
+Run it as `bash verify.sh --tree <candidate_aiter> --world-size 8`. It writes a JSON verdict and
+exits non-zero if any *gating* check fails. See `megamoe_ep_persistent_fusion.validation.yaml` for the
+shapes/routes the on-box validator feeds it.
+
+## Three-way comparison (Baseline / M2.5 incumbent / new candidate)
+
+`verify.sh --three-way` measures all three arms under one identical route/iteration command and one
+denominator (the **frozen public-AITER baseline**):
+
+| arm | what it is | role |
+|---|---|---|
+| **Baseline** | four serialized launches/rank (quant → Stage1 → Stage2 → Combine), no fusion | denominator; every % below is vs this |
+| **M2.5 (incumbent)** | this skill's persistent megakernel; `source=validated_skill` | **known-good floor (保底)**, not the ceiling |
+| **New candidate** | whatever the current run produced | must clear Baseline; **is allowed to beat M2.5** |
+
+M2.5 is the incumbent to **match-or-beat**, not a target to converge to. The gate is: candidate must
+beat Baseline on the `uniform` guards *and* hold parity; if it additionally beats M2.5 on the same
+A/B against the immutable oracle, it **supersedes** this incumbent (bump `incumbent.label`, re-record
+the measured gains, keep `is_ceiling: false`). A candidate that merely ties M2.5 is not a regression —
+it reproduces the validated capability, which is the production-mode goal.
+
 ## Knobs & pitfalls
 
 - `payload_chunk_rows` — `256` at the 512-token bucket, `384` at 8192. This was measured, not
@@ -167,6 +240,23 @@ Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive cont
   and no null arm is unreadable, not a result. See the workflow's positive-control gate.
 - Denominator discipline: measure against the **frozen public-AITER baseline** under an identical
   route/iteration command. Do not quote a speedup against MORI or Taco.
+
+## Provenance & reporting
+
+`provenance.source: validated_skill`. This card is the **reuse of a human-validated capability** (the
+hand-built persistent megakernel, "M2.5" / version D, measured on-box) — legitimate in
+**production-optimization mode** as reuse of validated capability, *not* plagiarism. Two hard rules
+keep the two ledgers from contaminating each other:
+
+- **A result reproduced from this card is reported with `source=validated_skill`.** It must **not** be
+  presented as an autonomous derivation — never "GEAK discovered M2.5". The three-way report labels
+  the arm accordingly.
+- **The blind autonomy proof does not read this card.** Strict/blind runs set `use_expert_skills=OFF`
+  (default), so the byte-identity criterion is untouched; this channel is opt-in and production-only.
+
+The card carries **mechanism, never the built copy**: no reference branch/commit/path, no literal
+diff of the answer. That is the same containment rule `scripts/skill_address_scan.sh` enforces —
+"reproducible because it describes what to build, not because it says where the built copy is parked."
 
 ## Sources
 
