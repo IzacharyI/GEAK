@@ -1,0 +1,11 @@
+source_file_path:
+- kernel_src/
+target_kernel_functions:
+- gemm
+compile_command:
+- python3 unittest.py compile
+correctness_command:
+- python3 unittest.py correctness
+performance_command:
+- python3 unittest.py performance
+task_type: triton2flydsl

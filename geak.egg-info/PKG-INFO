@@ -1,0 +1,429 @@
+Metadata-Version: 2.4
+Name: geak
+Version: 4.0.0
+Summary: GEAK v4 — clones the repo locally and installs the Claude Code CLI its Workflows run inside.
+License: Copyright © 2026 Advanced Micro Devices, Inc. All rights reserved.
+        
+                                         Apache License
+                                   Version 2.0, January 2004
+                                http://www.apache.org/licenses/
+        
+           TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+        
+           1. Definitions.
+        
+              "License" shall mean the terms and conditions for use, reproduction,
+              and distribution as defined by Sections 1 through 9 of this document.
+        
+              "Licensor" shall mean the copyright owner or entity authorized by
+              the copyright owner that is granting the License.
+        
+              "Legal Entity" shall mean the union of the acting entity and all
+              other entities that control, are controlled by, or are under common
+              control with that entity. For the purposes of this definition,
+              "control" means (i) the power, direct or indirect, to cause the
+              direction or management of such entity, whether by contract or
+              otherwise, or (ii) ownership of fifty percent (50%) or more of the
+              outstanding shares, or (iii) beneficial ownership of such entity.
+        
+              "You" (or "Your") shall mean an individual or Legal Entity
+              exercising permissions granted by this License.
+        
+              "Source" form shall mean the preferred form for making modifications,
+              including but not limited to software source code, documentation
+              source, and configuration files.
+        
+              "Object" form shall mean any form resulting from mechanical
+              transformation or translation of a Source form, including but
+              not limited to compiled object code, generated documentation,
+              and conversions to other media types.
+        
+              "Work" shall mean the work of authorship, whether in Source or
+              Object form, made available under the License, as indicated by a
+              copyright notice that is included in or attached to the work
+              (an example is provided in the Appendix below).
+        
+              "Derivative Works" shall mean any work, whether in Source or Object
+              form, that is based on (or derived from) the Work and for which the
+              editorial revisions, annotations, elaborations, or other modifications
+              represent, as a whole, an original work of authorship. For the purposes
+              of this License, Derivative Works shall not include works that remain
+              separable from, or merely link (or bind by name) to the interfaces of,
+              the Work and Derivative Works thereof.
+        
+              "Contribution" shall mean any work of authorship, including
+              the original version of the Work and any modifications or additions
+              to that Work or Derivative Works thereof, that is intentionally
+              submitted to the Licensor for inclusion in the Work by the copyright owner
+              or by an individual or Legal Entity authorized to submit on behalf of
+              the copyright owner. For the purposes of this definition, "submitted"
+              means any form of electronic, verbal, or written communication sent
+              to the Licensor or its representatives, including but not limited to
+              communication on electronic mailing lists, source code control systems,
+              and issue tracking systems that are managed by, or on behalf of, the
+              Licensor for the purpose of discussing and improving the Work, but
+              excluding communication that is conspicuously marked or otherwise
+              designated in writing by the copyright owner as "Not a Contribution."
+        
+              "Contributor" shall mean Licensor and any individual or Legal Entity
+              on behalf of whom a Contribution has been received by the Licensor and
+              subsequently incorporated within the Work.
+        
+           2. Grant of Copyright License. Subject to the terms and conditions of
+              this License, each Contributor hereby grants to You a perpetual,
+              worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+              copyright license to reproduce, prepare Derivative Works of,
+              publicly display, publicly perform, sublicense, and distribute the
+              Work and such Derivative Works in Source or Object form.
+        
+           3. Grant of Patent License. Subject to the terms and conditions of
+              this License, each Contributor hereby grants to You a perpetual,
+              worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+              (except as stated in this section) patent license to make, have made,
+              use, offer to sell, sell, import, and otherwise transfer the Work,
+              where such license applies only to those patent claims licensable
+              by such Contributor that are necessarily infringed by their
+              Contribution(s) alone or by combination of their Contribution(s)
+              with the Work to which such Contribution(s) was submitted. If You
+              institute patent litigation against any entity (including a
+              cross-claim or counterclaim in a lawsuit) alleging that the Work
+              or a Contribution incorporated within the Work constitutes direct
+              or contributory patent infringement, then any patent licenses
+              granted to You under this License for that Work shall terminate
+              as of the date such litigation is filed.
+        
+           4. Redistribution. You may reproduce and distribute copies of the
+              Work or Derivative Works thereof in any medium, with or without
+              modifications, and in Source or Object form, provided that You
+              meet the following conditions:
+        
+              (a) You must give any other recipients of the Work or
+                  Derivative Works a copy of this License; and
+        
+              (b) You must cause any modified files to carry prominent notices
+                  stating that You changed the files; and
+        
+              (c) You must retain, in the Source form of any Derivative Works
+                  that You distribute, all copyright, patent, trademark, and
+                  attribution notices from the Source form of the Work,
+                  excluding those notices that do not pertain to any part of
+                  the Derivative Works; and
+        
+              (d) If the Work includes a "NOTICE" text file as part of its
+                  distribution, then any Derivative Works that You distribute must
+                  include a readable copy of the attribution notices contained
+                  within such NOTICE file, excluding any notices that do not
+                  pertain to any part of the Derivative Works, in at least one
+                  of the following places: within a NOTICE text file distributed
+                  as part of the Derivative Works; within the Source form or
+                  documentation, if provided along with the Derivative Works; or,
+                  within a display generated by the Derivative Works, if and
+                  wherever such third-party notices normally appear. The contents
+                  of the NOTICE file are for informational purposes only and
+                  do not modify the License. You may add Your own attribution
+                  notices within Derivative Works that You distribute, alongside
+                  or as an addendum to the NOTICE text from the Work, provided
+                  that such additional attribution notices cannot be construed
+                  as modifying the License.
+        
+              You may add Your own copyright statement to Your modifications and
+              may provide additional or different license terms and conditions
+              for use, reproduction, or distribution of Your modifications, or
+              for any such Derivative Works as a whole, provided Your use,
+              reproduction, and distribution of the Work otherwise complies with
+              the conditions stated in this License.
+        
+           5. Submission of Contributions. Unless You explicitly state otherwise,
+              any Contribution intentionally submitted for inclusion in the Work
+              by You to the Licensor shall be under the terms and conditions of
+              this License, without any additional terms or conditions.
+              Notwithstanding the above, nothing herein shall supersede or modify
+              the terms of any separate license agreement you may have executed
+              with Licensor regarding such Contributions.
+        
+           6. Trademarks. This License does not grant permission to use the trade
+              names, trademarks, service marks, or product names of the Licensor,
+              except as required for reasonable and customary use in describing the
+              origin of the Work and reproducing the content of the NOTICE file.
+        
+           7. Disclaimer of Warranty. Unless required by applicable law or
+              agreed to in writing, Licensor provides the Work (and each
+              Contributor provides its Contributions) on an "AS IS" BASIS,
+              WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+              implied, including, without limitation, any warranties or conditions
+              of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+              PARTICULAR PURPOSE. You are solely responsible for determining the
+              appropriateness of using or redistributing the Work and assume any
+              risks associated with Your exercise of permissions under this License.
+        
+           8. Limitation of Liability. In no event and under no legal theory,
+              whether in tort (including negligence), contract, or otherwise,
+              unless required by applicable law (such as deliberate and grossly
+              negligent acts) or agreed to in writing, shall any Contributor be
+              liable to You for damages, including any direct, indirect, special,
+              incidental, or consequential damages of any character arising as a
+              result of this License or out of the use or inability to use the
+              Work (including but not limited to damages for loss of goodwill,
+              work stoppage, computer failure or malfunction, or any and all
+              other commercial damages or losses), even if such Contributor
+              has been advised of the possibility of such damages.
+        
+           9. Accepting Warranty or Additional Liability. While redistributing
+              the Work or Derivative Works thereof, You may choose to offer,
+              and charge a fee for, acceptance of support, warranty, indemnity,
+              or other liability obligations and/or rights consistent with this
+              License. However, in accepting such obligations, You may act only
+              on Your own behalf and on Your sole responsibility, not on behalf
+              of any other Contributor, and only if You agree to indemnify,
+              defend, and hold each Contributor harmless for any liability
+              incurred by, or claims asserted against, such Contributor by reason
+              of your accepting any such warranty or additional liability.
+        
+           END OF TERMS AND CONDITIONS
+        
+           APPENDIX: How to apply the Apache License to your work.
+        
+              To apply the Apache License to your work, attach the following
+              boilerplate notice, with the fields enclosed by brackets "[]"
+              replaced with your own identifying information. (Don't include
+              the brackets!)  The text should be enclosed in the appropriate
+              comment syntax for the file format. Please also get an approval
+              from the Advanced Micro Devices, Inc. legal team before applying
+              the license to your work.
+        
+           Copyright [2026] Advanced Micro Devices, Inc.
+        
+           Licensed under the Apache License, Version 2.0 (the "License");
+           you may not use this file except in compliance with the License.
+           You may obtain a copy of the License at
+        
+               http://www.apache.org/licenses/LICENSE-2.0
+        
+           Unless required by applicable law or agreed to in writing, software
+           distributed under the License is distributed on an "AS IS" BASIS,
+           WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+           See the License for the specific language governing permissions and
+           limitations under the License.
+        
+Project-URL: Homepage, https://github.com/AMD-AGI/GEAK
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE.md
+Requires-Dist: pyyaml
+Requires-Dist: requests
+Requires-Dist: datasets
+Requires-Dist: metrix @ git+https://github.com/AMDResearch/intellikit.git@bcbfa0252df9d55f3aab68c95dd3ce45ccbe5b46#subdirectory=metrix
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+Requires-Dist: coverage>=7.0; extra == "dev"
+Dynamic: license-file
+
+<p align="center">
+  <img src="examples/images/logo.png" alt="GEAK v4" width="300">
+</p>
+
+<p align="center">
+  <a href="https://www.amd.com/en/developer/resources/technical-articles/2026/geak-v4.html"><b>📝 Blog</b></a>
+  &nbsp;•&nbsp;
+  <a href="https://rocm.docs.amd.com/projects/geak/en/latest/"><b>📚 Documentation</b></a>
+</p>
+
+GEAK is an autonomous optimization agent that makes AMD Instinct GPUs run faster, automatically. Built as a
+multi-agent system with an evolving knowledge base, it learns from every optimization run and continuously
+improves its strategies over time. Point it at a single kernel or a live model-serving stack such as vLLM or
+sglang, and GEAK runs the full optimization loop: it finds the bottlenecks, generates and tunes better kernels
+across paths such as Triton, FlyDSL, TileLang, and HIP, and validates the speedup on the real system. What
+normally takes weeks of expert kernel engineering becomes an automated, repeatable, and self-improving process.
+
+GEAK targets AMD Instinct MI GPUs (CDNA, e.g. gfx942 / gfx950; the on-box card is auto-detected), driven by
+Claude Code and orchestrated by deterministic JS Workflows. It ships two workflows, each for a different scenario:
+
+| Workflow | Scope | What it optimizes |
+| --- | --- | --- |
+| [e2e_workflow](e2e_workflow/) | Whole-model serving | End-to-end sglang / vLLM throughput of a full LLM |
+| [kernel_workflow](kernel_workflow/) | Single kernel | Latency / speedup of a single AMD GPU kernel (Triton, HIP, CK, FlyDSL, …) |
+
+Use e2e_workflow to raise a whole model's serving throughput: it triages hot kernels, pulls the cheapest levers
+first, and recursively calls kernel_workflow for the kernels worth fixing. Use kernel_workflow on its own to
+optimize a single kernel.
+
+---
+
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/GEAK_v4_framework.png" alt="GEAK v4 Optimization Pipeline" width="900">
+</p>
+
+---
+
+## Getting started
+
+### 1. Prerequisites
+
+- An **AMD Instinct MI GPU** (CDNA, e.g. gfx942 / gfx950), **ROCm 6+**, a profiler (`rocprof-compute` /
+  `rocprofv3` / `rocprof`), Python 3.8+.
+- For E2E: a running-capable serving backend (`sglang` or `vllm`) and the model weights on disk.
+
+> **⚠️ Build your kernel environment first.** GEAK does **not** install the toolchains your kernels
+> need (e.g. PyTorch, Triton, FlyDSL, hipBLASLt) — these differ per kernel. Set up and verify the
+> baseline builds/runs before starting a workflow.
+
+### 2. Set up
+
+Installing GEAK does three things: installs the `geak` Python package + deps, clones the GEAK repo, and installs
+the Claude Code CLI. By default the repo lands in `./GEAK` under the directory you run the command from (override
+the location with `GEAK_HOME`). Pick either method — both end up the same:
+
+**A. One-liner** — run it in the directory where you want GEAK to live:
+
+```bash
+pip install "git+https://github.com/AMD-AGI/GEAK"
+```
+
+**B. Clone first** — if you'd rather have the checkout up front (e.g. to work on a branch):
+
+```bash
+git clone https://github.com/AMD-AGI/GEAK.git
+cd GEAK
+pip install .
+```
+
+### 3. Launch Claude Code in auto mode
+
+**Set up PATH and API access**
+
+You'll need to add `~/.local/bin` to your PATH and configure API access yourself — follow the installer's printed next-steps:
+
+```bash
+# Option 1: Anthropic API directly
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Option 2: Standard gateway (x-api-key / bearer)
+export ANTHROPIC_BASE_URL=https://your-gateway
+export ANTHROPIC_AUTH_TOKEN=your-token
+```
+
+> If your gateway authenticates with a **custom header** instead of `x-api-key` / a bearer token
+> (e.g. `Ocp-Apim-Subscription-Key`), set it via `ANTHROPIC_CUSTOM_HEADERS`:
+> ```bash
+> export ANTHROPIC_BASE_URL=https://your-gateway
+> export ANTHROPIC_CUSTOM_HEADERS="Your-Header-Name: <your-key>"
+> ```
+
+**Launch Claude Code**
+
+The workflows spawn many sub-agents and run profiling / benchmark / build commands on the box, so run
+Claude Code with permissions auto-approved (≥ 2.1.177 for the dynamic Workflow feature):
+
+```bash
+IS_SANDBOX=1 claude --dangerously-skip-permissions
+```
+
+Then just describe what you want in natural language (examples below). Claude Code resolves the paths and
+invokes the `Workflow` tool for you.
+
+---
+
+## e2e_workflow — whole-model serving throughput ⭐
+
+`e2e_workflow/` raises the **sglang / vLLM serving throughput** of a whole LLM. It is a *system layer*
+that wraps — and recursively calls — the single-kernel kernel_workflow:
+
+1. **Preflight** the env (GPU arch, backend, model).
+2. **Profile** a running server on your exact workload.
+3. **Triage** hot kernels by **Amdahl** (`pct_gpu_time × achievable_speedup`).
+4. **Pull levers cheapest-first** — config/backend sweep → head GEMM/attention bake-off (aiter per-shape
+   tune + a kernel *authored* via the recursive kernel layer, FlyDSL-first for GEMM) → editable-kernel
+   milestone loop.
+5. **Overlay** each accepted change back **reversibly**, gated on a measured warm-server throughput delta
+   (interleaved A/B, 0.5% band + engagement proof + output parity).
+
+Every run writes a complete **`final_report.md`** (with a Phases tree + artifacts tree).
+
+### Example
+
+```
+use path_to_GEAK/e2e_workflow to optimize inference for /models/Qwen3.5-27B-FP8, sglang, ISL/OSL=1024, conc=64, gpus 0,1,2,3
+```
+
+**Output** lands under `e2e_workflow/exp/e2e_<model>_<timestamp>/` — `final_report.md`,
+`architect_report.md`, `final/` (overlay + patch + `final_launch.sh`), and per-stage artifacts.
+
+---
+
+## kernel_workflow — single kernel
+
+`kernel_workflow/` optimizes a single AMD GPU kernel — Triton, HIP, CK, FlyDSL, or any AMD GPU source:
+Director → TechLead → specialist engineers (algorithm / memory / compute / host_runtime), multi-round and
+budget-controlled, with each patch independently verified before it's accepted.
+
+### Example
+
+```
+use path_to_GEAK/kernel_workflow to optimize path_to_GEAK/examples/tasks/knn
+```
+
+```
+use path_to_GEAK/kernel_workflow to optimize /path/to/silu, budget 8, focus on wrapper overhead
+```
+
+### Batch (many kernels at once)
+
+Spawn one agent per kernel with isolated GPU assignments; GPU access is serialized via
+`scripts/gpu_lock.sh` (flock-based), so kernels can safely share GPUs.
+
+---
+
+## Why Workflows
+
+Control flow — the budget loop, fan-out, verification, and stop conditions — is **deterministic JS** in
+`kernel_workflow.js` / `e2e_workflow.js`. LLM agents are called only for judgement (analysis, strategy,
+optimization). This makes runs reliable and reproducible.
+
+## Results — single-kernel
+
+12 HIP kernels, measured on AMD MI300X (gfx942) (excluding mla_decode; FAIL counted as 1.0x):
+
+| Method | LLM | Geo Mean |
+| ------ | --- | -------- |
+| GEAK_v3 (baseline) | Opus 4.8 | 1.90x |
+| **kernel_workflow** | Opus 4.8 | **3.68x** |
+
+## Repository layout
+
+```
+GEAK/
+├── e2e_workflow/        # ⭐ End-to-end LLM serving-throughput optimizer (wraps kernel_workflow/)
+│   ├── e2e_workflow.js   # system-layer orchestration (config / head-GEMM / kernel tracks + e2e gate)
+│   ├── roles/  knowledge/  scripts/   # adapters/{sglang,vllm}.sh, op_bench.py, parse_profile.py, …
+│   └── README.md / PLAN.md
+├── kernel_workflow/     # Single-kernel optimizer
+│   ├── kernel_workflow.js       # deterministic JS orchestration
+│   ├── roles/  knowledge/  scripts/   # gpu_lock.sh, profile_kernel.sh
+│   └── README.md
+├── perf_knowledge/      # AMD operator × backend SOTA knowledge base (REFERENCE ONLY)
+├── examples/            # Example kernel tasks, benchmark comparisons, real e2e runs
+└── exp/                 # Experiment outputs (timestamped per run)
+```
+
+## Approaches compared
+
+How the workflows in this repo relate to the GEAK_v3 baseline:
+
+|                        | GEAK v3 (baseline)                        | kernel_workflow                                                  | e2e_workflow                                                       |
+| ---------------------- | ----------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **Target**             | Single kernel                             | Single kernel                                                   | **Whole-model sglang/vLLM serving throughput**                    |
+| **Agent backend**      | miniswe                                   | Claude                                                          | Claude                                                            |
+| **Architecture**       | Orchestrator + parallel workers           | Hierarchical: Director → TechLead → Engineers → Merge           | e2e Director → System Architect → Profiler / Config Tuner / Kernel Extractor / e2e Integrator (wraps the kernel layer) |
+| **Iteration**          | Multi-round                               | Multi-round, budget-controlled                                  | Multi-round, Amdahl-triaged, budget-controlled                    |
+| **Orchestration**      | Python                                    | **Deterministic JS** — loop/parallelism/verification in code   | **Deterministic JS**                                              |
+| **Verification**       | Orchestrator verifies                     | **Pipelined** — each patch verified by a separate agent        | **Warm-server interleaved A/B** — throughput delta + engagement proof + output parity |
+| **Engineer types**     | Generic                                   | **Specialist**: algorithm, memory, compute, host_runtime       | System roles + the specialist kernel squad via the recursive layer |
+| **Cross-round memory** | miniswe-memory control                    | **Explicit**: insight blackboard + hypothesis ledger           | **Explicit**: insight blackboard + per-backend knowledge          |
+| **Best for**           | Programmatic kernel optimization          | Single-kernel gains with high reliability/reproducibility      | **Raising end-to-end serving throughput of a full model**         |
+
+## License
+
+GEAK is licensed under the Apache License 2.0 — see [LICENSE.md](LICENSE.md).

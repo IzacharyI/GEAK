@@ -1,0 +1,9 @@
+pyyaml
+requests
+datasets
+metrix @ git+https://github.com/AMDResearch/intellikit.git@bcbfa0252df9d55f3aab68c95dd3ce45ccbe5b46#subdirectory=metrix
+
+[dev]
+pytest
+pytest-cov>=5.0
+coverage>=7.0
