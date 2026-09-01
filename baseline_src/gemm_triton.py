@@ -13,16 +13,16 @@ import triton.language as tl
 
 
 CONFIGS = {
-    (32, 8192, 8192): {
-        "BLOCK_SIZE_M": 64,
-        "BLOCK_SIZE_N": 128,
-        "BLOCK_SIZE_K": 128,
+    (2048, 10240, 8192): {
+        "BLOCK_SIZE_M": 256,
+        "BLOCK_SIZE_N": 256,
+        "BLOCK_SIZE_K": 64,
         "GROUP_SIZE_M": 1,
-        "num_warps": 4,
+        "num_warps": 8,
         "num_stages": 2,
         "waves_per_eu": 2,
         "matrix_instr_nonkdim": 16,
-        "cache_modifier": ".cg",
+        "cache_modifier": "",
         "NUM_KSPLIT": 1,
         "SPLITK_BLOCK_SIZE": 8192,
     },

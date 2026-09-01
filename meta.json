@@ -1,5 +1,5 @@
 {
-  "task_name": "triton2flydsl_gemm_bf16_llama70b_oproj_decode",
+  "task_name": "triton2flydsl_gemm_bf16_llama70b_qkv_prefill",
   "op_kind": "gemm",
   "language": "triton",
   "live_backend": "triton",
@@ -9,7 +9,7 @@
   ],
   "math_contract": "C[M,N] = A[M,K] @ B[N,K].T with fp32 accumulation and bf16 output",
   "dtype": "bf16",
-  "regime": "Llama-3-70B O projection; decode, single-token-regime M=32, memory-bound, small-M bucket",
+  "regime": "Llama-3-70B QKV projection; prefill, M=2048, compute-bound, large-M bucket",
   "entry_point": "kernel_src:gemm",
   "baseline_callable": "baseline_src.gemm_triton:gemm",
   "baseline_frozen": true,
@@ -19,16 +19,16 @@
   "tol": 0.02,
   "cases": [
     {
-      "sig": "m32_n8192_k8192",
-      "m": 32,
-      "n": 8192,
+      "sig": "m2048_n10240_k8192",
+      "m": 2048,
+      "n": 10240,
       "k": 8192,
       "seed": 1000
     }
   ],
-  "baseline_src_sha256": "e4f4fd72ea7b7f6114218483b536706bb2463f6152d1dc4d98fca2cf501cce24",
+  "baseline_src_sha256": "7c2daf60256bbdb13270e06df0857cce91e78a9301b380353cd754d93e84b309",
   "harness_lib_sha256": "fe8e18f4cba1313cc5033ae47950fb6154f6680e050d77436f7c5bb4095fd7f2",
   "unittest_sha256": "4bf859fd22362abdd65767468d7bcff762765a8046435a156887e41e2418d1e2",
   "reference_io_sha256": "",
-  "notes": "Llama-3-70B O projection, decode regime (M=32). Source: AITER Triton gemm_a16w16, gfx942 M_LEQ_64 config embedded in baseline_src; no mutable config DB consulted. Single frozen shape; run 10x per arm (perf_knowledge on/off)."
+  "notes": "Llama-3-70B QKV projection, prefill regime (M=2048). Source: AITER Triton gemm_a16w16, gfx942 M_LEQ_2048 config embedded in baseline_src; no mutable config DB consulted. Single frozen shape; run 10x per arm (perf_knowledge on/off)."
 }
