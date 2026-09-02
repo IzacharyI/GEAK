@@ -117,7 +117,14 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    are building a prerequisite: the producer half of a fusion, a readiness signal, a second buffer.
    It has no consumer yet, so the only thing it can measure is its own overhead, and it is supposed
    to be slower. Your acceptance is four things — it compiles, the path marker proves the new code
-   ran, correctness passes, and it does not deadlock. Report your measured number as the COST it is,
+   ran, correctness passes, and it does not deadlock. **"The path marker proves the new code ran"
+   means ran ON A CARD this round, with your switch set — not that it py_compiled and not that a
+   COMPILE_ONLY ISA hash differs.** A JIT that builds your ON variant lazily only traces it when the
+   switch is set at run time, so a switched enabling step whose ON path you never launched on hardware
+   has proven nothing, and on a `require_hardware_activation` wave it is void — worse, three rounds in
+   a row that never reach the device hard-stop the whole wave. Run your ON path through the gpu_lock
+   benchmark/correctness once, with the switch set, and hand verify the device-side marker to observe.
+   Report your measured number as the COST it is,
    in `notes`, next to the `cost_budget_pct` your direction declared. **Do not delete working code
    because it benchmarked below 1.0, and do not bolt on an unrelated optimisation to get the number
    above 1.0** — both destroy the thing the next round has to build on, which is the only reason

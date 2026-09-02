@@ -142,6 +142,21 @@ absolute per-case latencies. The script trusts only your numbers.
      JIT-compiled and `unknown` is correct when you could not run the proof — neither is penalised.
      Do not answer `yes` to avoid a warning; equality is the only thing that voids a result, and a
      false `yes` is how a one-binary A/B closed an axis it had never measured.
+   - **ON HARDWARE — the marker and the ISA hash both lie about this, so report it separately.**
+     `activation_confirmed:"yes"` is satisfiable from a **host** print, and `artifact_distinct:"yes"`
+     is satisfiable from a **COMPILE_ONLY** ISA hash (see `knowledge/gfx950_lowering.md`'s lease-free
+     method) — neither proves the selected path ever **traced and launched on a card**. A JIT that
+     builds the ON kernel variant lazily only compiles it when the switch is set *at run time*, so its
+     trace-time faults are invisible to every static screen. Therefore report `activation_on_hardware`
+     (`yes|no|n/a|unknown`) and `hardware_evidence`: `"yes"` requires a `gpu_lock`-wrapped
+     benchmark/correctness run **with the switch set**, that **reached the candidate** and produced a
+     device-side observable — a nonzero `mega_e2e` reading, a rocprof/trace record for the candidate
+     kernel, or the on-device path marker captured from the torchrun output. Paste that command and its
+     output into `hardware_evidence`. A `py_compile`, a `COMPILE_ONLY=1` build, an ISA sha, or a CPU
+     dry-run is **`no`** — they never touched a card. `n/a` only when the candidate has no switched
+     path at all. When the run named `require_hardware_activation`, a committable or enabling candidate
+     that is not `yes` here is **void, not negative**: the script excludes it from the commit gate AND
+     from the round's on-device-progress accounting, and three such rounds in a row hard-stop the wave.
    - **Not confirmed → `status:"inactive"`, `activation_confirmed:"no"|"unknown"`, and report the
      measured numbers anyway** so the direction can be re-run cleanly. Do NOT report it as
      `regression` and do NOT report it as a 1.000x null: both file a void experiment as a finding.
@@ -259,6 +274,8 @@ absolute per-case latencies. The script trusts only your numbers.
   ],
   "activation_confirmed": "yes|no|unknown",
   "activation_evidence": "the command you ran and the marker output it printed",
+  "activation_on_hardware": "yes|no|n/a|unknown  — yes ONLY if the switched path traced+launched on a card this round",
+  "hardware_evidence": "the gpu_lock cmd (switch set) + the device-side observable: nonzero mega_e2e / trace record / on-device marker",
   "artifact_distinct": "yes|no|n/a|unknown  — n/a for a non-JIT candidate; unknown if you could not run the proof",
   "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
   "artifact_hash_candidate": "the same quantity for the candidate arm",

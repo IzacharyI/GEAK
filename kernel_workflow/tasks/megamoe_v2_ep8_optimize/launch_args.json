@@ -1,0 +1,65 @@
+{
+  "_comment": "OPTIMIZE-MODE launch recipe for MegaMoE V2 EP8. Sibling of tasks/megamoe_v2_ep8 (the STRICT capability-eval template) with the derivation/containment framing removed. Here the frozen baseline AITER checkout is a LEGITIMATE optimization starting point (public main branch), NOT an answer to be fenced off, so capability_eval and strict_autonomy are OFF and there is no reference-containment gate. The workflow is ALLOWED to use its own accumulated MegaMoE knowledge -- the megamoe_ep_persistent_fusion expert skill (the distilled full-fusion production recipe) and the moe_bottleneck analysis skill. The bar to beat is the hand-authored M2.5 (kept out of tree as an oracle only). ${...} placeholders are resolved by scripts/bootstrap_task.sh.",
+
+  "kernel_path": "${WORKSPACE}",
+  "workflow_dir": "${SKILL_DIR}",
+  "exp_root": "${EXP_ROOT}",
+  "state_dir": "${STATE_DIR}",
+
+  "budget": 15,
+  "max_no_improve": 3,
+  "min_improve": 0.01,
+  "objective": "working_kernel",
+  "strict_autonomy": "false",
+  "promotion_metric": "operator_e2e",
+  "target_guards": ["8192_uniform"],
+  "regression_guards": [
+    "8192_rank-mixed-skew",
+    "512_uniform",
+    "512_rank-mixed-skew"
+  ],
+  "launch_target": 2,
+  "require_overlap": "true",
+  "require_attribution": "true",
+  "require_artifact_distinct": "true",
+  "require_hardware_activation": "true",
+  "_require_hardware_activation_comment": "ON. A switched / perf-bearing candidate is committable and counts as on-device progress ONLY if the verifier reports activation_on_hardware=yes -- the switched path traced+launched on a card THIS round (a gpu_lock benchmark/correctness with the switch set, backed by a device-side observable: nonzero mega_e2e, a rocprof/trace record, or the on-device path marker). A py_compile, a COMPILE_ONLY ISA hash, or a CPU dry-run is NOT hardware activation. Three consecutive rounds in which nothing reaches the device hard-stop the wave (surface it, do not keep banking OFF scaffolding). This closes the hole that let the D1/D2 fused arm defer its JIT-trace-time crash across 8 rounds, green on every static screen, never once run on hardware.",
+  "accuracy_metric": "relL2",
+  "accuracy_threshold": 0.10,
+  "required_replays": 1000,
+  "required_pairs": 5,
+  "required_pairs_by_guard": {
+    "8192_uniform": 5,
+    "8192_rank-mixed-skew": 5,
+    "512_uniform": 16,
+    "512_rank-mixed-skew": 16
+  },
+  "_acceptance_comment": "OPTIMIZE run. Only 8192_uniform creates positive credit; the other guards can only veto. The promotion metric is operator rank-max mega_e2e across a launch-structure change. A terminal candidate must reach two launches per rank, controlled non-zero on-edge overlap, numeric relL2 < threshold, graph-safe 1000-replay liveness, complete attribution, and all guard evidence. objective=working_kernel keeps slower intermediate fusion artifacts alive across rounds so the staged fusion chain can reach its terminal step; it does not relax final acceptance. Unlike the strict template there is NO derived-not-copied (criterion 5) requirement: applying the megamoe_ep_persistent_fusion recipe is allowed; the win is a complete fused kernel that beats the baseline (and, per the persistent-fusion skill, meets M2.5 as a floor).",
+  "_state_comment": "Pass --state-dir pointing at a NEW empty directory. (Optimize mode does not forbid inheriting a prior shelf, but a clean state dir keeps this run's result unambiguous.)",
+
+  "gpu_ids": "0,1,2,3,4,5,6,7",
+  "gpus_per_job": 8,
+  "_gpu_comment": "This is a collective: the group form of the lease takes all 8 cards as ONE lease. A round's GPU capacity is therefore one direction (roles/tech_lead.md rule 3e), and a single lease is capped by GEAK_GPU_RUN_TIMEOUT -- chunk the plan and re-emit results after every chunk.",
+  "gpu_min_free_gib": 150,
+
+  "use_expert_skills": "true",
+  "analysis_skill": "moe_bottleneck",
+  "_analysis_skill_comment": "ENABLED for optimize mode: the moe_bottleneck analysis skill enriches the generic bottleneck classification with this operator's route/expert imbalance and Stage1/Stage2/combine time-share. Combined with the megamoe_ep_persistent_fusion expert skill, the workflow works from its accumulated MegaMoE knowledge rather than deriving from scratch.",
+  "capability_eval": "false",
+  "_capability_eval_comment": "FALSE: this run is for its OUTPUT (a fast fused kernel), not for evaluating whether the loop can derive the fusion blind. With capability_eval off there is no reference-containment gate, no plagiarized verdict, and prior art / expert skills are available in full. The baseline's git refs are irrelevant.",
+  "known_reference_paths": "",
+
+  "positive_control": {
+    "name": "synthetic slowdown: injected fixed cost in the Stage2 tile loop",
+    "how": "This control does NOT require a working optimization -- see roles/benchmark_engineer.md 5b, 'When no known-good change exists'. Build it in a workspace UNDER /tmp, outside the task tree. Candidate arm: add a bounded, side-effect-free spin (sized as described next -- do NOT size it off the published noise floor) to the Stage2 persistent tile loop, gated by an env var. Base arm: the same tree with the var unset. Because these kernels come from a caching JIT, the switch MUST be anchored per knowledge/jit_arm_isolation.md -- read it BEFORE authoring the gate, and record the two distinct disk_keys in activation_evidence. The candidate is the SLOWER arm, so measured_pct is expected NEGATIVE. SIZE IT AGAINST THE NULL, AND MEASURE THE NULL FIRST. The gate compares your effect to 3x the WORST PAIR in your own null arm. So run the null arm FIRST -- >=8 interleaved base-vs-base pairs on 8192_uniform, byte-identical trees -- take max(abs(null_pairs)), and aim the injection at >=4x that, leaving headroom for the sublinearity every spin knob has at small counts. Use a cheap single-rank dose ladder to hit the target, then commit to it. Then run >=5 interleaved pairs on 8192_uniform with the spin on/off and report the paired effect as spin_on minus spin_off, together with the null pairs you collected first. Report `switch_present` about the knob YOU built, checked AFTER the gate is committed. When it finishes, MOVE the control workspace aside (mv, not rm) and say in `note` where it was and that it is gone.",
+    "expected_pct_lo": -9.0,
+    "expected_pct_hi": -4.0,
+    "magnitude": "constructed",
+    "_magnitude_comment": "REQUIRED. The band above is a TARGET a synthetic knob was aimed at, not a previously measured fact. With magnitude=constructed the gate still requires the right sign, unanimity across pairs, and >=3x the WORST null pair -- it only tolerates landing above half the target. Do NOT relabel a recorded control as constructed to get past a failure.",
+    "implausible_pct": 25.0,
+    "guard": "8192_uniform",
+    "abort_on_fail": true
+  },
+  "require_task_graph": true,
+  "_require_task_graph_comment": "Analyze must still emit the tile-level dependency DAG as a structured artifact (nodes, edges, edge scope, what enforces each edge today, critical path, slack, declared unknowns) before any direction is ranked -- see knowledge/tile_task_graph.md and the ANALYZE_SCHEMA task_graph field. In optimize mode this is the justification for WHICH edges to fuse (and the guard against 'the stages are serialized, so fuse them' restatements), not a derivation-from-blind requirement. The gate does not abort; it emits a caveat that travels to the report."
+}
