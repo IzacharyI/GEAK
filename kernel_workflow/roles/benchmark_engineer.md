@@ -322,7 +322,17 @@ Cheapest constructions, in order of preference:
 Whatever you build, it is subject to every rule above: same interleave, ≥5 pairs, a null arm beside
 it, and — if it is env- or config-gated on a caching JIT — the artifact-distinctness proof from
 `SKILL_DIR/knowledge/jit_arm_isolation.md`. A synthetic control that silently compiled to one binary
-"proves" the harness is blind and aborts the run for the wrong reason.
+"proves" the harness is blind and aborts the run for the wrong reason. Two failure modes there are
+NOT optional to guard, and both sank the 2026-09-01 MegaMoE control: **(1)** run **every dose and
+every A/B arm as its own fresh process** — an import-time env read and the kernel's in-memory compile
+memo both freeze your switch at the first dose's value inside one interpreter, turning a monotone
+ladder into a flat 0.00% (a warm process reused the first dose's binary for the whole sweep); and
+**(2)** before you spend a single GPU pair, do the **two-process cache-key dump** from that knowledge
+file — assert `switch-on != switch-off` and `switch-off == switch-off` across processes. It needs no
+lease and it is the difference between catching a one-binary A/B for one hash and burning the entire
+step to learn it. That file also carries the confirmed, reproduce-it recipe for THIS operator (a
+factory-local `GEAK_S2_SPIN` → nested-kernel `rocdl.s_sleep` spin, N≈640 for ~+5.5%, and copy the
+tree WITH `csrc` so the build does not die on `aiter_enum.h`).
 
 Say in `note` which construction you used and how you sized it. A synthetic control is not a weaker
 control; it is the one that generalises, and it keeps the answer out of the run tree.

@@ -69,6 +69,70 @@ keys (`7cf14e9c` / `af58afb4` / `40aee6de`) with the canonical tree proved ident
 `sha be49c3b728f4e9e5` — which is the *other* half of the proof and is easy to forget: the null arm
 must **match** canonical as surely as the candidate must **differ** from base.
 
+## Even a correct anchor collapses to one binary in a warm process
+
+The anchor above makes the switch *keyable*; it does not make a **dose ladder** actually vary it.
+Two mechanisms freeze the value inside a single interpreter, and both bit this workflow — a synthetic
+MegaMoE control (2026-09-01) read a monotone dose ladder as a flat 0.00%, "proved" the harness blind,
+and aborted the whole run at round 1:
+
+- **Import-time reads.** `x = int(os.environ.get("SWITCH","0"))` at module top runs **once**, at first
+  import. Setting `os.environ["SWITCH"]` later in the same process changes nothing — the module object
+  is cached. Read the switch **at compile time** (inside the factory that builds the kernel), not at
+  module import, so a fresh call re-reads it.
+- **In-memory compile memos.** A get-or-compile cache keyed on the *declared* compile params (FlyDSL
+  MegaMoE: `_G2_LAUNCH_CACHE`, a dict keyed on the compile-kwarg tuple; plus the framework's own
+  in-process cache) returns the **first** dose's compiled launcher for every later dose, because your
+  switch is not one of those declared params. The on-disk key would differ but is never consulted —
+  the process already has an answer in RAM. (Symptom seen: `NEW_LAUNCH_DIRS=8` at the first dose then
+  `=0` for all the rest.)
+
+The remedy is not more anchoring, it is **process isolation**: run **every dose and every A/B arm as
+its own fresh process** (a fresh `torchrun`), with the switch exported in that process's environment.
+One process = one binary, no matter how many doses you sweep inside it. A warm interpreter reusing the
+first dose's kernel is the single most common way a correct anchor still produces a flat null.
+
+## Prove it before you spend a lease: the two-process key dump
+
+Cheap, and not optional when your control is JIT-gated. In **two separate processes**, build the
+launcher and print its resolved cache key, for `switch=0` and for `switch=N`:
+
+```python
+launch = compile_the_kernel(**params)      # needs only the arch probe, no GPU lease
+launch._ensure_cache_manager()             # FlyDSL: resolves the on-disk manager_key
+print(launch.manager_key)
+```
+
+Require **`switch=0 != switch=N`** (distinct binaries) *and* **`switch=0 == switch=0`** across two
+processes (null identity + proof the key is deterministic). Only then spend the GPU pairs. This dump
+resolves the key *before* launch, so it costs no lease; skipping it costs the whole positive-control
+step and aborts the run on a false "harness is blind".
+
+## Confirmed recipe on the MegaMoE stage2 kernel (2026-09-01, validated on-box)
+
+The exact positive control that passed keying + magnitude on this operator, reproduce it:
+
+1. **Build the control tree by copying the WHOLE workspace WITH `csrc` present** — `cp -a <workspace>
+   /tmp/<uniq>` (or copy + symlink `csrc`). A fresh from-scratch tree missing `csrc` crashes every
+   dose with `FileNotFoundError: aiter_enum.h not found` (`aiter/utility/aiter_types.py` resolves
+   `csrc/include/aiter_enum.h`). Separate checkouts do NOT isolate the artifact (§ above) — the copy
+   is only to keep the spin knob out of the task tree, so still build under `/tmp` and move it aside
+   **out of `/tmp`** when done.
+2. **Inject** into `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`: inside
+   `compile_mega_moe_stage2`, a factory-LOCAL `_spin_count = int(os.environ.get("GEAK_S2_SPIN","0"))`
+   (compile-time read, `import os` at top), referenced inside the nested `@flyc.kernel kernel_epilog_v2`
+   at kernel entry as `if const_expr(_spin_count > 0):\n    for _ in range_constexpr(_spin_count):
+   rocdl.s_sleep(2)`. `rocdl.s_sleep` is a side-effecting ROCDL op the compiler will not DCE; the
+   factory-local referenced in the nested kernel becomes a closure freevar → enters the key. Output-
+   neutral (correctness untouched).
+3. **Size**: `s_sleep` overlaps across co-resident workgroups, so ~0.3µs/unit — **N must be in the
+   hundreds**. Confirmed ladder on 8192_uniform (base ≈ 4.68 ms rank-max): N=256→+1.7%, N=512→+3.9%,
+   **N=640→+5.5%** (mid-band), N=896→+8.9%. Anything ≤256 is buried in the ~1.09% worst-pair noise.
+4. **Confirmed keys**: `GEAK_S2_SPIN=0 → 71978067946bbdad08574dcf8b040b7f`,
+   `=640 → a9326b9b588953c0ab797e8e0b51be8b`, spin0 identical across two processes. (The absolute hash
+   depends on the full compile-param set, so a standalone probe yields a different hash than the on-arm
+   bench config — what matters is that flipping the spin flips the key.)
+
 ## What you owe in your report
 
 Whenever your candidate is JIT-gated, put in `activation_evidence`:
