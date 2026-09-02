@@ -490,3 +490,40 @@ wait (measured: 8.6%–23% of kernel time) supports overlap but does not demonst
 needs a **residency-side** instrument — executing-wave sampling across the timed window, or an ATT
 pass correlating wait regions against issued VALU. Plan for that instrument up front, or state the
 overlap result as partial and say what is missing.
+
+## Four traps this operator's producer→consumer edge hits (established on-box, gfx950/MI355X)
+
+These cost a whole round to rediscover; treat them as preconditions, not surprises.
+
+1. **A `@flyc.kernel` that calls mori shmem runtime primitives (`wait_until_equals`,
+   `fence_system_acquire`, the combine's `CrossDeviceBarrier`) binds/executes those primitives at
+   **trace/codegen time**, so it cannot be compiled standalone without live peers — it can only be
+   exercised under a full multi-rank lease.** Do not plan a cheap compile-screen for the combine or
+   any consumer that waits on a peer; there is no compile-only gate for it, only a lease. (This does
+   NOT mean you cannot *distinct-hash* it — a JIT-key anchor still produces distinct binaries; it
+   means the trace itself needs the peers present.)
+
+2. **Threading a producer→consumer arg requires editing the combine HOST OP wrapper
+   (`flydsl_dispatch_combine_intranode_op.py`, `_run_combine_kernel`), not only the kernel body.**
+   The kernel-body file and the op-wrapper file are two separate files; the arg list is assembled in
+   the op wrapper. If the op wrapper is outside your modifiable-files scope, the producer→consumer
+   edge is structurally unbuildable — surface that as a scope blocker on round 1, do not bank a
+   kernel-only half that can never be wired.
+
+3. **A host-toggled double-buffer parity index is FROZEN at CUDA-graph capture time**, so host-side
+   buffer swapping between launches is a NO-OP under the 1000-replay captured-graph harness (stale
+   read / deadlock risk). Double-buffering a peer-written shmem buffer (`shmem_comb_inp`) needs a
+   **device-side epoch/parity counter** that advances inside the kernel, not host logic. Budget this
+   as a lease-free prerequisite before the gain arm, not as something to discover mid-lease.
+
+4. **The producer publish spans multiple blocks.** The hidden vector spans `num_n_blocks` blocks and a
+   last-block fence orders only its own slice, so a per-token consumer wait must expect
+   `expected = topk * num_n_blocks` arrivals (plus the device epoch from #3), not `topk`. A wait sized
+   for a single block deadlocks or reads stale under skew.
+
+Corollary (timing/meter): `s_memrealtime` is **not** exposed through the flydsl rocdl binding — emit
+the raw `llvm.amdgcn.s.memrealtime` intrinsic directly (`read_memrealtime()` helper pattern). And an
+in-kernel meter accumulator is capture-safe but its **host readback (device sync + `.item()` + print)
+is illegal during CUDA-graph capture** — guard it with `is_current_stream_capturing()`; the meter's
+scattered(~0)/forced-concurrency(high) controls are therefore only observable in EAGER mode, so run
+the meter validation eager, not inside the captured bench.
