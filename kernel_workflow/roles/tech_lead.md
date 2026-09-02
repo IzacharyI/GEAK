@@ -222,6 +222,26 @@ for three waves while every round re-planned from the profile.
    was never proposed at all. Six directions, and the top of the ladder was never reached. Rungs
    are how the next phase knows what it still owes.
 
+6b. **WHOLE-FUSION-FIRST when a validated full-fusion recipe is in scope.** If your inputs carry a
+   `validated`/`human_validated` full-fusion expert skill for THIS operator (e.g.
+   `megamoe_ep_persistent_fusion`, a distilled production recipe with a measured floor) AND the
+   acceptance shape is a single fused kernel (`LAUNCH_TARGET` ≤ 2 with `REQUIRE_OVERLAP`), then the
+   ladder's FIRST terminal rung MUST be the **complete fused kernel authored as one unit** following
+   that recipe end-to-end — correctness and CUDA-graph safety FIRST (the recipe's double-buffer /
+   epoch-parity step is not optional; it is what makes the terminal rung graph-safe on replay N), the
+   floor reproduced SECOND, further speed rungs stacked ON TOP of the working fused kernel THIRD. Do
+   **NOT** decompose the fusion into isolated single-edge terminal rungs (a lone producer readiness
+   edge, a lone stage merge) and measure each alone as if its sign were the fusion's sign. A validated
+   recipe of this kind ships with the finding that an isolated producer edge prices in the full
+   publish/wait cost with **no consumer overlap present to hide it**, so it reads catastrophically
+   negative — a misleading NON-result that has closed the highest-payoff axis of a whole campaign on a
+   coin-flip. Under this directive a single-edge change is admissible ONLY as a `mandatory_arms`
+   diagnostic / control UNDER the whole-fusion terminal rung (to attribute cost once the fused kernel
+   exists), never as a standalone terminal rung whose negative reading is allowed to close the chain.
+   The incremental ladder (bounding readout → readiness edge → stage merge → fusion) remains the right
+   shape ONLY when you are deriving the fusion from scratch with no validated recipe; a validated
+   recipe converts it into a build order for one rung, not four gated rungs.
+
    Under `STRICT_AUTONOMY`, at least one terminal rung must also carry
    `target_shape: {launches: LAUNCH_TARGET, stages_fused:[...], require_overlap:REQUIRE_OVERLAP}`.
    The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
@@ -585,6 +605,18 @@ Rules:
    never going to be free inside its clock. Nothing in any artefact showed it except sysfs.
    Corollary: an unmeasured direction that banks a runnable instrument plus its driver is a *partial*
    worth having; a direction that spends the round waiting is a zero. Plan for the first.
+   **But banking is PREPARATION, not progress, and a switched / perf-bearing ON path is not on-device
+   progress until it has traced+launched on a card with its switch set.** Lease-free authoring is the
+   right move when the pool is occupied — it is NOT a substitute for ever running the thing. On a
+   `require_hardware_activation` wave the script counts rounds in which no candidate reached the device
+   (`activation_on_hardware=yes`); three in a row **hard-stop the wave**, because a fused ON path that
+   defers its first hardware execution indefinitely is exactly how a JIT-trace-time crash survived from
+   round 6 to round 14 of one program, green on every static screen, never once run. So the FIRST round
+   the pool frees, the single lease goes to **executing the banked ON path end-to-end and reading its
+   candidate `mega_e2e` against the baseline on the target guard** — the win/no-win question — before
+   any attribution/overlap coverage. Warm the JIT cache OUTSIDE the lease (a prior lease-free round, or
+   a warm `AITER_JIT_DIR`), run the arm detached so a short tool timeout cannot kill a cold cold-compile
+   mid-arm, and only then spend device time on the number that decides the round.
    **When your inputs carry `GPU_POOL`, the script has already taken this sample for you and its
    verdict is binding, not advisory.** `GPU_POOL.verdict` is one of `free` / `occupied` / `unknown`,
    against the per-card floor in `GPU_MIN_FREE_GIB`. On `occupied` **or** `unknown` you plan the round
@@ -630,7 +662,10 @@ Rules:
      1.000x with a full vault. So: when you allocate the round's single lease, a direction whose arm
      was **authored and compile-verified in an earlier round outranks a new arm of comparable expected
      size**, and if you bank a second artifact while the first is still unmeasured, say in `reasoning`
-     which round is going to spend it and why not this one.
+     which round is going to spend it and why not this one. And "spend it" means **run its ON path on a
+     card and read candidate `mega_e2e` vs baseline on the target guard** — the compile-verified banked
+     arm is a debt precisely because its win/no-win is still unknown; attribution/overlap coverage is
+     what you buy AFTER that number exists, not instead of it.
    - **Two falsifications on one axis close the axis.** Do not spend the third lease there. That wave
      spent lease 2 on Stage1 occupancy (+18% for removing all 48 spills) and lease 3 on Stage2
      occupancy (−15.7% e2e for doubling occupancy on both binding limiters). The second was a

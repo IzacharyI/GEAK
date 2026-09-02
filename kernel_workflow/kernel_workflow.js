@@ -294,6 +294,18 @@ const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : '
 const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
 const REQUIRE_ARTIFACT_DISTINCT = String(
   A.require_artifact_distinct != null ? A.require_artifact_distinct : 'false') === 'true';
+// ON-HARDWARE ACTIVATION. Opt-in (default OFF, so a wave that does not ask for it is byte-identical to
+// before). When set, a switched / perf-bearing candidate may be committed or counted as an enabling
+// step ONLY if its patched path was EXECUTED ON THE DEVICE this round — not merely compile-screened.
+// This closes the exact hole that let a fused MegaMoE arm bank for 8 rounds behind a default-OFF flag,
+// green on py_compile + a static ISA-distinctness hash, whose ON path crashed at JIT-trace time the
+// first time it was ever run on hardware. `artifact_distinct: 'yes'` is satisfiable from a COMPILE_ONLY
+// build (see roles/gfx950_lowering.md's lease-free method); it proves two binaries differ, NOT that the
+// selected one ever traced+launched. `activation_confirmed: 'yes'` is likewise satisfiable from a host
+// marker + static hash. Neither exercises the switch on a card. This flag makes on-device execution a
+// hard, machine-checked field rather than prose the planner is free to defer.
+const REQUIRE_HW_ACTIVATION = String(
+  A.require_hardware_activation != null ? A.require_hardware_activation : 'false') === 'true';
 const ACCURACY_METRIC = String(A.accuracy_metric || 'relL2');
 const ACCURACY_THRESHOLD = Number(A.accuracy_threshold != null ? A.accuracy_threshold : 0.10);
 if (STRICT_AUTONOMY && (!(ACCURACY_THRESHOLD > 0) || !Number.isFinite(ACCURACY_THRESHOLD))) {
@@ -963,6 +975,16 @@ const VERIFY_SCHEMA = obj({
   // unproven activation is exactly the state that produced a 1.000x on an unexercised patch.
   activation_confirmed: { type: 'string' },  // yes|no|unknown
   activation_evidence: { type: 'string' },   // the command + the marker output that proves it
+  // Did the switched/perf-bearing path run ON THE DEVICE this round? `yes` requires a gpu_lock-wrapped
+  // benchmark/correctness invocation that reached the candidate with the switch SET — a real launch,
+  // reported via a device-side observable (a nonzero mega_e2e reading, a rocprof/trace record for the
+  // candidate kernel, or the on-device path marker captured from the torchrun run). A COMPILE_ONLY ISA
+  // hash, a py_compile screen, or a CPU dry-run is `no`: they never touched a card, and a JIT-trace-time
+  // crash is precisely the fault they cannot see. `n/a` is reserved for a candidate with no switched
+  // path at all. When REQUIRE_HW_ACTIVATION is set the script holds a committable/enabling candidate to
+  // `yes` here; `no`/`unknown` is void, not negative.
+  activation_on_hardware: { type: 'string' }, // yes|no|n/a|unknown
+  hardware_evidence: { type: 'string' },       // the gpu_lock cmd + the device-side observable it produced
   // A marker proves the HOST path ran. It does not prove the arms compiled to different code. Under
   // a JIT with a disk cache, two arms can print two different markers and execute one identical
   // cached binary, because the switch never entered the cache key. So for a JIT-compiled candidate
@@ -2398,6 +2420,15 @@ function functionalAcceptance(ver, requirements) {
     }
   }
   if (s(ver.activation_confirmed) !== 'yes') missing.push('the new path was not confirmed to run');
+  // A compile screen is not a readout. `activation_confirmed:'yes'` and `artifact_distinct:'yes'` are
+  // both satisfiable without a card — a host marker and a static ISA hash respectively — so on a wave
+  // that opts in, the switched path must additionally be shown to have EXECUTED ON THE DEVICE this round.
+  // Absent/`no`/`unknown` here is void, not negative: it is the state a JIT-trace-time crash lives in.
+  if (req.requireHardwareActivation && s(ver.activation_on_hardware) !== 'yes') {
+    missing.push('the switched path was not confirmed to run ON HARDWARE this round (a compile-only / ' +
+      'static-ISA / CPU-dry-run proof does not exercise it; require a gpu_lock device run, with the ' +
+      `switch set, that reached the candidate — got activation_on_hardware=${ver.activation_on_hardware || 'none'})`);
+  }
   if (req.requireLiveness) {
     if (s(ver.liveness) !== 'pass') missing.push('liveness pass is required and was not reported');
     const requiredReplays = Number(req.requiredReplays || 0);
@@ -2564,6 +2595,11 @@ function functionalRequirementsFor(direction, purpose) {
     requireLiveness: strictPath,
     requireGraphSafe: strictPath,
     requireArtifactDistinct: strictPath && REQUIRE_ARTIFACT_DISTINCT,
+    // Deliberately NOT gated on strictPath and NOT emptied by runtimeCommit: "did the switched path run
+    // on a card this round" is the one requirement a still-slow terminal commit must keep, because it is
+    // exactly what the commit-on-running gate means by "runs". Waiving it at commit (as requiredArms is
+    // waived) is how a patch whose ON path never executed gets preserved into the next round's tree.
+    requireHardwareActivation: REQUIRE_HW_ACTIVATION,
     requiredReplays: strictPath ? REQUIRED_REPLAYS : 0,
     replayGuards: strictPath ? [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])] : [],
     accuracyMetric: ACCURACY_METRIC,
@@ -3133,6 +3169,25 @@ let noImprove = 0;
 // instrument is not returning readings. Both stop the loop at MAX_NO_IMPROVE, and they must not be
 // summed — see roundEvidence.
 let noEvidence = 0;
+// Consecutive rounds in which the switched/perf path never reached a card. ORTHOGONAL to both counters
+// above and armed under EVERY objective (including working_kernel), because the thing it catches is not
+// "no win" and not "no reading" but "no on-device execution at all". working_kernel deliberately exempts
+// itself from the no-improve/no-evidence stops — a debug round is non-improving by construction and a
+// crashing-on-device terminal round is real progress that produces no speed number — but a round whose
+// candidate never traced+launched on hardware is neither of those; it is scaffolding banked on static
+// screens, which is exactly the pathology that let a fused arm defer its ON-path crash for 8 rounds. So
+// this stop stays live in working_kernel. A round that reached the card (even to crash at runtime) resets
+// it; only a run genuinely stuck never-reaching-hardware trips it. Inert unless REQUIRE_HW_ACTIVATION.
+let noHardware = 0;
+// Decoupled from MAX_NO_IMPROVE and independently overridable via `max_no_hardware`. Default stays
+// MAX_NO_IMPROVE so every existing campaign is unchanged. The reason for the knob: authoring ONE large
+// graph-safe fused megakernel as a single unit (whole-fusion-first, not an incremental single-edge
+// ladder) legitimately spends several early rounds on trace-time / deadlock crash-debug that never
+// reach launch, and a cap of 2-3 hard-stops that authoring before the terminal ON-path ever lands.
+// Raising the cap does not defeat the stop's purpose — it still terminates a run that is genuinely
+// stuck never-reaching-hardware, just with room for a big authoring push. Any round that reaches the
+// card (even to crash at runtime) still resets it to 0.
+const MAX_NO_HARDWARE = Math.max(1, parseInt(A.max_no_hardware != null ? A.max_no_hardware : MAX_NO_IMPROVE, 10));
 // Why the round loop ended. Written down because nothing used to write it down: reconstructing the
 // stop condition of one finished wave took a full session of reading code against artifacts, and
 // the answer ("the counter reached its cap while a lease was still in the budget") was a defect
@@ -4930,6 +4985,34 @@ exact_patch, transaction_valid, note}.`,
   const ev = roundEvidence(clean, stepRoleOf, rungOutcomeOf);
   if (ev.measured) noEvidence = 0;
   else noEvidence++;
+  // ON-HARDWARE accounting. A round "touched hardware" iff some clean direction reported its switched
+  // path executed on the device this round (activation_on_hardware=yes). Reset on touch; else increment.
+  // Live under EVERY objective when REQUIRE_HW_ACTIVATION is set — unlike noImprove/noEvidence, this is
+  // not a speed or reading stop, so working_kernel does not exempt it. A round that reached the card even
+  // to crash at runtime resets it; only a run stuck never-reaching-hardware (the static-scaffold pathology,
+  // and the trace-time crash that hides there) trips it. Hard-stop + surface, per the operator's choice.
+  if (REQUIRE_HW_ACTIVATION) {
+    const touched = clean.some((r) => r && r.ver &&
+      String(r.ver.activation_on_hardware || '').toLowerCase() === 'yes');
+    if (touched) noHardware = 0;
+    else noHardware++;
+    if (!touched) {
+      log(`Round ${round}: NO candidate reached the device this round (none reported ` +
+        `activation_on_hardware=yes). noHardware=${noHardware}/${MAX_NO_HARDWARE} consecutive such rounds. ` +
+        'A round banked entirely on compile/static/CPU screens is not on-device progress — it is exactly ' +
+        'how a fused ON-path deferred its JIT-trace crash across rounds. At the cap the wave hard-stops so ' +
+        'a human fixes the ON-path or the lease, rather than spending another lease on OFF scaffolding.');
+    }
+    if (noHardware >= MAX_NO_HARDWARE) {
+      stopReason = `${noHardware} consecutive round(s) never executed the switched path on hardware ` +
+        `(the no-hardware cap, ${MAX_NO_HARDWARE}). ${BUDGET - dispatched} of ${BUDGET} budget unit(s) ` +
+        'were left unspent. This is not an exhausted search and not a slow kernel: the ON path never ' +
+        'reached a card — it may not even trace/launch there. Fix the activation or the lease before ' +
+        'planning another direction; do not bank more compile-only scaffolding.';
+      log(`Round ${round}: hard-stop — ${stopReason}`);
+      break;
+    }
+  }
   if (improved) {
     // noImprove was already reset at the commit above.
   } else if (enablingLanded) {
