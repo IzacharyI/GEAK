@@ -4112,6 +4112,36 @@ while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && 
       rungTally.set(r, e);
     }
   }
+  // Reconcile each direction's focus_files against the MODIFIABLE whitelist Analyze declared.
+  // The planner (DIRECTION.focus_files) and Analyze (analysis.modifiable_files) are produced by
+  // two different roles with no cross-check, so a plan can steer an engineer at files it is not
+  // allowed to edit; verify_engineer then rejects the patch as out-of-whitelist and the round dies
+  // with apply_failed / "no candidate patch exists to measure" -- the round-1 lane-gap deadlock.
+  // Constrain focus to the intersection; if that empties the lane, steer focus onto the modifiable
+  // set itself and log loudly, turning a silent deadlock into a recoverable round. No-op when
+  // Analyze declared no whitelist (preserves legacy behavior) or focus is already a subset.
+  {
+    const mod = (analysis && Array.isArray(analysis.modifiable_files)) ? analysis.modifiable_files : [];
+    if (mod.length) {
+      const inMod = (f) => mod.some((m) => f === m || f.endsWith('/' + m) || m.endsWith('/' + f));
+      for (const d of directions) {
+        const focus = Array.isArray(d.focus_files) ? d.focus_files : [];
+        if (!focus.length) continue;
+        const keep = focus.filter(inMod);
+        if (keep.length === focus.length) continue;
+        if (keep.length) {
+          log(`Round ${round}: ${d.id} focus_files narrowed to the MODIFIABLE whitelist ` +
+              `(${focus.length}->${keep.length}); dropped ${focus.filter((f) => !inMod(f)).join(', ')}.`);
+          d.focus_files = keep;
+        } else {
+          log(`Round ${round}: ${d.id} focus_files are DISJOINT from the MODIFIABLE whitelist ` +
+              `(${focus.join(', ')} vs allowed ${mod.join(', ')}) -- the lane-gap deadlock. Steering ` +
+              `focus onto the modifiable set so the engineer edits files it is allowed to.`);
+          d.focus_files = mod.slice();
+        }
+      }
+    }
+  }
   const roundCost = directions.reduce((s, d) => s + (d.specialty === 'deep_explore' ? DEEP_COST : 1), 0);
   dispatched += roundCost;
   log(`Round ${round}: ${directions.length} direction(s) [${directions.map(d => d.specialty).join(', ')}], cost ${roundCost}, budget ${dispatched}/${BUDGET}`);
