@@ -37,6 +37,10 @@ Kernel bodies:
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`  (dispatch + GEMM1; the largest stage)
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`  (GEMM2 + `p2p_scatter_epilog`)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py`  (combine)
+- `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py`  (combine **host-op wrapper**:
+  combine arg-tuple assembly + `flyc.compile`, the producer→consumer arg-threading boundary. This is
+  on the MegaMoEV2 path and MUST be modifiable — without it a fused `path=MEGA` is unauthorable
+  because the switched path's args cannot be threaded from host to the fused device entry.)
 - `aiter/ops/flydsl/kernels/mega_moe/dispatch.py`  (`DispatchSlot` symmetric-heap state, publish/wait helpers)
 - `aiter/ops/flydsl/kernels/communication_ops_utils.py`  (fences, system/agent atomics). NOTE: this
   snapshot does **not** define a `read_memrealtime` helper — an earlier revision of this file claimed
@@ -44,6 +48,25 @@ Kernel bodies:
   timing, you must add the `s_memrealtime` inline-asm helper yourself.
 
 These are FlyDSL kernels (Python-authored, JIT-compiled), not Triton or HIP source.
+
+## DIRECTIVE — D1 whole-fusion edit lane (authoritative; overrides any inferred file set)
+
+The whole-fusion dimension (D1: "author whole-fused persistent megakernel", `path=MEGA`) MUST use
+EXACTLY this file set as both its `focus_files` and its MODIFIABLE set. Every file below is on the
+MegaMoEV2 path and is modifiable:
+
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py`            (entry / launch orchestration)
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`       (dispatch + GEMM1)
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`       (GEMM2 + p2p publish)
+- `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py`  (combine device kernel)
+- `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py`      (combine host-op wrapper / arg-threading boundary)
+- `aiter/ops/flydsl/kernels/communication_ops_utils.py`        (fences, atomics)
+
+DO NOT target `moe_kernels.py` (or any `moe_kernels*`): it is a DEAD LANE, off the MegaMoEV2 path,
+and produces no in-lane patch. Prior rounds repeatedly failed with `apply_failed` / "no candidate
+patch exists to measure" because the inferred `focus_files` were disjoint from the MODIFIABLE set
+(focus pointed at `moe_kernels.py` + a frozen wrapper, while the real fusion files were unfocused).
+The intersection {focus} ∩ {modifiable} ∩ {needed} MUST be non-empty; the set above guarantees it.
 
 ## The optimization target
 
