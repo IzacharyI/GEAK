@@ -87,8 +87,19 @@ while logical remote bytes differ by `<0.1%` between the two routes. If the skew
 *bytes* or *padding* instead, this is the wrong skill.
 
 Do **not** reach for this to cut launch overhead. Measured launch cost for the whole four-kernel
-chain is `≈6.4 µs` — roughly 0.1% of the skew-route runtime. The win comes from replacing
-kernel-boundary ordering with fine-grained readiness edges, not from launching less.
+chain is `≈6.4 µs` — roughly 0.1% of the skew-route runtime, so launching less is not the win.
+
+**Where the win actually comes from (corrected 2026-09-03 against the aiter_mega M2.5 source and
+831_handoff.md).** M2.5's measured +4.71% (8192_uniform) ships **default-ON** through
+`AITER_MEGAMOE_FUSE_ALL` — the full-megakernel wiring of **Steps 4–5** below (CU-role-partition
+GEMM1/GEMM2 + combine folded in as a third work queue), running `path=MEGA` on all ranks with no env
+vars set. It does **not** come from a per-token cross-rank readiness edge. That edge (Steps 1–2) is a
+**measured regression** on this hardware: M2.5's own `mega_moe_fused_s2c.py` carries it opt-in and
+default-OFF because it is *slower* (8192-uniform Stage2+combine `2.0777 → 2.2334 ms`) and wedges
+intermittently. On MI355X (8 XCDs, each with a private L2) any system-scope release/atomic lowers to a
+cross-L2 flush — a fixed ~6.6 ms, contention-bound cost that coarsening cannot remove — so leading
+with it measures ~0.4× baseline, not a gain. **Do the wiring (Steps 4–5) first; treat the readiness
+edge as optional and hardware-gated, not the headline mechanism.**
 
 ## Mechanism
 
@@ -103,9 +114,14 @@ Two readiness edges are *structurally absent* from the scattered form, and both 
 - **GEMM1→GEMM2** is intra-rank, so it needs only agent scope (`fence_agent_release` +
   `atomic_add_agent`), and it indexes cleanly because `SBM` is already the Stage1↔Stage2 metadata
   alignment (`m_row//SBM → tile_row_base`).
-- **Stage2/P2P→Combine** is cross-rank and needs system scope. The existing payload store uses
-  `cache_modifier=2` (an SLC *hint*), which is neither a release nor a fence — nothing currently
-  tells the peer its rows are ready, which is precisely why the all-rank barrier exists.
+- **Stage2/P2P→Combine** is cross-rank. The existing payload store uses `cache_modifier=2` (an SLC
+  *hint*), which is neither a release nor a fence — nothing currently tells the peer its rows are
+  ready, which is precisely why the all-rank barrier exists. **Caveat (MI355X):** making this edge
+  per-token with a *system-scope* atomic is a measured regression — a cross-L2 flush per token (see
+  "Where the win actually comes from"). If it is attempted at all, keep the publication **local**
+  (agent- or workgroup-scope release, `atomic_add_agent`) and shard the arrival counter ~64 ways to
+  spread cache-line contention across the XCDs, exactly as M2.5's `mega_moe_fused_s2c.py` does; a
+  cross-rank system-scope per-token atomic must never be the first move.
 
 Once both edges exist, the stages can share one persistent kernel and a token's combine reduction
 starts as soon as *its own* `topk` partials land. That is where the gain is: the exposed tail of the
@@ -124,12 +140,17 @@ retained, so it is measurable as a one-flag A/B rather than as a rebuild. Build 
 start — the flag is what makes every number below reproducible, and it doubles as the run's
 positive control.
 
-1. **Add the cross-rank readiness edge (highest payoff, do this first).** In `p2p_scatter_epilog`
-   (`mega_moe_stage2.py`), after the payload and scale stores, emit `fence_system_release()` then
-   `atomic_add_system` on a new per-destination-token arrival counter in the peer's symmetric heap.
-   Model the new state on the existing `TILE_READY`/`P2P_TILE_READY` `DispatchSlot`s
-   (`dispatch.py`); the producer/consumer slot addressing already matches
-   (`slot = dest_lid*topk + s` on both sides), so no index decode is needed.
+1. **Cross-rank readiness edge — OPTIONAL, hardware-gated, do this LAST (measured regression on
+   MI355X; see "Where the win actually comes from").** Attempt this only if a trace shows an exposed
+   cross-rank tail *after* Steps 4–5 are landed, and only with a **local** publication
+   (agent/workgroup-scope release, `atomic_add_agent`) on a **~64-way sharded** per-destination-token
+   arrival counter — **never** a `fence_system_release()` + `atomic_add_system` per-token atomic,
+   which is a cross-L2 flush here (~6.6 ms fixed) and is why M2.5 ships this edge default-OFF. In
+   `p2p_scatter_epilog` (`mega_moe_stage2.py`), after the payload and scale stores, emit the local
+   release then the sharded arrival increment in the peer's symmetric heap. Model the new state on the
+   existing `TILE_READY`/`P2P_TILE_READY` `DispatchSlot`s (`dispatch.py`); the producer/consumer slot
+   addressing already matches (`slot = dest_lid*topk + s` on both sides), so no index decode is
+   needed.
 2. **Replace the consumer barrier.** In `flydsl_dispatch_combine_intranode_kernel.py`, swap the
    Stage-2 all-rank barrier for a per-token `wait_until_equals(arrival[tok], topk_expected[tok])`
    followed by `fence_system_acquire()` immediately before that token's Stage-3 reduction.

@@ -70,11 +70,28 @@ interconnect, and they sit at different rows of the edge-scope table. Classify b
 **An edge that does not exist cannot be optimized — it must first be added.** Budget for that: the
 publication itself costs something (Levers 5 and 6 are about making it cheap).
 
-## Lever 2 — Replace whole-phase joins with per-item readiness (highest payoff)
+## Lever 2 — Replace whole-phase joins with per-item readiness (highest payoff *only* when the publication is cheaper than the wait it removes)
 
 An all-rank barrier, or any single counter every consumer gates on, forces **every** consumer to pay
 `max` over **all** producers. It is where load skew gets exposed, and it is almost always the largest
 single line item.
+
+**Caveat that inverts the ranking on multi-die parts — read before you put this first.** "Highest
+payoff" is the *potential*, not the *net*. Per-item readiness only pays when the readiness
+publication itself is cheaper than the wait it removes, and on an 8-XCD part the naive publication
+is *not* cheap: a per-item **system-scope** atomic or release fence lowers to a cross-die LLC
+flush (Lever 6 measured `fence_system_release` at **+0.411 ms** over ~200 blocks), which can exceed
+the exposed wait outright — a measured **regression**, not a win. So the correct order is: (a) size
+the exposed wait (the no-payload control + an instrumented peer-wait timer), (b) size the
+per-item publication cost at the scope you would actually need for cross-die visibility (Lever 5)
+using the cheap form (Lever 6), and only (c) rank this lever first if (a) > (b) with margin. Where
+(b) ≥ (a) — which happens on well-tuned operators whose cross-rank tail is already short — the gain
+is **not** on this edge at all; it is in the **resource partition** (who owns which CUs once the
+stages are co-resident: `resource_partition.md`) and in the launch-structure wiring, and the
+per-item readiness edge should be attempted **last, hardware-gated, with a local (agent/workgroup)
+publication and a sharded arrival counter**, never a system-scope per-item atomic as the first move.
+For an operator with an existing distilled recipe, defer to that operator's expert skill for where
+this lever actually ranked when measured — it overrides the generic "usually" below.
 
 **Measure it, do not assume it.** Instrument the peer wait itself (an in-kernel cycle counter around
 the wait, rank-max p95 over ≥20 replays) and compare a uniform route against a skewed one. The
@@ -450,7 +467,16 @@ free.
 1. **Run the no-payload control** and the DAG. No exposed wait ⇒ no fusion win available; stop.
 2. **Enumerate the missing readiness edges** (Lever 1). This is static and cheap.
 3. **Attack the largest exposed wait first** with per-item readiness (Lever 2) — usually the cross-rank
-   barrier, and usually most of the available gain.
+   barrier, and usually most of the available gain — **but only after confirming the readiness
+   publication is cheaper than that wait** (Lever 2's multi-die caveat + Lever 6). On an 8-XCD part a
+   system-scope per-item atomic can cost more than the wait it removes; when it does, this lever is a
+   regression and the gain is in the resource partition (item 3b), not here. Defer to the operator's
+   expert skill for where this ranked when it was actually measured.
+   3b. **When the exposed cross-rank wait is already short**, skip straight to the launch-structure
+   wiring and CU-role partition (`resource_partition.md`) — co-residency of the stages with the right
+   CU ownership, and folding combine in as a third concurrent queue, is what pays there. This is the
+   headline mechanism on a well-tuned distributed operator, and it does **not** depend on a per-item
+   cross-rank readiness edge.
 4. **Then the intra-rank producer→consumer edge**, agent scope, which is cheaper to publish.
 5. **Do not fuse launch-only phases at all** (Lever 3) unless something other than launch count pays
    for it. If you build one to settle the question, land it default-off and labelled as a control.
