@@ -1643,7 +1643,9 @@ if (MODE === 'mega') {
   // DE-CRIPPLE flag: HEAD is a prior wave's VALIDATED-but-CRIPPLED flat floor (BASELINE = the floor HEAD:
   // path=MEGA, launches=2, relL2-clean, but sub-parity — static CU split / coarse barrier / serial combine).
   // Reproduce's job is to author the GEMM1‖GEMM2 overlap INTO the floor (de-cripple the concurrency IN PLACE)
-  // under the perf gate, KEEPING GEMM2 flat + gemm2_compute_v2 byte-identical — NOT to re-author the topology
+  // under the perf gate, keeping GEMM2 flat + gemm2_compute_v2 NUMERICALLY equivalent (relL2-gated; MFMA
+  // matmul math unchanged) while ALLOWING its A-gather/wave-reclaim SCHEDULING to be restructured (the
+  // site-4 waiver: the dominant remaining serializer once the CU-split/barrier are de-crippled) — NOT to re-author the topology
   // from scratch (FLOOR_PREBUILT=false-from-scattered path) and NOT to verify-and-accept-any-speed
   // (FLOOR_PREBUILT=true path). This relocates the coupled concurrency rebuild into Reproduce's holistic
   // authoring vehicle (the right fit) instead of optimize's single-diff gate. Set via A.floor_decripple=true.
@@ -1685,8 +1687,16 @@ if (MODE === 'mega') {
             `coarse global barrier over-serializing the phases, and a serial combine post-phase. Your job THIS ` +
             `wave is to DE-CRIPPLE the concurrency IN PLACE — author fine-grained per-SBM GEMM1‖GEMM2 overlap, ` +
             `give each stage full CU width when active, remove the coarse barrier's over-serialization, fold ` +
-            `combine as a third concurrent queue — to raise floor_geomean toward the +3% target, KEEPING GEMM2 ` +
-            `FLAT and gemm2_compute_v2 byte-identical. Do NOT re-author the topology from scratch (it exists ` +
+            `combine as a third concurrent queue, and — once the CU-split and coarse barrier are de-crippled ` +
+            `and GEMM2's A-gather/wave-reclaim emerges as the dominant remaining serializer — restructure that ` +
+            `gather/reclaim SCHEDULING to overlap it (the site-4 waiver, below) — to raise floor_geomean ` +
+            `toward the +3% target, keeping GEMM2 FLAT and NUMERICALLY equivalent (relL2<0.10 both routes is ` +
+            `the hard bar; the MFMA matmul math itself stays unchanged). SITE-4 WAIVER: the earlier ` +
+            `byte-identity mandate on gemm2_compute_v2 is RELAXED to numeric-identity — you MAY change the ` +
+            `A-gather/wave-reclaim schedule inside it to break that serializer, but NOT re-collapse GEMM2 (NO ` +
+            `g2-collapse — it blows SGPR pressure and triggers the cut4 regalloc fault); manage register ` +
+            `pressure, and an on-card spill/wild-address fault fails the round (the floor is preserved). Do NOT ` +
+            `re-author the topology from scratch (it exists ` +
             `and is correct) and do NOT accept the crippled speed as complete — MODIFY the existing operator ` +
             `to overlap. cut-ladder (crash_bisection) is a bring-up bisection instrument ONLY, never a ` +
             `committed intermediate topology. \n\n`
@@ -1706,8 +1716,13 @@ if (MODE === 'mega') {
         `M2.5's SPEED, not just its shape: a fused floor SLOWER than the scattered baseline is a shape-only ` +
         `skeleton. So de-crippling the concurrency (give each stage full CU width when active — undo any ` +
         `static 50/50 GEMM1:GEMM2 CU split; remove the coarse global barrier's over-serialization; do not ` +
-        `leave combine as a serial post-phase) IS IN SCOPE for you and is what "faithful floor" means — ` +
-        `keep GEMM2 FLAT and gemm2_compute_v2 byte-identical while doing it. Return authoring_status=complete ` +
+        `leave combine as a serial post-phase; and restructure GEMM2's A-gather/wave-reclaim SCHEDULING once ` +
+        `it is the dominant remaining serializer) IS IN SCOPE for you and is what "faithful floor" means — ` +
+        `keep GEMM2 FLAT and NUMERICALLY equivalent (relL2<0.10 both routes is the hard bar; MFMA matmul math ` +
+        `unchanged) while doing it — SITE-4 WAIVER: gemm2_compute_v2's byte-identity mandate is RELAXED to ` +
+        `numeric-identity so its gather/reclaim schedule MAY change to break that serializer, but NO ` +
+        `g2-collapse and no on-card spill/wild-address fault (the round fails and the floor is preserved if ` +
+        `it faults). Return authoring_status=complete ` +
         `ONLY when the whole flat operator validates clean (relL2<0.10 both routes + path=MEGA==${GPU_RESOURCE.gpusPerJob} ` +
         `+ launches=2 + >=30 clean replays) AND floor_geomean >= ${REPRO_FLOOR_TARGET.toFixed(2)}x vs the frozen ` +
         `scattered baseline (M2.5-class is ~1.045x). Reaching >= ${REPRO_FLOOR_TARGET.toFixed(2)}x is the AUTHORING ` +
