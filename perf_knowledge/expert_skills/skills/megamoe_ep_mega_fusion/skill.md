@@ -513,6 +513,60 @@ just delete. The win is the realization that keeps correctness AND recovers the 
    Realization on-card; this touches the same n-block addressing that fix 6 had to get right, so it is a
    direct extension of a confirmed fix, not a new subsystem.
 
+#### D1 CONFIRMED on-card (optimize round_1, +1.322× over the coarse-barrier floor) — the site-3 realization, folded like fixes 1–6
+
+Site 3's *derived target* (fine-grained per-SBM readiness) is now a **replay-confirmed construction**:
+`MEGA_FINE_READY=1` measured **15.042 vs 19.885 ms rank-max @8192_uniform (paired) = +1.322×** over the
+committed floor, correctness intact (relL2<0.10 all shapes, `path=MEGA`×8, near-identical to the floor).
+Same binary topology, gated by `MEGA_FINE_READY` (default 1 = this; 0 = the coarse-barrier floor → a
+clean A/B). Derived entirely from the in-tree modifiable files (`mega_moe_stage1.py`,
+`communication_ops_utils.py`) — NOT from `/root/geak_reference/`. The construction, exactly:
+
+1. **Publish/acquire via `AtomicRMWOp`, never a `FenceOp`.** Add two helpers in
+   `communication_ops_utils.py`: `atomic_add_agent_release(addr,val)` (agent-scope RELEASE fetch-and-add
+   = the GEMM1→GEMM2 publish, ordering all prior output stores to the whole-GPU/cross-XCD-L2 coherence
+   point WITHOUT a standalone fence) and `atomic_acquire_agent(addr)` (agent-scope ACQUIRE via
+   fetch-add-0), both lowering to a single `_llvm_d.AtomicRMWOp(add, ptr, val, ordering, syncscope=Agent)`.
+   **`AtomicRMWOp` is the proven-safe-in-loop instruction class; `FenceOp` (fence_agent_release/acquire)
+   faults as a spill-independent regalloc artifact inside the high-SGPR loop** — this is why the r3 floor
+   had to hoist its fence to the cold region. The atomic replaces the fence and can sit in-loop.
+
+2. **THE KEY NEGATIVE FINDING — the wall is PLACEMENT, not the atomic and not a source-init.** A 3-arm
+   `cut=8` bisection proved **ANY agent atomic in the producer POST-MFMA region — monotonic OR release,
+   offset-0 OR per-tile, ANY address pin (readfirstlane / manual lo-hi / none) — faults with a
+   spill-independent backend regalloc wild-address, the SAME class as cut4**, while the SAME instruction
+   is safe at the producer loop-top and in the cold post-drain region. So the cure is atomic **PLACEMENT**,
+   not a pin and not an init. This **falsifies the r3 "atomic exonerated, the fence is the poison" claim**
+   (the atomic faults in the hot region too) and supersedes the earlier "readfirstlane-pin fixes the
+   runtime wild address" theory — the pin is neither necessary nor sufficient in the post-MFMA region.
+
+3. **PRODUCER publish — DEFERRED one iteration to the low-pressure loop-top.** `_fine_publish(tile)` is
+   called **unconditionally at the `scf.while` producer loop-top** (the same position as the safe
+   `a_work_head` atomic), so only a scalar tile index — not the atomic — crosses the MFMA. Inside it:
+   `s_waitcnt(0)` + `fx.barrier()` run on **every thread every iteration** (uniform control flow — a
+   workgroup barrier inside a runtime `if` can hang on AMD even when the predicate is uniform), draining
+   the tile's GEMM1 output stores; only the counter bump is `tid==0`- and valid-tile-guarded, via the
+   agent-RELEASE atomic at `g2_ready1 + (tile//N_TILES)*4`. The just-produced tile is carried to the next
+   loop-top by `prev_work`, a loop-carried `scf.while` iter_arg — which **MUST be bound unconditionally
+   before the loop** (`prev_work = fx.Int32(-1)`); initializing it inside `if const_expr(...)` leaves the
+   `__while_after` block referencing an unbound value → **UnboundLocalError at trace time** (this was the
+   "DEFER0 crash" — a trace-time bug, not a device fault).
+
+4. **CONSUMER acquire gate — per-tile, no whole-stage barrier.** Each GEMM2 tile blocks until ITS
+   sort-block has all `N_TILES` GEMM1 n-subtiles released — `int32_wait_until_greater_than(ready1[sb],
+   N_TILES-1)` with `sb == m_block` (holds because `g2_BM==g2_SBM`) — then an `atomic_acquire_agent`
+   add-0 makes the released stores visible to this consumer's A-loads. **r12 idiom: readfirstlane-pin the
+   per-tile gate address** (`m_block` is wave-uniform via the `g2_ws` broadcast) so the base can't be
+   recomputed from a clobbered VGPR. There is **no whole-stage pre-loop barrier** under fine_ready — each
+   tile acquires its own sort-block, so GEMM2 consumes ready tiles while GEMM1 still produces later ones
+   (the actual overlap). Correspondingly **skip the coarse `ready1[0]→NUM_G1_BLOCKS` handoff entirely**
+   under fine_ready (bumping `ready1[0]` would corrupt sort-block 0's per-tile count, and the fine
+   consumer never waits on it).
+
+This is the site-3 serializer removed. Sites 1, 2, 4 remain *derived targets* to attack on the floor that
+now sits at +1.322× — attack one serializer per lease, positive-control the overlap meter first, fold each
+back here as confirmed exactly as this rung was.
+
 **Two second-order axes, RESOLVED by in-tree inspection (do not chase them as open levers).** An audit
 asked whether intra-stage inner-loop tuning and occupancy are additional un-deconstructed gaps. They are
 not — the code settles both:

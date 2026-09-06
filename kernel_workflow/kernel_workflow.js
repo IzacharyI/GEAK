@@ -1661,9 +1661,14 @@ if (MODE === 'mega') {
         `keep GEMM2 FLAT and gemm2_compute_v2 byte-identical while doing it. Return authoring_status=complete ` +
         `ONLY when the whole flat operator validates clean (relL2<0.10 both routes + path=MEGA==${GPU_RESOURCE.gpusPerJob} ` +
         `+ launches=2 + >=30 clean replays) AND floor_geomean >= ${REPRO_FLOOR_TARGET.toFixed(2)}x vs the frozen ` +
-        `scattered baseline (M2.5-class is ~1.045x; >= parity ${REPRO_FLOOR_MIN.toFixed(2)}x is the hard floor — ` +
-        `a correct-but-slower floor is NOT complete, report it as progressed with the serializer you will ` +
-        `de-cripple next). Otherwise return progressed / blocked_fixable / dead_end with ` +
+        `scattered baseline (M2.5-class is ~1.045x). Reaching >= ${REPRO_FLOOR_TARGET.toFixed(2)}x is the AUTHORING ` +
+        `ASPIRATION — de-cripple the concurrency toward it while rounds remain (undo static CU split / coarse ` +
+        `barrier / serial combine). It is NOT a hard fail floor: a CORRECT flat operator at ANY speed is an ` +
+        `optimizable starting point (optimize ratchets it up from the seeded floor), so if you cannot reach ` +
+        `the target within your rounds, hand off the best CORRECT floor you have — report it as progressed ` +
+        `with the serializer you would de-cripple next, and it is accepted as the floor when rounds run out. ` +
+        `Only a topology that does NOT validate clean, or whose speed is never measured, is a true failure. ` +
+        `Otherwise return progressed / blocked_fixable / dead_end with ` +
         `a concrete next_blocker.\n\n${priorSummary}`, {
         OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
         GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
@@ -1676,23 +1681,34 @@ if (MODE === 'mega') {
     const fg = Number(reproResult && reproResult.floor_geomean);
     const perfMeasured = Number.isFinite(fg);
     const roundsLeft = REPRO_ROUNDS - rr;
-    // Complete when correct AND the floor reproduces M2.5-class SPEED (>= +3% target); OR correct and at
-    // least scattered parity with no authoring rounds left (accept the >=parity floor, optimize finishes).
+    // Complete when correct AND either the floor already reproduces M2.5-class SPEED (>= +3% target),
+    // OR authoring rounds are exhausted — in which case ACCEPT the correct floor at WHATEVER speed and
+    // let optimize ratchet it up. round_1 PROVED the optimize diff-gate lands a clean +1.322x/round
+    // overlap step from a sub-parity floor, so a correct-but-slow floor is a valid, OPTIMIZABLE starting
+    // point, not a failure. The +3% target is the authoring ASPIRATION (keep de-crippling toward it while
+    // rounds remain), NOT a hard floor below which Reproduce fails.
     const ok = correctnessOk && perfMeasured &&
-      (fg >= REPRO_FLOOR_TARGET || (fg >= REPRO_FLOOR_MIN && roundsLeft <= 0));
+      (fg >= REPRO_FLOOR_TARGET || roundsLeft <= 0);
     if (ok) {
+      const speedNote = fg >= REPRO_FLOOR_TARGET
+        ? ` — reproduces M2.5-class speed`
+        : fg >= REPRO_FLOOR_MIN
+          ? ` — at/above scattered parity but below the +3% target; optimize ratchets the remaining overlap toward M2.5's ~1.045x`
+          : ` — a CORRECT sub-parity floor; ACCEPTED as an optimizable starting point (cumulative seeds from the floor, optimize ratchets UP from here; floor永久保留 as HEAD)`;
       log(`Reproduce (mega) r${rr}: faithful flat floor VALIDATED + committed as HEAD (floor ${reproResult.floor_ms || '?'} ms` +
-          `, ${fg.toFixed(3)}x vs scattered${fg < REPRO_FLOOR_TARGET ? ` — at/above parity but below the +3% target; optimize inherits the remaining overlap toward M2.5's ~1.045x` : ` — reproduces M2.5-class speed`}` +
+          `, ${fg.toFixed(3)}x vs scattered${speedNote}` +
           `, path=${reproResult.path_marker || '?'}, launches=${reproResult.launches != null ? reproResult.launches : '?'}). Optimizing on the floor now.`);
       break;
     }
     // Correct-but-too-slow is NOT done: the topology reproduces but the SPEED does not. Fall through to
     // another authoring round (de-cripple toward parity/+3%) — this is the concurrency work landing in the
     // authoring vehicle, not the optimize diff-gate. reproResult's committed WIP stays HEAD for next round.
-    if (correctnessOk && perfMeasured && fg < REPRO_FLOOR_MIN) {
-      log(`Reproduce (mega) r${rr}: topology CORRECT but floor ${fg.toFixed(3)}x is a shape-only skeleton ` +
-          `(< parity ${REPRO_FLOOR_MIN}x) — a faithful floor must reproduce M2.5's SPEED. De-cripple next ` +
-          `round (undo static CU split / coarse barrier / serial combine), not the optimizer.`);
+    if (correctnessOk && perfMeasured && fg < REPRO_FLOOR_MIN && roundsLeft > 0) {
+      log(`Reproduce (mega) r${rr}: topology CORRECT, floor ${fg.toFixed(3)}x still sub-parity ` +
+          `(< ${REPRO_FLOOR_MIN}x). Rounds remain — keep de-crippling toward the +3% target (undo static ` +
+          `CU split / coarse barrier / serial combine) to hand optimize a BETTER floor. A correct floor at ` +
+          `any speed is still accepted when rounds run out (optimize ratchets it up), so this is aspiration, ` +
+          `not a fail gate.`);
     }
     reproHistory.push({
       round: rr,
@@ -1713,17 +1729,18 @@ if (MODE === 'mega') {
   }
   const finalCorrect = reproResult && reproResult.reproduced && reproResult.correctness === 'pass';
   const finalFg = Number(reproResult && reproResult.floor_geomean);
-  const finalPerfOk = Number.isFinite(finalFg) && finalFg >= REPRO_FLOOR_MIN;
+  // A CORRECT floor at ANY measured speed is optimizable — optimize ratchets it up from the seeded floor
+  // (round_1: +1.322x/round from a 0.232x floor). So Reproduce fails ONLY when the topology is not correct,
+  // or the floor speed was never measured at all (cannot seed the commit-gate from an unmeasured floor) —
+  // NEVER merely for being sub-parity. (This previously hard-failed below REPRO_FLOOR_MIN, dead-ending a
+  // correct-but-slow floor that optimize could have climbed; round_1 refuted that premise.)
+  const finalPerfOk = Number.isFinite(finalFg);
   if (!finalCorrect || !finalPerfOk) {
     const why = !finalCorrect
       ? (reproResult ? reproResult.notes || reproResult.correctness : 'no result')
-      : !Number.isFinite(finalFg)
-        ? 'topology correct but floor SPEED was never measured — cannot certify a faithful floor'
-        : `topology correct but floor ${finalFg.toFixed(3)}x is a shape-only skeleton below scattered parity ` +
-          `(< ${REPRO_FLOOR_MIN}x) — a faithful reproduction must reproduce M2.5's SPEED (de-cripple the ` +
-          `static CU split / coarse barrier / serial combine), not just its 2-launch shape`;
+      : 'topology correct but floor SPEED was never measured — cannot seed the optimize commit-gate from an unmeasured floor';
     log(`Reproduce (mega) FAILED after ${reproHistory.length} authoring round(s): ${why}. ` +
-        `Aborting — no faithful floor to optimize. Fix the reproduction (skill / repro_engineer), not the optimizer.`);
+        `Aborting — no optimizable floor. Fix the reproduction (skill / repro_engineer), not the optimizer.`);
     return {
       mode: 'mega', reproduced: false,
       eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
@@ -3429,9 +3446,14 @@ let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source}
 // Seed ONLY `cumulative`, never bestPerCase — the per-case regression guard must stay on the frozen
 // baseline's per-case shape, and the floor's per-case vector may not share it. mega-gated; author/
 // optimize see cumulative=1.0 exactly as before.
-if (MODE === 'mega' && reproResult && Number.isFinite(Number(reproResult.floor_geomean)) && Number(reproResult.floor_geomean) > 1.0) {
+// SEED FROM ANY POSITIVE FLOOR, INCLUDING A SUB-PARITY FLOOR (<1.0x). round_1 evidence: the optimize
+// single-diff gate DOES land a clean concurrency rung on a sub-parity floor (+1.322x/round overlap
+// step, correct, path=MEGA). If `cumulative` were pinned at 1.0 for a 0.232x floor, that candidate — a
+// real +1.322x IMPROVEMENT over the floor — is rejected by `>cumulative*(1+MIN_IMPROVE)`, HEAD freezes,
+// no cross-round accumulation. The gate must read "beat the FLOOR", not "beat 1.0x", wherever the floor sits.
+if (MODE === 'mega' && reproResult && Number.isFinite(Number(reproResult.floor_geomean)) && Number(reproResult.floor_geomean) > 0) {
   cumulative = Number(reproResult.floor_geomean);
-  log(`mega floor seeded into commit-gate: cumulative=${cumulative.toFixed(3)}x — a candidate must BEAT the floor to overwrite HEAD; otherwise HEAD stays the floor and final = floor.`);
+  log(`mega floor seeded into commit-gate: cumulative=${cumulative.toFixed(3)}x — a candidate must BEAT the floor to overwrite HEAD; otherwise HEAD stays the floor and final = floor. (Seeds from ANY positive floor: a sub-parity floor <1.0x is RATCHETED UP by optimize, not rejected — round_1 landed +1.322x/round from a 0.232x floor.)`);
 }
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
 // The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
