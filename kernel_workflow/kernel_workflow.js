@@ -1640,6 +1640,14 @@ if (MODE === 'mega') {
   // dangerous on a continuation (it invites a destructive rewrite of a working floor). Set via
   // A.floor_prebuilt=true on the relaunch. Off => the original from-scratch authoring behavior.
   const FLOOR_PREBUILT = A.floor_prebuilt === true || String(A.floor_prebuilt) === 'true';
+  // DE-CRIPPLE flag: HEAD is a prior wave's VALIDATED-but-CRIPPLED flat floor (BASELINE = the floor HEAD:
+  // path=MEGA, launches=2, relL2-clean, but sub-parity — static CU split / coarse barrier / serial combine).
+  // Reproduce's job is to author the GEMM1‖GEMM2 overlap INTO the floor (de-cripple the concurrency IN PLACE)
+  // under the perf gate, KEEPING GEMM2 flat + gemm2_compute_v2 byte-identical — NOT to re-author the topology
+  // from scratch (FLOOR_PREBUILT=false-from-scattered path) and NOT to verify-and-accept-any-speed
+  // (FLOOR_PREBUILT=true path). This relocates the coupled concurrency rebuild into Reproduce's holistic
+  // authoring vehicle (the right fit) instead of optimize's single-diff gate. Set via A.floor_decripple=true.
+  const FLOOR_DECRIPPLE = A.floor_decripple === true || String(A.floor_decripple) === 'true';
   const reproHistory = [];
   for (let rr = 1; rr <= REPRO_ROUNDS; rr++) {
     const priorSummary = reproHistory.length
@@ -1650,6 +1658,11 @@ if (MODE === 'mega') {
         ? `This is a CONTINUATION round 1. The workspace HEAD is ALREADY the prior wave's fully-authored, ` +
           `on-card-validated flat 2-launch floor (path=MEGA, launches=2, relL2-clean). VERIFY + MEASURE it ` +
           `this round; do NOT re-author.`
+        : FLOOR_DECRIPPLE
+        ? `This is a DE-CRIPPLE round 1. The workspace HEAD is the prior wave's VALIDATED flat 2-launch ` +
+          `floor (path=MEGA, launches=2, relL2-clean) but CRIPPLED (sub-parity: static CU split / coarse ` +
+          `barrier / serial combine). De-cripple the concurrency IN PLACE (author GEMM1‖GEMM2 overlap) ` +
+          `toward the perf target this round; do NOT re-author from scratch, do NOT accept the slow speed.`
         : `This is authoring round 1. The workspace HEAD is the clean scattered baseline; author the flat ` +
           `2-launch operator toward first on-card activation (path=MEGA) this round.`;
     reproResult = await agentT(
@@ -1665,11 +1678,27 @@ if (MODE === 'mega') {
             `to fix a concrete verification failure you actually observe. If it validates clean, that IS ` +
             `complete no matter how slow the floor is (a sub-parity floor is the optimizable starting point; ` +
             `the optimize phase ratchets it up — you do NOT need to de-cripple it here). \n\n`
+          : FLOOR_DECRIPPLE && reproHistory.length === 0
+          ? `DE-CRIPPLE — THE FLAT FLOOR ALREADY EXISTS AND IS VALIDATED AT HEAD (path=MEGA on-card ` +
+            `×${GPU_RESOURCE.gpusPerJob}, launches=2, relL2<0.10 at {128,512,8192}×{uniform,skew}, ≥30 clean ` +
+            `replays). It is CORRECT but CRIPPLED (sub-parity ~0.23x): a static 50/50 GEMM1:GEMM2 CU split, a ` +
+            `coarse global barrier over-serializing the phases, and a serial combine post-phase. Your job THIS ` +
+            `wave is to DE-CRIPPLE the concurrency IN PLACE — author fine-grained per-SBM GEMM1‖GEMM2 overlap, ` +
+            `give each stage full CU width when active, remove the coarse barrier's over-serialization, fold ` +
+            `combine as a third concurrent queue — to raise floor_geomean toward the +3% target, KEEPING GEMM2 ` +
+            `FLAT and gemm2_compute_v2 byte-identical. Do NOT re-author the topology from scratch (it exists ` +
+            `and is correct) and do NOT accept the crippled speed as complete — MODIFY the existing operator ` +
+            `to overlap. cut-ladder (crash_bisection) is a bring-up bisection instrument ONLY, never a ` +
+            `committed intermediate topology. \n\n`
           : ``) +
         `AUTHOR the COMPLETE flat two-launch fused megakernel following the mega skill's Construction ` +
-        `skeleton — ON-LEASE AUTHORING round ${rr} of ${REPRO_ROUNDS}. The flat 2-launch floor does NOT ` +
-        `exist in-tree; you are AUTHORING it (flat per-tile GEMM2 work-pool mirroring stage2.run_unit, ` +
-        `combine folded as a third queue, r12 substrate init applied), NOT copying a known-good tree. ` +
+        `skeleton — ON-LEASE AUTHORING round ${rr} of ${REPRO_ROUNDS}. ${FLOOR_DECRIPPLE ? `The flat ` +
+        `2-launch floor ALREADY EXISTS at HEAD (validated: path=MEGA, launches=2, relL2-clean); you are ` +
+        `DE-CRIPPLING it in place (author GEMM1‖GEMM2 overlap, full CU width per stage, remove the coarse ` +
+        `barrier's over-serialization, fold combine as a third concurrent queue), NOT re-authoring the ` +
+        `topology. ` : `The flat 2-launch floor does NOT exist in-tree; you are AUTHORING it (flat per-tile ` +
+        `GEMM2 work-pool mirroring stage2.run_unit, combine folded as a third queue, r12 substrate init ` +
+        `applied), NOT copying a known-good tree. `}` +
         `Bring it up incrementally ON THE CARD across your gpu_lock leases this round; commit your WIP so ` +
         `the next round carries it forward. The single flat 2-launch topology is the target — NO ` +
         `g2-collapse, NO intermediate half-fused topology committed as terminal, NO cut-ladder as a build ` +
