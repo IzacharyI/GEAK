@@ -13,8 +13,8 @@ match:
   gens:
   - gfx950
   dtypes:
-  - mxfp8_e4m3   # a8w4: A = MXFP8 (e4m3, 1x32 block scale)
-  - mxfp4        # a8w4: W = MXFP4 (e2m1, 1x32 block scale)
+  - mxfp8_e4m3
+  - mxfp4
   regimes:
   - prefill
   - decode
@@ -23,49 +23,49 @@ match:
   profile_signature:
     op_name_regex: mega_moe|dispatch_combine|p2p_scatter
     min_pct_gpu: 20.0
-  # Precise applicability. All must hold for this card to apply; a route/precision/parallel
-  # outside this envelope is a different problem and the numbers below do not transfer.
   config:
     framework: MegaMoE_v2
-    parallel: EP8              # expert-parallel, 8 ranks, one intranode XGMI group
-    arch: gfx950               # CDNA4 / MI355X
-    precision: a8w4            # A=MXFP8(e4m3,1x32), W=MXFP4(e2m1,1x32); f32 accum; scaled-MFMA
+    parallel: EP8
+    arch: gfx950
+    precision: a8w4
     graph: cuda_graph_captured
     shapes:
-      tokens_per_rank: [512, 8192]
-      routes: [uniform, skew]  # uniform is the TARGET route; skew is diagnostic-only, out of scope
+      tokens_per_rank:
+      - 512
+      - 8192
+      routes:
+      - uniform
+      - skew
       topk: measured_per_config
 expects:
   isolated_speedup_min: 1.01
   e2e_delta_min_pct: 1.0
   parity: required
-# Provenance — this card is a REUSE of a human-validated capability, not an autonomous finding.
 provenance:
   source: validated_skill
-  origin: human_validated_capability   # hand-built persistent megakernel ("M2.5" / version D), measured on-box
+  origin: human_validated_capability
   reuse_mode: production_optimization
-  reporting_rule: >
-    A candidate reproduced FROM this skill MUST be reported with source=validated_skill and MUST NOT
-    be presented as an autonomous derivation ("GEAK discovered M2.5"). The blind autonomy proof runs
-    with use_expert_skills=OFF and never reads this card; the two ledgers stay separate.
-# Incumbent, not ceiling. M2.5 is the known-good performance FLOOR (保底). A candidate that beats
-# these numbers on the same A/B against the immutable oracle wins and supersedes this incumbent.
+  reporting_rule: 'A candidate reproduced FROM this skill MUST be reported with source=validated_skill
+    and MUST NOT be presented as an autonomous derivation ("GEAK discovered M2.5"). The blind autonomy
+    proof runs with use_expert_skills=OFF and never reads this card; the two ledgers stay separate.
+
+    '
 incumbent:
   label: M2.5_persistent_megakernel
   is_ceiling: false
   measured_gain_vs_baseline_pct:
     tokens512_uniform: 1.49
-    tokens8192_uniform: 4.71   # target route, tightest spread -> the positive control
+    tokens8192_uniform: 4.71
 validation:
-  status: draft
-  last_verified: ''
-  gpu: ''
+  status: validated
+  last_verified: '2026-09-04'
+  gpu: gfx950/MI355X
   model: ''
   measured:
-    isolated: ''
-    e2e_pct: ''
-    parity: ''
-  artifact: ''
+    isolated: 1.0448
+    e2e_pct: 4.48
+    parity: pass
+  artifact: /sgl-workspace/megamoe/geak_handD_eval
 role: advisory_prior
 supersedes: []
 ---
@@ -170,6 +170,65 @@ positive control.
    its predicate produces a plausible wrong number that reads as "fusion didn't help". A result
    without the marker is void, not zero.
 
+### Construction skeleton — the single persistent grid
+
+The six steps name WHAT to wire; this is the control-flow shape they wire INTO. It is a structure
+to fill in in flydsl against the frozen baseline's own machinery (Sources line-refs), **not code to
+transcribe** — every identifier below is generic on purpose, and every fact it uses is already stated
+above. It exists because knowing the six mechanisms has repeatedly failed to land a body: the gap is
+not *which* primitives but *how they compose into one resident loop*.
+
+ONE launch. Grid = the full CU budget (256 CU on gfx950), launched co-resident so a grid-wide barrier
+is legal — participant count must equal the resident count, or a participant outside the resident
+window deadlocks at one size and runs at another (see Knobs). Every workgroup stays resident and runs
+one top loop until all three queues drain:
+
+    role   = role_of(block_id)      # disjoint partition of resident WGs (Step 4):
+                                    #   GEMM1 | GEMM2 | COMBINE, each sized to its own LDS
+                                    #   footprint against the 256-CU budget — NOT an LDS union.
+    parity = replay_parity          # flips every graph replay (Step 3); selects the
+                                    #   double-buffered slice this generation reads/writes.
+
+    loop:
+        item = claim_next(queue[role], parity)     # atomic ticket off this role's counter
+        if item is DRAINED: break                  #   (arrival-ticket mechanism, stage1:210-225)
+
+        if role is GEMM1:
+            r = gemm1(item)
+            publish(ready1[item], scope=agent)      # fence_agent_release + atomic_add_agent;
+                                                    #   index by SBM (m_row//SBM -> tile_row_base)
+
+        elif role is GEMM2:
+            wait_until(ready1[deps(item)]); acquire(scope=agent)    # every wait is paired
+            r = gemm2(item)
+            store_payload_writethrough(peer, item, parity)          # keep the write-through P2P win
+            # Cross-rank publish is OPTIONAL / hardware-gated / LAST (Step 1). Base form: leave the
+            # all-rank barrier as COMBINE's gate behind the fallback flag. Opt-in form only: local
+            # release + ~64-way-sharded arrival[dest_token]++ — never a per-token system atomic.
+
+        elif role is COMBINE:                       # the THIRD queue (Step 5), not a phase:
+            wait_until(arrival[item] == topk_expected[item])        # a token unlocks the moment its
+            acquire(scope=system)                                   #   own topk partials land ...
+            out[item] = reduce_topk(inp[item, parity])              # ... reduce from the parity slice
+            reset(arrival[item, other(parity)])                     # reset the NEXT parity, never this one
+
+    once_per_process: emit "path=MEGA"              # Step 6; a run without the marker is void, not zero
+
+Three invariants separate "passes single-shot" from "passes the 1000-replay stress":
+
+- **Parity discipline (Step 3).** COMBINE reads parity `P` while the next generation is already
+  filling `P`'s complement; the counter reset touches the complement, never `P`. Skipping this is the
+  stale read the all-rank barrier was hiding — correct on iteration 1, desynced on iteration 2.
+- **Disjoint roles (Step 4).** GEMM1 at `159744 B` LDS and GEMM2 at `66560 B` cannot co-reside on one
+  CU; the partition is by block, enforced by the ticket, never by an LDS overlay.
+- **Combine is a queue, not a barrier-gated phase (Step 5).** Its items unlock per-token as their
+  partials arrive, so combine-role CUs drain the exposed P2P tail concurrently with the last GEMM
+  work — the only thing that hides the `0.96 ms` payload cost the Mechanism section quantifies.
+
+The skeleton is derived-not-copied by construction: it names roles, queues, scopes and a parity index,
+and points every primitive at the baseline line-refs in Sources. It never says what any built copy's
+kernel body contains. `scripts/reference_leak_sweep.sh` + `skill_address_scan.sh` are the enforced check.
+
 **Measured effect of steps 1–5**, isolated (same tree, only `AITER_MEGAMOE_FUSE_ALL` varying, quant a
 separate launch on both arms, A,B,A,B ×3 pairs per guard, rank-max `mega_e2e`, path marker verified
 on all 24 runs):
@@ -183,6 +242,45 @@ on all 24 runs):
 
 Large-uniform (`+4.71%`, tightest spread) is the guard to use as a positive control; 512-skew is
 **not** — one of its three pairs came back negative.
+
+### Build order under a shared, un-screenable lease (bankable rungs, carried forward)
+
+The six steps say WHAT to wire and the skeleton says how they compose; this says HOW to land them when
+the only place the fused body can be validated is a shared 8-rank lease. The fused body binds mori
+shmem / `CrossDeviceBarrier` / system fences at trace time, so **it cannot be compile-screened**, its
+dominant first-draft failure is a **HANG that holds the whole pool to the run timeout**, and a single
+author turn has neither the compile feedback nor the lease budget to bring ~250–500 lines up blind.
+Landing it as one monolithic rung has repeatedly reached the timeout with nothing measured.
+
+Build it as a chain of **enabling rungs**, each small enough to author AND validate in one lease, each
+**committed to the canonical tree and carried forward** as the base for the next (the workflow's
+`step_role:'enabling'` + `enables:` carry-forward — a prerequisite left only in its own round dir and
+not promoted forces the next rung to restart without it, which is how a fusion stops at half). Order
+them by the corrected win-attribution above — barrier-gated wiring first, the regressing per-token
+edge last-and-optional:
+
+0. **A-resident GEMM2 (prerequisite; often the missing rung).** Step 4's CU-role partition and the
+   combine fold both assume GEMM2 holds A across its n-sweep. If this tree's `gemm2_compute_v2`
+   streams A through a rolling `kStages` LDS buffer and `_stage2_lds_bytes` UNIONs the A-staging with
+   the CShuffle/epilog region via `max()`, folding on top of it inherits an **A-reload regression**
+   (measured ~0.69× when this rung is skipped). Restructure GEMM2 to load A once per m-block
+   (register-tile the n-sweep, hold-N accumulators) FIRST, as its own enabling rung — this touches
+   `gemm2.py`, which must therefore be in the fold's modifiable set. Bank it before wiring any
+   cross-stage edge.
+1. **Barrier-gated combine fold + parity double-buffer (Steps 5 + 3), all-rank barrier RETAINED.**
+   Deterministic, no per-token race; correctness + graph-safety first. no-win expected. Bank it.
+2. **CU-role partition GEMM1/GEMM2 into the one launch (Step 4).** Disjoint LDS roles sized to the
+   256-CU budget, not an LDS union. no-win expected. Bank it.
+   → With rungs 0–2 landed this IS the barrier-gated megakernel that carries M2.5's +4.71%: **measure
+   the floor here.** This is the `terminal` rung for the base form.
+3. **(optional, hardware-gated, LAST) per-token cross-rank edge (Steps 1–2).** Only if a post-fold
+   trace shows an exposed cross-rank tail, and only with a local release + ~64-way-sharded counter —
+   never a per-token system atomic (the MI355X cross-L2-flush regression above). Usually skipped; it
+   is not where the win is.
+
+Each rung must emit its path marker on hardware the round it lands; a rung that only compiles has not
+landed. This is the same order the `verify.sh` gate below checks the terminal form against — the rungs
+are how you reach that form without gambling the whole pool on one blind draft.
 
 ## Executable verification
 

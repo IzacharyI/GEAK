@@ -51,22 +51,69 @@ These are FlyDSL kernels (Python-authored, JIT-compiled), not Triton or HIP sour
 
 ## DIRECTIVE — D1 whole-fusion edit lane (authoritative; overrides any inferred file set)
 
-The whole-fusion dimension (D1: "author whole-fused persistent megakernel", `path=MEGA`) MUST use
-EXACTLY this file set as both its `focus_files` and its MODIFIABLE set. Every file below is on the
-MegaMoEV2 path and is modifiable:
+The whole-fusion dimension (D1: "author whole-fused persistent megakernel", `path=MEGA`) is modifiable
+across these on-path files. This list is the known-on-path core, NOT a closed whitelist: extend it to
+any other file **on the MegaMoEV2 path** that your task-graph or the `megamoe_ep_persistent_fusion`
+skill shows a required edge lives in — the point of the guard below is to keep you out of the dead
+lane, not out of files the fusion genuinely needs.
 
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py`            (entry / launch orchestration)
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`       (dispatch + GEMM1)
-- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`       (GEMM2 + p2p publish)
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`       (GEMM2 launch + p2p publish)
+- `aiter/ops/flydsl/kernels/mega_moe/gemm2.py`                 (GEMM2 compute body / K-loop — the A-resident prerequisite rung lives here; see skill build-order rung 0)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py`  (combine device kernel)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py`      (combine host-op wrapper / arg-threading boundary)
 - `aiter/ops/flydsl/kernels/communication_ops_utils.py`        (fences, atomics)
 
-DO NOT target `moe_kernels.py` (or any `moe_kernels*`): it is a DEAD LANE, off the MegaMoEV2 path,
-and produces no in-lane patch. Prior rounds repeatedly failed with `apply_failed` / "no candidate
-patch exists to measure" because the inferred `focus_files` were disjoint from the MODIFIABLE set
-(focus pointed at `moe_kernels.py` + a frozen wrapper, while the real fusion files were unfocused).
-The intersection {focus} ∩ {modifiable} ∩ {needed} MUST be non-empty; the set above guarantees it.
+The ONE hard exclusion: DO NOT target `moe_kernels.py` (or any `moe_kernels*`): it is a DEAD LANE, off
+the MegaMoEV2 path, and produces no in-lane patch. Prior rounds failed with `apply_failed` / "no
+candidate patch exists to measure" because the inferred `focus_files` were disjoint from the MODIFIABLE
+set (focus pointed at `moe_kernels.py` + a frozen wrapper, while the real fusion files were unfocused).
+The intersection {focus} ∩ {modifiable} ∩ {needed} MUST be non-empty; the on-path set above, extended
+by your own analysis, guarantees it — a required edge in an on-path file is never a reason to fall back
+to the dead lane.
+
+## DIRECTIVE — D1 staged build (activation-first, bankable per lease; the skill's Procedure is authoritative on mechanism)
+
+The fused body binds device-only primitives (mori shmem, `CrossDeviceBarrier`, system fences) at
+trace/codegen time, so a first-draft whole-megakernel **cannot be compile-screened** and its dominant
+failure is a **HANG that holds the whole 8-rank lease**. Authoring it blind as one round's terminal
+rung has not reached the card — the switched path never activated and the no-hardware cap stopped the
+wave with nothing measured. A single subagent turn also cannot author AND debug ~250–500 lines of
+lease-only flydsl (no compile screen, no line numbers on a fused kernel) inside one lease. Therefore
+build the fused kernel as a sequence of **enabling rungs, each of which**:
+
+- activates its path on hardware THIS round (every round touches the card — that is the point),
+- is small enough to author AND validate inside one 8-rank lease,
+- is judged on FUNCTION (`relL2 < 0.10`, no deadlock, path marker present), `expected_speedup`=no-win,
+- **names the terminal rung it `enables`** and is **committed to the canonical tree** so the next rung
+  builds on it (`objective=working_kernel`; this is the enabling-step carry-forward the harness already
+  implements — declare `step_role:'enabling'` and `enables:<terminal-id>` so it is banked, not discarded),
+
+with only the LAST rung `terminal` and measured for credit.
+
+**Where the credit-bearing terminal actually is — read the skill's "Where the win actually comes
+from"; do NOT re-derive it wrong (an earlier version of this DIRECTIVE did, and it cost the run).**
+The M2.5 floor (+4.71% @ 8192_uniform) is the **barrier-gated megakernel**: combine folded in as a
+work queue + CU-role partition of GEMM1/GEMM2 into one persistent launch, with the **all-rank barrier
+RETAINED** (skill Steps 4–5, `path=MEGA` default-ON). **That fused-and-partitioned barrier-gated
+kernel is the `terminal` rung; read win/no-win THERE**, under the terminal liveness gate (Hard
+constraint 2b) and the full acceptance set below.
+
+**The per-token cross-rank readiness edge is NOT the credit rung.** Converting the combine barrier to
+a per-token `wait_until` + system-scope acquire (skill Steps 1–2) is a **measured regression** on
+MI355X — a cross-L2 flush per token — and M2.5 ships it default-OFF. Attempt it only AFTER the
+barrier-gated floor is landed, only if a trace shows an exposed cross-rank tail remaining, and then
+only with a **local** release on a ~64-way-sharded arrival counter — **never** a per-token system
+atomic. It is an optional, hardware-gated, LAST rung, not the terminal that closes the chain.
+
+The exact rung breakdown, ordering, invariants (parity double-buffer, disjoint roles,
+combine-as-queue) and the single-persistent-grid skeleton are the **`megamoe_ep_persistent_fusion`
+skill's Procedure + Construction skeleton — authoritative on mechanism**. This DIRECTIVE fixes only
+the STRUCTURE (bankable carried-forward enabling→terminal rungs, activation-first, one lease per rung)
+and the modifiable file set (above). The route to the fused body is that ladder + the skill mechanism
+— **NOT** porting the out-of-tree M2.5 source (do not byte-copy it; the artifact-distinctness check
+stays on).
 
 ## The optimization target
 
@@ -119,8 +166,25 @@ bound this task:
    those two. A candidate's `relL2` that lands inside the range above is indistinguishable from the
    baseline; the bound that matters is the hard `< 0.10`.
 2. **Liveness**: the operator is captured into a CUDA Graph and replayed. A fused kernel with
-   cross-rank waits can deadlock on replay N without failing on replay 1. Stress ≥1000 replays per
-   route; a timeout is a FAILURE, never a skip.
+   cross-rank waits can deadlock on replay N without failing on replay 1. **Liveness is per-rung, and
+   replay COUNT is not the coverage knob — replay DIVERSITY is.** Identical replays re-run one
+   interleaving and can systematically miss a timing-dependent deadlock no matter how many you run;
+   parity/epoch/reset bugs, by contrast, surface within ~10 replays as state carries across flips.
+   Key the screen off whether the rung carries a **per-token / cross-rank arrival race**, NOT off its
+   enabling/terminal label — the barrier-gated fold (including the credit-bearing barrier-gated
+   terminal) is deterministic, while the optional per-token cross-rank edge is the one that can race:
+   - **2a — deterministic rungs** (barrier-gated: the combine fold, the CU-role partition, and the
+     barrier-gated terminal floor — no per-token cross-rank race) need a bounded functional-liveness
+     screen: ≥30 replays on EACH of {128, 8192} × {uniform, skew} under a bounded per-replay timeout.
+     This still catches the parity/epoch/reset and residency-at-one-shape classes, which is why it
+     runs both shapes.
+   - **2b — any rung with a per-token / cross-rank arrival race** (the optional per-token readiness
+     edge, or a terminal that folds it in) needs graph-safe liveness of ≥256 replays carrying
+     **per-replay arrival-timing jitter** (re-draw routing / vary token arrival order between replays)
+     across both shapes and both routes, under a bounded per-replay timeout.
+
+   A jittered 256 covers the replay-N race class strictly better than an identical 1000. A timeout is
+   a FAILURE, never a skip.
 3. **Residency**: any grid-wide wait requires all blocks co-resident. Blocks must not exceed the CU
    budget; `_check_block_num_resident` is the existing check.
 4. Never modify anything outside this workspace.
@@ -142,10 +206,21 @@ A terminal candidate is accepted only when the same independently verified candi
 launches per rank; a positive `8192_uniform` operator rank-max result versus the baseline (and, per
 the persistent-fusion skill, at or above M2.5); no regression on the other three guards; numeric
 `relL2 < 0.10` evidence; distinct JIT artifact hashes for the A/B arms (measurement integrity, not
-containment); graph-safe liveness over at least 1000 replays; every mandatory arm; controlled,
-non-zero on-edge overlap; and launch-change attribution. A working but slower/intermediate artifact is
-**preserved for the next round** (objective=working_kernel) so the staged fusion chain can reach its
-terminal step — it is not a failure, it is a rung.
+containment); graph-safe arrival-jittered liveness over at least 256 replays (Hard constraint 2b);
+every mandatory arm; controlled, non-zero on-edge overlap; and launch-change attribution.
+
+An **enabling rung** (any rung before the credit-bearing terminal — e.g. an A-resident GEMM2
+prerequisite, the barrier-gated combine fold, the CU-role partition) is accepted on FUNCTION, not
+speed: it activates its path on hardware this round, is numerically correct (`relL2 < 0.10` at the
+required shapes), and passes the bounded functional-liveness screen (Hard constraint 2a). It is
+`expected_speedup`=no-win, it counts as on-device progress against the no-hardware activation cap, and
+it owes **neither** the terminal jitter-liveness gate **nor** the `8192_uniform` credit-win — those
+are read once, at the terminal rung (the barrier-gated fused-and-partitioned megakernel; see the D1
+staged-build DIRECTIVE). A working but slower/intermediate artifact **MUST be committed to the
+canonical tree and preserved for the next round** (`objective=working_kernel`, `step_role:'enabling'`
+naming the terminal it `enables`) so the next rung builds on it — a successful prerequisite that is
+left only in its own round dir and not carried forward forces the next rung to restart without it and
+is the specific failure this DIRECTIVE exists to prevent. It is not a failure, it is a rung.
 
 Run `bootstrap_task.sh --task megamoe_v2_ep8_optimize` to assemble the workspace. No `MARKER_FILE`,
 `--known-reference`, or containment preflight is needed in this mode.

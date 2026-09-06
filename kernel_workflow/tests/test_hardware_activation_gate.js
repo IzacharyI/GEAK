@@ -88,8 +88,10 @@ console.log('\n# wiring: the requirement is enforced in code, threaded, and not 
 
 console.log('\n# wiring: the no-hardware stop is orthogonal, live under working_kernel, and hard-stops');
 {
-  ok(/let noHardware = 0;/.test(src) && /const MAX_NO_HARDWARE = MAX_NO_IMPROVE;/.test(src),
-     'a dedicated noHardware counter exists, separate from noImprove and noEvidence');
+  ok(/let noHardware = 0;/.test(src) &&
+     /const MAX_NO_HARDWARE = [^;]*A\.max_no_hardware[^;]*MAX_NO_IMPROVE[^;]*;/.test(src),
+     'a dedicated noHardware counter exists (separate from noImprove/noEvidence); its cap defaults to ' +
+     'MAX_NO_IMPROVE but is independently overridable via max_no_hardware (no-hardware cap decoupling)');
   ok(/if \(touched\) noHardware = 0;\s*\n\s*else noHardware\+\+;/.test(src),
      'it resets when a candidate reached the device (activation_on_hardware=yes) and increments when none did');
   ok(/if \(noHardware >= MAX_NO_HARDWARE\) \{[\s\S]*?break;\s*\n\s*\}/.test(src),

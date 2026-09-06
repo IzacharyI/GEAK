@@ -26,7 +26,7 @@
   "_require_hardware_activation_comment": "ON. A switched / perf-bearing candidate is committable and counts as on-device progress ONLY if the verifier reports activation_on_hardware=yes -- the switched path traced+launched on a card THIS round (a gpu_lock benchmark/correctness with the switch set, backed by a device-side observable: nonzero mega_e2e, a rocprof/trace record, or the on-device path marker). A py_compile, a COMPILE_ONLY ISA hash, or a CPU dry-run is NOT hardware activation. Three consecutive rounds in which nothing reaches the device hard-stop the wave (surface it, do not keep banking OFF scaffolding). This closes the hole that let the D1/D2 fused arm defer its JIT-trace-time crash across 8 rounds, green on every static screen, never once run on hardware.",
   "accuracy_metric": "relL2",
   "accuracy_threshold": 0.10,
-  "required_replays": 1000,
+  "required_replays": 256,
   "required_pairs": 5,
   "required_pairs_by_guard": {
     "8192_uniform": 5,
@@ -34,7 +34,7 @@
     "512_uniform": 16,
     "512_rank-mixed-skew": 16
   },
-  "_acceptance_comment": "OPTIMIZE run. Only 8192_uniform creates positive credit; the other guards can only veto. The promotion metric is operator rank-max mega_e2e across a launch-structure change. A terminal candidate must reach two launches per rank, controlled non-zero on-edge overlap, numeric relL2 < threshold, graph-safe 1000-replay liveness, complete attribution, and all guard evidence. objective=working_kernel keeps slower intermediate fusion artifacts alive across rounds so the staged fusion chain can reach its terminal step; it does not relax final acceptance. Unlike the strict template there is NO derived-not-copied (criterion 5) requirement: applying the megamoe_ep_persistent_fusion recipe is allowed; the win is a complete fused kernel that beats the baseline (and, per the persistent-fusion skill, meets M2.5 as a floor).",
+  "_acceptance_comment": "OPTIMIZE run. Only 8192_uniform creates positive credit; the other guards can only veto. The promotion metric is operator rank-max mega_e2e across a launch-structure change. A terminal candidate must reach two launches per rank, controlled non-zero on-edge overlap, numeric relL2 < threshold, graph-safe arrival-jittered liveness over >=256 replays (terminal rung; enabling sub-rungs owe only a bounded >=30-replay functional-liveness screen -- see GEAK_TASK Hard constraint 2), complete attribution, and all guard evidence. required_replays is the TERMINAL-rung floor; replay DIVERSITY (per-replay arrival jitter), not raw count, is what covers the replay-N deadlock class, so a jittered 256 supersedes the old identical-1000. objective=working_kernel keeps slower intermediate fusion artifacts alive across rounds so the staged fusion chain can reach its terminal step; it does not relax final acceptance. Unlike the strict template there is NO derived-not-copied (criterion 5) requirement: applying the megamoe_ep_persistent_fusion recipe is allowed; the win is a complete fused kernel that beats the baseline (and, per the persistent-fusion skill, meets M2.5 as a floor).",
   "_state_comment": "Pass --state-dir pointing at a NEW empty directory. (Optimize mode does not forbid inheriting a prior shelf, but a clean state dir keeps this run's result unambiguous.)",
 
   "gpu_ids": "0,1,2,3,4,5,6,7",
