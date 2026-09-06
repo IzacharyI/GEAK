@@ -1,0 +1,72 @@
+{
+  "_comment": "MEGA-MODE launch recipe for MegaMoE V2 EP8 (megafusion workflow = author-mode + optimize-mode combined). Sibling of tasks/megamoe_v2_ep8_optimize; identical baseline/oracle framing (frozen public AITER is the legitimate starting point + denominator; hand-authored M2.5 kept OUT of tree as an oracle/floor only), capability_eval and strict_autonomy both OFF. The ONE thing mega changes vs optimize is METHODOLOGY, delivered via mode=mega: (1) author the COMPLETE 2-launch fused topology in ONE coherent design -- no bankable-rung ladder, no intermediate half-fused topologies; (2) the mega skill (megamoe_ep_mega_fusion) spells out the EXACT spin-wait/arrival-ticket/epoch-parity address arithmetic to reproduce faithfully (leak-sweep lifted for mega; source is the reachable in-tree baseline + the r12 diagnosis, NOT any out-of-tree reference); (3) fixing the baseline mega_moe_stage1.py spin-wait base/predicate register init is a first-class allowed action (it is the r12 root cause). The HARD boundary NOT lifted: never read anything under /root/geak_reference/. The bar to beat is M2.5 (floor +4.71% @ 8192_uniform). ${...} placeholders are resolved by scripts/bootstrap_task.sh.",
+
+  "mode": "mega",
+  "_mode_comment": "mode=mega selects the megafusion path in kernel_workflow.js: the skill-consuming roles are pointed DIRECTLY at skills/megamoe_ep_mega_fusion/skill.md (not the generic index.yaml auto-match, so no collision with the persistent-fusion card), and the whole-topology / reproduction-authorized / fix-the-substrate methodology relaxation is injected in-prompt. MODE!=='mega' code paths are byte-identical to optimize/author; this field is the only switch.",
+
+  "kernel_path": "${WORKSPACE}",
+  "workflow_dir": "${SKILL_DIR}",
+  "exp_root": "${EXP_ROOT}",
+  "state_dir": "${STATE_DIR}",
+
+  "budget": 15,
+  "max_no_improve": 3,
+  "min_improve": 0.01,
+  "objective": "speedup",
+  "_objective_comment": "speedup, NOT working_kernel. mega runs a dedicated Reproduce phase BEFORE the optimize loop (kernel_workflow.js phase('Reproduce'), role repro_engineer): it faithfully reproduces the whole flat 2-launch fused operator, correctness-gates it independently (relL2<0.10 both routes + path=MEGA==world_size + bounded liveness), and commits it as HEAD = the FLOOR (保底). Because a correct running whole-topology artifact already exists after Reproduce, the optimize loop does NOT need working_kernel's 'keep-anything-that-runs' tolerance -- and that tolerance is exactly what would let a slower candidate overwrite the faster floor (working_kernel BYPASSES the >cumulative commit-gate). objective=speedup keeps the commit-gate ACTIVE, and the loop seeds `cumulative` from the floor's measured speedup, so a candidate must BEAT the floor to overwrite HEAD; a non-winner leaves HEAD = floor and final reports the floor. Correctness-first-then-speedup is achieved by the Reproduce phase running before the loop, NOT by a mid-wave objective flip (objective is a wave-level constant). If Reproduce cannot produce a clean floor the wave aborts at validation_status:repro_failed -- fix the reproduction (skill / repro_engineer), do not bury a broken partial under an optimize wave.",
+  "strict_autonomy": "false",
+  "promotion_metric": "operator_e2e",
+  "target_guards": ["8192_uniform"],
+  "regression_guards": [
+    "8192_rank-mixed-skew",
+    "512_uniform",
+    "512_rank-mixed-skew"
+  ],
+  "launch_target": 2,
+  "require_overlap": "true",
+  "require_attribution": "true",
+  "require_artifact_distinct": "false",
+  "_require_artifact_distinct_comment": "OFF in mega mode. Reproduction of the M2.5 topology is the GOAL here, not a violation -- there is no derived-not-copied / containment / artifact-distinctness requirement in mega mode. (It is strictPath-gated anyway -- strictPath = strict_autonomy && ... -- so with strict_autonomy=false it never bites regardless; false is set explicitly to state intent. Measurement integrity of the A/B arms is still carried by distinct JIT disk_keys per knowledge/jit_arm_isolation.md and by require_hardware_activation below, which are about the two arms being genuinely different builds, NOT about not-copying M2.5.)",
+  "require_hardware_activation": "true",
+  "_require_hardware_activation_comment": "ON (same as optimize). A switched / perf-bearing candidate is committable and counts as on-device progress ONLY if the verifier reports activation_on_hardware=yes -- the switched path traced+launched on a card THIS round (a gpu_lock benchmark/correctness with the switch set, backed by a device-side observable: nonzero mega_e2e, a rocprof/trace record, or the on-device path marker). A py_compile, a COMPILE_ONLY ISA hash, or a CPU dry-run is NOT hardware activation. Three consecutive rounds in which nothing reaches the device hard-stop the wave. In mega mode this is the primary guard against the last wave's failure: the whole-topology body must reach the card and clear the r12 cut4 boundary, not defer a trace-time fault across rounds.",
+  "accuracy_metric": "relL2",
+  "accuracy_threshold": 0.10,
+  "required_replays": 256,
+  "required_pairs": 5,
+  "required_pairs_by_guard": {
+    "8192_uniform": 5,
+    "8192_rank-mixed-skew": 5,
+    "512_uniform": 16,
+    "512_rank-mixed-skew": 16
+  },
+  "_acceptance_comment": "MEGA run. Only 8192_uniform creates positive credit; the other guards can only veto. The promotion metric is operator rank-max mega_e2e across a launch-structure change. A terminal candidate must reach two launches per rank, controlled non-zero on-edge overlap, numeric relL2 < threshold, graph-safe arrival-jittered liveness over >=256 replays, complete attribution, and all guard evidence. required_replays is the terminal floor; replay DIVERSITY (per-replay arrival jitter), not raw count, covers the replay-N deadlock class. The working-but-not-yet-winning whole-topology artifact is produced ONCE by the Reproduce phase (the FLOOR, committed as HEAD) BEFORE the loop -- so a substrate fix (r12) is part of Reproduce, and knob sweeps land on top of the floor inside the loop under objective=speedup (see _objective_comment). objective=speedup does not relax final acceptance; it activates the commit-gate so nothing slower than the floor overwrites it. In mega mode there is NO derived-not-copied (criterion 5) and NO artifact-distinctness-vs-M2.5 requirement: faithfully reproducing the M2.5 topology from the mega skill is the intended route; the win is a complete fused kernel that beats the baseline and beats the M2.5 floor.",
+  "_state_comment": "Pass --state-dir pointing at a NEW empty directory. A clean state dir keeps this run's whole-topology result unambiguous and prevents inheriting the prior wave's half-fused intermediate shelf (which mega mode explicitly does not build on).",
+
+  "gpu_ids": "0,1,2,3,4,5,6,7",
+  "gpus_per_job": 8,
+  "_gpu_comment": "This is a collective: the group form of the lease takes all 8 cards as ONE lease. A round's GPU capacity is therefore one direction (roles/tech_lead.md rule 3e), and a single lease is capped by GEAK_GPU_RUN_TIMEOUT -- chunk the plan and re-emit results after every chunk.",
+  "gpu_min_free_gib": 150,
+
+  "use_expert_skills": "true",
+  "_use_expert_skills_comment": "REQUIRED in mega mode: the megafusion methodology is delivered through the expert-skill injection path (kernel_workflow.js expertSkillsBlock, mode=mega branch). With use_expert_skills off, the mega skill and its concrete arithmetic never reach the roles and mega mode degrades to a plain optimize run.",
+  "analysis_skill": "moe_bottleneck",
+  "_analysis_skill_comment": "ENABLED: the moe_bottleneck analysis skill enriches the generic bottleneck classification with this operator's route/expert imbalance and Stage1/Stage2/combine time-share, justifying WHICH edges the one-shot topology fuses.",
+  "capability_eval": "false",
+  "_capability_eval_comment": "FALSE: this run is for its OUTPUT (a fast fused kernel that beats M2.5), not for evaluating whether the loop can derive the fusion blind. With capability_eval off there is no reference-containment gate and no plagiarized verdict; the mega skill's concrete arithmetic is usable in full.",
+  "known_reference_paths": "",
+  "_known_reference_paths_comment": "Empty. The mega skill's arithmetic is authored from the in-tree baseline + r12 diagnosis. The hand-authored M2.5 under /root/geak_reference/ is the ONE hard boundary that is NOT lifted in mega mode -- never read it; it is not a known-reference to port from.",
+
+  "positive_control": {
+    "name": "synthetic slowdown: injected fixed cost in the Stage2 tile loop",
+    "how": "This control does NOT require a working optimization -- see roles/benchmark_engineer.md 5b, 'When no known-good change exists'. Build it in a workspace UNDER /tmp, outside the task tree. Candidate arm: add a bounded, side-effect-free spin (sized as described next -- do NOT size it off the published noise floor) to the Stage2 persistent tile loop, gated by an env var. Base arm: the same tree with the var unset. Because these kernels come from a caching JIT, the switch MUST be anchored per knowledge/jit_arm_isolation.md -- read it BEFORE authoring the gate, and record the two distinct disk_keys in activation_evidence. The candidate is the SLOWER arm, so measured_pct is expected NEGATIVE. SIZE IT AGAINST THE NULL, AND MEASURE THE NULL FIRST. The gate compares your effect to 3x the WORST PAIR in your own null arm. So run the null arm FIRST -- >=8 interleaved base-vs-base pairs on 8192_uniform, byte-identical trees -- take max(abs(null_pairs)), and aim the injection at >=4x that, leaving headroom for the sublinearity every spin knob has at small counts. Use a cheap single-rank dose ladder to hit the target, then commit to it. Then run >=5 interleaved pairs on 8192_uniform with the spin on/off and report the paired effect as spin_on minus spin_off, together with the null pairs you collected first. Report `switch_present` about the knob YOU built, checked AFTER the gate is committed. When it finishes, MOVE the control workspace aside (mv, not rm) and say in `note` where it was and that it is gone.",
+    "expected_pct_lo": -9.0,
+    "expected_pct_hi": -4.0,
+    "magnitude": "constructed",
+    "_magnitude_comment": "REQUIRED. The band above is a TARGET a synthetic knob was aimed at, not a previously measured fact. With magnitude=constructed the gate still requires the right sign, unanimity across pairs, and >=3x the WORST null pair -- it only tolerates landing above half the target. Do NOT relabel a recorded control as constructed to get past a failure.",
+    "implausible_pct": 25.0,
+    "guard": "8192_uniform",
+    "abort_on_fail": true
+  },
+  "require_task_graph": true,
+  "_require_task_graph_comment": "Analyze must still emit the tile-level dependency DAG as a structured artifact (nodes, edges, edge scope, what enforces each edge today, critical path, slack, declared unknowns) before the one-shot topology is committed -- see knowledge/tile_task_graph.md and the ANALYZE_SCHEMA task_graph field. In mega mode this justifies WHICH edges the whole-topology design fuses (and guards against 'the stages are serialized, so fuse them' restatements); it is not a derivation-from-blind requirement. The gate does not abort; it emits a caveat that travels to the report."
+}

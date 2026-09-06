@@ -137,6 +137,17 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 6. Preserve the kernel's external interface (signature, semantics) so the wrapper/tests still work.
 7. Hipify safety (HIP): never put `<<<>>>` launches inside a macro if/else or ternary — use template
    dispatch functions. See `hip_optimization.md` → Hipify Safety Rules.
+8. **mode=mega (mega-gated) — the HEAD you are editing IS the reproduced FLOOR (保底); beat it, keep it
+   whole.** In `mode=mega`, a Reproduce phase already committed the whole flat faithful 2-launch fused
+   operator as HEAD. Your `DIRECTION` is a **speed rung stacked ON TOP of that whole operator**, or an
+   **alternative COMPLETE fused candidate** — always keeping the entire 2-launch topology
+   (dispatch→GEMM1→GEMM2→combine as one persistent kernel + separate quant launch) intact. Do NOT
+   re-decompose the operator into an incremental single-edge change, do NOT hand back a half-fused
+   intermediate topology, and do NOT commit a cut-ladder cut as if it were the operator. The commit-gate
+   is seeded from the floor's speedup, so only a patch that **beats the floor** is admitted; a worse
+   patch leaves HEAD = floor (the floor is permanently retained — you cannot lose it). If your direction
+   is the g2-collapse, you own its cut4 SGPR-pressure risk (see the mega skill's OPTIMIZATION-PHASE
+   FAILURE LORE); it is optional and not part of the floor. Red line: never read `/root/geak_reference/`.
 
 ## Workflow
 1. **Baseline**: in `KERNEL_PATH`, clear cache, run the COMMANDMENT benchmark via gpu_lock, record

@@ -91,7 +91,50 @@ skills:
     isolated_speedup_min: 1.01
     e2e_delta_min_pct: 1.0
     parity: required
-  validation_status: draft
+  validation_status: validated
+# mega-mode fork of megamoe_ep_persistent_fusion. Injected ONLY by MODE=mega via explicit path
+# (kernel_workflow.js expertSkillsBlock), NEVER by auto-match: validation_status is 'mega_only', not
+# 'validated', so optimize/author runs skip it and cannot collide with the persistent_fusion card.
+- id: megamoe_ep_mega_fusion
+  file: skills/megamoe_ep_mega_fusion/skill.md
+  scope: kernel
+  mode: mega
+  match:
+    operator: moe_dispatch_combine
+    arch_class:
+    - '*'
+    gens:
+    - gfx950
+    dtypes:
+    - mxfp8_e4m3
+    - mxfp4
+    regimes:
+    - prefill
+    - decode
+    from_backend: ''
+    to_backend: flydsl
+    profile_signature:
+      op_name_regex: mega_moe|dispatch_combine|p2p_scatter
+      min_pct_gpu: 20.0
+    config:
+      framework: MegaMoE_v2
+      parallel: EP8
+      arch: gfx950
+      precision: a8w4
+      graph: cuda_graph_captured
+      shapes:
+        tokens_per_rank:
+        - 512
+        - 8192
+        routes:
+        - uniform
+        - skew
+        topk: measured_per_config
+  expects:
+    isolated_speedup_min: 1.01
+    e2e_delta_min_pct: 1.0
+    parity: required
+  validation_status: mega_only
 - id: mla_tilelang_to_triton
   file: skills/mla_tilelang_to_triton/skill.md
   scope: kernel

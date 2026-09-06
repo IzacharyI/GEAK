@@ -61,6 +61,61 @@ was the fault that cost a fusion rung its only chance at a measurement. A lesson
 per-wave log reaches the rounds after it only if someone happens to read it; a lesson on this card
 reaches every engineer on every wave.
 
+### Adding a publish can EXPOSE a latent uninit address elsewhere — the publish is not the bug
+
+The subsection above is about a publish that is *itself* miscompiled. This one is the opposite and is
+easy to misattribute to it: a publish that is correctly formed can still **kill the arm**, because
+**adding any store shifts register allocation, and the shifted allocation exposes a latent
+use-of-uninitialized / miscomputed base-or-predicate ADDRESS that was already present elsewhere** —
+most dangerously in a spin-wait loop that the old allocation happened to leave in a runnable state.
+
+The tell that distinguishes this from the exec-mask bug above: **swap the real publish for a benign
+constant store** (`store(some_scratch, 0xBEEF)` — no atomic, no computed pointer, no counter) and see
+if it faults **identically**. If it does — same instruction/mem-op mix, same LDS, zero spill, same
+cut faulting — then the publish is a red herring; the fault is a pre-existing address defect that the
+publish's regalloc pressure merely uncovered. Chasing the publish formulation (scope, fence pairing,
+head-vs-tail placement, buffer sizing) will falsify every hypothesis and never converge, because none
+of them is the cause.
+
+This was paid for on the MegaMoE V2 EP8 launch-collapse wave (r11–r12): the fused terminal faulted at
+the arrival-ticket handshake in `mega_moe_stage1.py`, and it was the benign-`0xBEEF` control that
+proved the substrate spin-wait — not the new edge — carried the defect. Two concrete suspects on that
+substrate, both address-init: an **LDS-aliased ticket scratch** (`recast_iter(Int64, a_buf.ptr)`
+reusing the same LDS pool the GEMM staging view aliases — under a shifted allocation the ticket base
+and live staging data share storage), and an **un-pinned gate base/predicate**
+(`gate_addr = a_epoch_gate + grid_epoch_slot*4`, `gate_epoch = generation+1`). Note `grid_epoch_slot`
+is a Python constexpr (`GRID_MULT_VALUES.index(grid_mult)`), so its `*4`/`*8` are constant offsets and
+are **not** the risk — the runtime inputs are `a_epoch_gate` (a 64-bit pointer from a dispatch-table
+`buffer_load`, i.e. a VGPR) and `generation` (a VGPR from the ticket division). Those two are computed
+once in the common path but consumed on two branches of wildly unequal length (the ~50-line owner store
+vs the 3-line non-owner spin), and — unlike `next_parity`/`launch_epoch`, which the baseline already
+`readfirstlane`s — they stay in VGPRs, so the publish-forced allocation shift makes the owner store the
+gate to one address and the waiter spin on another. The fix is at the address init (give the ticket
+broadcast its own LDS slot; and in the **common path before the owner/non-owner split**, pin the gate
+base and predicate to SGPR — `a_epoch_gate` via a **direct 64-bit `readfirstlane`**
+(`fx.rocdl.readfirstlane(T.i64, a_epoch_gate.ir_value())`, the exact idiom the combine substrate
+already uses on its own 64-bit peer pointer at `mega_moe_stage2.py:126`), and `gate_epoch` via the
+i32 `readfirstlane` stage1 already uses on parity/epoch at 239–240 — so both branches consume
+identical scalars), **not** in the publish. (Do *not* hand-roll a bitwise 32-bit split on `fx.Int64`;
+those ops are only demonstrated on `fx.Int32` here and are unnecessary given the direct i64
+readfirstlane.)
+
+**Falsified on-card (2026-09-05, round_2): base-pinning is necessary but NOT the cut4 fix.** An engineer
+applied the gate SGPR-pin correctly (direct i64 readfirstlane) *and* base-pinned every source-visible g2
+substrate base in both substrate copies; cut3 stayed clean+correct at bs=128 and bs=8192, but cut4→cut8
+faulted identically (`0x7e7e…` poison address, before combine, in the GEMM2-role substrate). So the
+corrupted register is **not** a source-visible base — consistent with the `0xBEEF`-constant-store faulting
+identically. The **primary** cut4 fix is instead a **resource-extent clamp**: the g2 tables are read
+through AMD buffer resources (`create_buffer_resource_from_addr`), several created *unbounded*
+(`gemm2.py:354`); binding each to its real byte extent (`num_records_bytes=numel*elem_size`, the same
+kwarg stage2:127 already passes as `comb_inp_nbytes`) makes the hardware **clamp** a wild index to 0
+instead of faulting — and cut4/cut5 discard the g2 output, so the clamp is correctness-safe there. Under
+`mode=mega`, the `megamoe_ep_mega_fusion` skill's r12 "fix 2a/2b" is authoritative. The converging diagnostic
+is an ISA diff of the faulting cut against the clean canary (which base/predicate register moved) plus
+reducing substrate SGPR pressure so the publish stops perturbing the allocation at all. See
+`knowledge/crash_bisection.md` (the CORRECTION note — this is NOT a `wait_until` counter
+target-unreachable) and, under `mode=mega`, the `megamoe_ep_mega_fusion` skill's r12 section.
+
 ### Price the release before you place it
 
 `buffer_wbl2 sc1` is a cross-XCD writeback because agent scope on an 8-XCD part cannot be satisfied

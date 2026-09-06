@@ -63,6 +63,115 @@ Two rungs deserve special handling because they fail *differently*:
   fault is masked by code that runs later — most often a clamp or a barrier that happens to make an
   out-of-range index harmless.
 
+## Size the hang watchdog to the healthy run, not to the lease
+
+"Run every rung under a timeout" (above) is not enough on its own: the timeout must be sized to how
+long a **passing** rung takes, not to the whole-lease cap. A healthy fused correctness rung is
+seconds-to-tens-of-seconds (the ~33 s measured above). Setting the per-rung timeout to the lease cap
+(`GEAK_GPU_RUN_TIMEOUT`, e.g. 15–30 min) means every hung rung sits in deadlock for the full cap
+before the coarse `timeout` fires — a three-rung bisection of a hang then costs ~40 min of an 8-card
+lease doing nothing. That is the "it stayed stuck for a long time before anything reacted" failure,
+and it is self-inflicted by a loose watchdog.
+
+Two rules:
+
+- **Per-rung deadline = a small multiple of the healthy rung time**, not the lease cap. If a clean
+  rung finishes in ~T, set the correctness watchdog to ~3–5×T (a floor of 90–120 s is plenty for a
+  fused MoE correctness screen). Use `timeout --kill-after=10s <deadline>` so a rung that ignores
+  SIGTERM is SIGKILLed promptly rather than hanging the driver too.
+- **Prefer a stdout-silence watchdog when you do not know T.** A deadlock produces **no new output**;
+  a slow-but-progressing run keeps printing. Wrap the run so it is killed after W seconds of stdout
+  silence (e.g. pipe through a reader that resets a timer on each line, or poll the log's mtime). This
+  distinguishes *hung* from *merely slow* without having to predict the healthy runtime, and it
+  reacts in ~W seconds instead of at the full cap. Emit `HANG cut=<c> reason=silence` as the rung's
+  recorded verdict and continue the ladder.
+
+The point of both is that a hang must be **detected and killed on the timescale of a healthy run**,
+so a deadlocked lease self-terminates in seconds-to-minutes and the next rung (or the next lease)
+starts immediately — never wait out a lease-length timeout to learn a rung hung.
+
+## A non-monotonic marker across rungs — deterministic target-unreachable vs a race
+
+> **CORRECTION (2026-09-05, from the D2 launch-collapse wave, r11–r12) — read before applying the
+> `wait_until`-target-unreachable reading below to the MegaMoE substrate.** On the MegaMoE V2 EP8
+> fused megakernel, a deterministic fault/hang at the arrival-ticket handshake in
+> `mega_moe_stage1.py` was **root-caused NOT to a counter target-unreachable** (an expected-count /
+> tile-index mismatch), but to a **latent use-of-uninitialized / miscomputed base-or-predicate
+> ADDRESS in the substrate spin-wait loops**, deterministically exposed by the register-allocation
+> shift that adding *any* `ready1` publish forces. The tell that falsifies the counter theory: a
+> benign constant `0xBEEF` store — no atomic, no computed pointer, no counter at all — faults
+> **identically**, with identical instruction/mem-op mix, identical LDS, zero spill. So for a fault
+> in `mega_moe_stage1.py`'s owner/producer gate handshake, do **not** stop at "print the counter and
+> its expected value" (the probe below). Also diff the emitted ISA of the faulting cut against the
+> clean canary to find which base/predicate register the publish perturbs, and reduce substrate SGPR
+> pressure so the publish does not perturb the arrival-ticket allocation. The suspects are the
+> LDS-aliased ticket scratch (`ticket_scratch = recast_iter(Int64, a_buf.ptr)`, aliasing the GEMM
+> staging pool) and the un-pinned gate base/predicate (`gate_addr = a_epoch_gate + grid_epoch_slot*4`,
+> `gate_epoch = generation+1`) — where the runtime culprits are `a_epoch_gate` (a VGPR pointer) and
+> `generation` (a VGPR), NOT `grid_epoch_slot` (a Python constexpr → constant offset); the fix is to
+> `readfirstlane` the gate base and predicate to SGPR in the common path before the owner/non-owner
+> split, so both branches consume identical scalars — the base via a **direct 64-bit** readfirstlane
+> (`fx.rocdl.readfirstlane(T.i64, a_epoch_gate.ir_value())`, the combine substrate's own idiom at
+> `mega_moe_stage2.py:126`), the predicate via the i32 readfirstlane stage1 already uses at 239–240;
+> do **not** hand-roll a bitwise 32-bit split on `fx.Int64` (unsupported/unnecessary here). **UPDATE
+> (2026-09-05, round_2): base-pinning is necessary but was FALSIFIED as the cut4 fix** — an engineer
+> applied it correctly plus base-pinned every source-visible g2 base, cut3 stayed clean at 128/8192 but
+> cut4→cut8 still faulted identically (`0x7e7e…` poison, before combine). The corrupted register is not a
+> source-visible base. The **primary** fix is a **resource-extent clamp** of the GEMM2-role tables (bind
+> each `create_buffer_resource_from_addr` to its real byte extent, the `num_records_bytes=` kwarg stage2:127
+> already uses) so a wild index clamps to 0 instead of faulting — correctness-safe at cut4/cut5 since g2
+> output is discarded there. See the `megamoe_ep_mega_fusion` skill's r12 "fix 2a/2b" (authoritative). See
+> `knowledge/gfx950_lowering.md` (regalloc can mask *or* expose a latent uninit address) and, under
+> `mode=mega`, the `megamoe_ep_mega_fusion` skill's "r12 — the substrate spin-wait address defect"
+> section, which is authoritative and supersedes the reading below for that operator.
+
+A **marker that is non-monotonic across cuts** — a deeper rung prints a progress/path marker that a
+shallower rung did not — has two very different causes, and the fix depends on which:
+
+- **Deterministic (the common case).** Different cuts are different binaries, so whether the marker
+  line is *reached* depends on where it sits relative to each cut's truncation, not on timing. A rung
+  that hangs at a `wait_until(counter)` whose target the producer never reaches will hang the SAME way
+  every run. This is a **`wait_until` target that is never reachable** (an expected-count / tile-index
+  mismatch between the publisher and the waiter), not a race. Confirm it by re-running ONE hanging cut
+  a few times: a stable hang at the same point is deterministic.
+- **A genuine race** is the other cause, and it is nondeterministic *within one binary* — the same cut
+  hangs on some runs and not others. Establish the failure *rate* on a fixed cut to tell them apart.
+
+For the deterministic target-unreachable case — which is what an intra-rank readiness edge
+(GEMM1→GEMM2) almost always is — **do not change the fence scope.** That edge is correctly agent-scope
+(`fence_agent_release` + `atomic_add_agent`); system scope there is a cross-L2 per-token regression on
+this target, not a fix. The move is the probe in the next section: print the counter, its expected
+value, and the work count in the implicated segment, and read the mismatch directly. Only a *proven*
+cross-rank visibility gap warrants a scope change, and even then a per-token system-scope atomic is a
+known regression — shard the counter instead. Re-run the ladder only to confirm the fix held.
+
+## Verify the instrument before you trust a rung verdict (FlyDSL: two silent no-ops)
+
+The ladder's whole value is that each rung's pass/fail is uncontestable. That guarantee is void if the
+rung you *think* you built is not the binary that ran. On FlyDSL this happened for **two consecutive
+rounds** on the MegaMoE cut4 fault — both rounds' on-device "results" were measuring nothing, and the
+diagnosis thrashed (register-corruption → write-to-RO-page → back to a read-path wild base) purely
+because the instrument was broken. Before believing any rung verdict, confirm both:
+
+- **A compile-time guard on a Python constant is NOT a compile-time branch unless it is wrapped in
+  `const_expr(...)`.** A bare `if PYCONST:` *reads* like dead-code elimination but actually lowers to a
+  device `scf.if`, which **strands the branch's local writes at their use site** and silently changes the
+  kernel — so a "toggle" written as a plain `if` on a constant tests two bodies that differ in the wrong
+  way, or does nothing at all. Every cut point and every A/B toggle keyed on a constant must be
+  `const_expr(int(cut) >= N)` / `const_expr(FLAG)`, never a bare `if`. Re-audit any toggle result you
+  inherited: if the guard was a plain `if`, it measured nothing.
+- **Confirm the body actually traced and reached the GPU.** A carried/fused body can fail to trace at a
+  given cut (e.g. a FlyDSL `NameError` at trace time — a point-of-use pin defined *above* a `while`/`if`
+  is not visible inside the generated `__while_after`/`__then` branch closures, because FlyDSL lowers
+  those into separate closures). When trace fails, the on-device run either never launched that body or
+  ran a stale cached module — and every "it still faults" / "the pin didn't help" conclusion from that
+  run is void. Make the harness assert a per-cut trace/compile success marker (and a fresh JIT key)
+  before it records a rung verdict; a rung with no trace marker is `INSTRUMENT_VOID`, not a fail.
+
+The tell that you were in this trap: redirecting or removing the suspected faulting op **does not move
+the fault**, or a toggle you expected to change behaviour changes nothing. That is not evidence the
+suspect is innocent — it is evidence the knob was disconnected. Fix the instrument, then re-bisect.
+
 ## Confirm the location before fixing it
 
 The ladder gives a segment, not a cause. Before writing a fix, add a probe inside the implicated

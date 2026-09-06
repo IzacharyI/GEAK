@@ -249,7 +249,9 @@ const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skil
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
 // Only planning + authoring roles consult skills; every other role gets no injection.
-const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
+// `repro_engineer` (mode=mega's dedicated faithful-reproduction role) consumes the mega skill as its
+// authoritative recipe; adding it here is inert unless MODE==='mega' AND use_expert_skills is on.
+const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'repro_engineer']);
 
 // ---- Capability-evaluation mode (OPTIONAL, default OFF -> byte-identical behaviour) --------------
 // In production, "this is already implemented next door, port it" is correct and the prior-art sweep
@@ -564,6 +566,30 @@ const AUTHOR_SCHEMA = obj({
   baseline_ms: { type: 'number' }, kernel_src_path: { type: 'string' }, entry_point: { type: 'string' },
   build: { type: 'boolean' }, notes: { type: 'string' },
 }, ['authored', 'correctness']);
+
+// mode=mega only. The dedicated Reproduce phase's return. `reproduced`+`correctness` gate whether a
+// clean whole-topology FLOOR was committed as HEAD (see the Reproduce phase). `floor_geomean` is the
+// floor's measured speedup vs the FROZEN baseline (mega_e2e rank-max on the target guard), and it is
+// what seeds `cumulative` so the optimize loop's commit gate becomes "beat the floor", not ">1.0" —
+// which is what makes the floor 保底/permanent. `floor_per_case` is diagnostic only (bestPerCase stays
+// the frozen baseline, so regression guards keep their original "at or above baseline" meaning).
+const REPRO_SCHEMA = obj({
+  reproduced: { type: 'boolean' }, correctness: { type: 'string' },
+  floor_ms: { type: 'number' }, floor_geomean: { type: 'number' },
+  floor_per_case: { type: 'array', items: { type: 'object' } },
+  kernel_src_path: { type: 'string' }, entry_point: { type: 'string' },
+  build: { type: 'boolean' }, path_marker: { type: 'string' }, liveness_replays: { type: 'number' },
+  launches: { type: 'number' }, notes: { type: 'string' },
+  // Reproduce is a bounded MULTI-ROUND on-lease AUTHORING loop (the flat 2-launch floor was never built
+  // in-tree; it must be authored, not copied). Each round the engineer carries forward its committed WIP
+  // at HEAD toward the ONE flat target. `authoring_status` steers the loop between rounds:
+  //  - 'complete'       : the whole flat operator validated clean (reproduced:true, correctness:pass) — floor established, stop.
+  //  - 'progressed'     : real on-card progress this round (WIP committed) but not yet clean — spend another round.
+  //  - 'blocked_fixable': hit a concrete, named blocker with a next-step in reach — spend another round.
+  //  - 'dead_end'       : a structural dead-end (the flat work-pool itself cannot be brought up) — honest early stop, no more rounds.
+  authoring_status: { type: 'string' },
+  next_blocker: { type: 'string' },   // the concrete thing the next round must attack (empty when complete)
+}, ['reproduced', 'correctness']);
 
 const ANALYZE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
@@ -1232,6 +1258,58 @@ async function agentT(p, o) {
 // pointer telling the agent to Read the fragment + query the skills index (scripts have no fs access).
 function expertSkillsBlock(role) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
+  // mode=mega (megafusion): author+optimize combined. Point the skill-consuming roles DIRECTLY at the
+  // mega skill instead of the generic index.yaml auto-match (so it cannot collide with the
+  // persistent-fusion skill's `match`), and deliver the mode's methodology relaxation in-prompt.
+  // PURELY ADDITIVE: only reached when MODE==='mega', so optimize/author builds are byte-identical.
+  if (MODE === 'mega') {
+    // mega now has TWO distinct phases with DIFFERENT jobs, so the advisory is role-aware:
+    //  - repro_engineer runs the Reproduce phase BEFORE the loop: faithfully reproduce the whole flat
+    //    operator as the FLOOR. Its charge is "reproduce, do not innovate".
+    //  - the optimize-loop roles (tech_lead / engineer / deep_engineer / author_engineer) run AFTER the
+    //    floor is already HEAD. Their charge is "beat the floor" — optimize on it or offer an alternative
+    //    fused candidate, never re-decompose the floor into an incremental single-edge ladder.
+    // Both share the skill, the arithmetic authorization, the r12 first-class fix, and the red line.
+    const megaCommon =
+      `- The mega skill spells out the EXACT arrival-ticket / epoch-parity / spin-wait address ` +
+      `arithmetic (base+predicate init included). Use it directly and faithfully — reproduction is ` +
+      `authorized in this mode (the derived-not-copied / leak-sweep constraint is lifted for mega). Its ` +
+      `source is the reachable baseline machinery plus the diagnosed correct init, NOT any out-of-tree ` +
+      `reference.\n` +
+      `- Fixing the baseline mega_moe_stage1.py spin-wait base/predicate register init is a FIRST-CLASS ` +
+      `allowed action (it is the r12 root cause; the substrate was wrongly treated as untouchable).\n` +
+      `- Advisory over measurement still holds: never override your isolated A/B vs the oracle, never ` +
+      `reduce a result below the measured baseline.\n` +
+      `- HARD BOUNDARY (unchanged, NOT lifted): never read anything under /root/geak_reference/.`;
+    if (role === 'repro_engineer') {
+      return `\n\n## MEGA FUSION MODE — REPRODUCE PHASE (this run)\n` +
+        `This is mode=mega and you are the dedicated REPRO engineer. Read ` +
+        `${EXPERT_SKILLS_DIR}/skills/megamoe_ep_mega_fusion/skill.md and follow it as the AUTHORITATIVE ` +
+        `recipe: it supersedes the generic persistent-fusion skill and any bankable-rung / cheaper-lever ` +
+        `ladder guidance FOR THIS MODE.\n` +
+        `- Your ONLY job is FAITHFUL REPRODUCTION of the COMPLETE 2-launch fused topology ` +
+        `(dispatch->GEMM1->GEMM2->combine) as the known-good FLOOR, authored in ONE coherent design ` +
+        `aligned to the full-operator decomposition. GEMM2 stays FLAT. Do NOT innovate, do NOT do ` +
+        `incremental half-fusion, do NOT do the g2-collapse, and do NOT treat the cut-ladder as a build ` +
+        `method (it is a bring-up DIAGNOSTIC only — you commit the whole flat operator, never a cut).\n` +
+        `- The skill's "OPTIMIZATION-PHASE FAILURE LORE" (cut4 / collapse / rocgdb) is NOT a build method ` +
+        `for you; it documents what the optimize phase must avoid.\n` +
+        megaCommon;
+    }
+    return `\n\n## MEGA FUSION MODE — OPTIMIZE PHASE (this run)\n` +
+      `This is mode=mega. A dedicated Reproduce phase has ALREADY committed the whole flat faithful ` +
+      `2-launch operator as HEAD = the FLOOR (保底). Read ` +
+      `${EXPERT_SKILLS_DIR}/skills/megamoe_ep_mega_fusion/skill.md and follow it as the AUTHORITATIVE ` +
+      `recipe: it supersedes the generic persistent-fusion skill and any bankable-rung / cheaper-lever ` +
+      `ladder guidance FOR THIS MODE.\n` +
+      `- Your job is to BEAT the floor: optimize on top of it, or offer an ALTERNATIVE complete fused ` +
+      `candidate — always keeping the whole 2-launch topology intact. Do NOT re-decompose the floor into ` +
+      `an incremental single-edge rung ladder, and do NOT invent intermediate half-fused topologies. The ` +
+      `floor is permanently retained; a candidate is admitted only if it BEATS the floor.\n` +
+      `- If you reintroduce the g2-collapse, you own its cut4 SGPR-pressure risk (see the skill's ` +
+      `OPTIMIZATION-PHASE FAILURE LORE) — it is optional and NOT part of the floor.\n` +
+      megaCommon;
+  }
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
     `Also Read ${WORKFLOW_DIR}/roles/_fragments/expert_skills.md and follow it: query ` +
     `${EXPERT_SKILLS_DIR}/index.yaml for skills whose \`match\` fits this op (operator/dtype/regime, and ` +
@@ -1510,6 +1588,152 @@ if (MODE === 'author') {
     };
   }
   log(`Author mode: ${TARGET_LANGUAGE} seed written (correct, seed ${authored.baseline_ms || '?'} ms; denominator = frozen online kernel). Optimizing it now.`);
+}
+
+// ===========================================================================
+// PHASE: Reproduce (mode=mega only) — mega's OWN pipeline, distinct from author (0->1 blind seed) and
+// from a bare optimize loop (improve-existing). A DEDICATED repro engineer AUTHORS the WHOLE flat
+// two-launch fused operator toward ONE coherent flat topology (dispatch->GEMM1->GEMM2(FLAT)->combine as
+// one persistent kernel/rank + quant its own launch). "Reproduce" is a misnomer inherited from the
+// design: the flat 2-launch floor was NEVER built and is unreachable in-tree (exhaustive on-card search
+// 2026-09-06), so this is multi-round ON-LEASE AUTHORING of a novel FlyDSL body, NOT a single-turn copy.
+// It does NOT innovate on the topology, does NOT do g2-collapse, does NOT commit an intermediate
+// half-fused TOPOLOGY as terminal, and does NOT treat the cut-ladder as a build method (only as a
+// bring-up bisection instrument). What IS iterated across rounds is on-card bring-up of the SAME flat
+// design. On success, HEAD of CANONICAL becomes that FLOOR/保底 — the code base the optimize loop diffs
+// against AND the incumbent it must beat (seeded into `cumulative` below). The SPEEDUP denominator stays
+// the frozen baseline in baseline_src/, never the floor. On failure (no clean flat floor within the
+// authoring round budget, or a declared dead_end) abort with `repro_failed`: the honest signal to fix
+// the flat-work-pool authoring (skill / repro_engineer), NOT to bury a broken partial under an optimize
+// wave. The whole block is mega-gated, so author/optimize builds are byte-identical.
+// ===========================================================================
+let reproResult = null;
+if (MODE === 'mega') {
+  phase('Reproduce');
+  // WHY A LOOP, NOT ONE CALL: the flat 2-launch floor was NEVER built and is unreachable in-tree
+  // (exhaustive on-card search, 2026-09-06: the sole GEMM2-fold anywhere is the d2_cut collapse ladder;
+  // cut<=3 = 4 launches, cut>=4 = the faulting g2-collapse; the FLAT per-tile GEMM2 work-pool is
+  // genuinely UNBUILT). So "faithful reproduction" is really multi-round on-lease AUTHORING of a novel
+  // FlyDSL body that lowers only on the card — a single turn cannot author+debug it to clean 2-launch
+  // without gambling the collective lease. Each round carries forward its committed WIP at HEAD toward
+  // the ONE flat target. This is bring-up iteration on a SINGLE flat topology — NOT the forbidden
+  // cut-ladder / intermediate-half-fused-topology / g2-collapse build method (those remain banned; what
+  // is committed at the end is always the whole flat 2-launch operator, never a cut).
+  const REPRO_ROUNDS = Math.max(1, Number(A.repro_rounds) || 6);
+  // PERF GATE (mega): a FAITHFUL reproduction reproduces M2.5's SPEED, not just its topology. A fused
+  // floor SLOWER than the scattered baseline is a shape-only skeleton — accepting it dumps the whole
+  // de-crippling climb (undo static 50/50 CU split + coarse barrier + serial combine) onto the optimize
+  // single-diff loop, which is the WRONG vehicle for a coupled concurrency rebuild. So gate the floor on
+  // floor_geomean (floor speedup vs the FROZEN scattered baseline), two-tier:
+  //   HARD  (< REPRO_FLOOR_MIN)  -> repro_failed: below scattered parity (with a small grace for the
+  //                                 persistent-grid's inherent sync overhead) is not a reproduction.
+  //   TARGET(>= REPRO_FLOOR_TARGET) -> complete: +3% proves real GEMM1‖GEMM2 overlap was AUTHORED in
+  //                                 (de-crippling alone reaches ~parity; the +% is the genuine overlap),
+  //                                 so the hard concurrency work lands in the AUTHORING vehicle where it
+  //                                 fits, leaving optimize a thin ratchet toward M2.5's full +4.71%.
+  //   [MIN,TARGET): keep authoring while rounds remain; if rounds exhaust in that band, accept the
+  //                 >=parity floor and log that optimize inherits the remaining overlap. Never accept
+  //                 below MIN. Tune via A.repro_floor_min / A.repro_floor_target.
+  const REPRO_FLOOR_MIN = Number.isFinite(Number(A.repro_floor_min)) ? Number(A.repro_floor_min) : 0.97;
+  const REPRO_FLOOR_TARGET = Number.isFinite(Number(A.repro_floor_target)) ? Number(A.repro_floor_target) : 1.03;
+  const reproHistory = [];
+  for (let rr = 1; rr <= REPRO_ROUNDS; rr++) {
+    const priorSummary = reproHistory.length
+      ? `PRIOR AUTHORING ROUNDS (carry the committed WIP at HEAD forward — do NOT restart from scratch):\n` +
+        reproHistory.map(h => `  r${h.round}: status=${h.status}; ${h.notes}`).join('\n') +
+        `\nThe next thing to attack: ${reproHistory[reproHistory.length - 1].next || '(unspecified — diagnose it)'}`
+      : `This is authoring round 1. The workspace HEAD is the clean scattered baseline; author the flat ` +
+        `2-launch operator toward first on-card activation (path=MEGA) this round.`;
+    reproResult = await agentT(
+      roleAgent('repro_engineer', 'reproduce',
+        `AUTHOR the COMPLETE flat two-launch fused megakernel following the mega skill's Construction ` +
+        `skeleton — ON-LEASE AUTHORING round ${rr} of ${REPRO_ROUNDS}. The flat 2-launch floor does NOT ` +
+        `exist in-tree; you are AUTHORING it (flat per-tile GEMM2 work-pool mirroring stage2.run_unit, ` +
+        `combine folded as a third queue, r12 substrate init applied), NOT copying a known-good tree. ` +
+        `Bring it up incrementally ON THE CARD across your gpu_lock leases this round; commit your WIP so ` +
+        `the next round carries it forward. The single flat 2-launch topology is the target — NO ` +
+        `g2-collapse, NO intermediate half-fused topology committed as terminal, NO cut-ladder as a build ` +
+        `method (cut-ladder is a bring-up bisection instrument ONLY). A faithful reproduction reproduces ` +
+        `M2.5's SPEED, not just its shape: a fused floor SLOWER than the scattered baseline is a shape-only ` +
+        `skeleton. So de-crippling the concurrency (give each stage full CU width when active — undo any ` +
+        `static 50/50 GEMM1:GEMM2 CU split; remove the coarse global barrier's over-serialization; do not ` +
+        `leave combine as a serial post-phase) IS IN SCOPE for you and is what "faithful floor" means — ` +
+        `keep GEMM2 FLAT and gemm2_compute_v2 byte-identical while doing it. Return authoring_status=complete ` +
+        `ONLY when the whole flat operator validates clean (relL2<0.10 both routes + path=MEGA==${GPU_RESOURCE.gpusPerJob} ` +
+        `+ launches=2 + >=30 clean replays) AND floor_geomean >= ${REPRO_FLOOR_TARGET.toFixed(2)}x vs the frozen ` +
+        `scattered baseline (M2.5-class is ~1.045x; >= parity ${REPRO_FLOOR_MIN.toFixed(2)}x is the hard floor — ` +
+        `a correct-but-slower floor is NOT complete, report it as progressed with the serializer you will ` +
+        `de-cripple next). Otherwise return progressed / blocked_fixable / dead_end with ` +
+        `a concrete next_blocker.\n\n${priorSummary}`, {
+        OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
+        GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
+        GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
+        REPRO_ROUND: String(rr), REPRO_ROUNDS_TOTAL: String(REPRO_ROUNDS),
+      }),
+      { phase: 'Reproduce', label: `repro:mega:r${rr}`, schema: REPRO_SCHEMA });
+    const correctnessOk = reproResult && reproResult.reproduced && reproResult.correctness === 'pass';
+    const fg = Number(reproResult && reproResult.floor_geomean);
+    const perfMeasured = Number.isFinite(fg);
+    const roundsLeft = REPRO_ROUNDS - rr;
+    // Complete when correct AND the floor reproduces M2.5-class SPEED (>= +3% target); OR correct and at
+    // least scattered parity with no authoring rounds left (accept the >=parity floor, optimize finishes).
+    const ok = correctnessOk && perfMeasured &&
+      (fg >= REPRO_FLOOR_TARGET || (fg >= REPRO_FLOOR_MIN && roundsLeft <= 0));
+    if (ok) {
+      log(`Reproduce (mega) r${rr}: faithful flat floor VALIDATED + committed as HEAD (floor ${reproResult.floor_ms || '?'} ms` +
+          `, ${fg.toFixed(3)}x vs scattered${fg < REPRO_FLOOR_TARGET ? ` — at/above parity but below the +3% target; optimize inherits the remaining overlap toward M2.5's ~1.045x` : ` — reproduces M2.5-class speed`}` +
+          `, path=${reproResult.path_marker || '?'}, launches=${reproResult.launches != null ? reproResult.launches : '?'}). Optimizing on the floor now.`);
+      break;
+    }
+    // Correct-but-too-slow is NOT done: the topology reproduces but the SPEED does not. Fall through to
+    // another authoring round (de-cripple toward parity/+3%) — this is the concurrency work landing in the
+    // authoring vehicle, not the optimize diff-gate. reproResult's committed WIP stays HEAD for next round.
+    if (correctnessOk && perfMeasured && fg < REPRO_FLOOR_MIN) {
+      log(`Reproduce (mega) r${rr}: topology CORRECT but floor ${fg.toFixed(3)}x is a shape-only skeleton ` +
+          `(< parity ${REPRO_FLOOR_MIN}x) — a faithful floor must reproduce M2.5's SPEED. De-cripple next ` +
+          `round (undo static CU split / coarse barrier / serial combine), not the optimizer.`);
+    }
+    reproHistory.push({
+      round: rr,
+      status: reproResult ? (reproResult.authoring_status || reproResult.correctness || 'unknown') : 'no-result',
+      notes: reproResult ? (reproResult.notes || '').slice(0, 600) : 'agent returned nothing',
+      next: reproResult ? (reproResult.next_blocker || '') : '',
+    });
+    log(`Reproduce (mega) r${rr}/${REPRO_ROUNDS}: status=${reproHistory[reproHistory.length - 1].status}` +
+        `${reproResult && reproResult.path_marker ? `, path=${reproResult.path_marker}` : ''}` +
+        `${reproResult && reproResult.launches != null ? `, launches=${reproResult.launches}` : ''}. ` +
+        `Next: ${reproHistory[reproHistory.length - 1].next || '(diagnose)'}`);
+    // Honest early stop on a structural dead-end: the flat work-pool itself cannot be brought up.
+    if (reproResult && reproResult.authoring_status === 'dead_end') {
+      log(`Reproduce (mega): DEAD-END declared at r${rr} — the flat work-pool cannot be authored clean. ` +
+          `Stopping honestly rather than spending the remaining ${REPRO_ROUNDS - rr} lease rounds.`);
+      break;
+    }
+  }
+  const finalCorrect = reproResult && reproResult.reproduced && reproResult.correctness === 'pass';
+  const finalFg = Number(reproResult && reproResult.floor_geomean);
+  const finalPerfOk = Number.isFinite(finalFg) && finalFg >= REPRO_FLOOR_MIN;
+  if (!finalCorrect || !finalPerfOk) {
+    const why = !finalCorrect
+      ? (reproResult ? reproResult.notes || reproResult.correctness : 'no result')
+      : !Number.isFinite(finalFg)
+        ? 'topology correct but floor SPEED was never measured — cannot certify a faithful floor'
+        : `topology correct but floor ${finalFg.toFixed(3)}x is a shape-only skeleton below scattered parity ` +
+          `(< ${REPRO_FLOOR_MIN}x) — a faithful reproduction must reproduce M2.5's SPEED (de-cripple the ` +
+          `static CU split / coarse barrier / serial combine), not just its 2-launch shape`;
+    log(`Reproduce (mega) FAILED after ${reproHistory.length} authoring round(s): ${why}. ` +
+        `Aborting — no faithful floor to optimize. Fix the reproduction (skill / repro_engineer), not the optimizer.`);
+    return {
+      mode: 'mega', reproduced: false,
+      eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+      final_geomean: 0, final_patch: '', validation_status: 'repro_failed',
+      repro_rounds_spent: reproHistory.length,
+      repro_history: reproHistory,
+      floor_geomean: Number.isFinite(finalFg) ? finalFg : 0,
+      reason: why,
+    };
+  }
 }
 
 // ===========================================================================
@@ -3195,6 +3419,20 @@ const MAX_NO_HARDWARE = Math.max(1, parseInt(A.max_no_hardware != null ? A.max_n
 let stopReason = null;
 let bestPerCase = BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source}
+// mode=mega FLOOR seeding of the commit-gate. The Reproduce phase committed the whole flat faithful
+// operator as HEAD = the FLOOR/保底. The optimize loop's ONLY guard against a slower artifact
+// overwriting a faster HEAD is the speedup commit-gate `winner.geomean > cumulative*(1+MIN_IMPROVE)`,
+// and `cumulative` starts at 1.0 (the frozen-baseline ratio). Left at 1.0, ANY >1.0 candidate (say
+// 1.02x) clears the gate and commits — OVERWRITING a faster floor (M2.5-class ~1.047x). So seed
+// `cumulative` from the floor's MEASURED speedup vs the frozen baseline: the gate then reads "must
+// BEAT the floor to commit". No win => HEAD stays the floor and final reports the floor (floor永久保留).
+// Seed ONLY `cumulative`, never bestPerCase — the per-case regression guard must stay on the frozen
+// baseline's per-case shape, and the floor's per-case vector may not share it. mega-gated; author/
+// optimize see cumulative=1.0 exactly as before.
+if (MODE === 'mega' && reproResult && Number.isFinite(Number(reproResult.floor_geomean)) && Number(reproResult.floor_geomean) > 1.0) {
+  cumulative = Number(reproResult.floor_geomean);
+  log(`mega floor seeded into commit-gate: cumulative=${cumulative.toFixed(3)}x — a candidate must BEAT the floor to overwrite HEAD; otherwise HEAD stays the floor and final = floor.`);
+}
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
 // The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
 // carry the round it came from and whether that round produced evidence at all.

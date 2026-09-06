@@ -242,10 +242,50 @@ for three waves while every round re-planned from the profile.
    shape ONLY when you are deriving the fusion from scratch with no validated recipe; a validated
    recipe converts it into a build order for one rung, not four gated rungs.
 
+   **Staging that one terminal rung when a first-draft whole-megakernel cannot be de-risked before
+   the shared lease.** "One rung" governs where the credit-bearing SIGN is read (win/no-win is
+   measured once, on the complete fused kernel), NOT how many times you may touch hardware to build
+   it. When the fused body binds device-only primitives that cannot be compile-screened (mori shmem /
+   cross-device barrier / system fences bound at trace/codegen time) and its dominant first-draft
+   failure is a HANG that holds the whole collective lease, authoring it blind as a single round's
+   terminal rung does not reach the card — three such rounds trip the no-hardware activation cap with
+   nothing measured. Then stage the SAME recipe-ordered build into `enabling` sub-rungs (§ step_role),
+   each of which MUST activate `path=MEGA` on hardware and pass a bounded functional-liveness screen,
+   each `expected_speedup`=no-win, judged on FUNCTION, NONE permitted to close the chain: (i) combine
+   folded in behind a **barrier-gated** phase + the recipe's device epoch/parity double-buffer
+   (correctness + CUDA-graph safety FIRST — deterministic, no per-token race); (ii) CU-role partition
+   of GEMM1/GEMM2 into the one launch via the arrival ticket; (iii) the TERMINAL rung — convert the
+   barrier to the per-token wait+acquire-fence concurrent-combine queue where the overlap and the
+   floor live, and read win/no-win HERE. This is the recipe's own "correctness-and-graph-safety
+   first, floor second, speed third" order made bankable one lease at a time; it is NOT the forbidden
+   isolated-single-edge decomposition above, because every sub-rung is an enabling step of the ONE
+   whole-fusion terminal rung (not an independent terminal rung), no sub-rung's reading closes the
+   chain, and the sign is still read once on the complete kernel. Do not use this to smuggle a lone
+   readiness edge back in as a terminal rung.
+
    Under `STRICT_AUTONOMY`, at least one terminal rung must also carry
    `target_shape: {launches: LAUNCH_TARGET, stages_fused:[...], require_overlap:REQUIRE_OVERLAP}`.
    The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
    two-launch terminal have the same machine state.
+
+6c. **mode=mega — the floor already exists; your job is to BEAT it, not to re-derive it (mega-gated).**
+   In `mode=mega` a dedicated **Reproduce phase runs BEFORE this loop** and has already committed the
+   **whole flat faithful 2-launch fused operator as HEAD = the FLOOR (保底)**. So §6b's "author the
+   complete fused kernel as the first terminal rung" is **already done** — do NOT re-author it, and do
+   NOT re-decompose the floor into an incremental ladder (bounding readout → readiness edge → stage
+   merge → fusion). That ladder is for deriving a fusion from scratch; here the fusion is on disk and
+   running. Instead:
+   - Treat the floor (HEAD) as the **incumbent to beat**. The commit-gate is seeded from the floor's
+     measured speedup, so a candidate is admitted ONLY if it BEATS the floor; a non-winner leaves HEAD =
+     floor. The floor is **permanently retained** — you cannot lose it by proposing a worse candidate.
+   - Each round's directions are **speed rungs stacked ON TOP of the whole fused floor** (tiling, split-k,
+     scheduling, occupancy, the optional g2-collapse with its cut4 SGPR-pressure risk owned) OR an
+     **alternative COMPLETE fused candidate** that keeps the whole 2-launch topology. Never a lone
+     single-edge terminal rung, never an intermediate half-fused topology.
+   - A single-edge change is admissible ONLY as a `mandatory_arms` diagnostic UNDER a whole-operator
+     terminal rung (to attribute cost), never as a standalone rung whose reading closes the chain.
+   - The mega skill is the authoritative recipe; its "OPTIMIZATION-PHASE FAILURE LORE" (cut4 / collapse /
+     rocgdb) tells you which cleverness carries which risk — it is not a build order.
 
 Return JSON:
 ```json
@@ -671,6 +711,65 @@ Rules:
      occupancy (−15.7% e2e for doubling occupancy on both binding limiters). The second was a
      well-run experiment against a hypothesis the first had already answered, and it cost the round
      that could have measured the banked arm.
+   - **The lease-only credit terminal is AUTHORED on the free lease — its risk is a reason to arm the
+     truncation ladder, never a reason to defer it.** When the win/no-win-deciding rung cannot be
+     compile-screened at all — its fused body binds shmem / barrier / system-fence primitives at
+     trace/codegen time (`distributed_fusion.md` Lever 10 / trap 1), so every hypothesis costs a full
+     multi-rank lease and a first draft can deadlock — the deadlock risk means you **arm the
+     crash-bisection truncation ladder** (record-and-continue, per-segment bracketing, rule 3e "one
+     instrumented run answers several questions") so ONE lease brackets the hang to a code segment. It
+     does **not** license spending the free lease re-measuring an enabler axis you have already
+     falsified. Re-confirming a closed axis banks nothing the objective can use; authoring the terminal
+     is the only move that can. **A free lease the pool actually granted is the resource this authoring
+     exists for.** Deferring it to "guaranteed coverage" of a known-negative partial is the banked-vault
+     failure above wearing the opposite mask — there the risky arm was banked and never run; here the
+     risky arm is never even *authored*, because a safe re-measurement of the partial always reads as
+     locally rational. This exact trap ran on 2026-09-05: an EP8 fuse wave falsified the D0+D1
+     enabler-alone composition as a ~-3.9 % regression at `8192_uniform` in round 6, then spent a FREE
+     8-card lease in round 7 re-measuring the same partial to four-guard depth — reconfirming the same
+     negative — while the one credit lever, the CU-role co-resident GEMM1+GEMM2 launch MERGE (4→2, the
+     rung that actually carries the win), stayed unauthored for a seventh round on the stated ground
+     that authoring it blind might deadlock the one-shot lease. If the terminal genuinely cannot reach a
+     first clean run in a single lease, emit a **numbered authoring plan with the truncation segments
+     named** so the NEXT lease resumes mid-authoring — that is the sanctioned lease-free output here,
+     NOT a re-confirmation of the closed axis.
+   - **A terminal that RAN and was bracketed to a deadlock is a BANKED result — the next lease targets
+     the bracketed segment, it does NOT re-author the body from scratch.** When the authored terminal
+     reached the device (its path marker printed) but the truncation ladder bracketed a hang to one
+     segment, that localization *is* what the lease bought. But note the resume seam: a RESUMED wave's
+     director seeds only from `STATE_DIR/best`, which is the cumulative-best **passing** patch — an
+     authored-but-deadlocked terminal never passed, so its diff and its bracket live ONLY in the
+     round dir, invisible to the seed. And the location is not where you'd first look: a resumed wave is
+     handed a **FRESH timestamped team dir** and the round counter restarts at 1, so the prior lease's
+     round dirs are **not under your own `EVAL_DIR`** — they are a SIBLING team dir under `exp_root`
+     (`exp_root/team_*/*/round_*/engineer_*/`), and the prior authoring's round number can be HIGHER than
+     your current one. Therefore, **before authoring any fusion edge on a resumed wave, scan `exp_root`
+     RECURSIVELY for the NEWEST-by-mtime `d2_ladder_results.json` (and the `best_patch.diff` /
+     `worker_result.json` beside it)** — that file marks the most recent on-device fusion-edge authoring
+     regardless of which team dir or round number it landed in. If it holds off-lease authoring for
+     the same edge, BUILD ON THAT DIFF and aim the lease at the localized bug. For a hang on an
+     **intra-rank** readiness edge (GEMM1→GEMM2), the fix is almost never a scope change: the
+     `megamoe_ep_persistent_fusion` skill pins that edge at **agent scope** (`fence_agent_release` +
+     `atomic_add_agent`) — system scope there is the MI355X cross-L2 per-token regression, not a fix. A
+     hang whose `path=MEGA` marker is non-monotonic across cuts is a `wait_until` **target that is never
+     reachable** (crash_bisection: the producer publishes a tile index / expected count the consumer's
+     wait does not match), so the move is the skill's own probe method — print `ready1[item]`, the
+     expected count, and `total_work` in the implicated segment and read the mismatch directly — NOT a
+     scope change. Re-running the truncation ladder confirms the fix. Re-deriving the same body to re-hit the same hang is the
+     banked-vault failure in yet another mask. This ran on 2026-09-05: round 9 banked the dispatch+GEMM1
+     persistent substrate (`path=MEGA`, relL2 0.059, clean, in `STATE_DIR/best`); round 10 AUTHORED the
+     whole-body GEMM2 fold across all six lane files (combine kernel + op included), and CUT8 **activated
+     `path=MEGA` but DEADLOCKED** — the ladder bracketed it to the GEMM1→GEMM2 agent-scope `ready1`
+     fence+atomic edge (CUT3 clean ↔ CUT4 hang; the mega marker was *non-monotonic* across cuts —
+     `mega=1` at CUT8/CUT5 but `mega=0` at CUT4). The scope is already correct per the skill (agent, the
+     right choice for this intra-rank edge); the deadlock is a `wait_until(ready1[...])` **target the
+     producer never reaches** — an expected-count / tile-index mismatch. The next lease's job is to
+     **probe that counter** (print `ready1`, expected, `total_work`) and fix the index/count, built on
+     round_10's `best_patch.diff` — NOT to change the fence scope. A fresh GEMM2-fold author that ignores
+     round_10 re-buys the same deadlock. Only
+     once GEMM1→GEMM2 runs clean does the downstream GEMM2→combine fold (4→3→2 launches) become
+     reachable in a single body run — the fusion edges deadlock in strict order, so the upstream edge is
+     the gate on everything below it.
    - **When nothing else separates two candidate directions, the lease goes to the one that tests what
      the TASK names as its objective, not to the one with the tidier local lever.** A local lever is
      easier to scope, easier to screen, and produces a cleaner artifact whether it works or not — so
