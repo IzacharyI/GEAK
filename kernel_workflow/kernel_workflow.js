@@ -1620,32 +1620,52 @@ if (MODE === 'mega') {
   // cut-ladder / intermediate-half-fused-topology / g2-collapse build method (those remain banned; what
   // is committed at the end is always the whole flat 2-launch operator, never a cut).
   const REPRO_ROUNDS = Math.max(1, Number(A.repro_rounds) || 6);
-  // PERF GATE (mega): a FAITHFUL reproduction reproduces M2.5's SPEED, not just its topology. A fused
-  // floor SLOWER than the scattered baseline is a shape-only skeleton — accepting it dumps the whole
-  // de-crippling climb (undo static 50/50 CU split + coarse barrier + serial combine) onto the optimize
-  // single-diff loop, which is the WRONG vehicle for a coupled concurrency rebuild. So gate the floor on
-  // floor_geomean (floor speedup vs the FROZEN scattered baseline), two-tier:
-  //   HARD  (< REPRO_FLOOR_MIN)  -> repro_failed: below scattered parity (with a small grace for the
-  //                                 persistent-grid's inherent sync overhead) is not a reproduction.
-  //   TARGET(>= REPRO_FLOOR_TARGET) -> complete: +3% proves real GEMM1‖GEMM2 overlap was AUTHORED in
-  //                                 (de-crippling alone reaches ~parity; the +% is the genuine overlap),
-  //                                 so the hard concurrency work lands in the AUTHORING vehicle where it
-  //                                 fits, leaving optimize a thin ratchet toward M2.5's full +4.71%.
-  //   [MIN,TARGET): keep authoring while rounds remain; if rounds exhaust in that band, accept the
-  //                 >=parity floor and log that optimize inherits the remaining overlap. Never accept
-  //                 below MIN. Tune via A.repro_floor_min / A.repro_floor_target.
+  // PERF GATE (mega): the floor SPEED is measured and the +3% target is an authoring ASPIRATION, but a
+  // CORRECT floor at ANY speed is accepted — round_1 proved the optimize single-diff gate ratchets a
+  // sub-parity floor up cleanly (+1.322x/round), so a correct-but-slow floor is an optimizable starting
+  // point, NOT a failure. floor_geomean is speedup vs the FROZEN scattered baseline. Bands:
+  //   >= REPRO_FLOOR_TARGET -> complete early: reproduces M2.5-class speed, de-crippling already done in
+  //                            the authoring vehicle, optimize just ratchets the last bit.
+  //   [MIN,TARGET) or < MIN with rounds left -> keep authoring: de-cripple toward the target to hand
+  //                            optimize a BETTER floor (aspiration), but this is NOT a fail condition.
+  //   rounds exhausted, correct at ANY speed -> accept as the floor; optimize ratchets from the seed.
+  //   FAIL only when NOT correct, or the floor speed was never measured (cannot seed the commit-gate).
+  //   Tune via A.repro_floor_min / A.repro_floor_target.
   const REPRO_FLOOR_MIN = Number.isFinite(Number(A.repro_floor_min)) ? Number(A.repro_floor_min) : 0.97;
   const REPRO_FLOOR_TARGET = Number.isFinite(Number(A.repro_floor_target)) ? Number(A.repro_floor_target) : 1.03;
+  // CONTINUATION flag: when a wave is seeded from a PRIOR wave's fully-authored floor tree (BASELINE =
+  // the floor HEAD, so the whole flat 2-launch operator is ALREADY present + on-card-validated), the
+  // Reproduce phase must VERIFY + MEASURE that floor, NOT re-author it from scratch. Without this the
+  // round-1 charge tells the engineer "HEAD is the clean scattered baseline, author from 0" — false and
+  // dangerous on a continuation (it invites a destructive rewrite of a working floor). Set via
+  // A.floor_prebuilt=true on the relaunch. Off => the original from-scratch authoring behavior.
+  const FLOOR_PREBUILT = A.floor_prebuilt === true || String(A.floor_prebuilt) === 'true';
   const reproHistory = [];
   for (let rr = 1; rr <= REPRO_ROUNDS; rr++) {
     const priorSummary = reproHistory.length
       ? `PRIOR AUTHORING ROUNDS (carry the committed WIP at HEAD forward — do NOT restart from scratch):\n` +
         reproHistory.map(h => `  r${h.round}: status=${h.status}; ${h.notes}`).join('\n') +
         `\nThe next thing to attack: ${reproHistory[reproHistory.length - 1].next || '(unspecified — diagnose it)'}`
-      : `This is authoring round 1. The workspace HEAD is the clean scattered baseline; author the flat ` +
-        `2-launch operator toward first on-card activation (path=MEGA) this round.`;
+      : FLOOR_PREBUILT
+        ? `This is a CONTINUATION round 1. The workspace HEAD is ALREADY the prior wave's fully-authored, ` +
+          `on-card-validated flat 2-launch floor (path=MEGA, launches=2, relL2-clean). VERIFY + MEASURE it ` +
+          `this round; do NOT re-author.`
+        : `This is authoring round 1. The workspace HEAD is the clean scattered baseline; author the flat ` +
+          `2-launch operator toward first on-card activation (path=MEGA) this round.`;
     reproResult = await agentT(
       roleAgent('repro_engineer', 'reproduce',
+        (FLOOR_PREBUILT && reproHistory.length === 0
+          ? `CONTINUATION — THE FLOOR IS ALREADY BUILT AND VALIDATED. The workspace HEAD is a prior wave's ` +
+            `fully-authored flat two-launch fused megakernel (path=MEGA on-card ×${GPU_RESOURCE.gpusPerJob}, ` +
+            `launches=2, relL2<0.10 at {128,512,8192}×{uniform,skew}, ≥30 clean replays already achieved). ` +
+            `Your job THIS round is to VERIFY it still validates on THIS machine and MEASURE its floor_geomean ` +
+            `(paired rank-max vs the frozen scattered baseline), then return reproduced=true / correctness=pass ` +
+            `/ floor_geomean=<measured> / launches=2 / path_marker=MEGA / authoring_status=complete. Do NOT ` +
+            `re-author, rewrite, "clean up", re-ladder, or "improve" the existing flat operator — touch it ONLY ` +
+            `to fix a concrete verification failure you actually observe. If it validates clean, that IS ` +
+            `complete no matter how slow the floor is (a sub-parity floor is the optimizable starting point; ` +
+            `the optimize phase ratchets it up — you do NOT need to de-cripple it here). \n\n`
+          : ``) +
         `AUTHOR the COMPLETE flat two-launch fused megakernel following the mega skill's Construction ` +
         `skeleton — ON-LEASE AUTHORING round ${rr} of ${REPRO_ROUNDS}. The flat 2-launch floor does NOT ` +
         `exist in-tree; you are AUTHORING it (flat per-tile GEMM2 work-pool mirroring stage2.run_unit, ` +
