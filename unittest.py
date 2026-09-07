@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Immutable oracle for the Triton-to-FlyDSL GEMM author A/B."""
+"""Immutable oracle for the Triton-to-FlyDSL fp8 block-scale GEMM author run.
+
+Denominator: aiter-Triton gemm_a8w8_blockscale (W=fp8/A=fp8 e4m3fnuz, 128x128 block
+scales, bf16 output), with the gfx942 config frozen per shape in baseline_src so
+neither the baseline nor the candidate consults a mutable tuning DB. Candidate must
+author the block-scale GEMM in FlyDSL and match the frozen baseline within tol.
+"""
 
 import argparse
 import hashlib
@@ -28,6 +34,10 @@ os.chdir(HERE)
 
 import torch  # noqa: E402
 import harness_lib as h  # noqa: E402
+from aiter.ops.triton.utils.types import get_fp8_dtypes  # noqa: E402
+
+_E5M2_DTYPE, FP8_DTYPE = get_fp8_dtypes()
+BLOCK_N, BLOCK_K = 128, 128
 
 
 def _tree_sha256(path):
@@ -77,12 +87,8 @@ def _import_callable(spec):
         if hasattr(module, attr):
             return getattr(module, attr)
     except ModuleNotFoundError as exc:
-        # Only suppress the absence of the requested package itself. A missing
-        # dependency inside an existing module must remain visible.
         if exc.name != module_name:
             raise
-    # Author implementations may choose any focused filename. The stable
-    # interface is kernel_src:gemm, exported directly or by one source file.
     if module_name != "kernel_src":
         raise ImportError(f"{module_name} does not export {attr}")
     candidates = []
@@ -112,7 +118,6 @@ def _code_only(source):
                 if chars[index] not in "\r\n":
                     chars[index] = " "
     except (IndentationError, tokenize.TokenError):
-        # Import will report malformed Python. Keep the conservative raw scan here.
         return source
     return "".join(chars)
 
@@ -144,23 +149,26 @@ def verify_candidate_is_flydsl():
 
 
 def baseline_call(args):
-    a, b = args
-    return BASELINE(a, b)
+    x, w, x_scale, w_scale = args
+    return BASELINE(x, w, x_scale, w_scale)
 
 
 def current_call(args):
-    a, b = args
-    return CURRENT(a, b)
+    x, w, x_scale, w_scale = args
+    return CURRENT(x, w, x_scale, w_scale)
 
 
 def build_args(case, seed=None, rng=None):
     if rng is None:
         rng = torch.Generator(device="cuda").manual_seed(int(case["seed"] if seed is None else seed))
-    a = torch.randn((case["m"], case["k"]), generator=rng, dtype=torch.float32,
-                    device="cuda").to(torch.bfloat16)
-    b = torch.randn((case["n"], case["k"]), generator=rng, dtype=torch.float32,
-                    device="cuda").to(torch.bfloat16)
-    return a, b
+    m, n, k = case["m"], case["n"], case["k"]
+    scale_k = (k + BLOCK_K - 1) // BLOCK_K
+    scale_n = (n + BLOCK_N - 1) // BLOCK_N
+    x = (torch.rand((m, k), generator=rng, dtype=torch.float16, device="cuda") / 10).to(FP8_DTYPE)
+    w = (torch.rand((n, k), generator=rng, dtype=torch.float16, device="cuda") / 10).to(FP8_DTYPE)
+    x_scale = torch.rand((m, scale_k), generator=rng, dtype=torch.float32, device="cuda")
+    w_scale = torch.rand((scale_n, scale_k), generator=rng, dtype=torch.float32, device="cuda")
+    return x, w, x_scale, w_scale
 
 
 def shapes():

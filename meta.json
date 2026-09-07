@@ -1,5 +1,5 @@
 {
-  "task_name": "triton2flydsl_gemm_bf16_llama70b_qkv_prefill",
+  "task_name": "triton2flydsl_gemm_fp8blk_n4096_k512",
   "op_kind": "gemm",
   "language": "triton",
   "live_backend": "triton",
@@ -7,11 +7,11 @@
     "triton",
     "flydsl"
   ],
-  "math_contract": "C[M,N] = A[M,K] @ B[N,K].T with fp32 accumulation and bf16 output",
-  "dtype": "bf16",
-  "regime": "Llama-3-70B QKV projection; prefill, M=2048, compute-bound, large-M bucket",
+  "math_contract": "Y[M,N] = (X[M,K]*x_scale) @ (W[N,K]*w_scale).T with 128x128 fp8 block-scale dequant, fp32 accumulation, bf16 output",
+  "dtype": "fp8_e4m3fnuz_blockscale",
+  "regime": "MI300/gfx942 Dense GEMM W=fp8/A=fp8; N=4096, K=512; decode M=8 + prefill M=32768 (one kernel, two cases)",
   "entry_point": "kernel_src:gemm",
-  "baseline_callable": "baseline_src.gemm_triton:gemm",
+  "baseline_callable": "baseline_src.gemm_fp8_blockscale:gemm",
   "baseline_frozen": true,
   "build": false,
   "random_draws": 5,
@@ -19,16 +19,23 @@
   "tol": 0.02,
   "cases": [
     {
-      "sig": "m2048_n10240_k8192",
-      "m": 2048,
-      "n": 10240,
-      "k": 8192,
-      "seed": 1000
+      "sig": "decode_m8",
+      "m": 8,
+      "n": 4096,
+      "k": 512,
+      "seed": 1008
+    },
+    {
+      "sig": "prefill_m32768",
+      "m": 32768,
+      "n": 4096,
+      "k": 512,
+      "seed": 33768
     }
   ],
-  "baseline_src_sha256": "7c2daf60256bbdb13270e06df0857cce91e78a9301b380353cd754d93e84b309",
+  "baseline_src_sha256": "75af0cfb89fb35b05deea693eb7bfbaf3025a07006548d599223e44a38417e56",
   "harness_lib_sha256": "fe8e18f4cba1313cc5033ae47950fb6154f6680e050d77436f7c5bb4095fd7f2",
-  "unittest_sha256": "4bf859fd22362abdd65767468d7bcff762765a8046435a156887e41e2418d1e2",
+  "unittest_sha256": "05e7a89321b1432f8028adc5fc6cfb17b941cfe2d0f63f7bfa499fc0af7f9c72",
   "reference_io_sha256": "",
-  "notes": "Llama-3-70B QKV projection, prefill regime (M=2048). Source: AITER Triton gemm_a16w16, gfx942 M_LEQ_2048 config embedded in baseline_src; no mutable config DB consulted. Single frozen shape; run 10x per arm (perf_knowledge on/off)."
+  "notes": "MI300/gfx942 Dense fp8 block-scale GEMM, weight (N=4096,K=512). Denominator: aiter-Triton gemm_a8w8_blockscale with gfx942 GEMM-A8W8_BLOCKSCALE config frozen per M for decode(M=8) and prefill(M=32768); 128x128 block scales; no mutable tuning DB consulted at eval. One FlyDSL kernel scored on both cases (geomean); ON-only, 10 author lanes."
 }
