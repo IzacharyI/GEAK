@@ -118,6 +118,12 @@ console.log('\n# skill lane is reserved but non-blocking');
     'the persistent skill lane returns on its configured interval');
   ok(!api.megaSkillLaneDue([{ ...skill, status: 'scored' }], 4, 'm25_skill', 6, 3),
     'a scored skill candidate stops consuming authoring attempts');
+  const due = (round, attempts) => api.megaSkillLaneDue([
+    { ...skill, attempts },
+  ], round, 'm25_skill', 4, 2, 2);
+  ok(due(1, 0) && due(2, 1) && !due(3, 2) && due(4, 2) &&
+     !due(5, 3) && due(6, 3),
+  'production cold start schedules skill,skill,search,skill,search,skill');
 }
 
 console.log('\n# calibration requires an atomic complete claim');

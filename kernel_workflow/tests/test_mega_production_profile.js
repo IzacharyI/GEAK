@@ -24,8 +24,9 @@ ok(args.mega_time_budget_s === 10800 && args.mega_final_reserve_s === 3600 &&
   'wall target is three hours with sixty minutes reserved for final validation and closeout');
 ok(args.mega_candidate_timeout_s === 1200 && args.mega_final_timeout_s === 1200,
   'candidate and finalist calls have separate bounded timeouts');
-ok(args.mega_skill_interval === 2 && args.mega_skill_max_attempts === 3,
-  'six turns split approximately three skill and three open-search attempts');
+ok(args.mega_skill_initial_burst === 2 && args.mega_skill_interval === 2 &&
+   args.mega_skill_max_attempts === 4,
+  'cold start reserves rounds 1,2,4,6 for skill and rounds 3,5 for open search');
 
 console.log('\n# valid output triggers early convergence');
 ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&

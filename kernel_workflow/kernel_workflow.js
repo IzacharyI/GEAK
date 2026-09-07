@@ -219,6 +219,7 @@ const MEGA_M25_RECORDED_SCORE = Number(A.mega_m25_recorded_score || 1.0448);
 const MEGA_M25_RECORDED_LOW = Number(A.mega_m25_recorded_low || 1.0403);
 const MEGA_M25_RECORDED_HIGH = Number(A.mega_m25_recorded_high || 1.0477);
 const MEGA_SKILL_MAX_ATTEMPTS = Math.max(1, Number(A.mega_skill_max_attempts || 6));
+const MEGA_SKILL_INITIAL_BURST = Math.max(0, Number(A.mega_skill_initial_burst || 0));
 const MEGA_SKILL_INTERVAL = Math.max(1, Number(A.mega_skill_interval || 3));
 const MEGA_FINAL_TOP_K = Math.max(1, Number(A.mega_final_top_k ||
   (MEGA_PRODUCTION ? 1 : 2)));
@@ -2633,13 +2634,21 @@ function selectMegaCandidate(registry, tieNoisePct) {
   return { selected: best, eligible, tie_kept_skill: false };
 }
 
-function megaSkillLaneDue(registry, round, candidateId, maxAttempts, interval) {
+function megaSkillLaneDue(registry, round, candidateId, maxAttempts, interval, initialBurst) {
   const c = (Array.isArray(registry) ? registry : [])
     .map(normalizeMegaCandidate).find((x) => x.id === candidateId);
   if (!c || c.status === 'rejected' || c.status === 'finalist' || c.status === 'scored') return false;
   if (c.attempts >= Math.max(1, Number(maxAttempts || 1))) return false;
   if (c.attempts === 0) return true;
-  return (Math.max(1, Number(round || 1)) - 1) % Math.max(1, Number(interval || 1)) === 0;
+  const burst = Math.max(0, Number(initialBurst || 0));
+  if (burst === 0) {
+    return (Math.max(1, Number(round || 1)) - 1) %
+      Math.max(1, Number(interval || 1)) === 0;
+  }
+  if (c.attempts < burst) return true;
+  const postBurstRound = Math.max(1, Number(round || 1)) - burst;
+  return postBurstRound > 0 &&
+    postBurstRound % Math.max(1, Number(interval || 1)) === 0;
 }
 
 function megaCalibrationClaimPass(pc, configured) {
@@ -4784,7 +4793,7 @@ function megaBaseHead(baseId) {
 
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   if (megaSkillLaneDue(megaCandidateRegistry, currentRound, MEGA_SKILL_CANDIDATE_ID,
-      MEGA_SKILL_MAX_ATTEMPTS, MEGA_SKILL_INTERVAL)) {
+      MEGA_SKILL_MAX_ATTEMPTS, MEGA_SKILL_INTERVAL, MEGA_SKILL_INITIAL_BURST)) {
     const skill = megaCandidateById(MEGA_SKILL_CANDIDATE_ID);
     return {
       id: `r${currentRound}_${MEGA_SKILL_CANDIDATE_ID}`,

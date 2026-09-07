@@ -85,7 +85,9 @@ Mega uses one budget loop:
 
 The default `production` profile has six candidate turns and a three-hour wall target, reserving the
 last 60 minutes for final validation and lightweight closeout. It stops earlier after a calibrated `>1.0x` candidate and two
-independent search attempts. `audit` is the explicit long-running profile.
+independent search attempts. Cold-start scheduling is `skill, skill, search, skill, search, skill`;
+if the skill candidate scores early, every remaining reserved turn becomes search. `audit` is the
+explicit long-running profile.
 
 1. **`m25_skill` lane (`mega_engineer`)** reconstructs the complete M2.5 capability from the skill.
    It keeps its own persistent HEAD and receives reserved attempts, but never blocks other lanes.
