@@ -24,6 +24,16 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   weighted target and never violate its gates, e.g. decode-no-regress or the memory cap).
 - `KERNEL_KNOWLEDGE_DIR` (may be empty), `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` — pointers into the
   AMD operator×backend SOTA base, resolved by the TechLead for THIS kernel (see the next section).
+- **MEGA candidate lane (only when `CANDIDATE_ID` is present):** `BASE_TREE`,
+  `BASE_HEAD`, `CANDIDATE_TREE`, `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
+  `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`. Continue that persistent tree; never recreate it or edit another lane. The exact
+  M2.5 recipe is intentionally absent from ordinary search lanes.
+
+In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
+can be optimized later, but it is never a final result. Finalists require absolute speedup greater
+than 1.0 versus frozen MegaMoE V2. Write an atomic evidence manifest and set
+`claim_complete:true` only after all measurements are final; missing data is `claim_complete:false`,
+never zero.
 
 ## Load only the knowledge for your specialty (keeps context focused)
 - algorithm  → `hip_optimization.md` (P0/P1) or `triton_optimization.md`, + `geomean_levers.md`
@@ -137,17 +147,12 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 6. Preserve the kernel's external interface (signature, semantics) so the wrapper/tests still work.
 7. Hipify safety (HIP): never put `<<<>>>` launches inside a macro if/else or ternary — use template
    dispatch functions. See `hip_optimization.md` → Hipify Safety Rules.
-8. **mode=mega (mega-gated) — the HEAD you are editing IS the reproduced FLOOR (保底); beat it, keep it
-   whole.** In `mode=mega`, a Reproduce phase already committed the whole flat faithful 2-launch fused
-   operator as HEAD. Your `DIRECTION` is a **speed rung stacked ON TOP of that whole operator**, or an
-   **alternative COMPLETE fused candidate** — always keeping the entire 2-launch topology
-   (dispatch→GEMM1→GEMM2→combine as one persistent kernel + separate quant launch) intact. Do NOT
-   re-decompose the operator into an incremental single-edge change, do NOT hand back a half-fused
-   intermediate topology, and do NOT commit a cut-ladder cut as if it were the operator. The commit-gate
-   is seeded from the floor's speedup, so only a patch that **beats the floor** is admitted; a worse
-   patch leaves HEAD = floor (the floor is permanently retained — you cannot lose it). If your direction
-   is the g2-collapse, you own its cut4 SGPR-pressure risk (see the mega skill's OPTIMIZATION-PHASE
-   FAILURE LORE); it is optional and not part of the floor. Red line: never read `/root/geak_reference/`.
+8. **mode=mega (mega-gated) — advance only your candidate lane.** `CANDIDATE_TREE` is an independent
+   lineage, not a shared floor. Continue its HEAD, keep its complete two-launch target coherent, and
+   never modify another registry candidate. Slow correct work remains runnable WIP; it may continue
+   but cannot become final output until absolute speedup is greater than 1.0 versus frozen MegaMoE V2.
+   Ordinary search lanes do not receive the exact M2.5 recipe. Never seek or read any hand-authored
+   M2.5 source tree outside the candidate workspace.
 
 ## Workflow
 1. **Baseline**: in `KERNEL_PATH`, clear cache, run the COMMANDMENT benchmark via gpu_lock, record
@@ -257,6 +262,40 @@ logs. The same wave lost a full benchmark phase the same way. So:
 ```
 `OUTPUT_DIR/report.md` — brief: task, approach, per-case results table, geomean, what worked, what
 didn't. (This is your required mini-report.)
+
+When `CANDIDATE_ID` is present, keep the early partial journal if useful, but the authoritative output
+is `OUTPUT_DIR/candidate_result.json`. Write it via temporary-file + atomic rename only after its
+evidence manifest is complete:
+
+```json
+{
+  "candidate_id": "<CANDIDATE_ID>",
+  "candidate_source": "search|integrated",
+  "base_candidate_id": "<BASE_CANDIDATE_ID>",
+  "candidate_status": "authoring|runnable|scored|rejected",
+  "claim_complete": true,
+  "attempt_id": "<ATTEMPT_ID>",
+  "evidence_manifest": "<path>",
+  "correctness": "pass|fail|pending",
+  "build": true,
+  "tree": "<CANDIDATE_TREE>",
+  "head": "<git HEAD>",
+  "patch_file": "<cumulative lane patch>",
+  "absolute_score": 1.0,
+  "per_case": [],
+  "activation_on_hardware": "yes|no|unknown",
+  "path_marker": "MEGA==8",
+  "launches": 2,
+  "liveness_replays": 30,
+  "graph_safe": "pass|fail|pending",
+  "topology_sig": "...",
+  "provenance": "workflow_search",
+  "next_blocker": "...",
+  "notes": "..."
+}
+```
+
+An interrupted attempt returns `claim_complete:false`; it does not claim `absolute_score:0`.
 
 If you achieved no speedup but produced a buildable, correct implementation, still submit its patch
 and the measured regression honestly. Omit `patch_file` only when no buildable/correct source change

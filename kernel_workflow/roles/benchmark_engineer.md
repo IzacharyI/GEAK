@@ -222,6 +222,7 @@ pair k. Nothing checks this at write time — but an artifact the replay cannot 
 that silently contributes nothing to the one instrument that catches a bad gate change.
 
 ### 5b. Run the POSITIVE CONTROL — only when `POSITIVE_CONTROL` is in your inputs
+
 The 3-run reliability check above tells you the baseline is *stable*. It does not tell you the
 harness can *see* anything. Those are different properties and only one of them is currently
 measured: a harness that returns the same number no matter what you do is maximally "reliable".
@@ -478,7 +479,10 @@ So, when a `POSITIVE_CONTROL` names a patch:
   indistinguishable from one still sitting in the tree.
 
 If the control cannot be run at all (path missing, lease unobtainable), return
-`{"ran": false, "note": "<why>"}` — an honest failure, not an omitted field.
+`{"ran": false, "claim_complete": false, "switch_present": null, "measured_pct": null,
+"note": "<why>"}` — an honest pending/failed attempt, not an
+omitted field or a synthetic zero. Write the evidence manifest first and atomically publish the
+complete control claim last.
 
 Save `EVAL_DIR/baseline_timing.json` (the `count`/`dims`/`dtypes`/`weight_source` fields appear only
 when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·latency_i`):
@@ -538,6 +542,9 @@ after every number had already been written to `setup_ab_*.json`.
   "num_test_cases": 0,
   "reliable": true,
   "positive_control": {"ran": true,
+                       "claim_complete": true,
+                       "attempt_id": "setup:synthetic_control:1",
+                       "evidence_manifest": "<EVAL_DIR>/setup_control/evidence_manifest.json",
                        "switch_present": true,
                        "switch_checked": "<the exact grep you ran and what it returned>",
                        "measured_pct": 0.0, "expected_lo": 0.0, "expected_hi": 0.0,

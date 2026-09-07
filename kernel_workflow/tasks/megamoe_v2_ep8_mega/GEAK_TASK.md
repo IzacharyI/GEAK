@@ -9,15 +9,12 @@ its own path — every command below sets `PYTHONPATH="$PWD"` so the copy you ar
 > copies. If you are reading unsubstituted `${...}` placeholders below, the workspace was assembled
 > by hand and those are the values you must supply — see "Environment prerequisites".
 
-> **This is MEGA mode (`mode=mega`) — its own two-phase pipeline (like author and optimize each have
-> their own), NOT a reuse of either.** It runs a dedicated **Reproduce phase** (role `repro_engineer`)
-> that faithfully reproduces the whole flat 2-launch fused operator from the `megamoe_ep_mega_fusion`
-> skill (which spells out the exact address arithmetic) and commits it as HEAD = the FLOOR (保底),
-> **then** an **Optimize phase** that must BEAT that floor (or leave it as HEAD). This replaces the
-> optimize task's incremental bankable-rung ladder: the whole operator is reproduced in one design
-> first, not laddered up edge by edge. Everything else — the baseline-as-denominator framing, the
-> M2.5-as-floor bar, `capability_eval=false`, `strict_autonomy=false`, the guards, the measurement
-> discipline — is identical to the optimize task. See the "MEGA is TWO phases" directive below.
+> **This is MEGA mode (`mode=mega`) — one shared loop with independent whole-kernel candidate lanes.**
+> The reserved `m25_skill` lane uses `mega_engineer` plus `megamoe_ep_mega_fusion` to reconstruct
+> M2.5 from the frozen public baseline. Other TechLead/Engineer lanes run independently and do not
+> receive that exact recipe. A slow or broken lane never overwrites or blocks another lane. All
+> selectable source is authored by the workflow; the hand-written M2.5 tree is never run, copied,
+> diffed, imported, or used as a base. Its recorded 1.0448x result is only a target.
 
 ## Environment prerequisites
 
@@ -44,7 +41,7 @@ quant  →  Stage1 (dispatch + GEMM1)  →  Stage2 (GEMM2 + P2P publish)  →  C
 
 Entry point / launch orchestration: `aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py`
 Kernel bodies:
-- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`  (dispatch + GEMM1; the largest stage — **and where the r12 substrate spin-wait defect lives; see the MEGA directive**)
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`  (dispatch + GEMM1; the largest stage)
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`  (GEMM2 + `p2p_scatter_epilog`)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py`  (combine)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py`  (combine **host-op wrapper**:
@@ -63,14 +60,13 @@ These are FlyDSL kernels (Python-authored, JIT-compiled), not Triton or HIP sour
 
 The whole-fusion dimension ("author whole-fused persistent megakernel", `path=MEGA`) is modifiable
 across these on-path files. This list is the known-on-path core, NOT a closed whitelist: extend it to
-any other file **on the MegaMoEV2 path** that your task-graph or the `megamoe_ep_mega_fusion`
-skill shows a required edge lives in — the point of the guard below is to keep you out of the dead
+any other file **on the MegaMoEV2 path** where your task graph shows a required edge lives — the point of the guard below is to keep you out of the dead
 lane, not out of files the fusion genuinely needs.
 
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py`            (entry / launch orchestration)
-- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`       (dispatch + GEMM1; **the arrival-ticket / epoch-parity / gate spin-wait substrate — hardening its base/predicate register init is a first-class action in mega mode, see below**)
+- `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py`       (dispatch + GEMM1 and its persistent scheduling substrate)
 - `aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py`       (GEMM2 launch + p2p publish)
-- `aiter/ops/flydsl/kernels/mega_moe/gemm2.py`                 (GEMM2 compute body / K-loop — the A-resident structure is part of the one-shot design, not a separately-promoted rung)
+- `aiter/ops/flydsl/kernels/mega_moe/gemm2.py`                 (GEMM2 compute body / K-loop)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py`  (combine device kernel)
 - `aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py`      (combine host-op wrapper / arg-threading boundary)
 - `aiter/ops/flydsl/kernels/communication_ops_utils.py`        (fences, atomics)
@@ -83,80 +79,31 @@ The intersection {focus} ∩ {modifiable} ∩ {needed} MUST be non-empty; the on
 by your own analysis, guarantees it — a required edge in an on-path file is never a reason to fall back
 to the dead lane.
 
-## DIRECTIVE — MEGA is TWO phases: Reproduce the floor first, then optimize on it
+## DIRECTIVE — independent candidate lanes
 
-**mega runs a dedicated `Reproduce` phase BEFORE the optimize loop** (`kernel_workflow.js`
-`phase('Reproduce')`, a dedicated role `repro_engineer` — the sibling of author mode's `phase('Author')`
-prefix). The two phases have DIFFERENT jobs:
+Mega uses one budget loop:
 
-1. **Reproduce phase (`repro_engineer`) — produce the FLOOR (保底).** ONE job: faithfully reproduce the
-   whole flat 2-launch fused operator following the `megamoe_ep_mega_fusion` skill's Construction
-   skeleton, GEMM2 FLAT, plus the r12 substrate fix. No innovation, no incremental half-fusion, no
-   `g2-collapse`, no cut-ladder as a build method. Correctness-gated independently (relL2<0.10 both
-   routes + `path=MEGA`==world_size + bounded liveness). On success it commits the whole operator as
-   HEAD = the floor. On failure it aborts the wave at `repro_failed` (fix the reproduction — skill /
-   repro_engineer — do NOT hand a broken partial to the optimizer). The reproduction spec is exactly the
-   "whole-topology build" directive below — that is now the repro_engineer's charge.
-2. **Optimize phase (`tech_lead` / `engineer`) — BEAT the floor.** The floor is already HEAD. The loop
-   runs under `objective=speedup` with `cumulative` seeded from the floor's measured speedup, so a
-   candidate is admitted ONLY if it beats the floor; a non-winner leaves HEAD = floor (permanently
-   retained). Stack speed rungs on the whole operator or offer an alternative COMPLETE fused candidate —
-   do NOT re-decompose the floor into an incremental single-edge ladder, do NOT ship a half-fused
-   intermediate. The optional `g2-collapse` carries the cut4 SGPR-pressure risk (skill's
-   OPTIMIZATION-PHASE FAILURE LORE) and is not part of the floor.
+The default `production` profile has six candidate turns and a three-hour wall target, reserving the
+last 60 minutes for final validation and lightweight closeout. It stops earlier after a calibrated `>1.0x` candidate and two
+independent search attempts. `audit` is the explicit long-running profile.
 
-The whole-topology build spec that follows is the **Reproduce phase's** recipe.
+1. **`m25_skill` lane (`mega_engineer`)** reconstructs the complete M2.5 capability from the skill.
+   It keeps its own persistent HEAD and receives reserved attempts, but never blocks other lanes.
+2. **Search lanes (`tech_lead` / `engineer`)** explore other complete megakernel implementations or
+   optimize an existing candidate. They do not receive the exact M2.5 skill recipe.
+3. Correct-but-slow candidates remain runnable WIP. They may continue, but cannot enter final
+   selection until their absolute `8192_uniform` speedup is greater than 1.0 versus frozen
+   MegaMoE V2.
+4. Final Director validation reruns the fastest candidates under one contract and chooses the best
+   measured implementation. Source/provenance never relaxes correctness or performance.
 
-### Whole-topology build (the Reproduce phase's recipe; replaces the optimize task's bankable-rung staged build)
+### Skill-lane boundary
 
-**In mega mode you do NOT build the fused body as a staircase of enabling rungs.** The optimize task
-lands it incrementally (A-resident GEMM2 rung → barrier-gated fold rung → CU-role partition rung →
-optional cross-rank edge) because its methodology could not author the whole body in one lease. That
-ladder is the specific thing mega mode removes — and it is *why* the last wave failed: the fatal fault
-lived inside a **self-invented intermediate half-fused topology** (a GEMM1-only single launch that M2.5
-never had), not in the whole-operator design.
-
-Instead:
-
-- **Author the COMPLETE 2-launch fused topology in ONE coherent design.** The `quant` ingress stays
-  its own launch; `dispatch → GEMM1 → GEMM2 → combine` become **one persistent kernel per rank**, all
-  four stages wired together, aligned to M2.5's full operator decomposition (the same function
-  boundaries, the same control flow, the same outputs). The prerequisites the optimize ladder called
-  "rungs" (A-resident GEMM2, parity double-buffer, CU-role partition, combine-as-third-queue) are
-  **parts of this one design**, authored together — not separately-promoted topologies.
-- **Do NOT invent intermediate half-fused topologies.** No GEMM1-only single launch, no barrier-only
-  shape with combine still a separate launch, as a *committed step*. Those are new artifacts M2.5 never
-  had and are exactly where the last wave's fault lived. The positive-control A/B (the
-  `AITER_MEGAMOE_FUSE_ALL` flag) and the compile-time cut-ladder (`knowledge/crash_bisection.md`) are
-  still yours to use as **diagnostics on the whole body** — they localize a fault inside the one
-  topology; they are not an instruction to ship a partial kernel.
-- **The `megamoe_ep_mega_fusion` skill is authoritative on mechanism AND spells out the exact address
-  arithmetic.** Unlike the persistent-fusion card, the mega skill is concrete about the arrival-ticket
-  / epoch-parity / gate spin-wait base+predicate arithmetic. **Reproduce it faithfully — do not
-  re-derive it.** Re-derivation is precisely what produced the r12 defect. Reproduction is authorized
-  in mega mode (see Acceptance): there is no derived-not-copied / artifact-distinctness requirement.
-- **Fixing the baseline `mega_moe_stage1.py` spin-wait substrate is a FIRST-CLASS action.** The last
-  wave (12 rounds) got the whole body on-card but the credit-bearing fused terminal faulted at cut4
-  (illegal access / SIGABRT), root-caused to a **latent use-of-uninitialized / miscomputed
-  base-or-predicate ADDRESS in the arrival-ticket spin-wait loops** in `mega_moe_stage1.py`,
-  deterministically exposed by the register-allocation shift that adding any `ready1` publish forces (a
-  benign `0xBEEF` constant store faults identically). That file was wrongly inherited as "clean
-  substrate" and never suspected until r12. **Harden it directly** — the mega skill's "r12 — the
-  substrate spin-wait address defect" section gives the two concrete hazards (LDS-aliased ticket
-  scratch; `grid_epoch_slot`-scaled gate base/predicate) and the converging diagnostic (diff the
-  faulting cut's ISA vs the clean canary; reduce substrate SGPR pressure so the publish does not
-  perturb the arrival-ticket allocation). Do NOT re-author the GEMM2 body or move the intra-rank edge
-  off agent scope to chase this — it is a substrate address-init defect, fix it there.
-
-Where the credit-bearing win is (read the skill's "Where the win actually comes from"; do NOT
-re-derive it wrong): the M2.5 floor (+4.71% @ 8192_uniform) is the **barrier-gated megakernel** —
-combine folded in as a work queue + CU-role partition of GEMM1/GEMM2 into one persistent launch, with
-the **all-rank barrier RETAINED** (`path=MEGA` default-ON). The per-token cross-rank readiness edge
-(converting the combine barrier to a per-token `wait_until` + system-scope acquire) is a **measured
-regression** on MI355X — a cross-L2 flush per token — and M2.5 ships it default-OFF. It is optional,
-hardware-gated, and LAST; attempt it only if a post-fold trace shows an exposed cross-rank tail, and
-then only with a **local** release on a ~64-way-sharded arrival counter, never a per-token system
-atomic. It is not where the win is.
+The exact M2.5 deconstruction is intentionally absent from this shared task text. Only
+`mega_engineer` receives it through the reserved skill-lane injection. Lane-local WIP commits are
+required for recovery, but a partial launch shape remains `authoring`, never a finalist. Ordinary
+search roles must derive their own complete megakernel candidates from the task graph and public
+baseline.
 
 ## The optimization target
 
@@ -166,16 +113,15 @@ That is the observation. *Why* they are serialized, which of the orderings betwe
 by the data and which are artifacts of how the code is written today, at what granularity a consumer
 could begin, what enforces each ordering now, and where the critical path actually runs — the Analyze
 phase must still work this out and defend each fused edge against it. This is a **mega** run: you MAY
-(and should) use GEAK's accumulated MegaMoE knowledge — the `megamoe_ep_mega_fusion` expert skill (the
-concrete full-fusion recipe with exact address arithmetic) and the `moe_bottleneck` analysis skill —
-and reproduce the known fusion topology faithfully. A candidate still must be justified by the
-task-graph analysis (a proposal that is a bare restatement of the launch count is not), but it does
-not have to be reinvented from scratch — and in mega mode it should NOT be.
+use the generic `moe_bottleneck` analysis and workflow knowledge. The exact
+`megamoe_ep_mega_fusion` recipe is reserved for `mega_engineer` in the `m25_skill` lane and must not
+be read or propagated by Analyze, TechLead, or ordinary search Engineers. Search candidates must be
+justified by their own task-graph analysis rather than restating that recipe.
 
 The end state the acceptance bar requires is a **two-launch** shape: the `quant` ingress stays its
 own launch, and the remaining three stages become **one persistent kernel per rank** with genuine
-compute/communication overlap. That is the *goal*. Authoring the whole topology in one design and
-getting it to run clean on-card (the r12 substrate fix included) is the work.
+compute/communication overlap. That is the *goal*. Authoring a complete topology and getting it to
+run clean on-card is the work.
 
 Start from `SKILL_DIR/knowledge/tile_task_graph.md` — the Analyze phase must emit the tile-level
 dependency graph as an artifact (nodes, edges, edge scope, what enforces each edge today, critical
@@ -190,8 +136,9 @@ measured anti-patterns, and the measurement discipline for this exact operator. 
 bound this task:
 
 - **Launch count is not the objective.** Two launches is the acceptance shape, not the goal; a
-  fused kernel that is slower than four launches has failed. The bar is beating M2.5 (+4.71% @
-  8192_uniform), not merely reaching two launches.
+  fused kernel that is slower than four launches cannot be final output. The hard performance bar is
+  beating frozen MegaMoE V2 (`speedup > 1.0`); recorded M2.5 (+4.71%) is the target, not executable
+  input or a mandatory floor.
 - Any fused path you add behind an env var / config predicate **must print a one-line path marker**
   (e.g. `[megamoe] path=MEGA` vs `path=SCATTERED`) once per process. An opt-in path that fails its
   predicate falls back silently and produces a plausible wrong number. A benchmark log without the
@@ -215,11 +162,10 @@ bound this task:
    systematically miss a timing-dependent deadlock no matter how many you run; parity/epoch/reset bugs,
    by contrast, surface within ~10 replays as state carries across flips. Key the screen off whether
    the candidate carries a **per-token / cross-rank arrival race**, not off a rung label:
-   - **Barrier-gated whole-topology** (the credit-bearing form — combine fold + CU-role partition,
-     all-rank barrier retained, no per-token cross-rank race) needs a bounded functional-liveness
+   - **A topology with deterministic phase barriers and no per-token cross-rank race** needs a bounded functional-liveness
      screen: ≥30 replays on EACH of {128, 8192} × {uniform, skew} under a bounded per-replay timeout.
      This catches the parity/epoch/reset and residency-at-one-shape classes, which is why it runs both
-     shapes. Use it during bring-up (including the r12 substrate fix) to confirm the body runs clean.
+     shapes.
    - **Any candidate with a per-token / cross-rank arrival race** (the optional per-token readiness
      edge folded in) needs graph-safe liveness of ≥256 replays carrying **per-replay arrival-timing
      jitter** (re-draw routing / vary token arrival order between replays) across both shapes and both
@@ -235,41 +181,29 @@ bound this task:
 
 This task's launch template sets `capability_eval=false` and `strict_autonomy=false`. The frozen
 public AITER tree is the optimization **starting point and the denominator**, not an answer to fence
-off — read it freely. The workflow is expected to use its accumulated MegaMoE knowledge (the
-`megamoe_ep_mega_fusion` expert skill and the `moe_bottleneck` analysis skill). There is **no
-derived-not-copied / byte-identity (criterion 5) requirement, and no artifact-distinctness-vs-M2.5
-requirement, in mega mode** — faithfully reproducing the M2.5 topology from the mega skill (including
-its exact address arithmetic) is the intended route, not a violation.
+off — read it freely. Analyze and ordinary search lanes use generic workflow knowledge and the
+`moe_bottleneck` analysis skill. The exact M2.5 deconstruction is injected separately into
+`mega_engineer` and is not part of this shared task prompt.
 
-The hand-authored **M2.5** full-fusion implementation is the **performance bar / floor** to beat.
-**HARD BOUNDARY (not lifted in mega mode): the M2.5 source is kept under `/root/geak_reference/` and
-you must NEVER read anything under that path.** The leak-sweep lift that lets the mega skill be
-concrete about the machinery does NOT authorize reading the out-of-tree reference — the skill's
-arithmetic was authored from the reachable in-tree baseline (`mega_moe_stage1.py`) plus the r12
-diagnosis, and everything you need is in-tree + the skill. Reproduction means building faithfully from
-the skill, never fetching from `/root/geak_reference/`.
+The recorded M2.5 result (`1.0448x`, observed `1.0403..1.0477`) is a target only. The hand-authored
+implementation is not an oracle arm and not an input. Never read, run, copy, diff, import, or use as
+a base any hand-authored M2.5 source tree outside the candidate workspace. Reproduction means
+authoring from the public baseline plus this skill.
 
-A terminal candidate is accepted only when the same independently verified candidate has: at most two
-launches per rank; a positive `8192_uniform` operator rank-max result versus the baseline **and at or
-above M2.5** (the floor — see `verify.sh --incumbent` and the skill's three-way comparison); no
+A terminal candidate is accepted only when the same independently verified candidate has: exactly two
+launches per rank; a positive `8192_uniform` operator rank-max result versus frozen MegaMoE V2
+(`speedup > 1.0`; the recorded M2.5 band remains the project target); no
 regression on the other three guards; numeric `relL2 < 0.10` evidence; graph-safe arrival-jittered
 liveness over at least 256 replays (Hard constraint 2, terminal read); distinct JIT artifact hashes
 for the A/B arms (**measurement integrity — that the two arms are genuinely different builds, NOT
-anti-plagiarism containment**); every mandatory arm; controlled, non-zero on-edge overlap; and
-launch-change attribution.
+anti-plagiarism containment**); and every production mandatory arm. Controlled overlap and
+launch-change attribution are optional diagnostics in the default production profile, not shipping
+gates; `mega_profile=audit` may make both mandatory. Slow candidates remain isolated WIP and can continue in later attempts,
+but they cannot become final output.
 
-The **Reproduce phase** produces the working whole-topology artifact ONCE (the FLOOR), commits it as
-HEAD, and folds the r12 substrate fix into that reproduction. The optimize loop then runs under
-`objective=speedup` with `cumulative` seeded from the floor's measured speedup (see the MEGA directive
-and `launch_args.json._objective_comment`): the commit-gate is ACTIVE, so a candidate is admitted only
-if it BEATS the floor, and a non-winner leaves HEAD = the floor (permanently retained; the final report
-is the floor). This is why the objective is `speedup`, not `working_kernel`: once Reproduce guarantees a
-correct running whole-topology floor, working_kernel's "keep-anything-that-runs" tolerance is not needed
-and would in fact let a slower candidate overwrite the faster floor. A knob sweep or a further speed rung
-lands on top of the floor INSIDE the loop; it never licenses building a half-fused intermediate topology
-as a committed step (mega mode forbids that; see the MEGA directive). If the Reproduce phase cannot
-produce a clean floor, the wave aborts at `repro_failed` — that is the honest signal to fix the
-reproduction (skill / repro_engineer), not to carry a broken partial into the loop.
+The candidate registry preserves every lane's source, base, HEAD, evidence and score. The skill lane
+failing or timing out does not end the wave. Search candidates continue, and final selection considers
+only workflow-authored candidates with complete calibrated evidence.
 
 Run `bootstrap_task.sh --task megamoe_v2_ep8_mega` to assemble the workspace. No `MARKER_FILE`,
 `--known-reference`, or containment preflight is needed in this mode.
@@ -281,12 +215,15 @@ group form of the lease wrapper (not the numeric single-GPU form):
 
 ```bash
 cd <workspace> && bash $SKILL_DIR/scripts/gpu_lock.sh \
-  --group 0,1,2,3,4,5,6,7 --wait-timeout 1800 --run-timeout 3600 -- \
+  --group 0,1,2,3,4,5,6,7 --wait-timeout 600 --run-timeout 1500 -- \
   env PYTHONPATH="$PWD:${MORI_ROOT}:${MORI_ROOT}/python" \
       AITER_JIT_DIR=${AITER_JIT_DIR} \
       MORI_SOCKET_IFNAME=lo MORI_SHMEM_HEAP_SIZE=40G \
-  timeout 50m torchrun --standalone --nproc_per_node=8 <script> <args>
+  timeout 20m torchrun --standalone --nproc_per_node=8 <script> <args>
 ```
+
+These are production limits. An audit invocation may explicitly restore 1800/3600-second lease
+limits and a 50-minute command timeout.
 
 `AITER_JIT_DIR` points at a **shared, prebuilt, read-only** module cache. Leave it as-is; do not
 point it at a fresh directory (that triggers a full C++ rebuild) and do not write into it.
@@ -323,7 +260,8 @@ rank-mean can improve while the operator gets slower. Rank-mean is diagnostic on
 | 512    | `uniform`        | regression guard — small-shape safety                  |
 | 512    | `rank-mixed-skew`| regression guard — small + skew safety                 |
 
-A final candidate must beat baseline rank-max on `8192_uniform` (and clear the M2.5 floor there) and
+A final candidate must beat baseline rank-max on `8192_uniform`; reaching the recorded M2.5 target is
+reported separately. It must
 be **at or above baseline on all three regression guards**. Regression guards are vetoes, never
 positive weight: a skew-only win cannot compensate for a uniform loss or become the current-best score.
 
@@ -363,8 +301,8 @@ state is real and currently unattributed. A 5-pair sample of `512_skew` the day 
 worst pair as 1.93% and missed the tail entirely. Therefore:
 
 - Run baseline and candidate **alternately** (A,B,A,B,A,B) and report the **per-pair** delta plus the
-  median. Never compare two independently collected medians. **At least 5 pairs on the 8192 guards
-  and at least 10 on the 512 guards** — fewer than 10 there does not sample the slow state.
+  median. Never compare two independently collected medians. Production starts with 5 pairs on the
+  8192 guards and 8 on the 512 guards.
 - Report the raw per-run readings for the 512 guards, not only the pair deltas. A ratio against a
   fat-tailed worst pair understates a real effect badly — but **do not reach for complete separation
   of the two arms here.** That is the right escape hatch on a unimodal guard and it is unreachable on
@@ -376,8 +314,8 @@ worst pair as 1.93% and missed the tail entirely. Therefore:
   its own right — the slow state costs 9-13% of a 512-token iteration, so a candidate that enters it
   less often has a bigger effect than the fast-mode delta will ever show, and dividing that out
   throws away the win. Disclose the mixed-mode and both-slow pairs you dropped.
-- Size the 512 collection for the *usable* pairs. At the measured ~20% slow rate a pair survives with
-  probability 0.64, so "10 pairs" has been yielding about six: collect **16** when you need 10.
+- Size the 512 collection adaptively. If the first 8 show a ≥3% split, arm imbalance, or fewer than
+  five both-fast usable pairs, extend to **16**. Audit mode always collects 16.
 - Report the per-rep spread alongside the median.
 - The speedup denominator is this frozen tree, run under the identical command. Nothing else.
 - **`stage1` and `stage2_combine` stop being comparable the moment anything overlaps, and they move

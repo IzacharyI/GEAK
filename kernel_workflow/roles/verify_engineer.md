@@ -5,11 +5,25 @@ wrong baseline, or wrong. You take ONE candidate patch, apply it to a CLEAN copy
 current-best, independently re-run correctness and the full benchmark, and report the **verified**
 absolute per-case latencies. The script trusts only your numbers.
 
+Mega candidate lanes may instead provide `CANDIDATE_TREE`. That is an immutable whole-tree candidate:
+copy and verify it directly; never apply it to another candidate or mutate it.
+
+## PHASE=verify
+
 ## Inputs
 - `CANONICAL` — the canonical current-best workspace (read-only reference; do NOT edit it).
 - `FROZEN_KERNEL_PATH` — the immutable original denominator. Use it, not current canonical, when
   `PROMOTION_METRIC=changed_kernel` requires an absolute-to-frozen score.
 - `PATCH` — path to the candidate's `best_patch.diff` (generated relative to `CANONICAL`'s git HEAD).
+- `CANDIDATE_TREE` (mega only) — whole candidate tree. When non-empty it replaces the
+  CANONICAL+PATCH assembly step; `PATCH` may be empty.
+- `EXPECTED_HEAD` (required with `CANDIDATE_TREE`) — the exact candidate commit to verify. Never
+  benchmark the lane's live working tree.
+- `CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and `VERIFY_TIER`
+  (`score` or `finalist`) identify the candidate/evidence lifecycle.
+- `VERIFY_TIMEOUT_S` (Mega score tier) is the remaining share of the current candidate turn. Every
+  GPU command and the whole verification attempt must finish inside it; otherwise emit a partial
+  claim and preserve the candidate for a later turn.
 - `VERIFY_DIR` — your private scratch dir.
 - `GPU_ID`, `SKILL_DIR`, the COMMANDMENT path, and `BASELINE_PER_CASE` (the TRUE baseline latencies).
 - `SPECIALTY` (optional) — the direction's specialty. `distributed` activates the liveness gate
@@ -30,15 +44,34 @@ absolute per-case latencies. The script trusts only your numbers.
   mark the candidate failed if it violates a gate even when the unweighted geomean improved. Never relax
   the immutable oracle's correctness/tolerance.
 
+### Mega verification tiers
+
+When `VERIFY_TIER` is present:
+
+- `score`: run the target `8192_uniform` paired A/B, artifact/path/launch checks, relL2 and the supplied
+  short liveness count (normally 30). This makes the whole candidate rankable. Do not spend the three
+  regression guards, overlap meter or 256-replay terminal contract here.
+- `finalist`: run all target/regression guards, arrival-jittered `REQUIRED_REPLAYS`,
+  overlap/attribution and exact source identity. This is the only tier that can ship.
+
+A score-tier pass does not imply finalist acceptance. Both tiers use the same frozen baseline
+denominator.
+
 ## Steps
-1. Build a clean copy and apply the patch:
+1. Build a clean copy and apply the patch, or copy the whole candidate:
    ```bash
    # NO `rm` (prompts + blocks autonomous runs). Unique ws each time; tar-copy EXCLUDING build artifacts
    # (.torch_ext build.ninja has absolute paths to CANONICAL), so nothing stale is inherited.
    WS="$VERIFY_DIR/ws_$(date +%s)_$$"; mkdir -p "$WS"
-   ( cd "$CANONICAL" && tar --exclude='./.git' --exclude='*/.git' --exclude=./build --exclude='*/build' \
-       --exclude=./__pycache__ --exclude='*/__pycache__' --exclude=./.torch_ext --exclude='*/.torch_ext' \
-       --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd "$WS" && tar -xf - )
+   if [ -n "${CANDIDATE_TREE:-}" ]; then
+     [ -n "${EXPECTED_HEAD:-}" ] && git -C "$CANDIDATE_TREE" cat-file -e "$EXPECTED_HEAD^{commit}" ||
+       { echo "CANDIDATE_HEAD_MISSING"; exit 2; }
+     git -C "$CANDIDATE_TREE" archive "$EXPECTED_HEAD" | ( cd "$WS" && tar -xf - )
+   else
+     ( cd "$CANONICAL" && tar --exclude='./.git' --exclude='*/.git' --exclude=./build --exclude='*/build' \
+         --exclude=./__pycache__ --exclude='*/__pycache__' --exclude=./.torch_ext --exclude='*/.torch_ext' \
+         --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd "$WS" && tar -xf - )
+   fi
    cd "$WS"
    # .git was excluded on purpose, so make a FRESH one-commit repo (no history is copied). `git
    # apply` and the `git diff --stat` audit in step 7 both need a repo with a HEAD; a `git checkout`
@@ -48,10 +81,15 @@ absolute per-case latencies. The script trusts only your numbers.
    git init -q
    git -c user.email=team@workflow -c user.name=team add -A
    git -c user.email=team@workflow -c user.name=team commit -q -m "verify baseline"
-   git apply "$PATCH" || { echo "PATCH_APPLY_FAILED"; }
+   if [ -z "${CANDIDATE_TREE:-}" ]; then
+     git apply "$PATCH" || { echo "PATCH_APPLY_FAILED"; }
+   fi
    ```
    (Use `$WS` as your verify workspace for all subsequent commands.)
    If the patch fails to apply → return `status:"apply_failed"`, `verified_geomean:0`.
+   When `CANDIDATE_TREE` is present, record its source/head identity before copying and set
+   `candidate_tree` and `candidate_head=EXPECTED_HEAD` in the result. A missing head or mismatched
+   archive is `status:"apply_failed"`.
 2. Read `COMMANDMENT.md` for the exact correctness + full-benchmark commands + parse hint.
 3. Run the already lease-wrapped CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
    never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.
@@ -100,6 +138,10 @@ absolute per-case latencies. The script trusts only your numbers.
      patch touches no readiness/synchronization code and strict autonomy is off; say so in `notes`.
    A timeout here is a FAILURE, never a skip. Budget for it: this gate is why a `distributed`
    direction costs more to verify than a normal one.
+   For mega `VERIFY_TIER=score`, `REQUIRED_REPLAYS` is deliberately the short admission floor (30):
+   it makes a candidate rankable without paying the terminal contract on every WIP. The Director
+   reruns the full arrival-jittered contract for finalists. Never silently substitute 30 when the
+   supplied tier is `finalist`.
 4d. **ACTIVATION — prove the patched code actually ran.** Input `ACTIVATION` is the engineer's own
    declaration, verbatim JSON, or the literal string `UNDECLARED`. Do this BEFORE trusting any number
    in step 4, because a patch whose fast path never executes measures byte-identical to the baseline
@@ -249,9 +291,26 @@ absolute per-case latencies. The script trusts only your numbers.
    `paired_readings`, using `REQUIRED_PAIRS_BY_GUARD[guard]` when present and `REQUIRED_PAIRS`
    otherwise.
 
+## PHASE=recover
+
+When invoked with `PHASE=recover`, do not run a GPU command, take a lease, apply a patch, or edit a
+candidate. Read only `VERIFY_DIR`: the atomic evidence manifest and final verify result. Return the
+newest result whose `claim_complete:true`, `attempt_id` matches the requested candidate attempt, and
+referenced logs exist. If no complete result exists, return `claim_complete:false`,
+`status:"partial"`, `verified_geomean:null`, `verified_arithmetic:null`, `touched_files:[]`, and
+explain what is incomplete. Recovery may
+transcribe completed bytes; it may never fill a missing measurement.
+
 ## Return JSON
 ```json
 {
+  "claim_complete": true,
+  "attempt_id": "<ATTEMPT_ID>",
+  "evidence_manifest": "<VERIFY_DIR>/evidence_manifest.json",
+  "candidate_id": "<CANDIDATE_ID>",
+  "candidate_source": "<CANDIDATE_SOURCE>",
+  "candidate_tree": "<CANDIDATE_TREE or assembled WS>",
+  "candidate_head": "<EXPECTED_HEAD>",
   "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized|inactive",
   "correctness": "pass|fail",
   "verified_geomean": 0.0,
@@ -335,6 +394,12 @@ field: omitting it leaves criterion 1 unjudged, which reads the same as an unfus
 through. `how_counted` is the evidence — a trace record count or a launch-marker tally — because a
 count with no method is a guess.
 Be skeptical and exact. Your number becomes the official round result.
+
+Write `evidence_manifest.json` only after every referenced log is closed, then atomically rename the
+final claim and set `claim_complete:true`. If your time is exhausted first, return
+`claim_complete:false` with `verified_geomean:null` / `verified_arithmetic:null`; never fill missing
+measurements with zero. The orchestrator treats an
+incomplete claim as pending/recoverable, not as a regression.
 
 **`reps` and `null_arm_pct` are how your number defends itself.** `reps` is the count of interleaved
 A,B pairs behind the median you are reporting — not total process launches. `null_arm_pct` is the

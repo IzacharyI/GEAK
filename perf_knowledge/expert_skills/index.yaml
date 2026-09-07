@@ -92,9 +92,8 @@ skills:
     e2e_delta_min_pct: 1.0
     parity: required
   validation_status: validated
-# mega-mode fork of megamoe_ep_persistent_fusion. Injected ONLY by MODE=mega via explicit path
-# (kernel_workflow.js expertSkillsBlock), NEVER by auto-match: validation_status is 'mega_only', not
-# 'validated', so optimize/author runs skip it and cannot collide with the persistent_fusion card.
+# Mega candidate-lane skill. Injected ONLY into `mega_engineer` for the `m25_skill` lane via the
+# explicit MODE=mega path, NEVER by auto-match; ordinary search roles do not receive this recipe.
 - id: megamoe_ep_mega_fusion
   file: skills/megamoe_ep_mega_fusion/skill.md
   scope: kernel

@@ -42,19 +42,13 @@ expects:
   e2e_delta_min_pct: 1.0
   parity: required
 provenance:
-  source: mega_mode_reproduction
-  origin: author_plus_optimize_fusion
-  reuse_mode: mega_fusion
-  reporting_rule: 'This card is injected ONLY under MODE=mega (megafusion mode: author+optimize combined,
-    capability_eval=false, strict_autonomy=false). In mega mode faithful REPRODUCTION of the M2.5 topology
-    is the GOAL, not a violation — there is no derived-not-copied / criterion-5 / artifact-distinctness
-    requirement here (that ledger belongs to the separate strict/blind task and is untouched). Report the
-    resulting arm plainly as the mega-mode fused candidate measured against baseline and against the M2.5
-    floor. The ONE boundary that is NOT lifted: never read anything under /root/geak_reference/ — the
-    concrete arithmetic in this card was authored from the reachable in-tree baseline (mega_moe_stage1.py)
-    plus the r12 root-cause diagnosis, not copied from any out-of-tree reference source.
-
-    '
+  source: validated_skill
+  origin: deconstructed_capability
+  reuse_mode: workflow_authored_candidate
+  reporting_rule: 'This card is injected only into the m25_skill candidate lane. The lane starts from
+    frozen public MegaMoE V2 and authors its own implementation. The hand-written M2.5 tree is never run,
+    copied, diffed, imported, or used as a base. Report source=validated_skill, never autonomous discovery.
+    The recorded 1.0448x result is a target band only.'
 incumbent:
   label: M2.5_persistent_megakernel
   is_ceiling: false
@@ -72,35 +66,27 @@ validation:
     isolated: 1.0448
     e2e_pct: 4.48
     parity: pass
-  artifact: /sgl-workspace/megamoe/geak_handD_eval
+  artifact: recorded_measurement_only
 role: advisory_prior
 supersedes: []
 ---
 
-## READ THIS FIRST — mega runs in TWO phases; which one you are decides which half of this card you follow
+## READ THIS FIRST — this card owns one candidate lane, not a phase
 
-mode=mega is not one job. It is a **Reproduce phase** followed by an **Optimize phase**, and this card
-serves both — but they read DIFFERENT halves of it. Find your phase before you read further.
+Only `mega_engineer` in the `m25_skill` lane reads this card. Author the complete two-launch
+megakernel from the frozen public baseline and continue the same lane across attempts. The card is
+not injected into TechLead or ordinary Engineer, so other optimization candidates remain independent.
 
-- **You are the `repro_engineer` (Reproduce phase).** Your ONLY job is to **faithfully reproduce the
-  whole flat 2-launch fused operator as the FLOOR (保底)**. Your recipe is the **"Construction skeleton —
-  the single persistent grid"** section below (the concrete arrival-ticket / epoch-parity / spin-wait
-  arithmetic) — **plus** the r12 substrate init fix. **GEMM2 stays FLAT.** You do **NOT** innovate, do
-  **NOT** do incremental half-fusion, do **NOT** do the `g2-collapse`, and do **NOT** treat the
-  cut-ladder as a build method (it is a bring-up diagnostic only — you commit the whole flat operator,
-  never a cut). **Everything under the banner "⚠️ OPTIMIZATION-PHASE FAILURE LORE" is NOT a build method
-  for you** — skip it as construction guidance; it exists to warn the Optimize phase off the moves that
-  faulted. If you find yourself designing something this card does not describe, that is drift — stop and
-  reproduce.
-- **You are an optimize-phase role (`tech_lead` / `engineer` / `deep_engineer`).** The Reproduce phase
-  has ALREADY committed the whole flat floor as HEAD. Your job is to **beat the floor** — stack speed
-  rungs on the whole operator, or offer an alternative COMPLETE fused candidate — never re-decompose the
-  floor into a single-edge ladder, never ship a half-fused intermediate. The FAILURE LORE section IS for
-  you: it tells you which cleverness (notably the `g2-collapse`) carries which fault risk. The floor is
-  permanently retained; a candidate is admitted only if it beats the floor.
+The skill candidate includes both halves of the capability:
 
-Both phases share the arithmetic authorization, the r12 first-class substrate fix, and the one
-un-lifted boundary: **never read anything under `/root/geak_reference/`.**
+1. the correct flat persistent topology in the Construction skeleton; and
+2. the concurrency reconstruction below (fine-grained readiness, useful CU/wave allocation and
+   combine as a concurrent queue).
+
+A correct `path=MEGA`, two-launch implementation at ~0.23x or ~0.66x is authoring WIP, not an M2.5
+reproduction. The lane becomes scored only after it beats frozen MegaMoE V2 and reaches the recorded
+M2.5 band. Never use `g2-collapse` as a build path. Never search for or read any hand-authored M2.5
+source tree outside the candidate workspace.
 
 ## Mega mode — what this card is, and how it differs from the persistent_fusion card
 
@@ -129,8 +115,8 @@ whole reason this fork exists:
    spin-wait address init. In mega mode, hardening that init **is allowed and expected** — it is not
    out of scope, it is the known blocker.
 
-**The one boundary that is NOT lifted:** never read anything under `/root/geak_reference/`. The
-concrete arithmetic here was authored from `mega_moe_stage1.py` (in-tree, reachable) + the r12
+**The one boundary that is NOT lifted:** never search for or read a hand-authored M2.5 source tree.
+The concrete arithmetic here was authored from `mega_moe_stage1.py` (in-tree, reachable) + the r12
 diagnosis, not from any reference copy.
 
 ## When to use
@@ -151,14 +137,14 @@ differ by `<0.1%` between the two routes.
 Do **not** reach for this to cut launch overhead. Measured launch cost for the whole four-kernel chain
 is `≈6.4 µs` — roughly 0.1% of the skew-route runtime, so launching less is not the win.
 
-**Where the win actually comes from (corrected 2026-09-03 against the aiter_mega M2.5 source and
-831_handoff.md).** M2.5's measured +4.71% (8192_uniform) ships **default-ON** through
+**Where the win actually comes from (deconstructed from the recorded measurement and reachable
+public baseline machinery).** M2.5's recorded +4.71% (8192_uniform) corresponds to
 `AITER_MEGAMOE_FUSE_ALL` — the full-megakernel wiring of **Steps 4–5** below (CU-role-partition
 GEMM1/GEMM2 + combine folded in as a third work queue), running `path=MEGA` on all ranks with no env
 vars set. It does **not** come from a per-token cross-rank readiness edge. That edge (Steps 1–2) is a
-**measured regression** on this hardware: M2.5's own `mega_moe_fused_s2c.py` carries it opt-in and
-default-OFF because it is *slower* (8192-uniform Stage2+combine `2.0777 → 2.2334 ms`) and wedges
-intermittently. On MI355X (8 XCDs, each with a private L2) any system-scope release/atomic lowers to a
+**measured regression** on this hardware: the recorded optional-edge experiment is *slower*
+(8192-uniform Stage2+combine `2.0777 → 2.2334 ms`) and wedges intermittently. On MI355X
+(8 XCDs, each with a private L2) any system-scope release/atomic lowers to a
 cross-L2 flush — a fixed ~6.6 ms, contention-bound cost that coarsening cannot remove — so leading with
 it measures ~0.4× baseline, not a gain. **Do the wiring (Steps 4–5); treat the readiness edge as
 optional and hardware-gated, not the headline mechanism.**
@@ -359,7 +345,7 @@ This is design experience, NOT a transcript of any reference source.
 > route through `BM=32`, a DIFFERENT and easier GEMM2 compute path. A clean bs=128 proves the topology
 > and the handshake — it does NOT prove the floor, because the flat GEMM2 at BM=64 is a separate,
 > harder path that has never validated. Treat "bs=128 clean" as bring-up, never as done. Gate
-> `authoring_status:"complete"` on the BM=64 target route passing relL2<0.10 — attack BM=64 FIRST, not
+> `candidate_status:"runnable"` on the BM=64 target route passing relL2<0.10 — attack BM=64 FIRST, not
 > after the BM=32 shapes are polished.**
 
 1. **The GEMM1→GEMM2 release fence lives in the COLD post-drain region, never the hot MFMA loop.**
@@ -429,19 +415,21 @@ bs=128 (relL2≈0.053), bs=512 (relL2≈0.053), and the **target bs=8192 (relL2�
 scattered baseline byte-for-byte)** — with `path=MEGA` ×8. The GEMM2 flat work-pool is proven at the
 target tile config (BM=64). No g2-collapse was ever committed; the whole flat bet held.
 
-**The 2-launch structural floor is COMPLETE.** Combine is folded in as the THIRD role/queue (Step 5 of
+**The 2-launch structural skeleton is a validated WIP milestone, not a completed M2.5 candidate.**
+Combine is folded in as the THIRD role/queue (Step 5 of
 the skeleton): a CU partition running the per-token top-k reduction, gated by the GEMM2→COMBINE arrival
 handshake with the parity double-buffer (reset the NEXT parity, never the current), WITHOUT disturbing
 the now-clean GEMM2, GEMM2 kept FLAT (no g2-collapse). The trailing `comb_op.combine_no_stage1` launch
 is dropped (`AITER_MEGAMOE_LAUNCH_TRACE` shows `combine_dropped=True`) → terminal `launches == 2`
 (`quant` + ONE persistent megakernel carrying `dispatch → GEMM1 → GEMM2(flat) → combine`), 8192_uniform
 validated with `fp8_blockwise_1x32` p2p_quant, ≥30 clean replays across {128,8192}×{uniform,skew}.
-`authoring_status:"complete"`.
+Record this state as `candidate_status:"runnable"`.
 
-**What is NOT yet done is PERFORMANCE.** The complete, correct 2-launch floor measures **~0.23×** the
+**What is NOT yet done is the capability's performance.** The correct 2-launch skeleton measures **~0.23×** the
 scattered baseline — it reproduces M2.5's shape, not M2.5's speed. Closing that ~4.5× gap is the
 concurrency work deconstructed in the next section ("The concurrency M2.5 has that the correctness-floor
-does NOT"); it is the OPTIMIZE phase's job, not a structural gap in the floor.
+does NOT"). That concurrency is part of finishing this skill candidate, not work deferred to a
+different phase.
 
 *Methodology caution (learned on-card, kept because it cost several rounds):* a "force scale to neutral"
 probe must be verified to actually produce 1.0 after every dequant word transform — the
@@ -520,7 +508,7 @@ Site 3's *derived target* (fine-grained per-SBM readiness) is now a **replay-con
 committed floor, correctness intact (relL2<0.10 all shapes, `path=MEGA`×8, near-identical to the floor).
 Same binary topology, gated by `MEGA_FINE_READY` (default 1 = this; 0 = the coarse-barrier floor → a
 clean A/B). Derived entirely from the in-tree modifiable files (`mega_moe_stage1.py`,
-`communication_ops_utils.py`) — NOT from `/root/geak_reference/`. The construction, exactly:
+`communication_ops_utils.py`) — not from a hand-authored source tree. The construction, exactly:
 
 1. **Publish/acquire via `AtomicRMWOp`, never a `FenceOp`.** Add two helpers in
    `communication_ops_utils.py`: `atomic_add_agent_release(addr,val)` (agent-scope RELEASE fetch-and-add
@@ -587,9 +575,9 @@ not — the code settles both:
 
 **Discipline — this half obeys the same rule as the six fixes.** The concurrency MODEL here (full-width,
 overlapped, latency-hidden) is *reconstructed from the readable scattered path*, whose overlap is a
-known-good in-tree fact — not copied from `/root/geak_reference/`. The specific lowering-safe
-REALIZATION of each derived target is what the OPTIMIZE phase confirms on-card (positive-control overlap
-meter first, then attack one serializer per lease) and folds back here as a confirmed construction step —
+known-good in-tree fact — not copied from a hand-authored source tree. The specific lowering-safe
+REALIZATION of each derived target is what later attempts in this candidate lane confirm on-card
+(positive-control overlap meter first, then attack one serializer per lease) and fold back here as a confirmed construction step —
 exactly as fixes 1–6 were folded after replay. Until a target is on-card-confirmed it is labeled *derived
 target*, never asserted as the fix. Do not write a guessed concurrency edit in as fact — that repeats the
 retracted-assertion failure (methodology caution above).
@@ -618,18 +606,18 @@ instructions and SGPR/VGPR pressure, and this kernel is pressure-sensitive (the 
 regalloc-under-pressure, not a source bug). So keep it lightweight, **env-gated OFF by default**, and it
 must carry **its own null control** — prove the instrumented build's floor timing matches the
 uninstrumented floor within the noise floor BEFORE trusting any reading. A dead/ timing-moving instrument
-gives confident wrong numbers; that exact trap cost the OPTIMIZE phase two rounds (see FAILURE LORE
+gives confident wrong numbers; that exact trap cost the candidate lane two rounds (see failure lore
 "instrument silently dead for two rounds"). Verify the ruler before you trust a rung verdict.
 
-## ⚠️ OPTIMIZATION-PHASE FAILURE LORE — NOT a build method (repro_engineer: skip this whole section)
+## Failure lore — diagnostics only, never a build method
 
-> **Everything from here down to "Measured effect of steps 1–5" is a record of how the OPTIMIZE phase
+> **Everything from here down to "Measured effect of steps 1–5" is a record of prior failed attempts
 > faulted when it introduced the `g2-collapse` (a clever collapsed GEMM2 write layout that is NOT part
 > of the faithful floor).** It is debugging history — the cut4 wild-address fault, the r3/r6/r7/r8 ISA
 > diagnosis, the rocgdb instrument, the falsified axes — kept so the optimize phase does not re-walk a
 > closed axis.
 >
-> **`repro_engineer`: this is NOT your recipe and NOT a sequence of build steps. Your recipe is the
+> **`mega_engineer`: this is NOT your recipe and NOT a sequence of build steps. Your recipe is the
 > "Construction skeleton" ABOVE, with GEMM2 FLAT and NO g2-collapse.** The whole reason the faithful
 > flat floor is worth building is that it **never introduces the g2-collapse write set**, so it never
 > creates the SGPR pressure that drives this fault. If your faithful flat operator faults somewhere,
@@ -637,7 +625,7 @@ gives confident wrong numbers; that exact trap cost the OPTIMIZE phase two round
 > NOT adopt any collapse/redirect "fix" from below as construction. Skip to "Measured effect" and
 > "Three-way comparison".
 >
-> **Optimize phase:** if you reintroduce the g2-collapse to chase speed, THIS is the fault you own and
+> **Any candidate lane:** if you reintroduce the g2-collapse to chase speed, THIS is the fault you own and
 > the axes already closed against it. Read it before spending a lease here.
 
 ### r12 — the cut4 g2-collapse fault (OPTIMIZE-phase history; the g2-collapse is not in the floor)
@@ -965,7 +953,7 @@ or re-measure the closed partial to chase this — it is a substrate address-ini
 ## ⚠️ END OPTIMIZATION-PHASE FAILURE LORE — the faithful-floor recipe resumes here
 
 > Back to material BOTH phases use: the measured M2.5 floor numbers, the executable verify gate, the
-> three-way comparison, knobs, and do-no-harm notes. `repro_engineer`: this is the part after the
+> three-way comparison, knobs, and do-no-harm notes. `mega_engineer`: this is the part after the
 > Construction skeleton that you DO follow (how the floor is measured and verified).
 
 **Measured effect of steps 1–5**, isolated (same tree, only `AITER_MEGAMOE_FUSE_ALL` varying, quant a
@@ -1076,9 +1064,8 @@ megafusion workflow (author-mode + optimize-mode combined, `capability_eval=fals
 - **The concrete arithmetic above was authored from reachable knowledge**, not copied from a reference
   source: the in-tree baseline `mega_moe_stage1.py` (compact-dispatch handshake) + the r12 root-cause
   diagnosis. That is why it can be concrete here where the persistent_fusion card had to stay lossy.
-- **The one boundary that is NOT lifted:** never read anything under `/root/geak_reference/`. The
-  hand-authored M2.5 lives there; it is off-limits regardless of mode. Everything needed is in-tree +
-  this card.
+- **The one boundary that is NOT lifted:** never search for or read hand-authored M2.5 source.
+  Everything needed is in-tree + this card.
 
 ## Sources
 

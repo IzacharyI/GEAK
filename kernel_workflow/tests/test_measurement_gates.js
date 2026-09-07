@@ -43,8 +43,8 @@ ok(/positive_control: obj\(\{/.test(wf),
   for (const f of ['ran', 'switch_present', 'measured_pct', 'null_arm_pct',
                    'control_pairs_pct', 'null_pairs_pct'])
     ok(new RegExp(`\\b${f}:`).test(seg), `  and declares ${f}, which the gate reads`);
-  ok(/\}, \['ran', 'switch_present', 'measured_pct'\]\)/.test(seg),
-     '  and requires the three whose absence would otherwise read as a passing control');
+  ok(/\}, \['ran', 'claim_complete', 'switch_present', 'measured_pct'\]\)/.test(seg),
+     '  and requires completion plus the three whose absence would otherwise read as a passing control');
 }
 // The gate must sit between Benchmark and the optimize loop. If it ran later, the budget it exists
 // to protect would already be spent.

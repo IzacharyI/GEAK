@@ -247,6 +247,10 @@ args_path, task_path = sys.argv[1], sys.argv[2]
 with open(args_path) as f: args = json.load(f)
 with open(task_path) as f: task = f.read()
 if not task.strip(): raise SystemExit("GEAK_TASK.md is empty")
+if str(args.get("mode", "")).lower() == "mega" and args.get("trusted_candidates"):
+    raise SystemExit(
+        "mega mode refuses trusted_candidates: M2.5 must be authored from the validated skill, "
+        "never registered as executable source")
 args["task"] = task
 args["_task_comment"] = (
     "Inlined verbatim from the workspace's GEAK_TASK.md by scripts/bootstrap_task.sh. "

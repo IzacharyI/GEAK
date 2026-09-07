@@ -106,7 +106,7 @@ ok(r.code === 1 && /no task template at/.test(r.out) && /have:/.test(r.out),
 console.log('\n# a real assembly resolves every placeholder');
 const ws = path.join(tmp, 'ws');
 r = run(['--no-probe', '--baseline', base, '--out', ws, '--mori-root', '/mori/here', '--jit-dir', '/jit/here']);
-ok(r.code === 0, `assembly succeeds (exit ${r.code})`);
+ok(r.code === 0, `assembly succeeds (exit ${r.code})${r.code === 0 ? '' : `: ${r.out}`}`);
 ok(/environment probe: SKIPPED/.test(r.out),
    '--no-probe says so out loud rather than quietly producing an uncertified workspace');
 
@@ -194,7 +194,8 @@ const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'gk_boot_args_'));
 const argsOut = path.join(outside, 'launch_args.json');
 r = run(['--no-probe', '--baseline', base, '--out', wsr, '--known-reference', REF,
          '--args-out', argsOut]);
-ok(r.code === 0 && fs.existsSync(argsOut), '--args-out places the launch args where it is told');
+ok(r.code === 0 && fs.existsSync(argsOut),
+   `--args-out places the launch args where it is told${r.code === 0 ? '' : `: ${r.out}`}`);
 const refArgs = JSON.parse(fs.readFileSync(argsOut, 'utf8'));
 ok(refArgs.known_reference_paths === '' && refArgs.known_reference_hashes.length === 1,
    'strict args replace the reference path with one opaque changed-file hash row');

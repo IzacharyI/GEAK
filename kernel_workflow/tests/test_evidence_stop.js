@@ -127,10 +127,11 @@ console.log('\n# an enabling step closes on function, here as everywhere else');
 
 console.log('\n# the loop still terminates when nothing ever works');
 {
-  const m = src.match(/while \(dispatched < BUDGET && \(WORKING_KERNEL \|\| \(([^)]*)\)\)\) \{/);
+  const m = src.match(
+    /while \(dispatched < BUDGET &&\s*\(MODE === 'mega' \|\| WORKING_KERNEL \|\|\s*\(([^)]*)\)\)\) \{/);
   ok(!!m, 'the round loop guards on more than the budget');
   ok(!!m && /noImprove < MAX_NO_IMPROVE/.test(m[1]) && /noEvidence < MAX_NO_IMPROVE/.test(m[1]),
-     'both counters are armed: exempting a no-evidence round from noImprove would otherwise let a broken harness spend the whole budget');
+     'both counters remain armed for ordinary optimize/author runs; Mega has lane-local WIP and its own budget stop');
   ok(/if \(ev\.measured\) noEvidence = 0;/.test(src),
      'and one real reading resets the no-evidence counter, so the cap only fires on CONSECUTIVE blind rounds');
 }

@@ -120,10 +120,10 @@ starts immediately — never wait out a lease-length timeout to learn a rung hun
 > source-visible base. The **primary** fix is a **resource-extent clamp** of the GEMM2-role tables (bind
 > each `create_buffer_resource_from_addr` to its real byte extent, the `num_records_bytes=` kwarg stage2:127
 > already uses) so a wild index clamps to 0 instead of faulting — correctness-safe at cut4/cut5 since g2
-> output is discarded there. See the `megamoe_ep_mega_fusion` skill's r12 "fix 2a/2b" (authoritative). See
-> `knowledge/gfx950_lowering.md` (regalloc can mask *or* expose a latent uninit address) and, under
-> `mode=mega`, the `megamoe_ep_mega_fusion` skill's "r12 — the substrate spin-wait address defect"
-> section, which is authoritative and supersedes the reading below for that operator.
+> output is discarded there. See `knowledge/gfx950_lowering.md` (regalloc can mask *or* expose a
+> latent uninit address). If an operator-specific candidate recipe was explicitly supplied to your
+> lane, its diagnosed substrate fix supersedes the generic reading below; do not search the skill
+> index for an unassigned operator recipe.
 
 A **marker that is non-monotonic across cuts** — a deeper rung prints a progress/path marker that a
 shallower rung did not — has two very different causes, and the fix depends on which:

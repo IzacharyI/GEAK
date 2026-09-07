@@ -65,7 +65,7 @@ validation:
     isolated: 1.0448
     e2e_pct: 4.48
     parity: pass
-  artifact: /sgl-workspace/megamoe/geak_handD_eval
+  artifact: recorded_measurement_only
 role: advisory_prior
 supersedes: []
 ---

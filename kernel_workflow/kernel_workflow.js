@@ -8,7 +8,7 @@ export const meta = {
     { title: 'Analyze', detail: 'tech_lead analyzes kernel + writes roadmap' },
     { title: 'Benchmark', detail: 'benchmark_engineer builds the COMMANDMENT + baseline' },
     { title: 'Profile', detail: 'profile_engineer classifies; optional analysis_engineer validates Step-2 evidence' },
-    { title: 'Optimize', detail: 'budget loop: tech_lead plans, specialist OR deep_explore engineers optimize, reprofile' },
+    { title: 'Optimize', detail: 'budget loop: normal modes advance one canonical tree; mega advances independent whole-kernel candidate lanes' },
     { title: 'Verify', detail: 'each candidate patch independently re-benchmarked' },
     { title: 'Merge', detail: 'integrator combines the round winners' },
     { title: 'Report', detail: 'tech_lead writes the final report + patch' },
@@ -22,6 +22,7 @@ export const meta = {
 // nothing about the install location is hard-coded.)
 // ---------------------------------------------------------------------------
 const A = args || {};
+const WORKFLOW_STARTED_MS = Date.now();
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
 // WORKFLOW_DIR = the directory that holds this script + roles/ + knowledge/ + scripts/.
@@ -177,7 +178,8 @@ const EVAL_DIR_OVERRIDE = A.eval_dir || '';
 const APPLY_TO_ORIGINAL = String(A.apply_to_original != null ? A.apply_to_original : 'false');
 const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 
-// --- author mode: when there is NO existing source, write a fresh from-scratch SEED first, then optimize it.
+// --- mode selection. optimize improves one canonical tree; author writes a seed first; mega keeps
+// independent whole-kernel candidate lanes and selects the fastest fully verified speedup.
 // mode=optimize (default) keeps the exact original behavior (backward compatible). mode=author seeds
 // the workspace from an op task dir (immutable oracle + frozen online kernel in baseline_src/), the
 // author_engineer writes a passing seed, then the SAME optimize loop runs — always timing against the
@@ -185,8 +187,45 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 // knowledge base — REFERENCE ONLY (facts/how-to, never decisions; the author always measures regardless). Default:
 // sibling perf_knowledge/ so standalone runs use it too; empty if WORKFLOW_DIR is unset (no behavior change).
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
+if (!['optimize', 'author', 'mega'].includes(MODE)) {
+  throw new Error(`args.mode must be 'optimize', 'author' or 'mega', got '${MODE}'`);
+}
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
+// Mega is a portfolio of independent WORKFLOW-AUTHORED whole-kernel candidates, not a Reproduce
+// gate followed by a different optimizer contract. The hand-authored M2.5 tree is never registered,
+// run, copied or used as a base. Its independently recorded number is only a target band.
+const MEGA_PROFILE = String(A.mega_profile || 'production').trim();
+if (!['production', 'audit'].includes(MEGA_PROFILE)) {
+  throw new Error(`args.mega_profile must be 'production' or 'audit', got '${MEGA_PROFILE}'`);
+}
+const MEGA_PRODUCTION = MEGA_PROFILE === 'production';
+const MEGA_STOP_ON_DELIVERABLE = A.mega_stop_on_deliverable != null
+  ? String(A.mega_stop_on_deliverable) === 'true' : MEGA_PRODUCTION;
+const MEGA_MIN_SEARCH_ATTEMPTS = Math.max(0, Number(A.mega_min_search_attempts != null
+  ? A.mega_min_search_attempts : 2));
+const MEGA_CANDIDATE_TIMEOUT_S = Math.max(300, Number(A.mega_candidate_timeout_s ||
+  (MEGA_PRODUCTION ? 1200 : 3600)));
+const MEGA_FINAL_TIMEOUT_S = Math.max(600, Number(A.mega_final_timeout_s ||
+  (MEGA_PRODUCTION ? 1200 : 3600)));
+const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
+  (MEGA_PRODUCTION ? 10800 : 28800)));
+const MEGA_FINAL_RESERVE_S = Math.max(600, Math.min(MEGA_TIME_BUDGET_S / 2,
+  Number(A.mega_final_reserve_s || 3600)));
+const MEGA_CLOSEOUT_RESERVE_S = Math.max(300, Number(A.mega_closeout_reserve_s || 900));
+const MEGA_SKILL_CANDIDATE_ID = String(A.mega_skill_candidate_id || 'm25_skill');
+const MEGA_SKILL_ID = String(A.mega_skill_id || 'megamoe_ep_mega_fusion');
+const MEGA_M25_RECORDED_SCORE = Number(A.mega_m25_recorded_score || 1.0448);
+const MEGA_M25_RECORDED_LOW = Number(A.mega_m25_recorded_low || 1.0403);
+const MEGA_M25_RECORDED_HIGH = Number(A.mega_m25_recorded_high || 1.0477);
+const MEGA_SKILL_MAX_ATTEMPTS = Math.max(1, Number(A.mega_skill_max_attempts || 6));
+const MEGA_SKILL_INTERVAL = Math.max(1, Number(A.mega_skill_interval || 3));
+const MEGA_FINAL_TOP_K = Math.max(1, Number(A.mega_final_top_k ||
+  (MEGA_PRODUCTION ? 1 : 2)));
+const MEGA_FINAL_FALLBACK_K = Math.max(MEGA_FINAL_TOP_K,
+  Number(A.mega_final_fallback_k || (MEGA_PRODUCTION ? 2 : MEGA_FINAL_TOP_K)));
+const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
+  A.mega_tie_noise_pct != null ? A.mega_tie_noise_pct : 1.45));
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
 // the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
 // graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
@@ -249,9 +288,9 @@ const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skil
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
 // Only planning + authoring roles consult skills; every other role gets no injection.
-// `repro_engineer` (mode=mega's dedicated faithful-reproduction role) consumes the mega skill as its
-// authoritative recipe; adding it here is inert unless MODE==='mega' AND use_expert_skills is on.
-const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'repro_engineer']);
+// `mega_engineer` alone consumes the exact M2.5 recipe. Other mega roles must remain unanchored so
+// independent search is real rather than several copies of the same skill direction.
+const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'mega_engineer']);
 
 // ---- Capability-evaluation mode (OPTIONAL, default OFF -> byte-identical behaviour) --------------
 // In production, "this is already implemented next door, port it" is correct and the prior-art sweep
@@ -518,6 +557,8 @@ const SETUP_SCHEMA = obj({
   // never kernel_src/ (the candidate's own scaffold). The director sets baseline_frozen=true after it
   // copies baseline_src/ + confirms meta.baseline_callable; the script aborts the run if neither holds.
   baseline_frozen: { type: 'boolean' }, baseline_callable: { type: 'string' },
+  mega_workspace_from_original: { type: 'boolean' },
+  mega_candidate_state_checked: { type: 'boolean' },
   // DEEP-MODE resume only: populated by the director ONLY when STATE_DIR was provided AND a prior best
   // exists there. Lets a continued wave restore its cumulative speedup + insight/ledger history so it
   // does not re-explore dead directions. Absent (undefined) on a fresh run -> no behavior change.
@@ -556,6 +597,9 @@ const SETUP_SCHEMA = obj({
       base_round: { type: 'number' }, shelved_round: { type: 'number' },
       absorbed: { type: 'boolean' },
     }, ['id', 'geomean']) },
+    candidate_registry: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    measurement_calibration: { type: 'object', additionalProperties: true },
+    state_sequence: { type: 'number' },
     // round -> files CANONICAL took on that round. Keys are round numbers as strings.
     absorbed_files: { type: 'object' },
   }, []),
@@ -567,29 +611,33 @@ const AUTHOR_SCHEMA = obj({
   build: { type: 'boolean' }, notes: { type: 'string' },
 }, ['authored', 'correctness']);
 
-// mode=mega only. The dedicated Reproduce phase's return. `reproduced`+`correctness` gate whether a
-// clean whole-topology FLOOR was committed as HEAD (see the Reproduce phase). `floor_geomean` is the
-// floor's measured speedup vs the FROZEN baseline (mega_e2e rank-max on the target guard), and it is
-// what seeds `cumulative` so the optimize loop's commit gate becomes "beat the floor", not ">1.0" —
-// which is what makes the floor 保底/permanent. `floor_per_case` is diagnostic only (bestPerCase stays
-// the frozen baseline, so regression guards keep their original "at or above baseline" meaning).
-const REPRO_SCHEMA = obj({
-  reproduced: { type: 'boolean' }, correctness: { type: 'string' },
-  floor_ms: { type: 'number' }, floor_geomean: { type: 'number' },
-  floor_per_case: { type: 'array', items: { type: 'object' } },
-  kernel_src_path: { type: 'string' }, entry_point: { type: 'string' },
-  build: { type: 'boolean' }, path_marker: { type: 'string' }, liveness_replays: { type: 'number' },
-  launches: { type: 'number' }, notes: { type: 'string' },
-  // Reproduce is a bounded MULTI-ROUND on-lease AUTHORING loop (the flat 2-launch floor was never built
-  // in-tree; it must be authored, not copied). Each round the engineer carries forward its committed WIP
-  // at HEAD toward the ONE flat target. `authoring_status` steers the loop between rounds:
-  //  - 'complete'       : the whole flat operator validated clean (reproduced:true, correctness:pass) — floor established, stop.
-  //  - 'progressed'     : real on-card progress this round (WIP committed) but not yet clean — spend another round.
-  //  - 'blocked_fixable': hit a concrete, named blocker with a next-step in reach — spend another round.
-  //  - 'dead_end'       : a structural dead-end (the flat work-pool itself cannot be brought up) — honest early stop, no more rounds.
-  authoring_status: { type: 'string' },
-  next_blocker: { type: 'string' },   // the concrete thing the next round must attack (empty when complete)
-}, ['reproduced', 'correctness']);
+// mode=mega only. Every whole-kernel lane — validated artifact, skill reproduction, or open search —
+// uses one lifecycle. A WIP may advance its own lane without becoming the global incumbent.
+const MEGA_CANDIDATE_SCHEMA = obj({
+  candidate_id: { type: 'string' },
+  candidate_source: { type: 'string', enum: ['validated_skill', 'search', 'integrated'] },
+  base_candidate_id: { type: 'string' },
+  candidate_status: { type: 'string', enum: ['authoring', 'runnable', 'scored', 'finalist', 'rejected'] },
+  claim_complete: { type: 'boolean' },
+  attempt_id: { type: 'string' },
+  evidence_manifest: { type: 'string' },
+  correctness: { type: 'string' },
+  build: { type: 'boolean' },
+  tree: { type: 'string' },
+  head: { type: 'string' },
+  patch_file: { type: 'string' },
+  absolute_score: { type: 'number' },
+  per_case: perCase,
+  activation_on_hardware: { type: 'string' },
+  path_marker: { type: 'string' },
+  launches: { type: 'number' },
+  liveness_replays: { type: 'number' },
+  graph_safe: { type: 'string' },
+  topology_sig: { type: 'string' },
+  provenance: { type: 'string' },
+  next_blocker: { type: 'string' },
+  notes: { type: 'string' },
+}, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete']);
 
 const ANALYZE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
@@ -806,9 +854,12 @@ const BENCH_SCHEMA = obj({
   // dropped field validate and then be interpreted as a passing control.
   positive_control: obj({
     ran: { type: 'boolean' },
-    switch_present: { type: 'boolean' },
+    claim_complete: { type: 'boolean' },
+    attempt_id: { type: 'string' },
+    evidence_manifest: { type: 'string' },
+    switch_present: { type: ['boolean', 'null'] },
     switch_checked: { type: 'string' },
-    measured_pct: { type: 'number' },
+    measured_pct: { type: ['number', 'null'] },
     expected_lo: { type: 'number' }, expected_hi: { type: 'number' },
     passed: { type: 'boolean' }, reps: { type: 'number' },
     control_pairs_pct: { type: 'array', items: { type: 'number' } },
@@ -817,7 +868,7 @@ const BENCH_SCHEMA = obj({
     note: { type: 'string' },
     // Required only when the object exists at all: a run with no control omits it entirely. When it
     // IS reported, these three are what separate a control from a number, so none may be defaulted.
-  }, ['ran', 'switch_present', 'measured_pct']),
+  }, ['ran', 'claim_complete', 'switch_present', 'measured_pct']),
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
 
@@ -907,6 +958,9 @@ const PLAN_SCHEMA = obj({
         required: ['launches'],
         additionalProperties: true,
       },
+      candidate_id: { type: 'string' },
+      candidate_source: { type: 'string' },
+      base_candidate_id: { type: 'string' },
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -918,6 +972,13 @@ const ENG_SCHEMA = obj({
   // = Σ weight_i / Σ (weight_i / speedup_i). Omitted on unweighted runs.
   speedup_weighted: { type: 'number' },
   per_case: perCase, status: { type: 'string' }, patch_file: { type: 'string' },
+  claim_complete: { type: 'boolean' }, attempt_id: { type: 'string' },
+  evidence_manifest: { type: 'string' },
+  candidate_id: { type: 'string' }, candidate_source: { type: 'string' },
+  base_candidate_id: { type: 'string' }, candidate_status: { type: 'string' },
+  candidate_tree: { type: 'string' }, candidate_head: { type: 'string' },
+  topology_sig: { type: 'string' }, provenance: { type: 'string' },
+  next_blocker: { type: 'string' },
   // Concrete arms completed by the engineer. Verify independently reports its own list; a rung
   // whose mandatory control arm was omitted stays open even if the candidate produced a number.
   arms_run: { type: 'array', items: { type: 'string' } },
@@ -936,8 +997,12 @@ const ENG_SCHEMA = obj({
 
 const VERIFY_SCHEMA = obj({
   status: { type: 'string' }, correctness: { type: 'string' },
-  verified_geomean: { type: 'number' }, verified_arithmetic: { type: 'number' },
-  verified_weighted: { type: 'number' }, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
+  claim_complete: { type: 'boolean' }, attempt_id: { type: 'string' },
+  evidence_manifest: { type: 'string' }, candidate_id: { type: 'string' },
+  candidate_source: { type: 'string' }, candidate_tree: { type: 'string' },
+  candidate_head: { type: 'string' },
+  verified_geomean: { type: ['number', 'null'] }, verified_arithmetic: { type: ['number', 'null'] },
+  verified_weighted: { type: ['number', 'null'] }, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
   per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
   graph_safe: { type: 'string' },
   liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
@@ -1114,6 +1179,11 @@ const INTEGRATE_SCHEMA = obj({
 
 const MEMORY_SCHEMA = obj({
   insights: { type: 'array', items: { type: 'string' } },
+  candidate_registry: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  measurement_calibration: { type: 'object', additionalProperties: true },
+  state_written: { type: 'boolean' }, state_round: { type: 'number' },
+  state_path: { type: 'string' }, state_generation: { type: 'string' },
+  state_sequence: { type: 'number' },
   // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
   // out of `roadmap_rung`. A row missing `id` merges as a new row every round; a row missing
   // `verdict` is treated by the next plan_round as untried. Both read as normal ledger growth.
@@ -1162,6 +1232,61 @@ const COMMIT_SCHEMA = obj({
   exact_patch: { type: 'boolean' }, transaction_valid: { type: 'boolean' },
 }, ['committed']);
 
+const MEGA_SELECTION_SCHEMA = obj({
+  claim_complete: { type: 'boolean' },
+  attempt_id: { type: 'string' },
+  evidence_manifest: { type: 'string' },
+  selected_candidate_id: { type: 'string' },
+  selected_source: { type: 'string' },
+  selected_tree: { type: 'string' },
+  selected_head: { type: 'string' },
+  materialized_from_head: { type: 'string' },
+  selected_score: { type: 'number' },
+  selected_patch: { type: 'string' },
+  tie_kept_skill: { type: 'boolean' },
+  candidates: { type: 'array', items: obj({
+    candidate_id: { type: 'string' }, source: { type: 'string' },
+    tree: { type: 'string' }, head: { type: 'string' }, score: { type: 'number' },
+    correctness: { type: 'string' }, guards_pass: { type: 'boolean' },
+    path_marker: { type: 'string' }, path_marker_count: { type: 'number' },
+    launches: { type: 'number' },
+    graph_safe: { type: 'string' }, artifact_distinct: { type: 'string' },
+    artifact_hash_base: { type: 'string' }, artifact_hash_candidate: { type: 'string' },
+    overlap_measured: { type: 'string' }, overlap_fraction: { type: 'number' },
+    overlap_cu_fraction: { type: 'number' },
+    overlap_scattered_reading: { type: 'number' }, overlap_forced_reading: { type: 'number' },
+    attribution_complete: { type: 'boolean' },
+    attribution: obj({
+      changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
+      residual_ms_base: { type: 'number' }, residual_ms_cand: { type: 'number' },
+      guard: { type: 'string' }, method: { type: 'string' },
+      absolute_to_frozen: { type: 'boolean' },
+    }, []),
+    accuracy_metric: { type: 'string' }, accuracy_value: { type: 'number' },
+    liveness_replays: { type: 'number' }, claim_complete: { type: 'boolean' },
+    replay_results: { type: 'array', items: obj({
+      guard: { type: 'string' }, count: { type: 'number' },
+      status: { type: 'string' }, graph_safe: { type: 'string' },
+      arrival_jitter: { type: 'boolean' },
+    }, ['guard', 'count', 'status']) },
+    paired_readings: { type: 'array', items: obj({
+      guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
+    }, ['guard', 'base', 'cand']) },
+    null_arm_pct: { type: 'number' },
+    per_case: perCase,
+    reason: { type: 'string' },
+  }, ['candidate_id', 'claim_complete']) },
+  notes: { type: 'string' },
+}, ['claim_complete', 'selected_candidate_id', 'selected_tree']);
+
+const MEGA_IDENTITY_SCHEMA = obj({
+  passed: { type: 'boolean' },
+  selected_candidate_id: { type: 'string' },
+  source_head: { type: 'string' },
+  materialized_head: { type: 'string' },
+  note: { type: 'string' },
+}, ['passed', 'selected_candidate_id', 'source_head', 'materialized_head']);
+
 const REPORT_SCHEMA = obj({
   final_speedup_geomean: { type: 'number' }, final_speedup_arithmetic: { type: 'number' },
   final_speedup_weighted: { type: 'number' }, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
@@ -1179,6 +1304,10 @@ const VALIDATE_SCHEMA = obj({
   autonomy_acceptance_confirmed: { type: 'boolean' },
   workflow_unchanged: { type: 'boolean' },
   workflow_revision_end: { type: 'string' },
+  materialization_matches: { type: 'boolean' },
+  selected_source_head: { type: 'string' },
+  selected_materialized_head: { type: 'string' },
+  final_patch_verified: { type: 'boolean' },
   attribution: obj({
     changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
     guard: { type: 'string' }, residual_ms_base: { type: 'number' },
@@ -1190,7 +1319,7 @@ const VALIDATE_SCHEMA = obj({
   // some direction backgrounded a lease and produced a measurement that is NOT in the report.
   orphan_leases_swept: { type: 'number' },
   arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
-}, ['director_verified_speedup_geomean', 'validation_status']);
+}, ['director_verified_speedup_geomean', 'validation_status', 'correctness']);
 
 // ---------------------------------------------------------------------------
 // Prompt helpers. Every agent reads its role file from WORKFLOW_DIR and the
@@ -1221,32 +1350,44 @@ const cfg = (o) => Object.entries(o).map(([k, v]) =>
 // (e.g. an auth/header requirement the client doesn't send), retries are exhausted then the run
 // degrades — re-run with Workflow({resumeFromRunId}) once the client/API is fixed; cached agent results
 // make resume cheap.
+// A call may set orchestration-only `timeout_ms`; agentT strips it before invoking agent(), so the
+// agent API/cache key remains unchanged while production Mega turns can use a tighter bound.
 const AGENT_TIMEOUT_MS = parseInt(A.agent_timeout_ms != null ? A.agent_timeout_ms : 3600000, 10);
 const AGENT_RETRIES = Math.max(1, parseInt(A.agent_retries != null ? A.agent_retries : 4, 10));
 async function agentT(p, o) {
   const label = (o && o.label) ? o.label : 'agent';
-  for (let attempt = 1; attempt <= AGENT_RETRIES; attempt++) {
+  const timeoutMs = Number(o && o.timeout_ms) > 0 ? Number(o.timeout_ms) : AGENT_TIMEOUT_MS;
+  const timeoutMarker = !!(o && o.timeout_marker);
+  const callRetries = Number(o && o.max_retries) > 0
+    ? Math.max(1, Number(o.max_retries)) : AGENT_RETRIES;
+  const callOpts = o && (Object.prototype.hasOwnProperty.call(o, 'timeout_ms') ||
+      Object.prototype.hasOwnProperty.call(o, 'timeout_marker') ||
+      Object.prototype.hasOwnProperty.call(o, 'max_retries'))
+    ? Object.fromEntries(Object.entries(o).filter(([key]) =>
+      key !== 'timeout_ms' && key !== 'timeout_marker' && key !== 'max_retries')) : o;
+  for (let attempt = 1; attempt <= callRetries; attempt++) {
     try {
-      if (typeof setTimeout !== 'function' || !(AGENT_TIMEOUT_MS > 0)) return await agent(p, o);
+      if (typeof setTimeout !== 'function' || !(timeoutMs > 0)) return await agent(p, callOpts);
       let to;
       const guard = new Promise((resolve) => {
         to = setTimeout(() => {
-          log(`  [hung-agent guard] ${label} exceeded ${Math.round(AGENT_TIMEOUT_MS / 60000)}min with no return — resolving null so the round proceeds.`);
-          resolve(null);
-        }, AGENT_TIMEOUT_MS);
+          log(`  [hung-agent guard] ${label} exceeded ${Math.round(timeoutMs / 60000)}min with no return — ` +
+            `${timeoutMarker ? 'returning a timeout marker so Mega stops safely' : 'resolving null so the round proceeds'}.`);
+          resolve(timeoutMarker ? { __agent_timed_out: true, label } : null);
+        }, timeoutMs);
       });
       // A timeout resolves null (returned as-is, no retry). An API/agent error rejects -> caught below.
       return await Promise.race([
-        agent(p, o).then((r) => { clearTimeout(to); return r; }, (e) => { clearTimeout(to); throw e; }),
+        agent(p, callOpts).then((r) => { clearTimeout(to); return r; }, (e) => { clearTimeout(to); throw e; }),
         guard,
       ]);
     } catch (e) {
       const msg = String(e && e.message ? e.message : e).slice(0, 200);
-      if (attempt < AGENT_RETRIES) {
-        log(`  [api-fault guard] ${label} attempt ${attempt}/${AGENT_RETRIES} hit an API/agent error (${msg}) — retrying so a transient outage doesn't kill the run.`);
+      if (attempt < callRetries) {
+        log(`  [api-fault guard] ${label} attempt ${attempt}/${callRetries} hit an API/agent error (${msg}) — retrying so a transient outage doesn't kill the run.`);
         continue;
       }
-      log(`  [api-fault guard] ${label} still failing after ${AGENT_RETRIES} attempts (${msg}) — resolving null so the workflow degrades gracefully instead of exiting.`);
+      log(`  [api-fault guard] ${label} still failing after ${callRetries} attempts (${msg}) — resolving null so the workflow degrades gracefully instead of exiting.`);
       return null;
     }
   }
@@ -1258,57 +1399,18 @@ async function agentT(p, o) {
 // pointer telling the agent to Read the fragment + query the skills index (scripts have no fs access).
 function expertSkillsBlock(role) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
-  // mode=mega (megafusion): author+optimize combined. Point the skill-consuming roles DIRECTLY at the
-  // mega skill instead of the generic index.yaml auto-match (so it cannot collide with the
-  // persistent-fusion skill's `match`), and deliver the mode's methodology relaxation in-prompt.
-  // PURELY ADDITIVE: only reached when MODE==='mega', so optimize/author builds are byte-identical.
+  // The exact M2.5 recipe belongs ONLY to its validated-skill candidate lane. Injecting it globally
+  // into TechLead/every Engineer anchors unrelated search directions on one topology and makes the
+  // "other candidates" branch fictional. Trusted artifact paths are never injected here.
   if (MODE === 'mega') {
-    // mega now has TWO distinct phases with DIFFERENT jobs, so the advisory is role-aware:
-    //  - repro_engineer runs the Reproduce phase BEFORE the loop: faithfully reproduce the whole flat
-    //    operator as the FLOOR. Its charge is "reproduce, do not innovate".
-    //  - the optimize-loop roles (tech_lead / engineer / deep_engineer / author_engineer) run AFTER the
-    //    floor is already HEAD. Their charge is "beat the floor" — optimize on it or offer an alternative
-    //    fused candidate, never re-decompose the floor into an incremental single-edge ladder.
-    // Both share the skill, the arithmetic authorization, the r12 first-class fix, and the red line.
-    const megaCommon =
-      `- The mega skill spells out the EXACT arrival-ticket / epoch-parity / spin-wait address ` +
-      `arithmetic (base+predicate init included). Use it directly and faithfully — reproduction is ` +
-      `authorized in this mode (the derived-not-copied / leak-sweep constraint is lifted for mega). Its ` +
-      `source is the reachable baseline machinery plus the diagnosed correct init, NOT any out-of-tree ` +
-      `reference.\n` +
-      `- Fixing the baseline mega_moe_stage1.py spin-wait base/predicate register init is a FIRST-CLASS ` +
-      `allowed action (it is the r12 root cause; the substrate was wrongly treated as untouchable).\n` +
-      `- Advisory over measurement still holds: never override your isolated A/B vs the oracle, never ` +
-      `reduce a result below the measured baseline.\n` +
-      `- HARD BOUNDARY (unchanged, NOT lifted): never read anything under /root/geak_reference/.`;
-    if (role === 'repro_engineer') {
-      return `\n\n## MEGA FUSION MODE — REPRODUCE PHASE (this run)\n` +
-        `This is mode=mega and you are the dedicated REPRO engineer. Read ` +
-        `${EXPERT_SKILLS_DIR}/skills/megamoe_ep_mega_fusion/skill.md and follow it as the AUTHORITATIVE ` +
-        `recipe: it supersedes the generic persistent-fusion skill and any bankable-rung / cheaper-lever ` +
-        `ladder guidance FOR THIS MODE.\n` +
-        `- Your ONLY job is FAITHFUL REPRODUCTION of the COMPLETE 2-launch fused topology ` +
-        `(dispatch->GEMM1->GEMM2->combine) as the known-good FLOOR, authored in ONE coherent design ` +
-        `aligned to the full-operator decomposition. GEMM2 stays FLAT. Do NOT innovate, do NOT do ` +
-        `incremental half-fusion, do NOT do the g2-collapse, and do NOT treat the cut-ladder as a build ` +
-        `method (it is a bring-up DIAGNOSTIC only — you commit the whole flat operator, never a cut).\n` +
-        `- The skill's "OPTIMIZATION-PHASE FAILURE LORE" (cut4 / collapse / rocgdb) is NOT a build method ` +
-        `for you; it documents what the optimize phase must avoid.\n` +
-        megaCommon;
-    }
-    return `\n\n## MEGA FUSION MODE — OPTIMIZE PHASE (this run)\n` +
-      `This is mode=mega. A dedicated Reproduce phase has ALREADY committed the whole flat faithful ` +
-      `2-launch operator as HEAD = the FLOOR (保底). Read ` +
-      `${EXPERT_SKILLS_DIR}/skills/megamoe_ep_mega_fusion/skill.md and follow it as the AUTHORITATIVE ` +
-      `recipe: it supersedes the generic persistent-fusion skill and any bankable-rung / cheaper-lever ` +
-      `ladder guidance FOR THIS MODE.\n` +
-      `- Your job is to BEAT the floor: optimize on top of it, or offer an ALTERNATIVE complete fused ` +
-      `candidate — always keeping the whole 2-launch topology intact. Do NOT re-decompose the floor into ` +
-      `an incremental single-edge rung ladder, and do NOT invent intermediate half-fused topologies. The ` +
-      `floor is permanently retained; a candidate is admitted only if it BEATS the floor.\n` +
-      `- If you reintroduce the g2-collapse, you own its cut4 SGPR-pressure risk (see the skill's ` +
-      `OPTIMIZATION-PHASE FAILURE LORE) — it is optional and NOT part of the floor.\n` +
-      megaCommon;
+    if (role !== 'mega_engineer') return '';
+    return `\n\n## MEGA CANDIDATE LANE — VALIDATED-SKILL REPRODUCTION\n` +
+      `Read ${EXPERT_SKILLS_DIR}/skills/${MEGA_SKILL_ID}/skill.md and use it as the authoritative ` +
+      `recipe for this candidate only. Produce the complete M2.5-class two-launch implementation, ` +
+      `including its concurrency schedule — path=MEGA plus two launches without the overlap is only ` +
+      `authoring WIP. Work only in the CANDIDATE_TREE named in your inputs; never touch another lane. ` +
+      `Report provenance=validated_skill:${MEGA_SKILL_ID}. Never search for or read any ` +
+      `hand-authored M2.5 source tree outside the candidate workspace.`;
   }
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
     `Also Read ${WORKFLOW_DIR}/roles/_fragments/expert_skills.md and follow it: query ` +
@@ -1373,13 +1475,21 @@ const setup = await agentT(
     ...(STRICT_AUTONOMY ? { STRICT_AUTONOMY: '1' } : {}),
     ...(STATE_DIR ? { STATE_DIR } : {}),
   }),
-  { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA });
+  { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
 if (!setup || !setup.eval_dir) throw new Error('Setup failed: director did not return an eval_dir');
 const EVAL_DIR = setup.eval_dir;
 const CANONICAL = setup.workspace;       // canonical current-best workspace (advances each round)
 const KERNEL_NAME = setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
 log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
+if (MODE === 'mega' &&
+    (setup.mega_workspace_from_original !== true || setup.mega_candidate_state_checked !== true)) {
+  throw new Error(
+    'MEGA SETUP REFUSED: ordinary workspace must be seeded from KERNEL_PATH_ORIG. Candidate state ' +
+    'must be checked and resumes only inside STATE_DIR/candidates; a legacy STATE_DIR/best must never ' +
+    'replace the frozen base.');
+}
 if (STRICT_AUTONOMY && setup.resumed) {
   throw new Error(
     'STRICT AUTONOMY REFUSED: director seeded this run from STATE_DIR/best. A proof run must start ' +
@@ -1471,7 +1581,7 @@ if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR &&
 // voided an earlier closure) entirely without hardware. An occupied pool should redirect a round to
 // lease-free work, not end the run. Sampling per round rather than once is deliberate — the tenant
 // observed here cycles between ~287 GiB and ~25 GiB free inside two minutes.
-async function samplePool(round) {
+async function samplePool(round, timeoutMs) {
   if (!(GPU_MIN_FREE_GIB > 0)) return null;
   const p = await agentT(
     `Sample the GPU pool and report what you see. Do NOT acquire a lease, do NOT run any workload, ` +
@@ -1485,7 +1595,8 @@ async function samplePool(round) {
     `verdict:"free" only if EVERY card has at least ${GPU_MIN_FREE_GIB} GiB free. If any card is ` +
     `below that floor, or a foreign tenant holds memory, verdict:"occupied". If you cannot read the ` +
     `pool at all, verdict:"unknown" — do not report an unreadable pool as free.`,
-    { phase: 'Optimize', label: `pool sample r${round}`, schema: POOL_SCHEMA });
+    { phase: 'Optimize', label: `pool sample r${round}`, schema: POOL_SCHEMA,
+      ...(Number(timeoutMs) > 0 ? { timeout_ms: Number(timeoutMs), max_retries: 1 } : {}) });
   if (!p) {
     log(`POOL SAMPLE r${round}: sampler returned nothing. Treating as UNKNOWN, not free.`);
     return { verdict: 'unknown', note: 'sampler agent returned nothing' };
@@ -1525,6 +1636,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
       phase: 'Profile',
       label,
       schema: ANALYSIS_RESULT_SCHEMA,
+      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}),
     },
   );
   return result || {
@@ -1591,230 +1703,28 @@ if (MODE === 'author') {
 }
 
 // ===========================================================================
-// PHASE: Reproduce (mode=mega only) — mega's OWN pipeline, distinct from author (0->1 blind seed) and
-// from a bare optimize loop (improve-existing). A DEDICATED repro engineer AUTHORS the WHOLE flat
-// two-launch fused operator toward ONE coherent flat topology (dispatch->GEMM1->GEMM2(FLAT)->combine as
-// one persistent kernel/rank + quant its own launch). "Reproduce" is a misnomer inherited from the
-// design: the flat 2-launch floor was NEVER built and is unreachable in-tree (exhaustive on-card search
-// 2026-09-06), so this is multi-round ON-LEASE AUTHORING of a novel FlyDSL body, NOT a single-turn copy.
-// It does NOT innovate on the topology, does NOT do g2-collapse, does NOT commit an intermediate
-// half-fused TOPOLOGY as terminal, and does NOT treat the cut-ladder as a build method (only as a
-// bring-up bisection instrument). What IS iterated across rounds is on-card bring-up of the SAME flat
-// design. On success, HEAD of CANONICAL becomes that FLOOR/保底 — the code base the optimize loop diffs
-// against AND the incumbent it must beat (seeded into `cumulative` below). The SPEEDUP denominator stays
-// the frozen baseline in baseline_src/, never the floor. On failure (no clean flat floor within the
-// authoring round budget, or a declared dead_end) abort with `repro_failed`: the honest signal to fix
-// the flat-work-pool authoring (skill / repro_engineer), NOT to bury a broken partial under an optimize
-// wave. The whole block is mega-gated, so author/optimize builds are byte-identical.
+// MEGA CANDIDATE REGISTRY — no blocking pre-loop reproduction phase.
 // ===========================================================================
-let reproResult = null;
+
+// Mega candidate portfolio. M2.5 is reconstructed only through its validated skill; the hand-written
+// tree is not an input. The skill lane is reserved and persistent but never blocks open search.
+let megaCandidateRegistry = [];
+let megaStateSequenceBase = 0;
+let megaUnsafeTimeout = null;
+let megaMeasurementCalibration = {
+  ready: false, candidate_id: '', attempt_id: '', evidence_manifest: '', note: 'not measured',
+};
 if (MODE === 'mega') {
-  phase('Reproduce');
-  // WHY A LOOP, NOT ONE CALL: the flat 2-launch floor was NEVER built and is unreachable in-tree
-  // (exhaustive on-card search, 2026-09-06: the sole GEMM2-fold anywhere is the d2_cut collapse ladder;
-  // cut<=3 = 4 launches, cut>=4 = the faulting g2-collapse; the FLAT per-tile GEMM2 work-pool is
-  // genuinely UNBUILT). So "faithful reproduction" is really multi-round on-lease AUTHORING of a novel
-  // FlyDSL body that lowers only on the card — a single turn cannot author+debug it to clean 2-launch
-  // without gambling the collective lease. Each round carries forward its committed WIP at HEAD toward
-  // the ONE flat target. This is bring-up iteration on a SINGLE flat topology — NOT the forbidden
-  // cut-ladder / intermediate-half-fused-topology / g2-collapse build method (those remain banned; what
-  // is committed at the end is always the whole flat 2-launch operator, never a cut).
-  const REPRO_ROUNDS = Math.max(1, Number(A.repro_rounds) || 6);
-  // PERF GATE (mega): the floor SPEED is measured and the +3% target is an authoring ASPIRATION, but a
-  // CORRECT floor at ANY speed is accepted — round_1 proved the optimize single-diff gate ratchets a
-  // sub-parity floor up cleanly (+1.322x/round), so a correct-but-slow floor is an optimizable starting
-  // point, NOT a failure. floor_geomean is speedup vs the FROZEN scattered baseline. Bands:
-  //   >= REPRO_FLOOR_TARGET -> complete early: reproduces M2.5-class speed, de-crippling already done in
-  //                            the authoring vehicle, optimize just ratchets the last bit.
-  //   [MIN,TARGET) or < MIN with rounds left -> keep authoring: de-cripple toward the target to hand
-  //                            optimize a BETTER floor (aspiration), but this is NOT a fail condition.
-  //   rounds exhausted, correct at ANY speed -> accept as the floor; optimize ratchets from the seed.
-  //   FAIL only when NOT correct, or the floor speed was never measured (cannot seed the commit-gate).
-  //   Tune via A.repro_floor_min / A.repro_floor_target.
-  const REPRO_FLOOR_MIN = Number.isFinite(Number(A.repro_floor_min)) ? Number(A.repro_floor_min) : 0.97;
-  const REPRO_FLOOR_TARGET = Number.isFinite(Number(A.repro_floor_target)) ? Number(A.repro_floor_target) : 1.03;
-  // CONTINUATION flag: when a wave is seeded from a PRIOR wave's fully-authored floor tree (BASELINE =
-  // the floor HEAD, so the whole flat 2-launch operator is ALREADY present + on-card-validated), the
-  // Reproduce phase must VERIFY + MEASURE that floor, NOT re-author it from scratch. Without this the
-  // round-1 charge tells the engineer "HEAD is the clean scattered baseline, author from 0" — false and
-  // dangerous on a continuation (it invites a destructive rewrite of a working floor). Set via
-  // A.floor_prebuilt=true on the relaunch. Off => the original from-scratch authoring behavior.
-  const FLOOR_PREBUILT = A.floor_prebuilt === true || String(A.floor_prebuilt) === 'true';
-  // DE-CRIPPLE flag: HEAD is a prior wave's VALIDATED-but-CRIPPLED flat floor (BASELINE = the floor HEAD:
-  // path=MEGA, launches=2, relL2-clean, but sub-parity — static CU split / coarse barrier / serial combine).
-  // Reproduce's job is to author the GEMM1‖GEMM2 overlap INTO the floor (de-cripple the concurrency IN PLACE)
-  // under the perf gate, keeping GEMM2 flat + gemm2_compute_v2 NUMERICALLY equivalent (relL2-gated; MFMA
-  // matmul math unchanged) while ALLOWING its A-gather/wave-reclaim SCHEDULING to be restructured (the
-  // site-4 waiver: the dominant remaining serializer once the CU-split/barrier are de-crippled) — NOT to re-author the topology
-  // from scratch (FLOOR_PREBUILT=false-from-scattered path) and NOT to verify-and-accept-any-speed
-  // (FLOOR_PREBUILT=true path). This relocates the coupled concurrency rebuild into Reproduce's holistic
-  // authoring vehicle (the right fit) instead of optimize's single-diff gate. Set via A.floor_decripple=true.
-  const FLOOR_DECRIPPLE = A.floor_decripple === true || String(A.floor_decripple) === 'true';
-  const reproHistory = [];
-  for (let rr = 1; rr <= REPRO_ROUNDS; rr++) {
-    const priorSummary = reproHistory.length
-      ? `PRIOR AUTHORING ROUNDS (carry the committed WIP at HEAD forward — do NOT restart from scratch):\n` +
-        reproHistory.map(h => `  r${h.round}: status=${h.status}; ${h.notes}`).join('\n') +
-        `\nThe next thing to attack: ${reproHistory[reproHistory.length - 1].next || '(unspecified — diagnose it)'}`
-      : FLOOR_PREBUILT
-        ? `This is a CONTINUATION round 1. The workspace HEAD is ALREADY the prior wave's fully-authored, ` +
-          `on-card-validated flat 2-launch floor (path=MEGA, launches=2, relL2-clean). VERIFY + MEASURE it ` +
-          `this round; do NOT re-author.`
-        : FLOOR_DECRIPPLE
-        ? `This is a DE-CRIPPLE round 1. The workspace HEAD is the prior wave's VALIDATED flat 2-launch ` +
-          `floor (path=MEGA, launches=2, relL2-clean) but CRIPPLED (sub-parity: static CU split / coarse ` +
-          `barrier / serial combine). De-cripple the concurrency IN PLACE (author GEMM1‖GEMM2 overlap) ` +
-          `toward the perf target this round; do NOT re-author from scratch, do NOT accept the slow speed.`
-        : `This is authoring round 1. The workspace HEAD is the clean scattered baseline; author the flat ` +
-          `2-launch operator toward first on-card activation (path=MEGA) this round.`;
-    reproResult = await agentT(
-      roleAgent('repro_engineer', 'reproduce',
-        (FLOOR_PREBUILT && reproHistory.length === 0
-          ? `CONTINUATION — THE FLOOR IS ALREADY BUILT AND VALIDATED. The workspace HEAD is a prior wave's ` +
-            `fully-authored flat two-launch fused megakernel (path=MEGA on-card ×${GPU_RESOURCE.gpusPerJob}, ` +
-            `launches=2, relL2<0.10 at {128,512,8192}×{uniform,skew}, ≥30 clean replays already achieved). ` +
-            `Your job THIS round is to VERIFY it still validates on THIS machine and MEASURE its floor_geomean ` +
-            `(paired rank-max vs the frozen scattered baseline), then return reproduced=true / correctness=pass ` +
-            `/ floor_geomean=<measured> / launches=2 / path_marker=MEGA / authoring_status=complete. Do NOT ` +
-            `re-author, rewrite, "clean up", re-ladder, or "improve" the existing flat operator — touch it ONLY ` +
-            `to fix a concrete verification failure you actually observe. If it validates clean, that IS ` +
-            `complete no matter how slow the floor is (a sub-parity floor is the optimizable starting point; ` +
-            `the optimize phase ratchets it up — you do NOT need to de-cripple it here). \n\n`
-          : FLOOR_DECRIPPLE && reproHistory.length === 0
-          ? `DE-CRIPPLE — THE FLAT FLOOR ALREADY EXISTS AND IS VALIDATED AT HEAD (path=MEGA on-card ` +
-            `×${GPU_RESOURCE.gpusPerJob}, launches=2, relL2<0.10 at {128,512,8192}×{uniform,skew}, ≥30 clean ` +
-            `replays). It is CORRECT but CRIPPLED (sub-parity ~0.23x): a static 50/50 GEMM1:GEMM2 CU split, a ` +
-            `coarse global barrier over-serializing the phases, and a serial combine post-phase. Your job THIS ` +
-            `wave is to DE-CRIPPLE the concurrency IN PLACE — author fine-grained per-SBM GEMM1‖GEMM2 overlap, ` +
-            `give each stage full CU width when active, remove the coarse barrier's over-serialization, fold ` +
-            `combine as a third concurrent queue, and — once the CU-split and coarse barrier are de-crippled ` +
-            `and GEMM2's A-gather/wave-reclaim emerges as the dominant remaining serializer — restructure that ` +
-            `gather/reclaim SCHEDULING to overlap it (the site-4 waiver, below) — to raise floor_geomean ` +
-            `toward the +3% target, keeping GEMM2 FLAT and NUMERICALLY equivalent (relL2<0.10 both routes is ` +
-            `the hard bar; the MFMA matmul math itself stays unchanged). SITE-4 WAIVER: the earlier ` +
-            `byte-identity mandate on gemm2_compute_v2 is RELAXED to numeric-identity — you MAY change the ` +
-            `A-gather/wave-reclaim schedule inside it to break that serializer, but NOT re-collapse GEMM2 (NO ` +
-            `g2-collapse — it blows SGPR pressure and triggers the cut4 regalloc fault); manage register ` +
-            `pressure, and an on-card spill/wild-address fault fails the round (the floor is preserved). Do NOT ` +
-            `re-author the topology from scratch (it exists ` +
-            `and is correct) and do NOT accept the crippled speed as complete — MODIFY the existing operator ` +
-            `to overlap. cut-ladder (crash_bisection) is a bring-up bisection instrument ONLY, never a ` +
-            `committed intermediate topology. \n\n`
-          : ``) +
-        `AUTHOR the COMPLETE flat two-launch fused megakernel following the mega skill's Construction ` +
-        `skeleton — ON-LEASE AUTHORING round ${rr} of ${REPRO_ROUNDS}. ${FLOOR_DECRIPPLE ? `The flat ` +
-        `2-launch floor ALREADY EXISTS at HEAD (validated: path=MEGA, launches=2, relL2-clean); you are ` +
-        `DE-CRIPPLING it in place (author GEMM1‖GEMM2 overlap, full CU width per stage, remove the coarse ` +
-        `barrier's over-serialization, fold combine as a third concurrent queue), NOT re-authoring the ` +
-        `topology. ` : `The flat 2-launch floor does NOT exist in-tree; you are AUTHORING it (flat per-tile ` +
-        `GEMM2 work-pool mirroring stage2.run_unit, combine folded as a third queue, r12 substrate init ` +
-        `applied), NOT copying a known-good tree. `}` +
-        `Bring it up incrementally ON THE CARD across your gpu_lock leases this round; commit your WIP so ` +
-        `the next round carries it forward. The single flat 2-launch topology is the target — NO ` +
-        `g2-collapse, NO intermediate half-fused topology committed as terminal, NO cut-ladder as a build ` +
-        `method (cut-ladder is a bring-up bisection instrument ONLY). A faithful reproduction reproduces ` +
-        `M2.5's SPEED, not just its shape: a fused floor SLOWER than the scattered baseline is a shape-only ` +
-        `skeleton. So de-crippling the concurrency (give each stage full CU width when active — undo any ` +
-        `static 50/50 GEMM1:GEMM2 CU split; remove the coarse global barrier's over-serialization; do not ` +
-        `leave combine as a serial post-phase; and restructure GEMM2's A-gather/wave-reclaim SCHEDULING once ` +
-        `it is the dominant remaining serializer) IS IN SCOPE for you and is what "faithful floor" means — ` +
-        `keep GEMM2 FLAT and NUMERICALLY equivalent (relL2<0.10 both routes is the hard bar; MFMA matmul math ` +
-        `unchanged) while doing it — SITE-4 WAIVER: gemm2_compute_v2's byte-identity mandate is RELAXED to ` +
-        `numeric-identity so its gather/reclaim schedule MAY change to break that serializer, but NO ` +
-        `g2-collapse and no on-card spill/wild-address fault (the round fails and the floor is preserved if ` +
-        `it faults). Return authoring_status=complete ` +
-        `ONLY when the whole flat operator validates clean (relL2<0.10 both routes + path=MEGA==${GPU_RESOURCE.gpusPerJob} ` +
-        `+ launches=2 + >=30 clean replays) AND floor_geomean >= ${REPRO_FLOOR_TARGET.toFixed(2)}x vs the frozen ` +
-        `scattered baseline (M2.5-class is ~1.045x). Reaching >= ${REPRO_FLOOR_TARGET.toFixed(2)}x is the AUTHORING ` +
-        `ASPIRATION — de-cripple the concurrency toward it while rounds remain (undo static CU split / coarse ` +
-        `barrier / serial combine). It is NOT a hard fail floor: a CORRECT flat operator at ANY speed is an ` +
-        `optimizable starting point (optimize ratchets it up from the seeded floor), so if you cannot reach ` +
-        `the target within your rounds, hand off the best CORRECT floor you have — report it as progressed ` +
-        `with the serializer you would de-cripple next, and it is accepted as the floor when rounds run out. ` +
-        `Only a topology that does NOT validate clean, or whose speed is never measured, is a true failure. ` +
-        `Otherwise return progressed / blocked_fixable / dead_end with ` +
-        `a concrete next_blocker.\n\n${priorSummary}`, {
-        OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
-        GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
-        GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
-        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
-        REPRO_ROUND: String(rr), REPRO_ROUNDS_TOTAL: String(REPRO_ROUNDS),
-      }),
-      { phase: 'Reproduce', label: `repro:mega:r${rr}`, schema: REPRO_SCHEMA });
-    const correctnessOk = reproResult && reproResult.reproduced && reproResult.correctness === 'pass';
-    const fg = Number(reproResult && reproResult.floor_geomean);
-    const perfMeasured = Number.isFinite(fg);
-    const roundsLeft = REPRO_ROUNDS - rr;
-    // Complete when correct AND either the floor already reproduces M2.5-class SPEED (>= +3% target),
-    // OR authoring rounds are exhausted — in which case ACCEPT the correct floor at WHATEVER speed and
-    // let optimize ratchet it up. round_1 PROVED the optimize diff-gate lands a clean +1.322x/round
-    // overlap step from a sub-parity floor, so a correct-but-slow floor is a valid, OPTIMIZABLE starting
-    // point, not a failure. The +3% target is the authoring ASPIRATION (keep de-crippling toward it while
-    // rounds remain), NOT a hard floor below which Reproduce fails.
-    const ok = correctnessOk && perfMeasured &&
-      (fg >= REPRO_FLOOR_TARGET || roundsLeft <= 0);
-    if (ok) {
-      const speedNote = fg >= REPRO_FLOOR_TARGET
-        ? ` — reproduces M2.5-class speed`
-        : fg >= REPRO_FLOOR_MIN
-          ? ` — at/above scattered parity but below the +3% target; optimize ratchets the remaining overlap toward M2.5's ~1.045x`
-          : ` — a CORRECT sub-parity floor; ACCEPTED as an optimizable starting point (cumulative seeds from the floor, optimize ratchets UP from here; floor永久保留 as HEAD)`;
-      log(`Reproduce (mega) r${rr}: faithful flat floor VALIDATED + committed as HEAD (floor ${reproResult.floor_ms || '?'} ms` +
-          `, ${fg.toFixed(3)}x vs scattered${speedNote}` +
-          `, path=${reproResult.path_marker || '?'}, launches=${reproResult.launches != null ? reproResult.launches : '?'}). Optimizing on the floor now.`);
-      break;
-    }
-    // Correct-but-too-slow is NOT done: the topology reproduces but the SPEED does not. Fall through to
-    // another authoring round (de-cripple toward parity/+3%) — this is the concurrency work landing in the
-    // authoring vehicle, not the optimize diff-gate. reproResult's committed WIP stays HEAD for next round.
-    if (correctnessOk && perfMeasured && fg < REPRO_FLOOR_MIN && roundsLeft > 0) {
-      log(`Reproduce (mega) r${rr}: topology CORRECT, floor ${fg.toFixed(3)}x still sub-parity ` +
-          `(< ${REPRO_FLOOR_MIN}x). Rounds remain — keep de-crippling toward the +3% target (undo static ` +
-          `CU split / coarse barrier / serial combine) to hand optimize a BETTER floor. A correct floor at ` +
-          `any speed is still accepted when rounds run out (optimize ratchets it up), so this is aspiration, ` +
-          `not a fail gate.`);
-    }
-    reproHistory.push({
-      round: rr,
-      status: reproResult ? (reproResult.authoring_status || reproResult.correctness || 'unknown') : 'no-result',
-      notes: reproResult ? (reproResult.notes || '').slice(0, 600) : 'agent returned nothing',
-      next: reproResult ? (reproResult.next_blocker || '') : '',
-    });
-    log(`Reproduce (mega) r${rr}/${REPRO_ROUNDS}: status=${reproHistory[reproHistory.length - 1].status}` +
-        `${reproResult && reproResult.path_marker ? `, path=${reproResult.path_marker}` : ''}` +
-        `${reproResult && reproResult.launches != null ? `, launches=${reproResult.launches}` : ''}. ` +
-        `Next: ${reproHistory[reproHistory.length - 1].next || '(diagnose)'}`);
-    // Honest early stop on a structural dead-end: the flat work-pool itself cannot be brought up.
-    if (reproResult && reproResult.authoring_status === 'dead_end') {
-      log(`Reproduce (mega): DEAD-END declared at r${rr} — the flat work-pool cannot be authored clean. ` +
-          `Stopping honestly rather than spending the remaining ${REPRO_ROUNDS - rr} lease rounds.`);
-      break;
-    }
-  }
-  const finalCorrect = reproResult && reproResult.reproduced && reproResult.correctness === 'pass';
-  const finalFg = Number(reproResult && reproResult.floor_geomean);
-  // A CORRECT floor at ANY measured speed is optimizable — optimize ratchets it up from the seeded floor
-  // (round_1: +1.322x/round from a 0.232x floor). So Reproduce fails ONLY when the topology is not correct,
-  // or the floor speed was never measured at all (cannot seed the commit-gate from an unmeasured floor) —
-  // NEVER merely for being sub-parity. (This previously hard-failed below REPRO_FLOOR_MIN, dead-ending a
-  // correct-but-slow floor that optimize could have climbed; round_1 refuted that premise.)
-  const finalPerfOk = Number.isFinite(finalFg);
-  if (!finalCorrect || !finalPerfOk) {
-    const why = !finalCorrect
-      ? (reproResult ? reproResult.notes || reproResult.correctness : 'no result')
-      : 'topology correct but floor SPEED was never measured — cannot seed the optimize commit-gate from an unmeasured floor';
-    log(`Reproduce (mega) FAILED after ${reproHistory.length} authoring round(s): ${why}. ` +
-        `Aborting — no optimizable floor. Fix the reproduction (skill / repro_engineer), not the optimizer.`);
-    return {
-      mode: 'mega', reproduced: false,
-      eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
-      final_geomean: 0, final_patch: '', validation_status: 'repro_failed',
-      repro_rounds_spent: reproHistory.length,
-      repro_history: reproHistory,
-      floor_geomean: Number.isFinite(finalFg) ? finalFg : 0,
-      reason: why,
-    };
-  }
+  const laneRoot = STATE_DIR
+    ? `${STATE_DIR}/candidates/${MEGA_SKILL_CANDIDATE_ID}/tree`
+    : `${EVAL_DIR}/candidate_lanes/${MEGA_SKILL_CANDIDATE_ID}`;
+  megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, {
+    id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill', base_id: 'frozen_baseline',
+    tree: laneRoot, status: 'authoring', provenance: `validated_skill:${MEGA_SKILL_ID}`,
+    notes: 'independent skill-reproduction lane; never blocks other candidates',
+  });
+  log(`MEGA candidate registry initialized: ${megaCandidateRegistry.map((c) =>
+    `${c.id}[${c.source}:${c.status}]`).join(', ')}.`);
 }
 
 // ===========================================================================
@@ -1829,7 +1739,7 @@ phase('Analyze');
 let analysis = await agentT(
   roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
-    KERNEL_KNOWLEDGE_DIR,
+    KERNEL_KNOWLEDGE_DIR: MODE === 'mega' ? '' : KERNEL_KNOWLEDGE_DIR,
     // Authoritative resolved rank count (from gpus_per_job | op_spec.resource | job_gpu_ids).
     // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
@@ -1848,7 +1758,16 @@ let analysis = await agentT(
     ...(STATE_DIR ? { STATE_DIR } : {}),
     ...RESUME_INPUT,
   }),
-  { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
+  { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION
+      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
+  return {
+    mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+    final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
+    reason: 'Analyze exceeded the production timeout; no second Analyze or GPU phase was started',
+  };
+}
 
 // <<REPLAY:analyze_resume_fallback>>
 // THE RESUMED WAVE THAT ANALYSED NOTHING.
@@ -1896,7 +1815,7 @@ function analyzeResumeDegenerate(incremental, ver) {
     const full = await agentT(
       roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
         WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
-        KERNEL_KNOWLEDGE_DIR,
+        KERNEL_KNOWLEDGE_DIR: MODE === 'mega' ? '' : KERNEL_KNOWLEDGE_DIR,
         GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
         ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
@@ -1909,7 +1828,16 @@ function analyzeResumeDegenerate(incremental, ver) {
         // but the rungs a prior wave already spent, and the ones it left owed, exist only here.
         ...(STATE_DIR ? { STATE_DIR } : {}),
       }),
-      { phase: 'Analyze', label: 'tech_lead:analyze:full', schema: ANALYZE_SCHEMA });
+      { phase: 'Analyze', label: 'tech_lead:analyze:full', schema: ANALYZE_SCHEMA,
+        ...(MODE === 'mega' && MEGA_PRODUCTION
+          ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+    if (MODE === 'mega' && full && full.__agent_timed_out) {
+      return {
+        mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+        final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
+        reason: 'full Analyze fallback exceeded the production timeout; no GPU phase was started',
+      };
+    }
     const got = (full && Array.isArray(full.candidate_directions) ? full.candidate_directions : [])
       .filter((c) => c && (c.id || c.title));
     if (got.length) {
@@ -2559,8 +2487,9 @@ function roundEvidence(clean, roleOf, outcomeOf) {
 // requires BOTH that verify could not apply the patch AND that the engineer's own numbers claim a win
 // — an unapplied patch under a null claim is just a null result, and calling it a reporting failure
 // would train readers to ignore the label.
-function claimBoundary(speedupOf) {
-  const usable = (c) => !!c && Array.isArray(c.per_case) && c.per_case.length > 0;
+function claimBoundary(speedupOf, requireComplete) {
+  const usable = (c) => !!c && (!requireComplete || c.claim_complete === true) &&
+    Array.isArray(c.per_case) && c.per_case.length > 0;
   return {
     // Go looking on disk for a claim the engineer never handed back?
     needsRecovery: (eng) => !usable(eng),
@@ -2571,6 +2500,455 @@ function claimBoundary(speedupOf) {
   };
 }
 // <</REPLAY:claim_boundary>>
+
+// <<REPLAY:mega_candidate_registry>>
+// Mega keeps whole-kernel candidates as independent lineages. A lane may commit WIP to its own tree
+// without changing the globally selected implementation; only a complete, independently verified
+// score can become a finalist. This is the separation the old Reproduce->Optimize chain lacked.
+const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected'];
+function validMegaCandidateId(value) {
+  const id = String(value || '');
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) && id !== 'frozen_baseline';
+}
+function validMegaCandidateSourceForId(id, source) {
+  if (String(id) === 'm25_skill') return source === 'validated_skill';
+  return source === 'search' || source === 'integrated';
+}
+function normalizeMegaCandidate(raw) {
+  const c = raw || {};
+  const sourceValid = ['validated_skill', 'search', 'integrated'].includes(c.source);
+  const source = sourceValid ? c.source : 'search';
+  const idValid = validMegaCandidateId(c.id);
+  const sourceIdValid = validMegaCandidateSourceForId(c.id, source);
+  const status = (!sourceValid || !idValid || !sourceIdValid) ? 'rejected'
+    : (MEGA_CANDIDATE_STATES.includes(c.status) ? c.status : 'authoring');
+  const score = Number(c.absolute_score);
+  return {
+    id: String(c.id || ''),
+    id_valid: idValid,
+    source,
+    source_valid: sourceValid,
+    source_id_valid: sourceIdValid,
+    base_id: String(c.base_id || 'frozen_baseline'),
+    tree: String(c.tree || ''),
+    head: String(c.head || ''),
+    working_head: String(c.working_head || ''),
+    working_status: String(c.working_status || ''),
+    patch: String(c.patch || ''),
+    status,
+    topology_sig: String(c.topology_sig || ''),
+    provenance: String(c.provenance || source),
+    claim_complete: c.claim_complete === true,
+    attempt_id: String(c.attempt_id || ''),
+    evidence_manifest: String(c.evidence_manifest || ''),
+    final_tree: String(c.final_tree || ''),
+    final_head: String(c.final_head || ''),
+    final_attempt_id: String(c.final_attempt_id || ''),
+    final_evidence_manifest: String(c.final_evidence_manifest || ''),
+    absolute_score: Number.isFinite(score) && score > 0 ? score : null,
+    per_case: Array.isArray(c.per_case) ? c.per_case : [],
+    paired_readings: Array.isArray(c.paired_readings) ? c.paired_readings : [],
+    null_arm_pct: c.null_arm_pct == null ? null : Number(c.null_arm_pct),
+    reps: Math.max(0, Number(c.reps || 0)),
+    artifact_hash_base: String(c.artifact_hash_base || ''),
+    artifact_hash_candidate: String(c.artifact_hash_candidate || ''),
+    correctness_pass: c.correctness_pass === true,
+    activation_pass: c.activation_pass === true,
+    head_pass: c.head_pass === true,
+    launch_pass: c.launch_pass === true,
+    liveness_pass: c.liveness_pass === true,
+    graph_pass: c.graph_pass === true,
+    guards_pass: c.guards_pass !== false,
+    artifact_distinct: c.artifact_distinct === true,
+    measurement_pass: c.measurement_pass === true,
+    attempts: Math.max(0, Number(c.attempts || 0)),
+    next_blocker: String(c.next_blocker || ''),
+    notes: String(c.notes || ''),
+  };
+}
+
+function upsertMegaCandidate(registry, incoming) {
+  const list = Array.isArray(registry) ? registry.map(normalizeMegaCandidate) : [];
+  const next = normalizeMegaCandidate(incoming);
+  if (!next.id) return list;
+  const i = list.findIndex((c) => c.id === next.id);
+  if (i < 0) return [...list, next];
+  const prev = list[i];
+  // Never combine a new unverified HEAD/status with an older verified score. Preserve the complete
+  // snapshot and record only where lane-local WIP has advanced; Director checks out `head`, not
+  // `working_head`, for final measurement.
+  if (prev.claim_complete && !next.claim_complete) {
+    list[i] = normalizeMegaCandidate({
+      ...prev,
+      attempts: Math.max(prev.attempts, next.attempts),
+      working_head: next.head || next.working_head || prev.working_head,
+      working_status: next.status || next.working_status || prev.working_status,
+      next_blocker: next.next_blocker || prev.next_blocker,
+      notes: next.notes || prev.notes,
+    });
+  } else {
+    list[i] = normalizeMegaCandidate({
+      ...prev,
+      ...next,
+      claim_complete: next.claim_complete === true,
+      attempts: Math.max(prev.attempts, next.attempts),
+      working_head: '',
+      working_status: '',
+    });
+  }
+  return list;
+}
+
+function megaCandidateHardPass(c) {
+  const n = normalizeMegaCandidate(c);
+  const targetReadout = pairedGuardReadout(n.paired_readings, '8192_uniform');
+  return n.claim_complete && n.correctness_pass && n.activation_pass && n.head_pass &&
+    n.launch_pass && n.liveness_pass && n.graph_pass && n.guards_pass &&
+    n.artifact_distinct && n.id_valid && n.source_valid && n.source_id_valid &&
+    n.measurement_pass && String(n.attempt_id) && String(n.evidence_manifest) &&
+    n.artifact_hash_base && n.artifact_hash_candidate &&
+    n.artifact_hash_base !== n.artifact_hash_candidate &&
+    n.reps >= 5 && Number.isFinite(n.null_arm_pct) &&
+    targetReadout.count >= 5 && Number(targetReadout.score) > 0 &&
+    Math.abs(Number(targetReadout.score) - Number(n.absolute_score)) <= 0.002 &&
+    targetReadout.sign_p <= 0.05 &&
+    (Number(targetReadout.score) - 1) * 100 > Math.abs(n.null_arm_pct) &&
+    Number.isFinite(n.absolute_score) && n.absolute_score > 0;
+}
+
+function selectMegaCandidate(registry, tieNoisePct) {
+  const eligible = (Array.isArray(registry) ? registry : [])
+    .map(normalizeMegaCandidate)
+    .filter((c) => (c.status === 'scored' || c.status === 'finalist') &&
+      megaCandidateHardPass(c) && c.absolute_score > 1.0)
+    .sort((a, b) => b.absolute_score - a.absolute_score);
+  if (!eligible.length) return { selected: null, eligible: [], tie_kept_skill: false };
+  const best = eligible[0];
+  const stableSkill = eligible.find((c) => c.source === 'validated_skill');
+  const noise = Math.max(0, Number(tieNoisePct || 0)) / 100;
+  if (stableSkill && best.id !== stableSkill.id &&
+      (best.absolute_score - stableSkill.absolute_score) / stableSkill.absolute_score <= noise) {
+    return { selected: stableSkill, eligible, tie_kept_skill: true };
+  }
+  return { selected: best, eligible, tie_kept_skill: false };
+}
+
+function megaSkillLaneDue(registry, round, candidateId, maxAttempts, interval) {
+  const c = (Array.isArray(registry) ? registry : [])
+    .map(normalizeMegaCandidate).find((x) => x.id === candidateId);
+  if (!c || c.status === 'rejected' || c.status === 'finalist' || c.status === 'scored') return false;
+  if (c.attempts >= Math.max(1, Number(maxAttempts || 1))) return false;
+  if (c.attempts === 0) return true;
+  return (Math.max(1, Number(round || 1)) - 1) % Math.max(1, Number(interval || 1)) === 0;
+}
+
+function megaCalibrationClaimPass(pc, configured) {
+  const p = pc || {};
+  const c = configured || {};
+  const got = Number(p.measured_pct);
+  const lo = Number(c.expected_pct_lo), hi = Number(c.expected_pct_hi);
+  const sign = Math.sign(lo + hi) || 1;
+  const ctrl = Array.isArray(p.control_pairs_pct)
+    ? p.control_pairs_pct.map(Number).filter(Number.isFinite) : [];
+  const nul = Array.isArray(p.null_pairs_pct)
+    ? p.null_pairs_pct.map(Number).filter(Number.isFinite) : [];
+  const nullWorst = nul.length ? Math.max(...nul.map(Math.abs)) : NaN;
+  const minEffect = Math.min(Math.abs(lo), Math.abs(hi));
+  const maxPlausible = Number.isFinite(Number(c.implausible_pct))
+    ? Math.abs(Number(c.implausible_pct)) : Math.max(Math.abs(lo), Math.abs(hi)) * 2;
+  return p.claim_complete === true && p.ran === true && p.switch_present === true &&
+    String(p.attempt_id || '').length > 0 && String(p.evidence_manifest || '').length > 0 &&
+    p.passed === true && Number.isFinite(got) && Math.sign(got) === sign &&
+    Math.abs(got) >= minEffect * 0.5 && Math.abs(got) <= maxPlausible &&
+    ctrl.length >= 5 && ctrl.every((x) => Math.sign(x) === sign) &&
+    nul.length >= 8 && Number.isFinite(nullWorst) && Math.abs(got) >= 3 * nullWorst;
+}
+
+function pairedGuardReadout(rows, guard) {
+  const rawPairs = (Array.isArray(rows) ? rows : []).filter((r) =>
+    String(r.guard || '') === String(guard) &&
+    Number(r.base) > 0 && Number(r.cand) > 0);
+  let pairs = rawPairs;
+  let bimodal = false, split = null;
+  if (/^512(?:_|$)/.test(String(guard)) && rawPairs.length >= 8) {
+    const values = rawPairs.flatMap((r, index) => [
+      { value: Number(r.base), arm: 'base', index },
+      { value: Number(r.cand), arm: 'cand', index },
+    ]).sort((a, b) => a.value - b.value);
+    let widest = 0, splitAt = -1;
+    for (let i = 0; i + 1 < values.length; i++) {
+      const gap = (values[i + 1].value - values[i].value) / values[i].value;
+      if (gap > widest) { widest = gap; splitAt = i; }
+    }
+    if (widest >= 0.03 && splitAt >= 0) {
+      const lowArms = new Set(values.slice(0, splitAt + 1).map((x) => x.arm));
+      const highArms = new Set(values.slice(splitAt + 1).map((x) => x.arm));
+      // Arm-blind state conditioning is valid only when BOTH arms draw both states. Otherwise the
+      // gap may simply be a large real effect separating base from candidate.
+      if (lowArms.size === 2 && highArms.size === 2) {
+        split = (values[splitAt].value + values[splitAt + 1].value) / 2;
+        pairs = rawPairs.filter((r) => Number(r.base) <= split && Number(r.cand) <= split);
+        bimodal = true;
+      }
+    }
+  }
+  const ratios = pairs.map((r) => Number(r.base) / Number(r.cand)).sort((a, b) => a - b);
+  const median = ratios.length
+    ? (ratios.length % 2 ? ratios[(ratios.length - 1) / 2]
+      : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2)
+    : null;
+  const favorable = ratios.filter((v) => v > 1.0).length;
+  const choose = (n, k) => {
+    let out = 1;
+    for (let i = 1; i <= k; i++) out = out * (n - k + i) / i;
+    return out;
+  };
+  let signP = 1;
+  if (ratios.length) {
+    let tail = 0;
+    for (let k = favorable; k <= ratios.length; k++) tail += choose(ratios.length, k);
+    signP = tail / Math.pow(2, ratios.length);
+  }
+  return {
+    raw_count: rawPairs.length, count: ratios.length, score: median,
+    favorable, sign_p: signP, bimodal, split,
+  };
+}
+
+function megaFinalSelectionVerdict(selection, finalists, opts) {
+  const s = selection || {};
+  const o = opts || {};
+  const list = Array.isArray(finalists) ? finalists.map(normalizeMegaCandidate) : [];
+  const source = list.find((c) => c.id === String(s.selected_candidate_id || ''));
+  const row = Array.isArray(s.candidates)
+    ? s.candidates.find((c) => String(c.candidate_id || '') === String(s.selected_candidate_id || ''))
+    : null;
+  const reasons = [];
+  const returnedIds = Array.isArray(s.candidates)
+    ? s.candidates.map((c) => String(c.candidate_id || '')) : [];
+  for (const candidate of list) {
+    if (returnedIds.filter((id) => id === candidate.id).length !== 1) {
+      reasons.push(`finalist ${candidate.id} does not have exactly one evidence row`);
+    }
+  }
+  if (returnedIds.some((id) => !list.some((c) => c.id === id))) {
+    reasons.push('selection contains an evidence row outside the supplied finalists');
+  }
+  const allGuards = [...new Set([...(o.targetGuards || []), ...(o.regressionGuards || [])])];
+  const rowFailures = (r) => {
+    const fail = [];
+    if (!r || r.claim_complete !== true) return ['incomplete evidence row'];
+    const registered = list.find((c) => c.id === String(r.candidate_id || ''));
+    if (!registered) fail.push('candidate is not registered');
+    else {
+      if (String(r.source || '') !== registered.source) fail.push('source mismatch');
+      if (String(r.tree || '') !== registered.tree) fail.push('tree mismatch');
+      if (String(r.head || '') !== registered.head) fail.push('head mismatch');
+    }
+    if (!(Number(r.score) > 1.0)) fail.push('score <= 1.0');
+    if (!String(r.correctness || '').toLowerCase().startsWith('pass')) fail.push('correctness');
+    const perCase = new Map((Array.isArray(r.per_case) ? r.per_case : [])
+      .map((x) => [String(x.name || ''), Number(x.speedup)]));
+    const pairs = Array.isArray(r.paired_readings) ? r.paired_readings : [];
+    const nullArm = r.null_arm_pct == null ? null : Number(r.null_arm_pct);
+    for (const guard of o.targetGuards || []) {
+      const readout = pairedGuardReadout(pairs, guard);
+      const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
+      if (readout.raw_count < needed || readout.count < Math.min(5, needed) ||
+          !(Number(readout.score) > 1.0) ||
+          readout.sign_p > 0.05 || !Number.isFinite(nullArm) ||
+          (Number(readout.score) - 1) * 100 <= Math.abs(nullArm)) {
+        fail.push(`target paired result ${guard}`);
+      }
+      if (readout.bimodal && readout.raw_count < 16) fail.push(`bimodal guard ${guard} needs 16 pairs`);
+      if (!(perCase.get(String(guard)) > 1.0) ||
+          Math.abs(Number(perCase.get(String(guard))) - Number(readout.score)) >
+            Number(o.scoreTolerance || 0.002)) fail.push(`target guard ${guard}`);
+    }
+    for (const guard of o.regressionGuards || []) {
+      const readout = pairedGuardReadout(pairs, guard);
+      const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
+      if (readout.raw_count < needed || readout.count < Math.min(5, needed) ||
+          !(Number(readout.score) >= 1.0)) {
+        fail.push(`regression paired result ${guard}`);
+      }
+      if (readout.bimodal && readout.raw_count < 16) fail.push(`bimodal guard ${guard} needs 16 pairs`);
+      if (!(perCase.get(String(guard)) >= 1.0) ||
+          Math.abs(Number(perCase.get(String(guard))) - Number(readout.score)) >
+            Number(o.scoreTolerance || 0.002)) fail.push(`regression guard ${guard}`);
+    }
+    const targetScores = (o.targetGuards || []).map((guard) =>
+      pairedGuardReadout(pairs, guard).score).filter((v) => Number.isFinite(Number(v)));
+    const recomputedScore = targetScores.length === (o.targetGuards || []).length
+      ? Math.exp(targetScores.reduce((sum, value) => sum + Math.log(Number(value)), 0) /
+        targetScores.length) : null;
+    if (recomputedScore == null || !Number.isFinite(Number(recomputedScore)) ||
+        Math.abs(Number(r.score) - Number(recomputedScore)) > Number(o.scoreTolerance || 0.002)) {
+      fail.push('headline score does not match paired target readings');
+    }
+    if (!Number.isFinite(nullArm)) fail.push('null arm');
+    if (r.guards_pass !== true) fail.push('guard verdict');
+    if (String(r.path_marker || '') !== `MEGA==${Number(o.worldSize || 8)}` ||
+        Number(r.path_marker_count) !== Number(o.worldSize || 8)) fail.push('path marker');
+    if (Number(r.launches) !== Number(o.launchTarget || 2)) fail.push('launch target');
+    if (String(r.graph_safe || '').toLowerCase() !== 'pass') fail.push('graph safety');
+    const hb = String(r.artifact_hash_base || ''), hc = String(r.artifact_hash_candidate || '');
+    if (String(r.artifact_distinct || '').toLowerCase() !== 'yes' || !hb || !hc || hb === hc) {
+      fail.push('artifact distinctness');
+    }
+    const replayRows = Array.isArray(r.replay_results) ? r.replay_results : [];
+    for (const guard of allGuards) {
+      const replay = replayRows.find((x) => String(x.guard || '') === String(guard));
+      const needed = Number(o.requiredReplays || 0);
+      if (!replay || Number(replay.count || 0) < needed ||
+          String(replay.status || '').toLowerCase() !== 'pass' ||
+          String(replay.graph_safe || '').toLowerCase() !== 'pass' ||
+          replay.arrival_jitter !== true) fail.push(`replay ${guard}`);
+    }
+    if (Number(r.liveness_replays || 0) < Number(o.requiredReplays || 0)) fail.push('liveness depth');
+    if (String(r.accuracy_metric || '') !== String(o.accuracyMetric || '') ||
+        r.accuracy_value == null ||
+        !Number.isFinite(Number(r.accuracy_value)) ||
+        Number(r.accuracy_value) < 0 ||
+        Number(r.accuracy_value) >= Number(o.accuracyThreshold)) fail.push('accuracy');
+    if (o.requireOverlap) {
+      if (String(r.overlap_measured || '').toLowerCase() !== 'yes' ||
+          !(Number(r.overlap_fraction) > 0) ||
+          !(Number(r.overlap_cu_fraction) > 0) ||
+          r.overlap_scattered_reading == null || r.overlap_forced_reading == null ||
+          Math.abs(Number(r.overlap_scattered_reading)) > 0.05 ||
+          !(Number(r.overlap_forced_reading) > 0.10)) fail.push('controlled overlap');
+    }
+    if (o.requireAttribution) {
+      const a = r.attribution || {};
+      if (r.attribution_complete !== true || !(Number(a.changed_us) > 0) ||
+          !(Number(a.replaced_sum_us) > 0) ||
+          a.residual_ms_base == null || a.residual_ms_cand == null ||
+          !Number.isFinite(Number(a.residual_ms_base)) ||
+          !Number.isFinite(Number(a.residual_ms_cand)) ||
+          !(o.targetGuards || []).includes(String(a.guard || '')) ||
+          !String(a.method || '') || a.absolute_to_frozen !== true) fail.push('attribution');
+    }
+    return fail;
+  };
+  for (const candidate of list) {
+    const candidateRow = (Array.isArray(s.candidates) ? s.candidates : [])
+      .find((r) => String(r.candidate_id || '') === candidate.id);
+    if (!candidateRow || candidateRow.claim_complete !== true) {
+      reasons.push(`finalist ${candidate.id} did not complete independent final measurement`);
+    }
+  }
+  if (s.claim_complete !== true) reasons.push('selection claim is incomplete');
+  if (!String(s.attempt_id || '') || !String(s.evidence_manifest || '')) {
+    reasons.push('selection evidence manifest is missing');
+  }
+  if (!source) reasons.push('selected id is not a supplied finalist');
+  if (!row || row.claim_complete !== true) reasons.push('selected finalist evidence row is incomplete');
+  if (source && String(s.selected_source || '') !== source.source) reasons.push('selected source mismatches registry');
+  if (source && row && String(row.source || '') !== source.source) reasons.push('finalist row source mismatches registry');
+  if (source && row && String(row.tree || '') !== source.tree) reasons.push('finalist row tree mismatches registry');
+  if (source && row && String(row.head || '') !== source.head) reasons.push('finalist row head mismatches registry');
+  if (String(s.selected_tree || '') !== String(o.selectedWorkspace || '')) {
+    reasons.push('selected tree is not the controlled materialized workspace');
+  }
+  if (!String(s.selected_head || '') ||
+      !source || String(s.materialized_from_head || '') !== source.head) {
+    reasons.push('materialized workspace is not bound to the selected candidate head');
+  }
+  if (!(Number(s.selected_score) > 1.0)) reasons.push('selected score does not beat frozen baseline');
+  if (row && Math.abs(Number(row.score) - Number(s.selected_score)) > 1e-9) {
+    reasons.push('selected score mismatches finalist evidence row');
+  }
+  if (row) reasons.push(...rowFailures(row).map((x) => `selected finalist: ${x}`));
+  const passedRows = (Array.isArray(s.candidates) ? s.candidates : [])
+    .filter((r) => rowFailures(r).length === 0)
+    .map((row) => {
+      const scores = (o.targetGuards || []).map((guard) =>
+        pairedGuardReadout(row.paired_readings, guard).score);
+      return {
+        row,
+        score: Math.exp(scores.reduce((sum, value) => sum + Math.log(Number(value)), 0) /
+          scores.length),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+  if (passedRows.length) {
+    let expected = passedRows[0];
+    const stable = passedRows.find((entry) => {
+      const registered = list.find((c) => c.id === String(entry.row.candidate_id || ''));
+      return registered && registered.source === 'validated_skill';
+    });
+    const noise = Math.max(0, Number(o.tieNoisePct || 0)) / 100;
+    if (stable && expected.row.candidate_id !== stable.row.candidate_id &&
+        (expected.score - stable.score) / stable.score <= noise) {
+      expected = stable;
+    }
+    if (String(s.selected_candidate_id || '') !== String(expected.row.candidate_id || '')) {
+      reasons.push('selection is not the fastest fully passing finalist under the tie policy');
+    }
+  } else {
+    reasons.push('no finalist evidence row clears the full contract');
+  }
+  return { pass: reasons.length === 0, reasons, source, row };
+}
+
+function megaCandidateFromVerification(meta, ver, opts) {
+  const v = ver || {};
+  const o = opts || {};
+  const aggregate = Number(v.verified_weighted != null ? v.verified_weighted : v.verified_geomean);
+  const score = promotionScore(v, o.promotionMetric || 'operator_e2e',
+    o.targetGuards || [], o.regressionGuards || [], aggregate);
+  const launches = Number(v.launch_shape && v.launch_shape.launches_cand);
+  const accuracy = Array.isArray(v.accuracy_results) ? v.accuracy_results : [];
+  const requiredAccuracy = accuracy.filter((a) =>
+    (!o.accuracyMetric || String(a.metric) === String(o.accuracyMetric)) &&
+    (!(o.targetGuards || []).length || (o.targetGuards || []).includes(String(a.guard))));
+  const accuracyPass = requiredAccuracy.length > 0 &&
+    requiredAccuracy.every((a) => Number.isFinite(Number(a.value)) &&
+      Number(a.value) >= 0 && Number(a.value) < Number(o.accuracyThreshold || a.threshold));
+  const livenessPass = String(v.liveness || '').toLowerCase() === 'pass';
+  const guards = guardContract(v, o.targetGuards || [], o.regressionGuards || [], score);
+  const targetGuard = (o.targetGuards || [])[0];
+  const targetReadout = pairedGuardReadout(v.paired_readings, targetGuard);
+  const nullArm = v.null_arm_pct == null ? null : Number(v.null_arm_pct);
+  const measurementPass = !!targetGuard &&
+    targetReadout.count >= Number(o.requiredPairs || 1) &&
+    Number.isFinite(Number(targetReadout.score)) &&
+    Math.abs(Number(targetReadout.score) - Number(score)) <= Number(o.scoreTolerance || 0.002) &&
+    targetReadout.sign_p <= 0.05 &&
+    Number.isFinite(nullArm) &&
+    (Number(targetReadout.score) - 1) * 100 > Math.abs(nullArm);
+  const record = normalizeMegaCandidate({
+    ...(meta || {}),
+    claim_complete: v.claim_complete === true,
+    attempt_id: v.attempt_id || (meta && meta.attempt_id),
+    evidence_manifest: v.evidence_manifest || '',
+    absolute_score: score,
+    per_case: v.per_case || [],
+    paired_readings: v.paired_readings || [],
+    null_arm_pct: nullArm,
+    reps: Number(v.reps || targetReadout.count),
+    artifact_hash_base: v.artifact_hash_base || '',
+    artifact_hash_candidate: v.artifact_hash_candidate || '',
+    correctness_pass: accuracyPass && String(v.correctness || '').toLowerCase().startsWith('pass'),
+    activation_pass: String(v.activation_confirmed || '').toLowerCase() === 'yes' &&
+      String(v.activation_on_hardware || '').toLowerCase() === 'yes',
+    head_pass: !!String(meta && meta.head || '') &&
+      String(v.candidate_head || '') === String(meta && meta.head || ''),
+    launch_pass: Number.isInteger(launches) && launches === Number(o.launchTarget || 2),
+    liveness_pass: livenessPass && Number(v.replay_count || 0) >= Number(o.requiredReplays || 30),
+    graph_pass: String(v.graph_safe || '').toLowerCase() === 'pass',
+    guards_pass: guards.regression_pass !== false,
+    artifact_distinct: String(v.artifact_distinct || '').toLowerCase() === 'yes' ||
+      (!!v.artifact_hash_base && !!v.artifact_hash_candidate &&
+       v.artifact_hash_base !== v.artifact_hash_candidate),
+    measurement_pass: measurementPass,
+  });
+  record.status = megaCandidateHardPass(record) ? 'scored'
+    : (record.correctness_pass && record.activation_pass && record.launch_pass ? 'runnable' : 'authoring');
+  return record;
+}
+// <</REPLAY:mega_candidate_registry>>
 
 // <<REPLAY:objective_gate>>
 // A WAVE THAT SKIPS THE POSITIVE CONTROL MUST NOT SHIP A NUMBER.
@@ -2884,7 +3262,7 @@ function terminalRungToForce(debtReport, ladder, plannedRungs, remaining) {
 }
 // <</REPLAY:terminal_forcing>>
 
-const CLAIM = claimBoundary(primSpeedup);
+const CLAIM = claimBoundary(primSpeedup, MODE === 'mega');
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
 // Acceptance criterion 1's target launch count per EP rank: the fused megakernel plus the one
@@ -3155,7 +3533,9 @@ const bench = await agentT(
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
     ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
   }),
-  { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA });
+  { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION
+      ? { timeout_ms: 1500000, timeout_marker: true, max_retries: 1 } : {}) });
 // A bench agent that dies without returning has usually NOT failed to measure — it has failed to
 // report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
 // EVAL_DIR is invisible here and used to abort the run outright. On 2026-08-21 that discarded 40
@@ -3164,6 +3544,13 @@ const bench = await agentT(
 // So before throwing, spend one cheap agent asking whether the measurements exist on disk. It may
 // only RECOVER — re-measuring here would silently double the phase's cost and hide the failure.
 let benchR = bench;
+if (MODE === 'mega' && benchR && benchR.__agent_timed_out) {
+  return {
+    mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+    final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
+    reason: 'benchmark/calibration agent exceeded the production timeout; no recovery was started',
+  };
+}
 if (!benchR || !benchR.baseline_per_case) {
   log('Benchmark setup returned nothing. Attempting RECOVERY from EVAL_DIR before aborting — an ' +
       'agent that died mid-phase usually left its measurements on disk.');
@@ -3181,7 +3568,8 @@ if (!benchR || !benchR.baseline_per_case) {
         TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
         STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
-    { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA });
+    { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA,
+      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
   if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
     throw new Error('Benchmark setup failed: no baseline recorded, and none recoverable from EVAL_DIR');
   }
@@ -3199,8 +3587,16 @@ let PC_UNDERSHOOT = '';  // set when a CONSTRUCTED control passed but read LOW; 
 // switch was absent ran two identical arms. objectiveVerdict reads this to decide whether an
 // uncontrolled wave's timings are admissible at all.
 let PC_RAN = false;
+let PC_PASSED = false;
 if (POSITIVE_CONTROL) {
   const pc = benchR.positive_control || {};
+  const pcComplete = MODE !== 'mega' || pc.claim_complete === true;
+  if (!pcComplete) {
+    log(`Positive control PENDING: claim_complete is not true` +
+      `${pc.attempt_id ? ` for attempt ${pc.attempt_id}` : ''}. A force-emitted or partial 0.00% ` +
+      `is not a failed instrument. Candidate authoring may continue, but mega performance ranking ` +
+      `remains disabled until a completed calibration manifest is recovered.`);
+  } else {
   const lo = Number(POSITIVE_CONTROL.expected_pct_lo);
   const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
   const got = Number(pc.measured_pct);
@@ -3341,6 +3737,8 @@ if (POSITIVE_CONTROL) {
   const ok = ran && !tooSmall && !absurd && (!overshoot || nullQuiet);
   // <</REPLAY:pc_gate>>
   PC_RAN = ran;
+  PC_PASSED = ok && (MODE !== 'mega' ||
+    megaCalibrationClaimPass({ ...pc, passed: ok }, POSITIVE_CONTROL));
   if (switchAbsent) {
     log(`POSITIVE CONTROL SWITCH ABSENT: "${POSITIVE_CONTROL.name || 'unnamed'}" names a knob that ` +
         `is not in the tree it was run against, so both arms executed identical code and the ` +
@@ -3436,6 +3834,18 @@ if (POSITIVE_CONTROL) {
     if (PC_ABORT) throw new Error(why);
     log(`WARNING: ${why}`);
   }
+  }
+}
+
+if (MODE === 'mega' && PC_PASSED) {
+  const pc = benchR.positive_control || {};
+  megaMeasurementCalibration = {
+    ready: true,
+    candidate_id: 'synthetic_control',
+    attempt_id: pc.attempt_id || 'benchmark-control',
+    evidence_manifest: pc.evidence_manifest || '',
+    note: `independent synthetic control passed at ${Number(pc.measured_pct).toFixed(2)}%`,
+  };
 }
 
 // ===========================================================================
@@ -3448,7 +3858,16 @@ let profileSummary = await agentT(
     COMMANDMENT,
     ...RESUME_INPUT,
   }),
-  { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA });
+  { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION
+      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+if (MODE === 'mega' && profileSummary && profileSummary.__agent_timed_out) {
+  return {
+    mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+    final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
+    reason: 'baseline profile exceeded the production timeout; no candidate GPU work was started',
+  };
+}
 const baselineAnalysisResult = await runProfileAnalysis(
   profileSummary,
   0,
@@ -3500,25 +3919,9 @@ const MAX_NO_HARDWARE = Math.max(1, parseInt(A.max_no_hardware != null ? A.max_n
 let stopReason = null;
 let bestPerCase = BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source}
-// mode=mega FLOOR seeding of the commit-gate. The Reproduce phase committed the whole flat faithful
-// operator as HEAD = the FLOOR/保底. The optimize loop's ONLY guard against a slower artifact
-// overwriting a faster HEAD is the speedup commit-gate `winner.geomean > cumulative*(1+MIN_IMPROVE)`,
-// and `cumulative` starts at 1.0 (the frozen-baseline ratio). Left at 1.0, ANY >1.0 candidate (say
-// 1.02x) clears the gate and commits — OVERWRITING a faster floor (M2.5-class ~1.047x). So seed
-// `cumulative` from the floor's MEASURED speedup vs the frozen baseline: the gate then reads "must
-// BEAT the floor to commit". No win => HEAD stays the floor and final reports the floor (floor永久保留).
-// Seed ONLY `cumulative`, never bestPerCase — the per-case regression guard must stay on the frozen
-// baseline's per-case shape, and the floor's per-case vector may not share it. mega-gated; author/
-// optimize see cumulative=1.0 exactly as before.
-// SEED FROM ANY POSITIVE FLOOR, INCLUDING A SUB-PARITY FLOOR (<1.0x). round_1 evidence: the optimize
-// single-diff gate DOES land a clean concurrency rung on a sub-parity floor (+1.322x/round overlap
-// step, correct, path=MEGA). If `cumulative` were pinned at 1.0 for a 0.232x floor, that candidate — a
-// real +1.322x IMPROVEMENT over the floor — is rejected by `>cumulative*(1+MIN_IMPROVE)`, HEAD freezes,
-// no cross-round accumulation. The gate must read "beat the FLOOR", not "beat 1.0x", wherever the floor sits.
-if (MODE === 'mega' && reproResult && Number.isFinite(Number(reproResult.floor_geomean)) && Number(reproResult.floor_geomean) > 0) {
-  cumulative = Number(reproResult.floor_geomean);
-  log(`mega floor seeded into commit-gate: cumulative=${cumulative.toFixed(3)}x — a candidate must BEAT the floor to overwrite HEAD; otherwise HEAD stays the floor and final = floor. (Seeds from ANY positive floor: a sub-parity floor <1.0x is RATCHETED UP by optimize, not rejected — round_1 landed +1.322x/round from a 0.232x floor.)`);
-}
+// Mega does not seed a global score from an authoring WIP. Each lane advances independently, and
+// `cumulative` changes only when a fully scored candidate wins. The validated artifact remains in
+// the registry even when another lane is selected, so a later regression cannot erase the fallback.
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
 // The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
 // carry the round it came from and whether that round produced evidence at all.
@@ -4265,9 +4668,461 @@ if (setup.resumed && setup.prior_state) {
     for (const k of Object.keys(ps.absorbed_files)) for (const f of (ps.absorbed_files[k] || [])) prior.push(f);
     if (prior.length) absorbedByRound[0.5] = [...new Set(prior.map(shelfFile))];
   }
+  if (MODE === 'mega' && Array.isArray(ps.candidate_registry)) {
+    for (const c of ps.candidate_registry) {
+      const n = normalizeMegaCandidate(c);
+      if (!n.id_valid || !n.source_valid || !n.source_id_valid) {
+        log(`MEGA candidate state rejected: id=${n.id || '(empty)'} source=${String(c && c.source || '')}.`);
+        continue;
+      }
+      megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, {
+        ...n,
+        // State may carry evidence and a head, never authority to redirect the lane outside its root.
+        tree: megaLaneTree(n.id),
+      });
+    }
+  }
+  if (MODE === 'mega' && Number.isFinite(Number(ps.state_sequence))) {
+    megaStateSequenceBase = Math.max(0, Number(ps.state_sequence));
+  }
+  // Calibration is intentionally NOT restored as authority. Every wave runs/recover-checks its own
+  // control; prior calibration remains in STATE for audit only and cannot license fresh scores.
   log(`RESUMED from STATE_DIR: cumulative=${cumulative.toFixed(3)}x, ${history.insights.length} insights, ${history.ledger.length} ledger entries carried forward.`);
   if (shelf.length) log(`  shelf: ${shelf.length} verified non-winner(s) carried forward, ` +
     `${shelf.filter((e) => e.footprint === 'known').length} with a known file footprint.`);
+  if (MODE === 'mega') {
+    log(`  mega candidates: ${megaCandidateRegistry.length}, calibration=${megaMeasurementCalibration.ready ? 'ready' : 'pending'}.`);
+  }
+}
+
+async function recoverMegaCalibration(label) {
+  if (MODE !== 'mega' || megaMeasurementCalibration.ready || !POSITIVE_CONTROL) return;
+  const recovered = await agentT(
+    roleAgent('benchmark_engineer', 'recover',
+      `RECOVER ONLY the completed positive-control aggregate from ${EVAL_DIR}. Do not run a GPU ` +
+      `command or take a lease. Ignore force-emitted/partial claims and return claim_complete:false ` +
+      `unless the evidence manifest and every pair are final.`, {
+        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR,
+        ANALYSIS: analysis, POSITIVE_CONTROL,
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+        REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+      }),
+    { phase: 'Benchmark', label: `mega calibration recovery ${label}`, schema: BENCH_SCHEMA,
+      ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+  const pc = recovered && recovered.positive_control;
+  if (megaCalibrationClaimPass(pc, POSITIVE_CONTROL)) {
+    megaMeasurementCalibration = {
+      ready: true, candidate_id: 'synthetic_control',
+      attempt_id: pc.attempt_id || `recovered:${label}`,
+      evidence_manifest: pc.evidence_manifest || '',
+      note: `recovered completed synthetic control at ${Number(pc.measured_pct).toFixed(2)}%`,
+    };
+    log(`MEGA measurement calibration RECOVERED (${label}): ${megaMeasurementCalibration.note}.`);
+  }
+}
+
+async function persistMegaCandidateState(currentRound, finalizing) {
+  if (MODE !== 'mega' || !STATE_DIR) return;
+  const sequence = megaStateSequenceBase + Number(currentRound) * 10 + (finalizing ? 9 : 0);
+  const generation = `mega:${currentRound}:${megaCandidateRegistry.reduce(
+    (m, c) => Math.max(m, Number(c.attempts || 0)), 0)}:${sequence}`;
+  const persisted = await agentT(
+    roleAgent('tech_lead', 'update_memory',
+      'Persist the mega candidate registry exactly; do not benchmark, plan, or modify candidate source.', {
+        STATE_DIR, CANONICAL, ROUND: currentRound,
+        CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase,
+        CANDIDATE_REGISTRY: megaCandidateRegistry,
+        MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
+        STATE_GENERATION: generation,
+        STATE_SEQUENCE: sequence,
+        PRIOR_HISTORY: history, OPEN_RUNGS: [], ROADMAP_LADDER: [],
+        LADDER_DISPATCHED: [], LADDER_COMPLETED: [],
+        SHELF: shelf, ABSORBED_FILES: absorbedByRound,
+      }),
+    { phase: 'Optimize', label: `mega candidate state r${currentRound}`, schema: MEMORY_SCHEMA,
+      ...(MEGA_PRODUCTION ? { timeout_ms: 60000, max_retries: 1 } : {}) });
+  if (!(persisted && persisted.state_written === true &&
+      Number(persisted.state_round) === Number(currentRound) &&
+      Number(persisted.state_sequence) === sequence &&
+      String(persisted.state_generation || '') === generation)) {
+    throw new Error(
+      `MEGA STATE PERSIST FAILED at round ${currentRound}: refusing to advance while candidate ` +
+      `lineage/evidence may be lost or overwritten by an older writer.`);
+  }
+}
+
+function megaCandidateById(id) {
+  return megaCandidateRegistry.find((c) => c.id === id) || null;
+}
+
+function megaLaneTree(candidateId) {
+  if (!validMegaCandidateId(candidateId)) {
+    throw new Error(`invalid mega candidate id '${candidateId}'`);
+  }
+  const prior = megaCandidateById(candidateId);
+  if (prior && prior.tree) return prior.tree;
+  return STATE_DIR
+    ? `${STATE_DIR}/candidates/${candidateId}/tree`
+    : `${EVAL_DIR}/candidate_lanes/${candidateId}`;
+}
+
+function megaBaseTree(baseId) {
+  if (!baseId || baseId === 'frozen_baseline') return `${EVAL_DIR}/baseline`;
+  const base = megaCandidateById(baseId);
+  return base && base.tree && base.status !== 'rejected' &&
+    (base.status === 'scored' || base.status === 'finalist') &&
+    base.id_valid && base.source_valid && base.source_id_valid
+    ? base.tree : `${EVAL_DIR}/baseline`;
+}
+
+function megaBaseHead(baseId) {
+  if (!baseId || baseId === 'frozen_baseline') return '';
+  const base = megaCandidateById(baseId);
+  return base && (base.status === 'scored' || base.status === 'finalist')
+    ? String(base.head || '') : '';
+}
+
+async function planMegaCandidateTurn(currentRound, remaining, pool) {
+  if (megaSkillLaneDue(megaCandidateRegistry, currentRound, MEGA_SKILL_CANDIDATE_ID,
+      MEGA_SKILL_MAX_ATTEMPTS, MEGA_SKILL_INTERVAL)) {
+    const skill = megaCandidateById(MEGA_SKILL_CANDIDATE_ID);
+    return {
+      id: `r${currentRound}_${MEGA_SKILL_CANDIDATE_ID}`,
+      candidate_id: MEGA_SKILL_CANDIDATE_ID, candidate_source: 'validated_skill',
+      base_candidate_id: 'frozen_baseline', title: 'M2.5 validated-skill reproduction candidate',
+      specialty: 'distributed', tree: skill && skill.tree ? skill.tree : megaLaneTree(MEGA_SKILL_CANDIDATE_ID),
+      prompt: `Continue the independent ${MEGA_SKILL_ID} candidate from its own lane. Produce the ` +
+        `complete fast two-launch operator, including the concurrency schedule; a shape-only fused ` +
+        `skeleton is authoring WIP, not a reproduced M2.5 candidate.`,
+    };
+  }
+
+  const plan = await agentT(
+    roleAgent('tech_lead', 'plan_round',
+      'Choose one whole-kernel candidate direction. M2.5 artifact and skill lanes are independent and must not block this search.', {
+        ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
+        EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
+        CUMULATIVE_SPEEDUP: cumulative, BASELINE_GEOMEAN_MS,
+        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
+        CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: history,
+        MEGA_CANDIDATE_REGISTRY: megaCandidateRegistry,
+        MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
+        MEGA_PROFILE, CANDIDATE_TIMEOUT_S: MEGA_CANDIDATE_TIMEOUT_S,
+        DEFAULT_BASE_CANDIDATE: (selectMegaCandidate(
+          megaCandidateRegistry, MEGA_TIE_NOISE_PCT).selected || {}).id || 'frozen_baseline',
+        ROADMAP: `${EVAL_DIR}/roadmap.md`, ROADMAP_LADDER: LADDER,
+        LADDER_DISPATCHED: [...dispatchedRungs], LADDER_COMPLETED: [...LADDER_MEASURED],
+        OPEN_RUNGS: openRungs(LADDER, rungTally),
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
+        REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+        REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+        KERNEL_KNOWLEDGE_DIR: '', KK_OPERATOR: '', KK_LANGUAGE: '', KK_REFS: [], ...KB_INPUTS,
+      }),
+    { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: PLAN_SCHEMA,
+      ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+  if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
+    const wip = megaCandidateRegistry.find((c) =>
+      c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable')) ||
+      megaCandidateRegistry.find((c) =>
+        c.source === 'validated_skill' && c.attempts < MEGA_SKILL_MAX_ATTEMPTS &&
+        (c.status === 'authoring' || c.status === 'runnable'));
+    if (!wip) return null;
+    return {
+      id: `r${currentRound}_continue_${wip.id}`, candidate_id: wip.id,
+      candidate_source: wip.source, base_candidate_id: wip.base_id,
+      title: `continue candidate ${wip.id}`, specialty: 'distributed',
+      tree: wip.tree, prompt: wip.next_blocker || 'Continue the first unresolved measured blocker.',
+    };
+  }
+  const raw = plan.directions[0];
+  const requestedId = String(raw.candidate_id || raw.id || `search_r${currentRound}`);
+  const safeRequestedId = validMegaCandidateId(requestedId) &&
+    requestedId !== MEGA_SKILL_CANDIDATE_ID ? requestedId : `search_r${currentRound}`;
+  const requested = megaCandidateById(safeRequestedId);
+  const candidateId = requested && (requested.status === 'scored' || requested.status === 'finalist')
+    ? `${safeRequestedId}_r${currentRound}` : safeRequestedId;
+  const requestedBaseId = String(raw.base_candidate_id ||
+    (candidateId !== safeRequestedId ? safeRequestedId : '') ||
+    ((selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT).selected || {}).id || 'frozen_baseline'));
+  const requestedBase = megaCandidateById(requestedBaseId);
+  const baseId = requestedBaseId === 'frozen_baseline' ||
+    (requestedBase && (requestedBase.status === 'scored' || requestedBase.status === 'finalist'))
+    ? requestedBaseId : 'frozen_baseline';
+  return {
+    ...enrichDirection(raw, LADDER),
+    id: raw.id || candidateId,
+    candidate_id: candidateId,
+    candidate_source: raw.candidate_source === 'integrated' ? 'integrated' : 'search',
+    base_candidate_id: baseId,
+    tree: megaLaneTree(candidateId),
+  };
+}
+
+async function runMegaCandidateTurn(currentRound, remaining) {
+  const turnStartedMs = Date.now();
+  const dispatchDeadlineMs = WORKFLOW_STARTED_MS +
+    (MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) * 1000;
+  if (!megaMeasurementCalibration.ready &&
+      (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
+    await recoverMegaCalibration(`before-round-${currentRound}`);
+  }
+  const pool = await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
+  const d = await planMegaCandidateTurn(currentRound, remaining, pool);
+  if (!d) return { stop: true, reason: 'no mega candidate direction was planned' };
+  const dispatchRemainingS = (dispatchDeadlineMs - Date.now()) / 1000;
+  if (MEGA_PRODUCTION && dispatchRemainingS < 600) {
+    return {
+      stop: true,
+      reason: `only ${Math.max(0, Math.round(dispatchRemainingS))}s remain before the production ` +
+        `final-validation reserve; no new candidate attempt was started`,
+    };
+  }
+  const turnDeadlineMs = MEGA_PRODUCTION
+    ? Math.min(turnStartedMs + MEGA_CANDIDATE_TIMEOUT_S * 1000, dispatchDeadlineMs)
+    : turnStartedMs + MEGA_CANDIDATE_TIMEOUT_S * 1000;
+  const turnBudgetS = (turnDeadlineMs - turnStartedMs) / 1000;
+  const prepElapsedS = (Date.now() - turnStartedMs) / 1000;
+  const availableAfterPrepS = (turnDeadlineMs - Date.now()) / 1000;
+  if (MEGA_PRODUCTION && availableAfterPrepS < 600) {
+    return {
+      stop: true,
+      reason: `candidate preparation consumed ${Math.round(prepElapsedS)}s; only ` +
+        `${Math.max(0, Math.round(availableAfterPrepS))}s remain in the shared turn budget, so no ` +
+        `Engineer was started`,
+    };
+  }
+  const engineerBudgetS = MEGA_PRODUCTION
+    ? Math.max(240, Math.min(
+      Math.floor(turnBudgetS * 0.60),
+      Math.floor(availableAfterPrepS - 360))) : MEGA_CANDIDATE_TIMEOUT_S;
+  const commandBudgetS = Math.max(180, engineerBudgetS - 60);
+
+  const candidateId = d.candidate_id;
+  const source = d.candidate_source;
+  const existing = megaCandidateById(candidateId);
+  const baseCandidateId = (existing && existing.base_id) || d.base_candidate_id || 'frozen_baseline';
+  const attempts = (existing ? existing.attempts : 0) + 1;
+  const attemptId = `${candidateId}:r${currentRound}:a${attempts}`;
+  const tree = d.tree || megaLaneTree(candidateId);
+  const laneManifest = tree.replace(/\/tree$/, '') + '/lane.json';
+  const baseTree = megaBaseTree(baseCandidateId);
+  const baseHead = megaBaseHead(baseCandidateId);
+  const outDir = `${EVAL_DIR}/round_${currentRound}/candidate_${candidateId}`;
+  let eng = null;
+
+  {
+    const role = source === 'validated_skill' ? 'mega_engineer' : 'engineer';
+    const roleFile = source === 'validated_skill' ? 'mega_engineer.md' : 'engineer.md';
+    eng = await agentT(
+      roleAgent(role, 'optimize',
+        `Advance candidate lane ${candidateId}; never edit or replace another candidate lane.`, {
+          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+          BASE_CANDIDATE_ID: baseCandidateId, BASE_TREE: baseTree, BASE_HEAD: baseHead,
+          CANDIDATE_TREE: tree, OUTPUT_DIR: outDir, ATTEMPT_ID: attemptId,
+          LANE_MANIFEST: laneManifest,
+          CANDIDATE_TIMEOUT_S: commandBudgetS,
+          SPECIALTY: d.specialty || 'distributed', DIRECTION: d,
+          KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
+          GPU_ID: GPU_RESOURCE.specForIndex(0), GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
+          SKILL_DIR: WORKFLOW_DIR,
+          KERNEL_KNOWLEDGE_DIR: source === 'validated_skill' ? KERNEL_KNOWLEDGE_DIR : '',
+          codebase_context: `${EVAL_DIR}/codebase_context.md`,
+          profiling_summary: profileSummary ? profileSummary.summary_path : '',
+          baseline_per_case: BASELINE_PER_CASE,
+          INSIGHTS: history.insights,
+          PRIOR_CANDIDATE: existing || null,
+        }) +
+      `\n\nCandidate-lane setup is part of this task. If ${tree}/.git does not exist, create ${tree}. ` +
+      (baseHead
+        ? `Export exact parent commit ${baseHead} from ${baseTree} with git archive into the lane. `
+        : `Copy ${baseTree} into it with a tar pipe excluding .git/build/__pycache__/.torch_ext/*.so/*.o. `) +
+      `then initialize a fresh git repository and commit "candidate base ${baseCandidateId}". ` +
+      `Before any long-running command, atomically write ${laneManifest} with candidate_id/source/` +
+      `base_candidate_id/tree/attempt_id so a timed-out first attempt is discoverable on resume. ` +
+      `If it exists, continue from its HEAD; never recreate it. Read ${WORKFLOW_DIR}/roles/${roleFile}. ` +
+      `Commit WIP to THIS lane after every real advance. Write ${outDir}/candidate_result.json ` +
+      `atomically only after its evidence files are final. Return candidate_id/source/base, tree, head, ` +
+      `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
+      `lane root), correctness, absolute_score, per_case, topology_sig, next_blocker and notes. ` +
+      `The entire candidate turn shares one ${Math.round(turnBudgetS)}s budget; this Engineer gets ` +
+      `${engineerBudgetS}s and every GPU command is bounded by ${commandBudgetS}s. A timeout or ` +
+      `force-emit returns claim_complete:false and status authoring; it is not score 0.`,
+      { phase: 'Optimize', label: `mega:${source}:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
+        timeout_ms: engineerBudgetS * 1000, timeout_marker: true, max_retries: 1 });
+
+    if (eng && eng.__agent_timed_out) {
+      megaUnsafeTimeout = eng;
+      return {
+        stop: true,
+        reason: `candidate agent ${eng.label || candidateId} exceeded its production timeout; ` +
+          `stopping without recovery/fallback so a still-running agent cannot overlap another lane`,
+      };
+    }
+    if (!eng || eng.claim_complete !== true) {
+      const recovered = await agentT(
+        roleAgent('engineer', 'recover',
+          `RECOVER ONLY candidate ${candidateId}. Read ${outDir}/candidate_result.json and completed ` +
+          `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
+          `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}.`, {
+            OUT_DIR: outDir, OUTPUT_DIR: outDir, CANDIDATE_ID: candidateId,
+            CANDIDATE_SOURCE: source, BASE_CANDIDATE_ID: baseCandidateId,
+            CANDIDATE_TREE: tree, KERNEL_PATH: tree, ATTEMPT_ID: attemptId,
+            SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+          }),
+        { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
+          ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
+      if (recovered && recovered.claim_complete === true) eng = recovered;
+    }
+  }
+
+  const engineerStatus = String(eng && eng.candidate_status || '');
+  const preVerifyStatus = engineerStatus === 'runnable' ? 'runnable' : 'authoring';
+  const meta = normalizeMegaCandidate({
+    id: candidateId, source, base_id: baseCandidateId, tree,
+    status: preVerifyStatus,
+    head: (eng && eng.head) || (eng && eng.candidate_head) ||
+      (existing && existing.working_head) || (existing && existing.head) || '',
+    patch: (eng && eng.patch_file) || (existing && existing.patch) || '',
+    topology_sig: (eng && eng.topology_sig) || (existing && existing.topology_sig) || '',
+    provenance: (eng && eng.provenance) || (existing && existing.provenance) || source,
+    // Engineer completion only enables independent Verify. It never inherits or creates verified
+    // score/correctness evidence for this HEAD.
+    claim_complete: false,
+    attempt_id: (eng && eng.attempt_id) || attemptId,
+    evidence_manifest: '',
+    attempts,
+    next_blocker: (eng && eng.next_blocker) || '',
+    notes: (eng && eng.notes) || '',
+  });
+  megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
+
+  let ver = null;
+  const turnRemainingS = turnBudgetS - (Date.now() - turnStartedMs) / 1000;
+  const verifyBudgetS = MEGA_PRODUCTION
+    ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
+      Math.floor((dispatchDeadlineMs - Date.now()) / 1000 - 60)))
+    : MEGA_CANDIDATE_TIMEOUT_S;
+  const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
+  const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
+    (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
+    ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || ''));
+  if (shouldVerify) {
+    ver = await agentT(
+      roleAgent('verify_engineer', 'verify',
+        'Independently verify and score this whole-tree mega candidate against the frozen baseline.', {
+          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+          CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+          BASE_CANDIDATE_ID: baseCandidateId,
+          CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
+          VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
+          VERIFY_TIMEOUT_S: verifyBudgetS,
+          GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+          BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+          VERIFY_TIER: 'score', MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
+          SPECIALTY: 'distributed', TARGET_SHAPE: {
+            launches: LAUNCH_TARGET,
+            stages_fused: ['dispatch', 'gemm1', 'gemm2', 'combine'],
+            require_overlap: false,
+          },
+          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+          REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
+          REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
+          REQUIRE_GRAPH_CAPTURE: '1',
+          REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
+          ACCURACY_METRIC, ACCURACY_THRESHOLD,
+        }),
+      { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: VERIFY_SCHEMA,
+        timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
+    if (ver && ver.__agent_timed_out) {
+      megaUnsafeTimeout = ver;
+      return {
+        stop: true,
+        reason: `verify agent ${ver.label || candidateId} exceeded its production timeout; ` +
+          `stopping before any recovery or competing GPU work`,
+      };
+    }
+    if (!ver || ver.claim_complete !== true) {
+      const recoveryBudgetS = MEGA_PRODUCTION
+        ? Math.max(0, Math.floor(turnBudgetS - (Date.now() - turnStartedMs) / 1000 - 60))
+        : 300;
+      if (recoveryBudgetS >= 30) {
+        const recoveredVer = await agentT(
+          roleAgent('verify_engineer', 'recover',
+            `RECOVER ONLY the completed verification for candidate ${candidateId}, attempt ${attemptId}, ` +
+            `from ${outDir}/verify. Do not run a GPU command, take a lease, apply a patch, or edit source.`, {
+              VERIFY_DIR: `${outDir}/verify`, CANDIDATE_ID: candidateId,
+              CANDIDATE_SOURCE: source, CANDIDATE_TREE: tree,
+              EXPECTED_HEAD: expectedHead, ATTEMPT_ID: attemptId,
+              SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+            }),
+          { phase: 'Verify', label: `mega:verify-recover:${candidateId}`, schema: VERIFY_SCHEMA,
+            timeout_ms: Math.min(120, recoveryBudgetS) * 1000, max_retries: 1 });
+        if (recoveredVer && recoveredVer.claim_complete === true) ver = recoveredVer;
+      }
+    }
+  }
+
+  let record = meta;
+  if (ver) {
+    record = megaCandidateFromVerification(meta, ver, {
+      targetGuards: TARGET_GUARDS, regressionGuards: [],
+      launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
+      accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
+      requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
+    });
+    record.attempts = attempts;
+    record.tree = tree;
+    if (source === 'validated_skill' && record.status === 'scored' &&
+        record.absolute_score < MEGA_M25_RECORDED_LOW) {
+      record.status = 'runnable';
+      record.next_blocker = record.next_blocker ||
+        `candidate is correct but ${record.absolute_score.toFixed(4)}x is below the recorded ` +
+        `M2.5 band ${MEGA_M25_RECORDED_LOW.toFixed(4)}..${MEGA_M25_RECORDED_HIGH.toFixed(4)}; ` +
+        `continue reconstructing the missing concurrency schedule`;
+    } else if (record.status === 'scored' && record.absolute_score <= 1.0) {
+      record.status = 'runnable';
+      record.next_blocker = record.next_blocker ||
+        `candidate is correct but ${record.absolute_score.toFixed(4)}x does not beat frozen ` +
+        `MegaMoE V2 baseline; keep optimizing this lane, never promote it to a finalist`;
+    }
+    megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, record);
+  }
+
+  // A real score may be recorded before calibration completes, but it cannot update the selected
+  // incumbent or be published as a result until an independent synthetic response proves the
+  // harness can see an effect.
+  const selection = megaMeasurementCalibration.ready
+    ? selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT)
+    : { selected: null, eligible: [], tie_kept_skill: false };
+  const selected = selection.selected;
+  const improved = !!(selected && selected.absolute_score > cumulative * (1 + MIN_IMPROVE));
+  if (selected && (improved || !finalWinner)) {
+    cumulative = Math.max(cumulative, selected.absolute_score);
+    bestPerCase = selected.per_case.length ? selected.per_case : bestPerCase;
+    finalWinner = {
+      id: selected.id, source: selected.source, geomean: selected.absolute_score,
+      per_case: selected.per_case, patch: selected.patch, tree: selected.tree,
+      topology_sig: selected.topology_sig, provenance: selected.provenance,
+    };
+  }
+
+  const hasEvidence = !!(ver && ver.claim_complete === true);
+  noEvidence = hasEvidence ? 0 : noEvidence + 1;
+  noImprove = improved ? 0 : noImprove + 1;
+  const reachedHardware = !!(ver && String(ver.activation_confirmed || '').toLowerCase() === 'yes');
+  noHardware = reachedHardware ? 0 : noHardware + 1;
+  history.rounds.push({
+    round: currentRound,
+    directions: [{ id: d.id, title: d.title, specialty: d.specialty,
+      candidate_id: candidateId, candidate_source: source }],
+    results: [{ id: d.id, status: ver ? ver.status : (eng ? eng.candidate_status : 'pending'),
+      verified: record.absolute_score, candidate_status: record.status }],
+    winner: selected ? { source: selected.id, geomean: selected.absolute_score } : null,
+    improved, cumulative,
+  });
+  await persistMegaCandidateState(currentRound);
+  return { stop: false, direction: d, record, ver, improved, selected };
 }
 
 // The no-improve stop is a SPEEDUP stop. Under objective=working_kernel every round before the last
@@ -4280,10 +5135,48 @@ if (setup.resumed && setup.prior_state) {
 // harness is broken would keep planning rounds until the budget ran out. Three consecutive rounds
 // with no reading is not a search that has run out of ideas, it is an instrument that is not
 // working, and the answer to that is not another lease.
-while (dispatched < BUDGET && (WORKING_KERNEL || (noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE))) {
+while (dispatched < BUDGET &&
+    (MODE === 'mega' || WORKING_KERNEL ||
+     (noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE))) {
   round++;
   const remaining = BUDGET - dispatched;
   phase('Optimize');
+
+  if (MODE === 'mega') {
+    const elapsedS = (Date.now() - WORKFLOW_STARTED_MS) / 1000;
+    if (elapsedS >= MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) {
+      stopReason = `${MEGA_PROFILE} dispatch deadline reached after ${Math.round(elapsedS / 60)} minutes; ` +
+        `preserving ${Math.round(MEGA_FINAL_RESERVE_S / 60)} minutes for finalist validation.`;
+      break;
+    }
+    const turn = await runMegaCandidateTurn(round, remaining);
+    if (turn.stop) {
+      stopReason = turn.reason;
+      break;
+    }
+    dispatched += 1;
+    log(`Mega round ${round}: candidate=${turn.record.id}[${turn.record.source}:${turn.record.status}], ` +
+      `score=${Number.isFinite(turn.record.absolute_score) ? turn.record.absolute_score.toFixed(4) + 'x' : 'pending'}, ` +
+      `selected=${turn.selected ? turn.selected.id : 'none'}, calibration=` +
+      `${megaMeasurementCalibration.ready ? 'ready' : 'pending'}, budget=${dispatched}/${BUDGET}.`);
+    const searchAttempts = megaCandidateRegistry
+      .filter((c) => c.source === 'search' || c.source === 'integrated')
+      .reduce((sum, c) => sum + Number(c.attempts || 0), 0);
+    if (MEGA_STOP_ON_DELIVERABLE && turn.selected &&
+        Number(turn.selected.absolute_score) > 1.0 &&
+        searchAttempts >= MEGA_MIN_SEARCH_ATTEMPTS) {
+      stopReason = `production early-stop after ${round} round(s): candidate ${turn.selected.id} ` +
+        `has calibrated ${Number(turn.selected.absolute_score).toFixed(4)}x speedup over frozen ` +
+        `MegaMoE V2 and ${searchAttempts} search attempt(s) have run; reserve the remaining ` +
+        `${BUDGET - dispatched} direction(s) for finalist validation instead of exhaustive search.`;
+      break;
+    }
+    if (REQUIRE_HW_ACTIVATION && noHardware >= MAX_NO_HARDWARE) {
+      log(`Mega hardware warning: ${noHardware} consecutive portfolio attempts did not reach a card. ` +
+        `The affected lane stays WIP; this does not stop or invalidate other candidate lanes.`);
+    }
+    continue;
+  }
 
   // --- (a) Plan the round (TechLead) ------------------------------------
   // Sample the pool FIRST, so the lead plans against the hardware that exists rather than the
@@ -5589,14 +6482,261 @@ if (!stopReason) {
 }
 log(`Rounds ended: ${stopReason}`);
 
+if (MODE === 'mega' && megaUnsafeTimeout) {
+  log(`MEGA SAFE STOP: ${megaUnsafeTimeout.label || 'agent'} may still be running after the ` +
+    `orchestration timeout. No recovery, fallback, finalist GPU work, report agent or validation ` +
+    `agent will be started in this invocation.`);
+  return {
+    mode: MODE,
+    mega_deliverable: false,
+    mega_selected_candidate: '',
+    mega_selected_source: '',
+    mega_candidate_registry: megaCandidateRegistry,
+    mega_note: 'agent timeout: candidate lane WIP is preserved, but no overlapping work was launched',
+    eval_dir: EVAL_DIR,
+    kernel_name: KERNEL_NAME,
+    final_speedup: 0,
+    final_geomean: 0,
+    validation_status: 'agent_timeout',
+    rounds: round,
+    budget_used: dispatched,
+    budget_total: BUDGET,
+    stop_reason: stopReason,
+    report_path: '',
+    final_patch: '',
+  };
+}
+
+let megaSelection = null;
+let megaSelectionContractPassed = false;
+let FINAL_WORKSPACE = CANONICAL;
+if (MODE === 'mega') {
+  phase('Validate');
+  if (!megaMeasurementCalibration.ready) await recoverMegaCalibration('before-final-selection');
+  const provisional = selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT);
+  const orderedEligible = provisional.selected
+    ? [provisional.selected, ...provisional.eligible.filter((c) => c.id !== provisional.selected.id)]
+    : provisional.eligible;
+  const ranked = orderedEligible.slice(0,
+    MEGA_PRODUCTION ? MEGA_FINAL_FALLBACK_K : MEGA_FINAL_TOP_K);
+  const stableSkill = provisional.eligible.find((c) => c.source === 'validated_skill');
+  const finalistMap = new Map(ranked.map((c) => [c.id, c]));
+  if (!MEGA_PRODUCTION && stableSkill) finalistMap.set(stableSkill.id, stableSkill);
+  const finalistOrder = [...finalistMap.values()];
+  const runFinalistBatch = async (batch, label) => {
+    if (!batch.length || !megaMeasurementCalibration.ready) return null;
+    const batchStartedMs = Date.now();
+    const remainingS = MEGA_TIME_BUDGET_S -
+      (Date.now() - WORKFLOW_STARTED_MS) / 1000 - MEGA_CLOSEOUT_RESERVE_S;
+    if (remainingS < 600) {
+      log(`MEGA finalist skipped: only ${Math.max(0, Math.round(remainingS))}s remain before the ` +
+        `closeout reserve; candidate state is preserved for the next production invocation.`);
+      return null;
+    }
+    const finalistTimeoutS = Math.min(MEGA_FINAL_TIMEOUT_S, remainingS);
+    const batchDeadlineMs = batchStartedMs + finalistTimeoutS * 1000;
+    const result = await agentT(
+      roleAgent('director', 'select_mega',
+        MEGA_PRODUCTION
+          ? 'Validate this highest-ranked workflow-authored candidate; do not pay for lower-ranked fallbacks unless it fails.'
+          : 'Re-measure the top workflow-authored Mega candidates together; select the fastest correct whole kernel.', {
+          EVAL_DIR, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+          BASELINE_TREE: `${EVAL_DIR}/baseline`, COMMANDMENT,
+          GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR,
+          CANDIDATES: batch, TOP_K: batch.length,
+          MEGA_PROFILE,
+          TIE_NOISE_PCT: MEGA_TIE_NOISE_PCT,
+          M25_RECORDED_SCORE: MEGA_M25_RECORDED_SCORE,
+          M25_RECORDED_BAND: [MEGA_M25_RECORDED_LOW, MEGA_M25_RECORDED_HIGH],
+          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+          LAUNCH_TARGET, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+          ACCURACY_METRIC, ACCURACY_THRESHOLD,
+          REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
+          REQUIRE_GRAPH_CAPTURE: '1',
+          SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
+        }),
+      { phase: 'Validate', label, schema: MEGA_SELECTION_SCHEMA,
+        timeout_ms: finalistTimeoutS * 1000, timeout_marker: true, max_retries: 1 });
+    if (result && (result.__agent_timed_out || result.claim_complete === true)) return result;
+    const recoveryRemainingS = Math.floor((batchDeadlineMs - Date.now()) / 1000);
+    if (recoveryRemainingS < 30) return result;
+    const recovered = await agentT(
+      roleAgent('director', 'recover_mega',
+        `RECOVER ONLY a completed finalist selection from ${EVAL_DIR}. Read the atomic selection ` +
+        `evidence and ${EVAL_DIR}/mega_selected; do not run a GPU command, take a lease, edit a ` +
+        `candidate, or create a new selection.`, {
+          EVAL_DIR, CANDIDATES: batch, SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
+          SKILL_DIR: WORKFLOW_DIR,
+        }),
+      { phase: 'Validate', label: `${label}:recover`, schema: MEGA_SELECTION_SCHEMA,
+        timeout_ms: Math.min(300, recoveryRemainingS) * 1000, max_retries: 1 });
+    return recovered && recovered.claim_complete === true ? recovered : result;
+  };
+  let finalists = [];
+  let selectionVerdict = megaFinalSelectionVerdict(null, [], {
+    selectedWorkspace: `${EVAL_DIR}/mega_selected`,
+  });
+  if (MEGA_PRODUCTION) {
+    for (let i = 0; i < finalistOrder.length; i++) {
+      const batch = [finalistOrder[i]];
+      const attempt = await runFinalistBatch(batch, `director:mega-finalist-${i + 1}`);
+      if (attempt && attempt.__agent_timed_out) {
+        megaUnsafeTimeout = attempt;
+        selectionVerdict = megaFinalSelectionVerdict(null, batch, {
+          selectedWorkspace: `${EVAL_DIR}/mega_selected`,
+        });
+        finalists = batch;
+        break;
+      }
+      const verdict = megaFinalSelectionVerdict(attempt, batch, {
+        selectedWorkspace: `${EVAL_DIR}/mega_selected`,
+        launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
+        targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
+        requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
+        requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
+        accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
+        requireOverlap: REQUIRE_OVERLAP, requireAttribution: REQUIRE_ATTRIBUTION,
+        tieNoisePct: MEGA_TIE_NOISE_PCT,
+      });
+      finalists = batch;
+      selectionVerdict = verdict;
+      if (verdict.pass) {
+        const identity = await agentT(
+          roleAgent('director', 'check_mega_identity',
+            'Independently compare the selected materialized tree with the exact source candidate head; do not run GPU work.', {
+              EVAL_DIR, SKILL_DIR: WORKFLOW_DIR,
+              SELECTED_CANDIDATE_ID: finalistOrder[i].id,
+              SELECTED_SOURCE_TREE: finalistOrder[i].tree,
+              SELECTED_SOURCE_HEAD: finalistOrder[i].head,
+              SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
+              SELECTED_MATERIALIZED_HEAD: attempt.selected_head,
+            }),
+          { phase: 'Validate', label: `director:mega-identity-${i + 1}`,
+            schema: MEGA_IDENTITY_SCHEMA, timeout_ms: 60000,
+            timeout_marker: true, max_retries: 1 });
+        if (identity && identity.__agent_timed_out) {
+          megaUnsafeTimeout = identity;
+          selectionVerdict = { pass: false, reasons: ['independent materialization identity timed out'] };
+          break;
+        }
+        if (!(identity && identity.passed === true &&
+            identity.selected_candidate_id === finalistOrder[i].id &&
+            identity.source_head === finalistOrder[i].head &&
+            identity.materialized_head === attempt.selected_head)) {
+          log(`MEGA production finalist ${finalistOrder[i].id} materialization identity failed. ` +
+            `${i + 1 < finalistOrder.length ? 'Trying the next scored fallback.' : 'No fallback remains.'}`);
+          selectionVerdict = { pass: false, reasons: ['independent materialization identity failed'] };
+          continue;
+        }
+        megaSelection = attempt;
+        break;
+      }
+      log(`MEGA production finalist ${finalistOrder[i].id} failed: ${verdict.reasons.join('; ')}. ` +
+        `${i + 1 < finalistOrder.length ? 'Trying the next scored fallback.' : 'No fallback remains.'}`);
+    }
+  } else {
+    finalists = finalistOrder;
+    megaSelection = await runFinalistBatch(finalists, 'director:mega-finalist-selection');
+    if (megaSelection && megaSelection.__agent_timed_out) {
+      megaUnsafeTimeout = megaSelection;
+      megaSelection = null;
+    }
+    selectionVerdict = megaFinalSelectionVerdict(megaSelection, finalists, {
+      selectedWorkspace: `${EVAL_DIR}/mega_selected`,
+      launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
+      targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
+      requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
+      requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
+      accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
+      requireOverlap: REQUIRE_OVERLAP, requireAttribution: REQUIRE_ATTRIBUTION,
+      tieNoisePct: MEGA_TIE_NOISE_PCT,
+    });
+  }
+  if (selectionVerdict.pass) {
+    megaSelectionContractPassed = true;
+    FINAL_WORKSPACE = megaSelection.selected_tree;
+    const selectedRecord = selectionVerdict.source;
+    const finalRow = selectionVerdict.row;
+    const finalTargetReadout = pairedGuardReadout(finalRow.paired_readings, TARGET_GUARDS[0]);
+    selectedRecord.status = 'finalist';
+    selectedRecord.absolute_score = Number(finalTargetReadout.score);
+    selectedRecord.per_case = Array.isArray(finalRow.per_case) ? finalRow.per_case : [];
+    selectedRecord.claim_complete = true;
+    selectedRecord.attempt_id = String(megaSelection.attempt_id || '');
+    selectedRecord.evidence_manifest = String(megaSelection.evidence_manifest || '');
+    selectedRecord.paired_readings = Array.isArray(finalRow.paired_readings)
+      ? finalRow.paired_readings : [];
+    selectedRecord.null_arm_pct = Number(finalRow.null_arm_pct);
+    selectedRecord.reps = finalTargetReadout.count;
+    selectedRecord.artifact_hash_base = String(finalRow.artifact_hash_base || '');
+    selectedRecord.artifact_hash_candidate = String(finalRow.artifact_hash_candidate || '');
+    selectedRecord.correctness_pass = true;
+    selectedRecord.activation_pass = true;
+    selectedRecord.head_pass = true;
+    selectedRecord.launch_pass = true;
+    selectedRecord.liveness_pass = true;
+    selectedRecord.graph_pass = true;
+    selectedRecord.guards_pass = true;
+    selectedRecord.artifact_distinct = true;
+    selectedRecord.measurement_pass = true;
+    selectedRecord.final_tree = megaSelection.selected_tree;
+    selectedRecord.final_head = String(megaSelection.selected_head || '');
+    selectedRecord.final_attempt_id = String(megaSelection.attempt_id || '');
+    selectedRecord.final_evidence_manifest = String(megaSelection.evidence_manifest || '');
+    megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, selectedRecord);
+    cumulative = Number(megaSelection.selected_score) || cumulative;
+    finalWinner = {
+      id: megaSelection.selected_candidate_id,
+      source: megaSelection.selected_source,
+      geomean: cumulative,
+      tree: FINAL_WORKSPACE,
+      source_tree: selectedRecord.tree,
+      source_head: selectedRecord.head,
+      materialized_head: megaSelection.selected_head,
+      patch: megaSelection.selected_patch || '',
+      provenance: selectedRecord ? selectedRecord.provenance : megaSelection.selected_source,
+      topology_sig: selectedRecord ? selectedRecord.topology_sig : '',
+      per_case: selectedRecord.per_case,
+    };
+    log(`MEGA FINALIST SELECTED: ${finalWinner.id}[${finalWinner.source}] ${cumulative.toFixed(4)}x` +
+      `${megaSelection.tie_kept_skill ? ' (tie within noise: validated-skill candidate retained)' : ''}.`);
+  } else {
+    const why = !megaMeasurementCalibration.ready
+      ? 'measurement calibration is incomplete'
+      : (!finalistOrder.length
+        ? 'no workflow-authored candidate passed the score-tier contract'
+        : `final selection contract failed: ${selectionVerdict.reasons.join('; ')}`);
+    ACCEPTANCE_CAVEATS.push(`Mega finalist selection unavailable: ${why}.`);
+    log(`MEGA FINALIST SELECTION INCOMPLETE: ${why}; no performance result will be presented as a deliverable.`);
+    finalWinner = null;
+  }
+}
+
+if (MODE === 'mega' && megaUnsafeTimeout) {
+  log(`MEGA SAFE STOP: finalist agent ${megaUnsafeTimeout.label || ''} timed out; no fallback or ` +
+    `second validation starts while that agent may still own resources.`);
+  return {
+    mode: MODE, mega_deliverable: false, mega_selected_candidate: '',
+    mega_selected_source: '', mega_candidate_registry: megaCandidateRegistry,
+    mega_note: 'finalist timeout: no overlapping fallback was launched',
+    eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME, final_speedup: 0, final_geomean: 0,
+    validation_status: 'agent_timeout', rounds: round, budget_used: dispatched,
+    budget_total: BUDGET, stop_reason: 'finalist agent timeout', report_path: '', final_patch: '',
+  };
+}
+
 // ===========================================================================
 // PHASE: Final report (TechLead)
 // ===========================================================================
 phase('Report');
 const report = await agentT(
   roleAgent('tech_lead', 'report', 'Write the final report and the cumulative final patch.', {
-    EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR,
+    EVAL_DIR, WORKSPACE: FINAL_WORKSPACE, SKILL_DIR: WORKFLOW_DIR,
     HISTORY: history, FINAL_WINNER: finalWinner, BASELINE_PER_CASE,
+    ...(MODE === 'mega' ? {
+      MEGA_CANDIDATE_REGISTRY: megaCandidateRegistry,
+      MEGA_SELECTION: megaSelection || {},
+    } : {}),
     STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
     LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
     REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
@@ -5684,30 +6824,67 @@ const report = await agentT(
     ...(REQUIRE_TASK_GRAPH && analysis && analysis.resource_timeline
       ? { RESOURCE_TIMELINE: JSON.stringify(analysis.resource_timeline).slice(0, 3000) } : {}),
   }),
-  { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
+  { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION
+      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+const reportReady = !!(report && !report.__agent_timed_out &&
+  String(report.report_path || '') && String(report.final_patch || ''));
+if (MODE === 'mega' && report && report.__agent_timed_out) megaUnsafeTimeout = report;
+if (MODE === 'mega' && megaUnsafeTimeout) {
+  return {
+    mode: MODE, mega_deliverable: false, mega_selected_candidate: '',
+    mega_selected_source: '', mega_candidate_registry: megaCandidateRegistry,
+    mega_note: 'report timeout: no identity validation or state writer was started afterward',
+    eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME, final_speedup: 0, final_geomean: 0,
+    validation_status: 'agent_timeout', rounds: round, budget_used: dispatched,
+    budget_total: BUDGET, stop_reason: 'report agent timeout', report_path: '', final_patch: '',
+  };
+}
 
 // ===========================================================================
 // PHASE: Director validation + arbitration
 // ===========================================================================
 phase('Validate');
-const validation = await agentT(
+const shouldRunFinalValidation = !(MODE === 'mega' && MEGA_PRODUCTION) ||
+  (reportReady && !!finalWinner && megaSelectionContractPassed);
+const validation = !shouldRunFinalValidation ? null : await agentT(
   roleAgent('director', 'validate', 'Independently validate the final patch vs the TRUE baseline.', {
-    KERNEL_PATH_ORIG, EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
+    KERNEL_PATH_ORIG, EVAL_DIR, WORKSPACE: FINAL_WORKSPACE, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     APPLY_TO_ORIGINAL, COMMANDMENT,
-    FINAL_PATCH: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
+    FINAL_PATCH: reportReady ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
     TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,
     STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
     LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
     REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
     ACCURACY_METRIC, ACCURACY_THRESHOLD, AUTONOMY_ACCEPTANCE_REACHED,
     WORKFLOW_REVISION_START,
+    ...(MODE === 'mega' && finalWinner ? {
+      VALIDATION_TIER: MEGA_PRODUCTION ? 'identity_only' : 'full',
+      MEGA_SELECTION_EVIDENCE: megaSelection,
+      SELECTED_SOURCE_TREE: finalWinner.source_tree,
+      SELECTED_SOURCE_HEAD: finalWinner.source_head,
+      SELECTED_MATERIALIZED_HEAD: finalWinner.materialized_head,
+    } : {}),
     ...(STRICT_AUTONOMY && KNOWN_REFERENCE_HASHES.length
       ? { KNOWN_REFERENCE_HASHES } : {}),
     ...(HAS_WORKLOAD && report && report.final_speedup_weighted != null
         ? { TECH_LEAD_REPORTED_WEIGHTED: report.final_speedup_weighted } : {}),
     BASELINE_TIMING: BASELINE_PER_CASE,
   }),
-  { phase: 'Validate', label: 'director:validate', schema: VALIDATE_SCHEMA });
+  { phase: 'Validate', label: 'director:validate', schema: VALIDATE_SCHEMA,
+    ...(MODE === 'mega' && MEGA_PRODUCTION
+      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+if (MODE === 'mega' && validation && validation.__agent_timed_out) {
+  return {
+    mode: MODE, mega_deliverable: false, mega_selected_candidate: '',
+    mega_selected_source: '', mega_candidate_registry: megaCandidateRegistry,
+    mega_note: 'identity validation timeout: no state writer was started afterward',
+    eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME, final_speedup: 0, final_geomean: 0,
+    validation_status: 'agent_timeout', rounds: round, budget_used: dispatched,
+    budget_total: BUDGET, stop_reason: 'identity validation agent timeout',
+    report_path: reportReady ? report.report_path : '', final_patch: reportReady ? report.final_patch : '',
+  };
+}
 
 const finalGeomean = validation ? validation.director_verified_speedup_geomean : cumulative;
 // PRIMARY headline: the time-weighted speedup when workload-aligned, else the geomean (unchanged).
@@ -5738,13 +6915,62 @@ if (validation && validation.orphan_leases_swept > 0) {
       `the report, and it may have contended with the validated numbers.`);
 }
 
+// Mega provenance/topology labels never change the quality bar. Every source must pass the same final
+// correctness/guard contract, and the same frozen-baseline score chooses what ships.
+let mega_deliverable = null, mega_note = '';
+if (MODE === 'mega') {
+  const correctnessClean = directorStatus === 'accepted' &&
+    reportReady &&
+    String(validation && validation.correctness || '').toLowerCase().startsWith('pass') &&
+    validation && validation.materialization_matches === true &&
+    validation.final_patch_verified === true &&
+    (APPLY_TO_ORIGINAL !== 'true' ||
+      String(validation.applied_to_original || '').toLowerCase() === 'true') &&
+    String(validation.selected_source_head || '') === String(finalWinner && finalWinner.source_head || '') &&
+    String(validation.selected_materialized_head || '') ===
+      String(finalWinner && finalWinner.materialized_head || '') &&
+    !strictProofFailure &&
+    finalGuards && finalGuards.regression_pass !== false;
+  mega_deliverable = !!(megaSelection && megaSelection.claim_complete === true &&
+    megaSelectionContractPassed && finalWinner && correctnessClean && Number.isFinite(finalPrimary) &&
+    finalPrimary > 1.0 && !scopedGuardFailure);
+  mega_note = mega_deliverable
+    ? `mega: selected ${finalWinner.id}[${finalWinner.source}] at ${finalPrimary.toFixed(3)}x vs ` +
+      `the frozen scattered baseline; all finalist gates passed.`
+    : `mega: no fully verified finalist cleared the common correctness/guard/performance contract; ` +
+      `workflow-authored candidate WIP remains recorded, but no result is presented as shipped.`;
+  if (!mega_deliverable && finalWinner) {
+    const rejectedFinal = megaCandidateById(finalWinner.id);
+    if (rejectedFinal) {
+      rejectedFinal.status = 'runnable';
+      rejectedFinal.next_blocker =
+        `independent final validation failed (${finalValidationStatus}); re-establish materialization, ` +
+        `correctness and full guard evidence before finalist selection`;
+      rejectedFinal.notes = `${rejectedFinal.notes || ''} FINAL VALIDATION: ${mega_note}`.trim();
+      megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, rejectedFinal);
+    }
+    const fallback = selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT).selected;
+    cumulative = fallback ? fallback.absolute_score : 1.0;
+    finalWinner = null;
+  }
+  await persistMegaCandidateState(round, true);
+  log(mega_note);
+}
+
 log(`COMPLETE. ${KERNEL_NAME}: verified ${TARGET_GUARDS.length ? `target-guard ${PROMOTION_METRIC}` :
     (HAS_WORKLOAD ? 'time-weighted' : 'geomean')} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
     `${HAS_WORKLOAD && Number.isFinite(finalGeomean) ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
-    ` (status ${finalValidationStatus}). Results in ${EVAL_DIR}`);
+    ` (status ${finalValidationStatus}${MODE === 'mega' ? `, mega_deliverable=${mega_deliverable}, selected=${finalWinner ? finalWinner.id : 'none'}` : ''}). Results in ${EVAL_DIR}`);
 
 return {
   mode: MODE,
+  ...(MODE === 'mega' ? {
+    mega_deliverable,
+    mega_selected_candidate: finalWinner ? finalWinner.id : '',
+    mega_selected_source: finalWinner ? finalWinner.source : '',
+    mega_candidate_registry: megaCandidateRegistry,
+    mega_note,
+  } : {}),
   target_language: MODE === 'author' ? TARGET_LANGUAGE : undefined,
   authored: MODE === 'author' ? true : undefined,
   eval_dir: EVAL_DIR,

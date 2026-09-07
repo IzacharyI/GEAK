@@ -95,13 +95,16 @@ ok(/live parent; that is not the orphan case/.test(lead),
 // itself and hands the lead a fact. These assertions pin the wiring, not just the paragraph.
 console.log('\n# the script takes the pool sample itself, so the rule is not merely advisory');
 const wf = read('kernel_workflow.js');
-ok(/async function samplePool\(round\)/.test(wf),
+ok(/async function samplePool\(round, timeoutMs\)/.test(wf),
    'kernel_workflow.js samples the pool rather than trusting the lead to remember');
 // It must run BEFORE the plan, or it is a postmortem of a round already budgeted.
 const iSample = wf.indexOf('const pool = await samplePool(round)');
-const iPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'");
-ok(iSample > 0 && iPlanCall > iSample,
-   'the sample is taken before plan_round, where the directions are still changeable');
+const iPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'", iSample);
+const iMegaSample = wf.indexOf('const pool = await samplePool(currentRound,');
+const iMegaPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'", iMegaSample);
+ok(iSample > 0 && iPlanCall > iSample &&
+   iMegaSample > 0 && iMegaPlanCall > iMegaSample,
+   'both canonical and Mega candidate paths sample before plan_round, while directions remain changeable');
 ok(/\.\.\.\(pool \? \{ GPU_POOL: pool, GPU_MIN_FREE_GIB \} : \{\}\)/.test(wf),
    'the verdict is threaded into the lead\'s inputs, not just logged');
 // Three-valued for the same reason the containment verdict is.

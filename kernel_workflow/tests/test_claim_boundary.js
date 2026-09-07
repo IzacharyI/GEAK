@@ -48,6 +48,7 @@ ok((() => { try { claimBoundary(() => 0); return true; } catch { return false; }
 // Here we inject the simplest thing that reproduces its contract: a missing claim scores 0.
 const speedupOf = (o) => (o && Number.isFinite(o.speedup_geomean) ? o.speedup_geomean : 0);
 const CB = claimBoundary(speedupOf);
+const MCB = claimBoundary(speedupOf, true);
 
 // --- 1. recovery fires on every way an engineer can fail to hand a claim back -------------------
 console.log('\n# when to go looking on disk');
@@ -66,6 +67,14 @@ for (const [what, eng] of [
 console.log('\n# when not to');
 ok(CB.needsRecovery({ per_case: [{ guard: '512_skew', pct: 20.6 }] }) === false,
    'a claim with at least one case is left alone -- recovery must never re-enter a good round');
+ok(MCB.needsRecovery({
+  per_case: [{ guard: '8192_uniform', pct: 3.2 }], claim_complete: false,
+}) === true,
+'Mega recovers a partial claim even when it already contains per-case rows');
+ok(MCB.needsRecovery({
+  per_case: [{ guard: '8192_uniform', pct: 3.2 }], claim_complete: true,
+}) === false,
+'Mega accepts the same claim only after its evidence manifest is complete');
 
 // --- 2. recovery cannot manufacture a claim ------------------------------------------------------
 // The recovery agent is told to return `per_case: []` when there is nothing on disk. That answer has
@@ -117,7 +126,7 @@ ok(CB.unbacked(null) === false, 'a missing result does not crash the sweep');
 // --- 4. wiring ----------------------------------------------------------------------------------
 // The predicates can be perfect and never called. These are the connections to the phase.
 console.log('\n# wiring');
-ok(/const CLAIM = claimBoundary\(primSpeedup\)/.test(src),
+ok(/const CLAIM = claimBoundary\(primSpeedup, MODE === 'mega'\)/.test(src),
    'the predicates are instantiated with the real primSpeedup, not a local copy');
 ok(/if \(CLAIM\.needsRecovery\(eng\)\)/.test(src), 'Optimize consults needsRecovery');
 ok(/if \(CLAIM\.recovered\(onDisk\)\)/.test(src), 'Optimize gates the recovered claim through recovered()');

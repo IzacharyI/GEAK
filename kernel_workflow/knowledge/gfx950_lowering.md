@@ -109,12 +109,13 @@ identically. The **primary** cut4 fix is instead a **resource-extent clamp**: th
 through AMD buffer resources (`create_buffer_resource_from_addr`), several created *unbounded*
 (`gemm2.py:354`); binding each to its real byte extent (`num_records_bytes=numel*elem_size`, the same
 kwarg stage2:127 already passes as `comb_inp_nbytes`) makes the hardware **clamp** a wild index to 0
-instead of faulting — and cut4/cut5 discard the g2 output, so the clamp is correctness-safe there. Under
-`mode=mega`, the `megamoe_ep_mega_fusion` skill's r12 "fix 2a/2b" is authoritative. The converging diagnostic
-is an ISA diff of the faulting cut against the clean canary (which base/predicate register moved) plus
+instead of faulting — and cut4/cut5 discard the g2 output, so the clamp is correctness-safe there.
+If an operator-specific candidate recipe was explicitly supplied to your lane, follow its diagnosed
+substrate fix; do not search the skill index for an unassigned recipe. The converging diagnostic is
+an ISA diff of the faulting cut against the clean canary (which base/predicate register moved) plus
 reducing substrate SGPR pressure so the publish stops perturbing the allocation at all. See
 `knowledge/crash_bisection.md` (the CORRECTION note — this is NOT a `wait_until` counter
-target-unreachable) and, under `mode=mega`, the `megamoe_ep_mega_fusion` skill's r12 section.
+target-unreachable).
 
 ### Price the release before you place it
 

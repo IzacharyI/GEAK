@@ -86,6 +86,21 @@ for (const m of src.matchAll(/roleAgent\(\s*'([a-z_]+)',\s*'([a-z_]+)'/g)) {
   ok(keys.includes('DIRECTION') && keys.includes('KERNEL_PATH'),
      `the hand-built engineer prompt was located and parsed (${keys.length} keys)`);
 }
+// Mega candidate lanes also dispatch through a dynamic role variable (`mega_engineer` for the skill
+// lane, ordinary `engineer` for search), so the literal roleAgent scanner cannot attribute them.
+{
+  const at = src.indexOf('Advance candidate lane ${candidateId}');
+  const start = src.lastIndexOf('eng = await agentT(', at);
+  const seg = src.slice(start, at + 3200);
+  const keys = [...seg.matchAll(KEY_RE)].map((k) => k[1]);
+  for (const role of ['engineer', 'mega_engineer']) {
+    if (!passedByRole.has(role)) passedByRole.set(role, new Set());
+    for (const k of keys) passedByRole.get(role).add(k);
+  }
+  ok(keys.includes('CANDIDATE_ID') && keys.includes('BASE_TREE') &&
+     keys.includes('PRIOR_CANDIDATE'),
+  `the Mega candidate prompt was located and parsed (${keys.length} keys)`);
+}
 ok(passedByPhase.size >= 15, `found ${passedByPhase.size} roleAgent call sites to check`);
 ok(passedByPhase.has('analysis_engineer:analyze_profile'),
    'including the multi-line call form — a regex that needs `(\'role\', \'phase\'` on one line misses it');

@@ -52,8 +52,8 @@ ok(/KNOWN_REFERENCE_PATHS: KNOWN_REFERENCE_PATHS\.join\(' '\)/.test(wf),
 // where the answer lives while claiming the run derived it.
 // Engineers are not spawned through roleAgent() — they get a hand-built prompt. Anchor on the
 // round out_dir assignment (where a direction becomes an engineer) through to the verify call.
-const iEng = wf.indexOf('out_dir: `${EVAL_DIR}/round_');
-const iVer = wf.indexOf("roleAgent('verify_engineer'");
+const iEng = wf.indexOf('You are Engineer ${d.id}');
+const iVer = wf.indexOf("roleAgent('verify_engineer'", iEng);
 ok(iEng > 0 && iVer > iEng, 'the engineer dispatch block can be located ahead of verify');
 const engineerBlock = wf.slice(iEng, iVer);
 ok(engineerBlock.length > 0 && !engineerBlock.includes('KNOWN_REFERENCE_PATHS'),

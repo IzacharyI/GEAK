@@ -8,6 +8,12 @@ invoked for whichever PHASE the orchestration script tells you:
     the baseline to optimize.
   - `mode=author` — there is NO existing source to optimize (a hot op needs a fresh implementation in
     a target language). Build an empty/seed workspace anchored on the op task dir's IMMUTABLE oracle.
+- **PHASE=select_mega** — independently remeasure the registered whole-kernel candidates, choose the
+  fastest one that clears the common contract, and materialize that exact tree for final validation.
+- **PHASE=recover_mega** — recover an already-completed finalist selection from its atomic evidence;
+  never rerun GPU work.
+- **PHASE=check_mega_identity** — independently compare a selected materialization with the exact
+  source candidate commit; never run GPU work.
 - **PHASE=validate** — independently verify the final result against the TRUE original baseline,
   and arbitrate (accept / flag / request one corrective round).
 
@@ -26,8 +32,11 @@ filesystem and shell work yourself with Bash/Read/Write. Return ONLY the request
 
 Inputs in your prompt: `KERNEL_PATH_ORIG`, `EXP_ROOT` (base dir for timestamped runs),
 `EVAL_DIR_OVERRIDE` (may be empty), `KERNEL_NAME_HINT` (basename), `TASK` (may be empty), and
-`MODE` (`optimize` default | `author`). In `author` mode you also get `TARGET_LANGUAGE` and `OP_SPEC`.
+`MODE` (`optimize` default | `author` | `mega`). In `author` mode you also get `TARGET_LANGUAGE` and `OP_SPEC`.
 `STRICT_AUTONOMY` is present only for a proof run.
+
+In mega mode, the hand-authored M2.5 tree is not an input: do not search for, run, copy or expose it.
+Only workflow-authored candidate trees under the candidate registry may reach final selection.
 
 When `STRICT_AUTONOMY` is present, before copying anything run
 `git -C "$SKILL_DIR/.." rev-parse HEAD` and `git -C "$SKILL_DIR/.." status --porcelain`.
@@ -41,19 +50,34 @@ If `STRICT_AUTONOMY` is present, **do not resume even when `$STATE_DIR/best` exi
 do not silently seed from it. A proof run must use a fresh/empty state directory.
 `STATE_DIR` is a stable per-(kernel,backend) directory carried ACROSS deep-mode waves. It lets a
 continued wave build on the cumulative best instead of restarting. Handle it as follows:
-- **If `STATE_DIR` is set AND `$STATE_DIR/best/` exists and is non-empty** (a prior wave's cumulative-best
+- **Mega candidate-registry exception (overrides both generic bullets below):** when `MODE=mega`,
+  always seed `baseline/` and ordinary `workspace/` from `KERNEL_PATH_ORIG`; ignore any legacy
+  `STATE_DIR/best`. Always read `STATE_DIR/STATE.json` if it
+  exists and return `resumed:true` plus `prior_state` containing its `candidate_registry`,
+  `measurement_calibration`, `state_sequence`, and other STATE fields verbatim, even when
+  `STATE_DIR/best` is absent. Do not put those fields at setup's top level: the orchestrator restores
+  only `prior_state`. Always return
+  `mega_workspace_from_original:true` and `mega_candidate_state_checked:true` (also when no prior
+  state exists). Candidate lanes resume from their own
+  `STATE_DIR/candidates/<id>/tree` paths and must never be collapsed into best.
+  Also scan `STATE_DIR/candidates/*/lane.json`. If a valid lane manifest/tree exists but its id is
+  absent from `STATE.json:candidate_registry` (for example, its first agent timed out before the
+  registry writer), add an `authoring` record to `prior_state.candidate_registry` with that manifest's
+  id/source/base/tree/attempt. Never infer a scored result from a lane manifest.
+- **When `MODE!=mega`, if `STATE_DIR` is set AND `$STATE_DIR/best/` exists and is non-empty** (a prior wave's cumulative-best
   workspace — it contains the optimized `kernel_src/` AND the immutable oracle `unittest.py`/`meta.json`/
   `reference_io.pt`): create `EVAL_DIR` as usual, but **seed `baseline/` and `workspace/` by copying from
   `$STATE_DIR/best/`** (same tar-pipe excludes as the optimize-mode copy) instead of from
   `KERNEL_PATH_ORIG`. Re-apply `chmod -w` to the oracle files. `git init` + commit this seeded state as
   HEAD (so this wave's patches diff from the cumulative best). Then read `$STATE_DIR/STATE.json` if present
   and return `resumed: true` plus `prior_state` (its `cumulative`, `insights`, `ledger`, `bottleneck_now`,
-  `best_per_case`, and — if present — `shelf` and `absorbed_files`, copied through VERBATIM: they are the
+  `best_per_case`, and — if present — `shelf`, `absorbed_files`, `candidate_registry`, and
+  `measurement_calibration`, `state_sequence`, copied through VERBATIM: they are the
   previous wave's verified-but-unmerged candidates and the file sets that decide which of them still
   apply, and a shelf entry that loses its `patch` or `files` is an offer that can no longer be made). Verify the oracle is intact: `reference_io.pt` sha256 must still match `meta.json`'s
   `reference_io_sha256` (if present) — if it was tampered, fall back to seeding from `KERNEL_PATH_ORIG` and
   set `resumed: false`.
-- **If `STATE_DIR` is set but `$STATE_DIR/best/` is absent** (the FIRST wave): proceed with the normal
+- **When `MODE!=mega`, if `STATE_DIR` is set but `$STATE_DIR/best/` is absent** (the FIRST wave): proceed with the normal
   copy from `KERNEL_PATH_ORIG` below, and return `resumed: false` (no `prior_state`). Do NOT create
   `$STATE_DIR/best` here — `update_memory` populates it after the first improving round.
 - Never write anything outside `EVAL_DIR` except reading `$STATE_DIR` (and, on the first wave, nothing in it).
@@ -101,7 +125,7 @@ Do this instead of the optimize-mode steps below:
    > `baseline_frozen: false` and explain in `notes`: the orchestrator will ABORT rather than let the
    > unittest time the seed against `kernel_src/` (the fake-win bug). Do NOT fabricate a baseline.
 
-### `mode=optimize` (default) — copy + commit an existing kernel
+### `mode=optimize` (default) or `mode=mega` — copy + commit the original kernel
 Steps:
 1. Compute a **collision-proof** run id. The agent clock may be frozen (multiple runs can get the
    same `date`), so ALWAYS append a random/PID suffix: `TS=$(date +%Y%m%d_%H%M%S)_$$_${RANDOM}`.
@@ -161,6 +185,8 @@ Steps:
      the pristine original (set `baseline_callable` from `meta.json:target_callable` if present, else "").
    Only report `baseline_frozen: false` if you genuinely cannot anchor a baseline (should not happen in
    optimize mode) — the orchestrator then ABORTS rather than time `kernel_src/` against itself.
+   In mega mode also return `mega_workspace_from_original:true`; never seed this workspace from
+   `STATE_DIR/best`.
 4. List the source files (so downstream agents know what exists):
    `find "$EVAL_DIR/workspace" -maxdepth 3 -type f \( -name '*.py' -o -name '*.hip' -o -name '*.cu' -o -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cuh' -o -name '*.yaml' \) | sort`
 
@@ -174,6 +200,8 @@ Return JSON:
   "source_files": ["<relative paths under workspace>"],
   "baseline_frozen": true,
   "baseline_callable": "<module:attr of the frozen real online kernel, or '' if the pristine EVAL_DIR/baseline is the anchor>",
+  "mega_workspace_from_original": true,
+  "mega_candidate_state_checked": true,
   "workflow_revision": "<GEAK git HEAD when STRICT_AUTONOMY is set>",
   "workflow_clean": true,
   "notes": "anything unusual about the layout"
@@ -181,9 +209,91 @@ Return JSON:
 ```
 (`baseline_frozen`/`baseline_callable` are REQUIRED — the orchestrator aborts the run if `baseline_frozen`
 is false AND `baseline_callable` is empty, to avoid timing the candidate against `kernel_src/`.)
-(DEEP-MODE resume only: also include `"resumed": true` and `"prior_state": {cumulative, insights, ledger,
-bottleneck_now, best_per_case, shelf, absorbed_files}` when you seeded from `$STATE_DIR/best/`; omit both
-on a normal/first run. `shelf`/`absorbed_files` are pass-through JSON — do not reformat or summarise them.)
+(Resume only: include `"resumed": true` and
+`"prior_state": {cumulative, insights, ledger, bottleneck_now, best_per_case, shelf, absorbed_files,
+candidate_registry, measurement_calibration, state_sequence}` when either a non-Mega run was seeded
+from `$STATE_DIR/best/` **or a Mega run loaded `STATE_DIR/STATE.json`**. Omit both on a normal/first run.
+All state fields are pass-through JSON — do not reformat or summarise them.)
+
+---
+
+## PHASE=select_mega
+
+Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU_ID`,
+`TARGET_GUARDS`, `REGRESSION_GUARDS`, `LAUNCH_TARGET`, `REQUIRED_REPLAYS`,
+`REQUIRED_PAIRS_BY_GUARD`, `TIE_NOISE_PCT`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
+`REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, and `SELECTED_WORKSPACE`.
+
+This is the final portfolio arbitration, not another optimization round:
+
+In `MEGA_PROFILE=production`, the orchestrator sends one candidate at a time in score order. Validate
+only that candidate; a lower-ranked fallback is dispatched only if this one fails. In `audit`, the
+batch may contain all finalists for one exhaustive comparison.
+
+1. Never edit a candidate tree. Verify its declared `head` exists. Benchmark a detached temporary
+   copy checked out at that exact head, not whatever newer WIP currently occupies the lane. Drop a
+   candidate whose tree/head is missing.
+2. On one EP8 lease, independently run every finalist with the same command/environment. Interleave
+   candidate arms with the frozen scattered baseline on `8192_uniform`, use rank-max `mega_e2e`, and
+   run the three regression guards. Recheck relL2, `path=MEGA` on every rank, exactly two launches,
+   graph safety and required liveness. When requested, also require controlled non-zero overlap,
+   launch-change attribution on a named target guard (absolute to the frozen baseline) and distinct
+   JIT/cache/ISA hashes.
+   For 512 guards, start with the configured production pair count. Pool base/candidate readings
+   arm-blind; if both arms populate two states separated by at least 3%, extend that same candidate
+   to 16 raw pairs and compute the guard from pairs where both arms are in the fast state. Do not
+   mistake a large arm-to-arm effect (clusters containing only one arm) for bimodality.
+3. A source label (`validated_skill`, `search`, `integrated`) never relaxes a
+   quality gate. Exclude any incomplete or incorrect arm, and exclude every candidate whose absolute
+   `8192_uniform` speedup is `<=1.0` versus frozen MegaMoE V2. Slow candidates remain WIP; they are
+   never final output.
+4. Select the highest absolute speedup versus the frozen baseline. If the fastest search candidate
+   and a clean `validated_skill` candidate differ by at most `TIE_NOISE_PCT`, keep the skill
+   candidate as the stable implementation; the data does not establish that the challenger is faster.
+   `M25_RECORDED_SCORE`/`M25_RECORDED_BAND` are report-only targets. Never run or fetch a hand-written
+   M2.5 tree to resolve them.
+5. Materialize the selected tree into the fresh `SELECTED_WORKSPACE`. Start it as a copy of
+   `BASELINE_TREE`, initialize/commit that baseline, mirror the selected source into it while
+   excluding `.git`, build outputs and caches, commit the selected source, and write a cumulative
+   `selected.patch` from root commit to selected commit. All deletion/mirroring must stay under
+   `SELECTED_WORKSPACE`; never mutate baseline or a candidate.
+   Return the materialized git HEAD as `selected_head` and the source candidate commit as
+   `materialized_from_head`.
+6. Write the evidence JSON atomically and set `claim_complete:true` only after every log, candidate
+   row, selected workspace and patch is complete. A timeout/force-emit returns
+   `claim_complete:false` and selects nothing.
+
+Return the `MEGA_SELECTION_SCHEMA` fields exactly, including every candidate's rejection reason,
+the selected tree/patch, and whether a tie retained the validated-skill candidate. Every candidate
+row must carry the exact registry `tree` and `head`, plus `graph_safe`, `artifact_distinct`,
+`overlap_measured`, `overlap_fraction`, `overlap_cu_fraction`,
+`attribution_complete`, `accuracy_metric`, `accuracy_value`, `liveness_replays`, and its full
+`per_case` guard table, raw `paired_readings`, null arm, artifact hashes, overlap controls,
+attribution fields and per-guard jittered `replay_results`; omissions fail the code-side selection
+verdict.
+
+---
+
+## PHASE=recover_mega
+
+Inputs: `EVAL_DIR`, `CANDIDATES`, `SELECTED_WORKSPACE`, `SKILL_DIR`.
+
+Read only the final selection evidence manifest and selected workspace. Return it only when
+`claim_complete:true`, every supplied candidate has exactly one completed evidence row, the selected
+workspace/head/patch exist, and all referenced logs exist. Otherwise return `claim_complete:false`.
+Do not run a GPU command, take a lease, benchmark, edit source, or construct a replacement result.
+
+---
+
+## PHASE=check_mega_identity
+
+Inputs: `SELECTED_CANDIDATE_ID`, `SELECTED_SOURCE_TREE`, `SELECTED_SOURCE_HEAD`,
+`SELECTED_WORKSPACE`, `SELECTED_MATERIALIZED_HEAD`, `EVAL_DIR`, `SKILL_DIR`.
+
+Run no GPU command. Require both commits to exist and compare
+`git ls-tree -r --full-tree` for the source candidate head and materialized head. Return
+`passed:true` only on exact mode/blob/path equality and echo the checked id/heads. Do not repair or
+rematerialize a mismatch; the orchestrator may try a lower-ranked candidate.
 
 ---
 
@@ -199,8 +309,31 @@ baseline latencies recorded at benchmark setup). Strict proof runs additionally 
 `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`, `WORKFLOW_REVISION_START`.
 `KNOWN_REFERENCE_HASHES` may be present for strict provenance checks. It contains only path digests
 and raw/normalized content digests, never a filesystem address or reference-only filename.
+Mega final validation additionally receives `SELECTED_SOURCE_TREE`, `SELECTED_SOURCE_HEAD`, and
+`SELECTED_MATERIALIZED_HEAD`, plus `VALIDATION_TIER` and `MEGA_SELECTION_EVIDENCE`.
 
 **Do NOT trust the TechLead's reported speedup — reproduce it from the TRUE baseline.**
+
+0. **Mega materialization identity (when the three `SELECTED_*` inputs are present).** Without
+   editing either tree, require both commits to exist and compare their complete tracked blob maps:
+   `git -C "$SELECTED_SOURCE_TREE" ls-tree -r --full-tree "$SELECTED_SOURCE_HEAD"` versus
+   `git -C "$WORKSPACE" ls-tree -r --full-tree "$SELECTED_MATERIALIZED_HEAD"`. The mode/hash/path rows
+   must be identical. Return `materialization_matches:true` only on exact equality, plus both heads in
+   `selected_source_head` / `selected_materialized_head`. A mismatch forces
+   `validation_status:"flagged"` before performance is considered.
+
+**Production identity-only tier.** When `VALIDATION_TIER=identity_only`, the preceding finalist
+selection already ran the full GPU contract. Do not run correctness or performance on GPU again.
+After the blob-map check, validate that `MEGA_SELECTION_EVIDENCE` is complete and select its chosen
+candidate row. Populate `per_case` and verified speed fields from that already-bound row, recomputing
+the target score from its raw pairs. Accept only if the materialization matches and the evidence is
+internally consistent. Also require `FINAL_PATCH` to exist and be non-empty; apply it to a fresh copy
+of the frozen baseline and require the resulting tracked blob map to equal `WORKSPACE` at
+`SELECTED_MATERIALIZED_HEAD`. Return `final_patch_verified:true` only then. If
+`APPLY_TO_ORIGINAL=true`, perform the normal guarded apply step after this check; identity-only skips
+duplicate GPU execution, not delivery. Return `correctness:"pass"` only when all checks pass. Continue
+to the final orphan-lease sweep. When `VALIDATION_TIER=full` or absent,
+run all steps below as before.
 
 1. Read `EVAL_DIR/COMMANDMENT.md` for the exact correctness + full-benchmark commands.
 2. Build a fresh validation workspace from the ORIGINAL path:
@@ -319,6 +452,10 @@ Return JSON:
   "autonomy_acceptance_confirmed": false,
   "workflow_unchanged": true,
   "workflow_revision_end": "<GEAK git HEAD at validation>",
+  "materialization_matches": true,
+  "selected_source_head": "<SELECTED_SOURCE_HEAD>",
+  "selected_materialized_head": "<SELECTED_MATERIALIZED_HEAD>",
+  "final_patch_verified": true,
   "correctness": "pass|fail",
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0}],
   "attribution": {"changed_us": 0.0, "replaced_sum_us": 0.0, "guard": "...",

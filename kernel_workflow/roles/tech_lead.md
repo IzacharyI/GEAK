@@ -268,24 +268,30 @@ for three waves while every round re-planned from the profile.
    The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
    two-launch terminal have the same machine state.
 
-6c. **mode=mega — the floor already exists; your job is to BEAT it, not to re-derive it (mega-gated).**
-   In `mode=mega` a dedicated **Reproduce phase runs BEFORE this loop** and has already committed the
-   **whole flat faithful 2-launch fused operator as HEAD = the FLOOR (保底)**. So §6b's "author the
-   complete fused kernel as the first terminal rung" is **already done** — do NOT re-author it, and do
-   NOT re-decompose the floor into an incremental ladder (bounding readout → readiness edge → stage
-   merge → fusion). That ladder is for deriving a fusion from scratch; here the fusion is on disk and
-   running. Instead:
-   - Treat the floor (HEAD) as the **incumbent to beat**. The commit-gate is seeded from the floor's
-     measured speedup, so a candidate is admitted ONLY if it BEATS the floor; a non-winner leaves HEAD =
-     floor. The floor is **permanently retained** — you cannot lose it by proposing a worse candidate.
-   - Each round's directions are **speed rungs stacked ON TOP of the whole fused floor** (tiling, split-k,
-     scheduling, occupancy, the optional g2-collapse with its cut4 SGPR-pressure risk owned) OR an
-     **alternative COMPLETE fused candidate** that keeps the whole 2-launch topology. Never a lone
-     single-edge terminal rung, never an intermediate half-fused topology.
-   - A single-edge change is admissible ONLY as a `mandatory_arms` diagnostic UNDER a whole-operator
-     terminal rung (to attribute cost), never as a standalone rung whose reading closes the chain.
-   - The mega skill is the authoritative recipe; its "OPTIMIZATION-PHASE FAILURE LORE" (cut4 / collapse /
-     rocgdb) tells you which cleverness carries which risk — it is not a build order.
+6c. **mode=mega — plan independent whole-kernel candidate lanes (mega-gated).**
+   Mega has no pre-loop Reproduce phase and no single mutable floor. You receive
+   `MEGA_CANDIDATE_REGISTRY`, which contains independent workflow-authored lineages:
+
+   - `m25_skill` is reserved for `mega_engineer`. It reconstructs M2.5 from the validated skill and
+     is scheduled by the orchestrator; do not plan or block on it.
+   - Your directions are `source=search` candidates. They do not receive the exact M2.5 recipe.
+     Set a stable `candidate_id` to continue a prior WIP lane, and `base_candidate_id` to the candidate
+     it builds on (`frozen_baseline` for a genuinely independent topology).
+   - Never point a direction at a hand-authored M2.5 tree. The only M2.5 input is the recorded target
+     `1.0448x` (observed band `1.0403..1.0477`); it is not executable source.
+   - A lane may be correct but slow. That is `runnable` WIP and can be improved in later rounds; it
+     does not change another lane or the selected incumbent.
+   - Final selection is source-blind: every candidate must pass the same correctness, path, launch,
+     liveness and guard contract, and **must have absolute speedup >1.0 versus frozen MegaMoE V2**.
+     Among those, the fastest verified candidate wins. Correctness alone never makes a slow candidate
+     the final output.
+   - Prefer continuing a named runnable lane with a measured bottleneck over re-deriving it. A new
+     direction is justified only by higher expected final speed or a distinct topology.
+   - Single-edge diagnostics may live inside a lane, but the candidate identity is always the complete
+     two-launch operator; never promote a half-fused shape as a finalist.
+   - Under `MEGA_PROFILE=production`, fit one useful implementation+score attempt inside
+     `CANDIDATE_TIMEOUT_S`; do not spend the round building audit-only overlap/attribution instruments.
+     Under `audit`, those mechanism measurements may be planned explicitly.
 
 Return JSON:
 ```json
@@ -298,6 +304,9 @@ Return JSON:
   "roadmap_summary": "3-6 sentences",
   "candidate_directions": [
     {"id": "D0", "title": "...", "specialty": "algorithm|memory|compute|host_runtime|distributed",
+     "candidate_id": "stable lane id (mode=mega)",
+     "candidate_source": "search",
+     "base_candidate_id": "frozen_baseline or a registry candidate id",
      "why": "...",
      "gated_on": ["<rung ids that must have RUN TO SPEC before this one is interpretable>"],
      "mandatory_arms": ["<arm without which this rung's result cannot be read, e.g. a publish-only arm>"],
@@ -464,6 +473,9 @@ passed), **`OPEN_RUNGS`**, and `ROADMAP` (the path). A prerequisite is satisfied
 next rung.
 Plus **`CHAIN_DEBT`** and **`CHAIN_BASELINE`**, present only when a fusion chain is open (see
 "Multi-step fusions" below).
+In `mode=mega`, `MEGA_CANDIDATE_REGISTRY`, `MEASUREMENT_CALIBRATION`, and
+`DEFAULT_BASE_CANDIDATE`, `MEGA_PROFILE`, and `CANDIDATE_TIMEOUT_S` replace the idea of one mutable floor. Plan one `search` lane; do not plan
+the reserved skill lane, do not wait for it, and do not assume a slow lane is the global incumbent.
 Strict runs also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `LAUNCH_TARGET`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`, and
@@ -926,6 +938,9 @@ should return an empty list, and most rounds will.
 none of them, so skip this whole block then):**
 - `STATE_DIR` (+ `CANONICAL`, `CUMULATIVE_SPEEDUP`, `BEST_PER_CASE`): persist this wave's progress so a
   re-invocation CONTINUES instead of restarting. After updating the blackboard, run:
+  **Mega exception:** when `CANDIDATE_REGISTRY` is present, do not execute the `$STATE_DIR/best`
+  synchronization below. Candidate trees already persist independently; write only the atomic
+  `STATE.json` registry/calibration snapshot.
   ```bash
   mkdir -p "$STATE_DIR"
   # sync the cumulative-best workspace (code + immutable oracle) to STATE_DIR/best (tar-pipe, exclude
@@ -939,8 +954,24 @@ none of them, so skip this whole block then):**
   ```
   Then write `$STATE_DIR/STATE.json` = `{cumulative: <CUMULATIVE_SPEEDUP>, insights, ledger,
   bottleneck_now, best_per_case: <BEST_PER_CASE>, last_round: <ROUND>,
-  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>, open_rungs: <OPEN_RUNGS>}`
+  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>, open_rungs: <OPEN_RUNGS>,
+  candidate_registry: <CANDIDATE_REGISTRY>, measurement_calibration: <MEASUREMENT_CALIBRATION>,
+  state_sequence: <STATE_SEQUENCE>, state_generation: <STATE_GENERATION>}`
   (the full carried-forward state).
+
+  When `CANDIDATE_REGISTRY` is present, copy it **verbatim**. Candidate lane trees already live under
+  `$STATE_DIR/candidates/<id>/tree`; never collapse them into `$STATE_DIR/best`, never rewrite their
+  `source/base_id/tree/head/attempt_id/evidence_manifest`, and never delete a slow runnable lane.
+  `MEASUREMENT_CALIBRATION.ready=false` is a real state: preserve it so a resumed wave does not publish
+  scores collected before the control completed.
+
+  Serialize the Mega state write with `flock "$STATE_DIR/.state.lock"`. While holding the lock, read
+  the existing `STATE.json:state_sequence`; if it is greater than or equal to `STATE_SEQUENCE`, do not overwrite
+  it (an older timed-out writer arrived late). Otherwise write a unique temporary JSON, fsync/close it, and rename
+  it atomically to `STATE.json`. Return `state_written:true`, `state_round:ROUND`,
+  `state_path:"$STATE_DIR/STATE.json"`, and the exact supplied `state_generation`. If the write or
+  monotonic check fails, return `state_written:false`; never claim persistence from context alone.
+  Also return `state_sequence:STATE_SEQUENCE`.
 
   **`OPEN_RUNGS` is the ladder minus what was actually measured, and it is what the next wave
   resumes from.** Copy each entry verbatim from `ROADMAP_LADDER` — `id`, `title`, `gated_on`,
@@ -982,7 +1013,12 @@ Return JSON:
      "generalizes": true}
   ],
   "bottleneck_now": "memory|compute|latency|lds|overhead|...",
-  "suggest_next": "one-line steer for next round (or 'consider stopping')"
+  "suggest_next": "one-line steer for next round (or 'consider stopping')",
+  "state_written": true,
+  "state_round": 1,
+  "state_path": "<STATE_DIR>/STATE.json",
+  "state_generation": "<STATE_GENERATION>",
+  "state_sequence": 10
 }
 ```
 
@@ -997,6 +1033,8 @@ also receive `STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION
 `LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`,
 `AUTONOMY_ACCEPTANCE_REACHED`, and any `ACCEPTANCE_CAVEATS`.
+Mega runs also receive `MEGA_CANDIDATE_REGISTRY` and `MEGA_SELECTION`. In that mode `WORKSPACE` is
+the Director-materialized selected candidate, not a mutable global floor.
 
 1. Write the cumulative final patch:
    ```bash
@@ -1010,6 +1048,11 @@ also receive `STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION
      workload-aligned (COMMANDMENT METRIC = time-weighted ratio-of-sums), report the **time-weighted
      speedup as the headline** with the unweighted geomean & arithmetic alongside; otherwise the
      geomean is the headline (unchanged).
+   - **Mega candidate portfolio** — when present, list every candidate id, source, base lineage,
+     lifecycle status, absolute score, and why it was or was not a finalist. Quote
+     `MEGA_SELECTION.selected_candidate_id`; do not infer a winner from the last round. State that
+     the hand-written M2.5 tree was not an input and that 1.0448x was a recorded target only.
+     A candidate at `<=1.0x` may be documented as runnable WIP but must never appear as final output.
    - **Autonomy acceptance** — required when `STRICT_AUTONOMY` is true. State
      `AUTONOMY_ACCEPTANCE_REACHED` verbatim. If false, headline status is
      `autonomy_incomplete` regardless of any partial speedup, and list every `ACCEPTANCE_CAVEATS`

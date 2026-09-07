@@ -96,11 +96,9 @@ console.log('\n# wiring: the no-hardware stop is orthogonal, live under working_
      'it resets when a candidate reached the device (activation_on_hardware=yes) and increments when none did');
   ok(/if \(noHardware >= MAX_NO_HARDWARE\) \{[\s\S]*?break;\s*\n\s*\}/.test(src),
      'at the cap it sets stopReason and BREAKS the loop — the operator chose hard-stop, not warn-and-continue');
-  // The existing working_kernel while-condition is UNCHANGED (this stop is a break in the body, not a
-  // new clause), so test_objective_working_kernel.js line 95 still matches verbatim.
-  ok(/while \(dispatched < BUDGET && \(WORKING_KERNEL \|\| \(noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE\)\)\)/.test(src),
-     'the working_kernel short-circuit of the SPEED/EVIDENCE stops is left exactly as it was — the ' +
-     'hardware stop does not ride inside it, because it must fire under working_kernel too');
+  ok(/while \(dispatched < BUDGET &&\s*\(MODE === 'mega' \|\| WORKING_KERNEL \|\|/.test(src),
+     'working_kernel still short-circuits SPEED/EVIDENCE stops; Mega also does so because one stalled ' +
+     'candidate lane must not terminate the independent portfolio');
 }
 
 console.log('\n# the roles tell the agents to produce and demand on-hardware execution');
