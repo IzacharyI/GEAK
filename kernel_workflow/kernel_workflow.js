@@ -262,6 +262,20 @@ const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
 // concurrency. The role layer (tech_lead/mega_engineer/verify_engineer) always describes the descriptor;
 // this flag decides whether it actually flows.
 const MEGA_TOPOLOGY_LEVERS = String(A.mega_topology_levers != null ? A.mega_topology_levers : 'false') === 'true';
+// Stage 5 — stability-edit authorization (default OFF = byte-identical prompt). The validated_skill lane
+// reliably reaches `runnable` (launches=2, correct, fast-state above band) but is gated from `scored` by
+// a bimodal slow-state: the combine-queue per-destination-token arrival wait latches a straggler slow
+// tail (candidate slips MORE than the scattered baseline because the fused kernel has no per-launch
+// resync point to drain a hiccup). Fixing it is a scoped but r12-class deadlock-risk kernel edit, so the
+// lane conservatively keeps measuring instead of blind-landing it. When this flag is ON, ONLY the
+// validated_skill lane gets an explicit STABILITY-EDIT authorization + a mandatory safe protocol
+// (in-kernel default-off flag so the runnable baseline can never regress, positive-control the straggler
+// latch on a free window, paired relL2<0.10, zero-hang liveness, A/B slow-state occupancy, keep-or-revert)
+// appended to its Engineer prompt, and slow-state occupancy toward baseline becomes an explicit promotion
+// sub-goal. OFF (default): the appended block is the empty string, so the prompt — and resume cache-key —
+// is byte-identical to the pre-Stage-5 lane. Search lanes never see it. This is the lever aimed at goal 2
+// ("M2.5 a STABLE candidate") in the standing goal hierarchy.
+const MEGA_STABILITY_EDIT = String(A.mega_stability_edit != null ? A.mega_stability_edit : 'false') === 'true';
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
 // the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
 // graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
@@ -5188,6 +5202,23 @@ async function runMegaCandidateTurn(currentRound, remaining) {
 
   const candidateId = d.candidate_id;
   const source = d.candidate_source;
+  // Stage 5: only the validated_skill deep-fusion lane, and only when explicitly authorized, receives the
+  // stability-edit block. When MEGA_STABILITY_EDIT is false (default) this is '' → the prompt is
+  // byte-identical to the pre-Stage-5 lane (resume cache-key preserved). Search lanes never see it.
+  const stabilityEditBlock = (MEGA_STABILITY_EDIT && source === 'validated_skill')
+    ? `STABILITY-EDIT AUTHORIZED: you may LAND (not only measure) the scoped combine-queue straggler ` +
+      `fix that gates this lane from scored — shard the per-destination-token arrival counter ~64-way, ` +
+      `publish arrivals with a workgroup/agent-scope release (NEVER a system-scope per-token atomic), ` +
+      `and parity double-buffer the arrival wait so the all-peer wait is no longer load-bearing for ` +
+      `single-buffer safety. MANDATORY safe protocol before you keep it: (a) gate the edit behind an ` +
+      `in-kernel DEFAULT-OFF flag so the runnable baseline can never regress; (b) positive-control the ` +
+      `straggler latch on a free GPU window first; (c) keep paired relL2 < 0.10 and pass the short ` +
+      `liveness screen with ZERO hangs; (d) A/B the slow-state occupancy (edit-on vs edit-off) and KEEP ` +
+      `the edit only if it drives candidate slow-state toward the scattered-baseline rate without ` +
+      `regressing fast-state speedup or correctness — otherwise revert and record why in next_blocker. ` +
+      `Driving slow-state occupancy toward baseline is now an explicit promotion sub-goal alongside the ` +
+      `M2.5 band; a stable in-band rank-max is the target, not a fast-state-only median. `
+    : '';
   const existing = megaCandidateById(candidateId);
   const baseCandidateId = (existing && existing.base_id) || d.base_candidate_id || 'frozen_baseline';
   const attempts = (existing ? existing.attempts : 0) + 1;
@@ -5234,6 +5265,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `atomically only after its evidence files are final. Return candidate_id/source/base, tree, head, ` +
       `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
       `lane root), correctness, absolute_score, per_case, topology_sig, next_blocker and notes. ` +
+      stabilityEditBlock +
       `The entire candidate turn shares one ${Math.round(turnBudgetS)}s budget; this Engineer gets ` +
       `${engineerBudgetS}s and every GPU command is bounded by ${commandBudgetS}s. A timeout or ` +
       `force-emit returns claim_complete:false and status authoring; it is not score 0.`,

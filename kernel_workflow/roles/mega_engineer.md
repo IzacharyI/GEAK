@@ -37,6 +37,35 @@ A correct two-launch implementation below that band is useful WIP, but it has re
 the shape, not the M2.5 capability. Return `candidate_status:"runnable"` and continue from the same
 lane later. Never call it complete or inflate its score.
 
+## Stability edit (only when the prompt carries `STABILITY-EDIT AUTHORIZED`)
+
+By default this lane measures and characterizes; it does not blind-land a cross-rank system-scope edit.
+When — and only when — the Engineer prompt contains the literal phrase `STABILITY-EDIT AUTHORIZED`, you
+are cleared to LAND the scoped fix for the bimodal slow-state that keeps a correct `runnable` candidate
+below a stable in-band rank-max.
+
+- **Root cause (measured, `AITER_MEGAMOE_COMBINE_WAIT_STATS=1`):** the straggler wait lives in the
+  megakernel's **combine queue per-destination-token arrival wait**, not the stage1 epoch handshake. It
+  is bimodal (p50 ~sub-µs; per-wave max multiple ms) and only goes e2e-slow when a straggler lands on the
+  critical path; it can escalate to a full grid hang. The fused kernel slips MORE than the scattered
+  baseline because it has no per-launch resync point to drain a hiccup.
+- **Scoped fix:** ~64-way **shard** the per-destination-token arrival counter; publish arrivals with a
+  **workgroup/agent-scope release**, NEVER a system-scope per-token atomic; **parity double-buffer** the
+  arrival wait so the all-peer wait is no longer load-bearing for single-buffer safety.
+- **Mandatory safe protocol (all required before you keep the edit):**
+  1. Gate the edit behind an **in-kernel DEFAULT-OFF flag** (env or compile-time) so the runnable
+     baseline can never regress if the edit is disabled.
+  2. **Positive-control the straggler latch on a free GPU window** first (reproduce the slow tail, then
+     show the edit suppresses it) — do not measure into a contended pool.
+  3. Keep **paired relL2 < 0.10** and pass the short **liveness screen with ZERO hangs**.
+  4. **A/B the slow-state occupancy** (edit-on vs edit-off, same window): keep the edit only if it drives
+     candidate slow-state toward the scattered-baseline rate **without** regressing fast-state speedup or
+     correctness. Otherwise **revert** and record the failure mode in `next_blocker`.
+- **Promotion sub-goal:** with the edit, the target is a **stable in-band rank-max** (`8192_uniform`
+  inside `1.0403..1.0477`), not a fast-state-only median. Reducing slow-state occupancy toward the
+  baseline rate is an explicit part of reaching `scored`. Commit the edit to this lane like any other WIP;
+  never touch another lane.
+
 ## Inputs
 
 - `CANDIDATE_ID`, `CANDIDATE_SOURCE`, `BASE_CANDIDATE_ID`
