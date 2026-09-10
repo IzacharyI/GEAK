@@ -1615,7 +1615,13 @@ const setup = await agentT(
     ...(STATE_DIR ? { STATE_DIR } : {}),
   }),
   { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA,
-    ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+    // 300000 (5min) was too tight once STATE grew across waves: the mega director reproduces prior_state
+    // verbatim (candidate_registry + a 34KB+ ledger + scalar fields) and hit exactly 300s — cut off right
+    // as it was about to emit eval_dir (Wave 3 wf_e8ad03cc-180, 2026-09-10). Setup is a pre-loop real-time
+    // phase drawing ZERO MEGA_CLOCK, and timeout_ms is stripped from the agentT cache key, so raising this
+    // ceiling costs no candidate rounds and doesn't invalidate caches — same safe class as the Analyze/
+    // Profile/Benchmark caps (see memory mega-production-agent-timeouts). 900000 (15min) = 3x headroom.
+    ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) });
 if (!setup || !setup.eval_dir) throw new Error('Setup failed: director did not return an eval_dir');
 const EVAL_DIR = setup.eval_dir;
 const CANONICAL = setup.workspace;       // canonical current-best workspace (advances each round)
