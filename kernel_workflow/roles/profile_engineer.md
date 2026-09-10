@@ -7,6 +7,12 @@ directions. Used for the baseline (PHASE=baseline) and after improving rounds (P
 `WORKSPACE` (canonical current-best), `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, the COMMANDMENT path, and
 (for reprofile) the PREVIOUS metrics to diff against, plus `ROUND`. Optionally `INCREMENTAL_RESUME`.
 
+For **PHASE=mega_analysis** you are additionally given the output paths for the MegaMoE bench's own
+instrumentation — `ANALYSIS_JSON_OUT` (per-rank `--json-output`), `ANALYSIS_XGMI_OUT`
+(`--xgmi-output`), `ANALYSIS_COMBINE_WAIT_OUT` (`--combine-wait-output`) — and `COMBINE_WAIT_ENV`
+(`AITER_MEGAMOE_COMBINE_WAIT_STATS=1`, prepend it to the combine-wait run so the fused arrival-wait
+timer is armed).
+
 **FAST PATH — if `INCREMENTAL_RESUME` is set** (a resumed deep wave; PHASE=baseline): the bottleneck was
 already classified in a prior wave. Do NOT re-run the full baseline profile from scratch — read the prior
 `EVAL_DIR/baseline_metrics.json` (or the latest `round_N_metrics.json` under STATE) and return the same
@@ -70,3 +76,78 @@ If no profiler is available, fall back to benchmark-only + the per-case table + 
   "shift_note": "for reprofile: BEFORE→AFTER and what to target next (empty for baseline)"
 }
 ```
+
+---
+
+## PHASE=mega_analysis — fused-kernel native analysis (do NOT run rocprof)
+
+For a fused MegaMoE megakernel the generic rocprof roofline above is **not just unhelpful, it is
+actively wrong**. Under co-resident fusion the standalone `stage1` and `stage2_combine` timers both
+RISE while rank-max end-to-end FALLS — combine is folded into the persistent megakernel as a third
+ticketed queue and its all-rank barrier is deleted, so a per-stage timer reads a bigger number even
+though total time dropped. A roofline that concludes "both stages got slower ⇒ regression" is exactly
+backwards (see `GEAK_TASK.md` on fused-timer semantics, and the bench's own combine-wait docstring:
+"do NOT read [a flat 0] as an overlap win"). So in this phase you **do not run rocprof**. You run the
+bench's OWN instrumentation and classify from it.
+
+### Steps
+1. From `EVAL_DIR/COMMANDMENT.md` get the mega bench command (`bench_mega_moe_v2.py`, the
+   `8192_uniform` production shape) and its env preamble. Clear cache in `WORKSPACE`.
+2. Run the bench **three ways** through the existing lease wrapper (never add another `gpu_lock.sh`),
+   writing to the given output paths:
+   - **rank records**: add `--json-output ANALYSIS_JSON_OUT`. Parse `cases[0].ranks[*].timing_ms`
+     (`e2e`, `stage1`, `stage2_combine`) — the **rank-MAX** across ranks is the straggler and the
+     metric that matters, NOT rank-mean. Also read the printed `[RESULT] … mega_e2e=<mean>/<max>ms
+     speedup=<pct>%` line (the second number is rank-max) and `[PERF-GUARD] PASS|FAIL speedup=..%
+     minimum=..%` if present.
+   - **XGMI amplification**: add `--xgmi-output ANALYSIS_XGMI_OUT` (requires `--mega-only`). Parse
+     `derived.counter_to_logical_useful_amplification` — fabric bytes moved ÷ logical-useful bytes.
+     >1 means the interconnect carried more than the payload (a real traffic lever a roofline cannot
+     see); ~1 means payload-bound.
+   - **combine-wait**: prepend `COMBINE_WAIT_ENV` and add `--combine-wait-output
+     ANALYSIS_COMBINE_WAIT_OUT`. Parse `fused_arrival_wait.rank_max_of_p95_us` and
+     `rank_max_of_total_p95_us` (the comparable-to-pre-fusion headline). If `fused_arrival_wait.enabled`
+     is false or the numbers are 0, say so — an empty timer under fusion is NOT an overlap win.
+3. Verify the path marker: every rank must print `[megamoe] path=MEGA`. Count them. If any rank prints
+   `SCATTERED`, the kernel fell back and every number is from the wrong path — set `path_marker` to
+   `SCATTERED` or `MIXED` and make that your top finding.
+4. Classify `bottleneck` from **rank-max e2e + XGMI amplification + combine-wait p95**, never from
+   summed per-stage timers:
+   - straggler-bound (large `combine_wait_total_p95_us` relative to e2e ⇒ rank imbalance / late
+     arrivals; the fix is scheduling/skew, not more compute),
+   - fabric-bound (`xgmi_amplification` ≫ 1 ⇒ redundant XGMI traffic; the fix is payload/quant/route),
+   - compute-bound (guard floor missed with low amplification and low wait),
+   - overlap-headroom (e2e above the sum of the non-overlapped critical pieces ⇒ room to co-schedule).
+5. Write `EVAL_DIR/mega_analysis/summary.md` with the parsed numbers and, in `fusion_note`, the single
+   most valuable NEXT fusion/overlap move (e.g. "combine-wait p95 is 18% of e2e and concentrated on 2
+   ranks → overlap combine with GEMM2 tail via the SITE-x skew knob", or "amplification 1.0, guard
+   met → topology is payload-bound, pursue launch-count not overlap"). This replaces the roofline's
+   per-stage-regression call. Keep `bottleneck`/`top_opportunities` populated so the planner degrades
+   gracefully.
+
+### Return JSON (PHASE=mega_analysis)
+```json
+{
+  "bottleneck": "straggler|fabric|compute|overlap-headroom|balanced|overhead",
+  "top_opportunities": ["ranked, each tied to a parsed number (rank-max ms, amplification, wait p95)"],
+  "dispatch_count": 2,
+  "device": "detected card",
+  "path_marker": "MEGA|SCATTERED|MIXED|unknown",
+  "path_marker_count": 8,
+  "world_size": 8,
+  "rank_max_ms": 0.0,
+  "stage1_rank_max_ms": 0.0,
+  "stage2_combine_rank_max_ms": 0.0,
+  "speedup_pct": null,
+  "perf_guard_floor": null,
+  "perf_guard_pass": false,
+  "xgmi_amplification": null,
+  "combine_wait_p95_us": null,
+  "combine_wait_total_p95_us": null,
+  "per_rank_straggler": [{"rank": 0, "e2e_ms": 0.0, "stage1_ms": 0.0, "stage2_combine_ms": 0.0}],
+  "fusion_note": "the single most valuable next fusion/overlap move, tied to a parsed number",
+  "summary_path": "<path to mega_analysis/summary.md>"
+}
+```
+Report a field as `null` when its run did not produce it; never invent a number. An empty combine-wait
+under fusion, or `--mega-only` making `speedup_pct` NaN/`null`, is DATA — say it, do not paper over it.

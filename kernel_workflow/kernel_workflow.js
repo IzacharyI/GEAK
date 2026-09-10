@@ -22,7 +22,24 @@ export const meta = {
 // nothing about the install location is hard-coded.)
 // ---------------------------------------------------------------------------
 const A = args || {};
-const WORKFLOW_STARTED_MS = Date.now();
+// Resume-safe monotonic clock. The Workflow runtime forbids Date.now()/new Date()
+// (they would break deterministic resume: cached agent() calls replay instantly, so a
+// live wall-clock read would diverge between the original run and the resume). Instead we
+// model elapsed wall time deterministically: every real second of this workflow's wall time
+// passes inside an agentT() await, and each agent is bounded by a CONFIGURED timeout that
+// agentT enforces with setTimeout (which IS allowed — it only fires on live execution and
+// is skipped on resume). So we accrue the configured per-turn budgets into MEGA_CLOCK_MS at
+// the same choke points where real time is spent. This reproduces the real-time squeeze
+// (verify shrinks after the engineer; the loop reserves a final-validation window; the
+// closeout skips when the budget is spent) as a pure function of round count + config, which
+// replays identically. WORKFLOW_STARTED_MS is a fixed epoch origin (0), not a live read.
+const WORKFLOW_STARTED_MS = 0;
+let MEGA_CLOCK_MS = 0;
+// Modeled per-turn planning/sampling/calibration cost, charged once at each turn start so the
+// dispatch deadline accounts for orchestration overhead, not just the engineer+verify budgets.
+const MEGA_PREP_MODEL_MS = 90 * 1000;
+function megaNowMs() { return WORKFLOW_STARTED_MS + MEGA_CLOCK_MS; }
+function megaAdvanceMs(ms) { MEGA_CLOCK_MS += Math.max(0, Number(ms) || 0); }
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
 // WORKFLOW_DIR = the directory that holds this script + roles/ + knowledge/ + scripts/.
@@ -206,6 +223,16 @@ const MEGA_MIN_SEARCH_ATTEMPTS = Math.max(0, Number(A.mega_min_search_attempts !
   ? A.mega_min_search_attempts : 2));
 const MEGA_CANDIDATE_TIMEOUT_S = Math.max(300, Number(A.mega_candidate_timeout_s ||
   (MEGA_PRODUCTION ? 1200 : 3600)));
+// Stage 4 — deep-fusion authoring lease (default 0 = OFF = byte-identical to the 60% engineer split).
+// The per-turn engineer budget below is capped at 60% of the turn to reserve verify budget; that is
+// right for search lanes that finish authoring inside one lease, but STARVES the validated_skill
+// deep-fusion lane, whose whole-megakernel authoring (dispatch+GEMM1+GEMM2+combine + concurrency)
+// needs a deeper contiguous lease to reach `runnable` before the shared turn is spent. When set (>0),
+// this gives ONLY the validated_skill lane a deeper engineer slice (hard-capped at 85% of the turn and
+// still behind the `availableAfterPrepS - 360` verify reserve, so verify keeps >=300s at runnable).
+// The modeled clock still advances by the granted engineerBudgetS (megaAdvanceMs), so resume replay
+// stays deterministic; no wall-clock is read.
+const MEGA_FUSION_ENGINEER_TIMEOUT_S = Math.max(0, Number(A.mega_fusion_engineer_timeout_s || 0) || 0);
 const MEGA_FINAL_TIMEOUT_S = Math.max(600, Number(A.mega_final_timeout_s ||
   (MEGA_PRODUCTION ? 1200 : 3600)));
 const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
@@ -227,6 +254,14 @@ const MEGA_FINAL_FALLBACK_K = Math.max(MEGA_FINAL_TOP_K,
   Number(A.mega_final_fallback_k || (MEGA_PRODUCTION ? 2 : MEGA_FINAL_TOP_K)));
 const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
   A.mega_tie_noise_pct != null ? A.mega_tie_noise_pct : 1.45));
+// Mismatch #2 (single-lever A/B → multi-lever topology). Master kill-switch for the whole topology-lever
+// path. Default OFF: the planner's `target_topology` descriptor is stripped in planMegaCandidateTurn, so
+// every downstream consumer (engineer DIRECTION, verify TARGET_SHAPE via megaShapeFromTopology) is
+// byte-identical to the pre-descriptor lane and the working path=MEGA search lane is untouched. Flip ON
+// (mega_topology_levers=true) only for a GPU-validated wave that intends to explore SITE1/SITE2/combine
+// concurrency. The role layer (tech_lead/mega_engineer/verify_engineer) always describes the descriptor;
+// this flag decides whether it actually flows.
+const MEGA_TOPOLOGY_LEVERS = String(A.mega_topology_levers != null ? A.mega_topology_levers : 'false') === 'true';
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
 // the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
 // graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
@@ -640,6 +675,52 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   notes: { type: 'string' },
 }, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete']);
 
+// Mismatch #2 fix (Stage-3 foundation). A structured, MULTI-LEVER description of a WHOLE fused-kernel
+// topology. The inherited optimize loop can only express a single on/off A/B switch (ENG_SCHEMA.activation);
+// a fused megakernel candidate is a vector — launch count, which stages are co-resident, whether combine is
+// folded as a third ticketed queue, the GEMM2 wave/reclaim count, and the SITE1/SITE2/combine concurrency
+// knobs the bench already exposes (bench_mega_moe_v2.py --stage1-*/--stage2-*/--combine-*). Emitted
+// OPTIONALLY by the planner on a direction's `target_topology`; consumed by megaShapeFromTopology() into the
+// verify TARGET_SHAPE. Purely additive: while a direction omits it, verify falls back to the legacy shape
+// byte-identically, so the working search lane is untouched until the role layer is wired to emit it.
+const MEGA_TOPOLOGY_SCHEMA = obj({
+  launches: { type: 'number' },
+  fused_stages: { type: 'array', items: { type: 'string' } },
+  combine_mode: { type: 'string', enum: ['queue', 'separate'] },
+  g2_waves: { type: 'number' },
+  require_overlap: { type: 'boolean' },
+  site1: obj({ work_shards: { type: 'number' }, dispatch_cu: { type: 'number' } }),
+  site2: obj({ persist_cu: { type: 'number' }, skew_cu: { type: 'number' } }),
+  combine_knobs: obj({ block_num: { type: 'number' }, warp_num: { type: 'number' } }),
+  notes: { type: 'string' },
+});
+
+// Convert a multi-lever MEGA_TOPOLOGY_SCHEMA descriptor into the verify TARGET_SHAPE. When no descriptor
+// is present — the default until the planner emits one — it returns the EXACT legacy hardcoded shape, so
+// the verify prompt and its agentT cache key stay byte-identical to before. When a descriptor IS present,
+// its launch count / fused stages / overlap flag drive the shape and the SITE1/SITE2/combine levers are
+// forwarded so verify can hold a candidate to the topology it claimed, not just a launch count.
+function megaShapeFromTopology(topo) {
+  const legacy = {
+    launches: LAUNCH_TARGET,
+    stages_fused: ['dispatch', 'gemm1', 'gemm2', 'combine'],
+    require_overlap: false,
+  };
+  if (!topo || typeof topo !== 'object') return legacy;
+  const shape = {
+    launches: Number.isFinite(Number(topo.launches)) ? Number(topo.launches) : legacy.launches,
+    stages_fused: Array.isArray(topo.fused_stages) && topo.fused_stages.length
+      ? topo.fused_stages.map(String) : legacy.stages_fused,
+    require_overlap: topo.require_overlap === true ? true : legacy.require_overlap,
+  };
+  if (topo.combine_mode) shape.combine_mode = String(topo.combine_mode);
+  if (topo.g2_waves != null && Number.isFinite(Number(topo.g2_waves))) shape.g2_waves = Number(topo.g2_waves);
+  if (topo.site1 && typeof topo.site1 === 'object') shape.site1 = topo.site1;
+  if (topo.site2 && typeof topo.site2 === 'object') shape.site2 = topo.site2;
+  if (topo.combine_knobs && typeof topo.combine_knobs === 'object') shape.combine_knobs = topo.combine_knobs;
+  return shape;
+}
+
 const ANALYZE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
   modifiable_files: { type: 'array', items: { type: 'string' } },
@@ -884,6 +965,44 @@ const PROFILE_SCHEMA = obj({
   summary_path: { type: 'string' }, shift_note: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
 
+// Mega-native analysis schema. A SUPERSET of the PROFILE_SCHEMA fields consumed downstream
+// (`bottleneck`, `dispatch_count`, `top_opportunities`, `summary_path`) so the same `profileSummary`
+// slot feeds the planner (planMegaCandidateTurn) and the mega engineer unchanged — PLUS the
+// fused-kernel signals the bench emits NATIVELY that a generic rocprof roofline cannot read
+// correctly. WHY this exists: under co-resident fusion the stage1 and stage2 timers both RISE while
+// rank-max e2e falls (combine folded into the megakernel, barrier deleted). A roofline that reads
+// "both stages got slower = regression" is exactly backwards — GEAK_TASK.md:323-337 and the bench's
+// own combine-wait docstring warn against it. So the mega analysis classifies from rank-MAX e2e +
+// XGMI amplification + fused combine-wait p95, never from summed per-stage timers, and reports
+// `fusion_note` (what to overlap/fuse next) in place of the roofline's per-stage-regression call.
+const MEGA_ANALYSIS_SCHEMA = obj({
+  bottleneck: { type: 'string' },        // classified from rank-max e2e + XGMI + combine-wait, NOT summed per-stage
+  top_opportunities: { type: 'array', items: { type: 'string' } },
+  dispatch_count: { type: 'number' },    // launches per rank (2 = fully fused: quant + one persistent megakernel)
+  device: { type: 'string' },
+  // path=MEGA proof: the kernel prints `[megamoe] path=MEGA|SCATTERED` once per rank (mega_moe_v2.py).
+  // Both/all ranks must read MEGA or the numbers are from the wrong (scattered) path.
+  path_marker: { type: 'string', enum: ['MEGA', 'SCATTERED', 'MIXED', 'unknown'] },
+  path_marker_count: { type: 'number' }, world_size: { type: 'number' },
+  // Rank-MAX (the straggler) is the promotion metric — NOT rank-mean. From the bench [RESULT] line
+  // and --json-output ranks[].timing_ms.
+  rank_max_ms: { type: 'number' },
+  stage1_rank_max_ms: { type: 'number' }, stage2_combine_rank_max_ms: { type: 'number' },
+  speedup_pct: { type: ['number', 'null'] },      // vs the Mori-EP denominator; null/NaN under --mega-only
+  perf_guard_floor: { type: ['number', 'null'] }, perf_guard_pass: { type: 'boolean' },
+  // XGMI firmware-counter bytes / logical-useful bytes (--xgmi-output derived amplification). >1 means
+  // the fabric moved more than the payload — a real traffic/overlap lever the roofline never sees.
+  xgmi_amplification: { type: ['number', 'null'] },
+  // Fused per-token arrival wait inside the combine queue in us (--combine-wait-output +
+  // AITER_MEGAMOE_COMBINE_WAIT_STATS=1). Empty/0 when the stat is off OR when the barrier was deleted
+  // by fusion — do NOT read 0 as an overlap win (see the bench docstring).
+  combine_wait_p95_us: { type: ['number', 'null'] },
+  combine_wait_total_p95_us: { type: ['number', 'null'] },
+  per_rank_straggler: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  fusion_note: { type: 'string' },       // fusion-aware "what to overlap/fuse next" (replaces roofline per-stage call)
+  summary_path: { type: 'string' },
+}, ['bottleneck', 'top_opportunities']);
+
 const ANALYSIS_RESULT_SCHEMA = obj({
   status: { type: 'string', enum: ['ready', 'degraded'] },
   analysis_skill: { type: 'string' },
@@ -959,6 +1078,11 @@ const PLAN_SCHEMA = obj({
         required: ['launches'],
         additionalProperties: true,
       },
+      // OPTIONAL multi-lever topology descriptor for a WHOLE fused-kernel candidate (mismatch #2 fix).
+      // Superset of target_shape: adds combine-as-queue, GEMM2 waves, and SITE1/SITE2/combine concurrency
+      // knobs. When present it drives the verify TARGET_SHAPE via megaShapeFromTopology(); when absent
+      // (today's default) verify uses the legacy hardcoded shape unchanged.
+      target_topology: MEGA_TOPOLOGY_SCHEMA,
       candidate_id: { type: 'string' },
       candidate_source: { type: 'string' },
       base_candidate_id: { type: 'string' },
@@ -1709,6 +1833,11 @@ if (MODE === 'author') {
 
 // Mega candidate portfolio. M2.5 is reconstructed only through its validated skill; the hand-written
 // tree is not an input. The skill lane is reserved and persistent but never blocks open search.
+// MEGA_CANDIDATE_STATES is declared here (not next to normalizeMegaCandidate further down) because the
+// top-level `if (MODE === 'mega')` seed below calls upsertMegaCandidate -> normalizeMegaCandidate,
+// which reads it. Under top-level-await module semantics the module body executes top-to-bottom, so a
+// const declared after that call would still be in its temporal dead zone when the seed runs.
+const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected'];
 let megaCandidateRegistry = [];
 let megaStateSequenceBase = 0;
 let megaUnsafeTimeout = null;
@@ -1761,7 +1890,12 @@ let analysis = await agentT(
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
-      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+      // 900s, not 300s: the mega REQUIRE_TASK_GRAPH analysis reads four knowledge docs
+      // (tile_task_graph, fusion_preconditions, resource_partition, distributed_fusion) plus the
+      // kernel source and emits a structured task-graph DAG. A prior wave cut this agent off AT the
+      // StructuredOutput call (analysis.json was already written on disk) at the 5-min mark. This is
+      // a one-time pre-loop cost and does not draw from MEGA_CLOCK_MS (the candidate-turn budget).
+      ? { timeout_ms: 900000, timeout_marker: true, max_retries: 1 } : {}) });
 if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
   return {
     mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
@@ -1831,7 +1965,8 @@ function analyzeResumeDegenerate(incremental, ver) {
       }),
       { phase: 'Analyze', label: 'tech_lead:analyze:full', schema: ANALYZE_SCHEMA,
         ...(MODE === 'mega' && MEGA_PRODUCTION
-          ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+          // 900s: same rationale as the primary analyze call site above.
+          ? { timeout_ms: 900000, timeout_marker: true, max_retries: 1 } : {}) });
     if (MODE === 'mega' && full && full.__agent_timed_out) {
       return {
         mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
@@ -2506,7 +2641,8 @@ function claimBoundary(speedupOf, requireComplete) {
 // Mega keeps whole-kernel candidates as independent lineages. A lane may commit WIP to its own tree
 // without changing the globally selected implementation; only a complete, independently verified
 // score can become a finalist. This is the separation the old Reproduce->Optimize chain lacked.
-const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected'];
+// NOTE: const MEGA_CANDIDATE_STATES is declared earlier (near megaCandidateRegistry) so the top-level
+// mega seed can call normalizeMegaCandidate before this point without a temporal-dead-zone error.
 function validMegaCandidateId(value) {
   const id = String(value || '');
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) && id !== 'frozen_baseline';
@@ -2640,15 +2776,28 @@ function megaSkillLaneDue(registry, round, candidateId, maxAttempts, interval, i
   if (!c || c.status === 'rejected' || c.status === 'finalist' || c.status === 'scored') return false;
   if (c.attempts >= Math.max(1, Number(maxAttempts || 1))) return false;
   if (c.attempts === 0) return true;
+  const roundN = Math.max(1, Number(round || 1));
+  const intv = Math.max(1, Number(interval || 1));
+  // RESUME-SAFETY (fixes the m25_skill starvation). The burst/interval schedule below is keyed on the
+  // wave-local round counter, which restarts at 1 on every fresh continuation wave — while `attempts`
+  // carry over from prior waves. In a cold wave attempts and round grow together (attempt k is earned
+  // at round k through the burst), so `attempts < roundN`. On a RESUMED wave the lane has run ahead of
+  // the round counter (`attempts >= roundN`), and the cold-start burst/interval window would place its
+  // next due-round several rounds out — so a short wave (e.g. one that stops at round 3) never
+  // schedules it at all, and the lane holding the real recipe gets zero turns. When attempts have run
+  // ahead of the round counter, the burst was already paid in a prior wave: apply the interval cadence
+  // anchored at round 1 so the resumed lane gets an early turn (rounds 1, 1+interval, ...), then the
+  // normal cadence. Cold-start scheduling (attempts < roundN) is unchanged.
+  if (c.attempts >= roundN) {
+    return (roundN - 1) % intv === 0;
+  }
   const burst = Math.max(0, Number(initialBurst || 0));
   if (burst === 0) {
-    return (Math.max(1, Number(round || 1)) - 1) %
-      Math.max(1, Number(interval || 1)) === 0;
+    return (roundN - 1) % intv === 0;
   }
   if (c.attempts < burst) return true;
-  const postBurstRound = Math.max(1, Number(round || 1)) - burst;
-  return postBurstRound > 0 &&
-    postBurstRound % Math.max(1, Number(interval || 1)) === 0;
+  const postBurstRound = roundN - burst;
+  return postBurstRound > 0 && postBurstRound % intv === 0;
 }
 
 function megaCalibrationClaimPass(pc, configured) {
@@ -3544,7 +3693,19 @@ const bench = await agentT(
   }),
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
-      ? { timeout_ms: 1500000, timeout_marker: true, max_retries: 1 } : {}) });
+      // 7200s (120 min), not 4200s (70 min): a 70-min bound was observed too tight in production
+      // (wf_afc743de-008 / cont9, 2026-09-09). The baseline + 4-guard null arms + 3-run reliability +
+      // correctness alone consumed ~66 of the 70 min; the positive control had only just STARTED its
+      // cold JIT of the spin-dosed variant when the window expired, so it never produced a control
+      // pair and the whole wave died with validation_status:agent_timeout. The positive control is a
+      // one-time cold JIT (>=8 null + >=5 control pairs = >=26 torchrun runs on 8192_uniform, each
+      // re-initializing a ~60 GiB MORI symmetric heap ~60s, plus a distinct-ISA rebuild of the dosed
+      // variant), so it needs genuine headroom AFTER the baseline pre-work, not merely a few minutes.
+      // This phase runs before the candidate loop and does NOT draw from MEGA_CLOCK_MS (which bounds
+      // the loop's turn count), so a longer real wall here does not reduce the number of candidate
+      // rounds — it is free in candidate-budget terms. Even so, a timeout here now RECOVERS from disk
+      // (see below) instead of terminating the wave.
+      ? { timeout_ms: 7200000, timeout_marker: true, max_retries: 1 } : {}) });
 // A bench agent that dies without returning has usually NOT failed to measure — it has failed to
 // report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
 // EVAL_DIR is invisible here and used to abort the run outright. On 2026-08-21 that discarded 40
@@ -3553,12 +3714,19 @@ const bench = await agentT(
 // So before throwing, spend one cheap agent asking whether the measurements exist on disk. It may
 // only RECOVER — re-measuring here would silently double the phase's cost and hide the failure.
 let benchR = bench;
-if (MODE === 'mega' && benchR && benchR.__agent_timed_out) {
-  return {
-    mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
-    final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
-    reason: 'benchmark/calibration agent exceeded the production timeout; no recovery was started',
-  };
+// A timed-out setup agent is the CANONICAL "died without returning but left measurements on disk"
+// case — it ran the full timeout window, so its baseline (and any completed control pairs) are
+// almost certainly already in EVAL_DIR/setup_ab_*.json. Terminating here without looking discards
+// that work AND, worse, reads to the operator as an unrecoverable failure. So do NOT short-circuit:
+// fall THROUGH to the RECOVERY attempt below (which reads the on-disk artifacts and never touches a
+// GPU). Only if recovery also finds nothing on disk do we surface the timeout as terminal.
+// (Regression fixed 2026-09-09 after wf_afc743de-008/cont9 died here with "no recovery was started"
+// despite control pair 1 being on disk.)
+const benchTimedOut = !!(MODE === 'mega' && benchR && benchR.__agent_timed_out);
+if (benchTimedOut) {
+  log('Benchmark setup hit its full timeout window without returning. Its measurements are usually ' +
+      'already on disk — attempting RECOVERY from EVAL_DIR before treating this as a terminal timeout.');
+  benchR = null; // a timeout marker carries no baseline_per_case; force the recovery path below
 }
 if (!benchR || !benchR.baseline_per_case) {
   log('Benchmark setup returned nothing. Attempting RECOVERY from EVAL_DIR before aborting — an ' +
@@ -3580,6 +3748,17 @@ if (!benchR || !benchR.baseline_per_case) {
     { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA,
       ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
   if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
+    if (benchTimedOut) {
+      // Setup genuinely produced nothing recoverable within its window — surface a clean, honest
+      // timeout status (not a raw throw), so the operator sees "timed out AND disk was empty" rather
+      // than a confusing "no baseline recorded" that hides the real cause.
+      return {
+        mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+        final_speedup: 0, final_geomean: 0, validation_status: 'agent_timeout',
+        reason: 'benchmark/calibration agent exceeded the production timeout; recovery from EVAL_DIR ' +
+                'found no baseline on disk',
+      };
+    }
     throw new Error('Benchmark setup failed: no baseline recorded, and none recoverable from EVAL_DIR');
   }
   log(`Benchmark RECOVERED from disk: ${benchR.baseline_per_case.length} cases. ${benchR.notes || ''}`);
@@ -3861,15 +4040,41 @@ if (MODE === 'mega' && PC_PASSED) {
 // PHASE: Baseline profile (Profile Engineer)
 // ===========================================================================
 phase('Profile');
-let profileSummary = await agentT(
-  roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
-    WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
-    COMMANDMENT,
-    ...RESUME_INPUT,
-  }),
-  { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA,
-    ...(MODE === 'mega' && MEGA_PRODUCTION
-      ? { timeout_ms: 300000, timeout_marker: true, max_retries: 1 } : {}) });
+let profileSummary;
+if (MODE === 'mega') {
+  // MEGA-NATIVE ANALYSIS (replaces the generic rocprof roofline). The roofline classifies a fused
+  // megakernel WRONG: under co-resident fusion the stage1 and stage2_combine timers both RISE while
+  // rank-max e2e falls (combine folded into the megakernel, its barrier deleted), so a "per-stage got
+  // slower = regression" reading is backwards (GEAK_TASK.md:323-337; bench combine-wait docstring).
+  // Instead run the bench's OWN instrumentation — `--json-output` (per-rank rank-max), `--xgmi-output`
+  // (fabric amplification), `--combine-wait-output` + AITER_MEGAMOE_COMBINE_WAIT_STATS=1 (fused
+  // arrival-wait p95) — and classify from rank-max e2e + XGMI amplification + combine-wait p95. These
+  // outputs are already emitted by the bench and were previously produced-but-unconsumed.
+  const megaAnalysisDir = `${EVAL_DIR}/mega_analysis`;
+  profileSummary = await agentT(
+    roleAgent('profile_engineer', 'mega_analysis',
+      "Run the MegaMoE bench's own per-rank/XGMI/combine-wait instrumentation and classify the fused kernel WITHOUT a roofline per-stage-regression reading.", {
+      WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
+      COMMANDMENT,
+      ANALYSIS_JSON_OUT: `${megaAnalysisDir}/rank_records.json`,
+      ANALYSIS_XGMI_OUT: `${megaAnalysisDir}/xgmi.json`,
+      ANALYSIS_COMBINE_WAIT_OUT: `${megaAnalysisDir}/combine_wait.json`,
+      COMBINE_WAIT_ENV: 'AITER_MEGAMOE_COMBINE_WAIT_STATS=1',
+      ...RESUME_INPUT,
+    }),
+    { phase: 'Profile', label: 'profile_engineer:mega_analysis', schema: MEGA_ANALYSIS_SCHEMA,
+      // 900s: the native analysis leases the 8-GPU group and runs bench_mega_moe_v2.py three times
+      // (rank-json / xgmi / combine-wait replays). One-time pre-loop cost, does not draw MEGA_CLOCK_MS.
+      ...(MEGA_PRODUCTION ? { timeout_ms: 900000, timeout_marker: true, max_retries: 1 } : {}) });
+} else {
+  profileSummary = await agentT(
+    roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
+      WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0), ROUND: 0,
+      COMMANDMENT,
+      ...RESUME_INPUT,
+    }),
+    { phase: 'Profile', label: 'profile_engineer:baseline', schema: PROFILE_SCHEMA });
+}
 if (MODE === 'mega' && profileSummary && profileSummary.__agent_timed_out) {
   return {
     mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
@@ -4749,14 +4954,75 @@ async function persistMegaCandidateState(currentRound, finalizing) {
         SHELF: shelf, ABSORBED_FILES: absorbedByRound,
       }),
     { phase: 'Optimize', label: `mega candidate state r${currentRound}`, schema: MEMORY_SCHEMA,
-      ...(MEGA_PRODUCTION ? { timeout_ms: 60000, max_retries: 1 } : {}) });
-  if (!(persisted && persisted.state_written === true &&
-      Number(persisted.state_round) === Number(currentRound) &&
-      Number(persisted.state_sequence) === sequence &&
-      String(persisted.state_generation || '') === generation)) {
-    throw new Error(
-      `MEGA STATE PERSIST FAILED at round ${currentRound}: refusing to advance while candidate ` +
-      `lineage/evidence may be lost or overwritten by an older writer.`);
+      // 300s, not 60s: this update_memory agent must Read the multi-KB tech_lead.md role doc, orient
+      // on PHASE=update_memory, write STATE.json + the full candidate registry, and echo back the
+      // exact state_round/state_sequence/state_generation. A 60s cap cut it off mid-orientation
+      // (4 tool calls: read role doc, grep it, re-read, ls STATE_DIR) before it wrote anything, so
+      // persisted came back null and the lineage guard threw at round 1. This cap is a real-time
+      // hung-guard only; the persist does NOT advance MEGA_CLOCK, so a larger cap costs no candidate
+      // rounds. Matches recoverMegaCalibration's 300s above. Raised 300s->600s: by round 4+ the
+      // registry has grown (multiple lanes, cumulative diffs, insights) and emitting the write helper
+      // + 36KB STATE.json under a 300s cap tipped over BEFORE the write landed — the round-4 killer.
+      ...(MEGA_PRODUCTION ? { timeout_ms: 600000, max_retries: 1 } : {}) });
+  const echoOk = (r) => Boolean(r && r.state_written === true &&
+    Number(r.state_round) === Number(currentRound) &&
+    Number(r.state_sequence) === sequence &&
+    String(r.state_generation || '') === generation);
+  if (!echoOk(persisted)) {
+    // A failed primary echo has TWO causes: (a) the write LANDED and only the structured echo was cut
+    // off at the agent layer (false-negative), or (b) the agent hit its cap BEFORE emitting the write
+    // helper for a grown registry, so STATE.json genuinely did not advance. Observed BOTH at round 4
+    // of real waves — cont3 was (a) (disk carried round-4 seq/gen, null echo threw away ~2h), cont5
+    // was (b) (no r4 write helper, disk still at round 3). Distinguish with a READ-ONLY verifier; if
+    // the write is genuinely missing, RETRY the write once with a larger cap; and if it STILL will not
+    // land, DO NOT kill the wave — the persist is bookkeeping, not candidate work.
+    const readState = (labelSuffix) => agentT(
+      roleAgent('tech_lead', 'update_memory',
+        'READ-ONLY verification: read STATE.json in STATE_DIR and report its state_written (true iff ' +
+        'the file exists and parses as JSON), state_round (its last_round), state_sequence, and ' +
+        'state_generation EXACTLY as stored. Do NOT write, benchmark, plan, or modify anything.', {
+          STATE_DIR, ROUND: currentRound,
+          EXPECT_SEQUENCE: sequence, EXPECT_GENERATION: generation,
+        }),
+      { phase: 'Optimize', label: `mega state verify r${currentRound}${labelSuffix || ''}`, schema: MEMORY_SCHEMA,
+        ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
+    let verify = await readState('');
+    if (!echoOk(verify)) {
+      // Genuinely-missing write. Retry the WRITE once with a larger cap: by round 4+ the registry has
+      // grown, so emitting the write helper + STATE.json takes longer than the first-round budget.
+      const retry = await agentT(
+        roleAgent('tech_lead', 'update_memory',
+          'RETRY persist: the prior attempt did not land STATE.json on disk. Persist the mega ' +
+          'candidate registry exactly and WRITE STATE.json now; do not benchmark, plan, or modify ' +
+          'candidate source.', {
+            STATE_DIR, CANONICAL, ROUND: currentRound,
+            CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase,
+            CANDIDATE_REGISTRY: megaCandidateRegistry,
+            MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
+            STATE_GENERATION: generation, STATE_SEQUENCE: sequence,
+            PRIOR_HISTORY: history, OPEN_RUNGS: [], ROADMAP_LADDER: [],
+            LADDER_DISPATCHED: [], LADDER_COMPLETED: [],
+            SHELF: shelf, ABSORBED_FILES: absorbedByRound,
+          }),
+        { phase: 'Optimize', label: `mega candidate state r${currentRound} retry`, schema: MEMORY_SCHEMA,
+          ...(MEGA_PRODUCTION ? { timeout_ms: 600000, max_retries: 1 } : {}) });
+      if (!echoOk(retry)) verify = await readState(' recheck');
+      if (!echoOk(retry) && !echoOk(verify)) {
+        // NON-FATAL. Do not throw. The in-memory `megaCandidateRegistry` is authoritative for THIS
+        // wave, and the NEXT round's persist writes a superseding (HIGHER) sequence; the final persist
+        // writes the terminal state. STATE.json on disk stays at the last landed sequence — monotonic,
+        // so on a FRESH wave there is no older-writer corruption (that failure mode is resume-only, and
+        // we never resume). A future fresh continuation simply restores from the last landed round.
+        // Killing a healthy multi-hour wave here to protect one self-healing bookkeeping write is the
+        // wrong trade — it is exactly what murdered cont3 and cont5 at round 4.
+        log(`MEGA state persist r${currentRound}: WARNING — STATE.json did not advance to seq=${sequence} ` +
+          `after a retry write. Continuing on the in-memory registry (authoritative for this wave); the ` +
+          `next round's persist supersedes, and cross-wave restore falls back to the last landed sequence.`);
+        return;
+      }
+    }
+    log(`MEGA state persist r${currentRound}: primary echo was incomplete, but STATE.json on disk ` +
+      `verifies (seq=${sequence}, gen=${generation}); lineage intact, continuing.`);
   }
 }
 
@@ -4864,11 +5130,15 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     candidate_source: raw.candidate_source === 'integrated' ? 'integrated' : 'search',
     base_candidate_id: baseId,
     tree: megaLaneTree(candidateId),
+    // Multi-lever topology descriptor (mismatch #2). enrichDirection spreads raw.target_topology through;
+    // this override is the kill-switch: unless MEGA_TOPOLOGY_LEVERS is on it is forced to undefined (and
+    // thus dropped from every prompt), keeping DIRECTION and the verify TARGET_SHAPE byte-identical.
+    target_topology: MEGA_TOPOLOGY_LEVERS ? (raw.target_topology || undefined) : undefined,
   };
 }
 
 async function runMegaCandidateTurn(currentRound, remaining) {
-  const turnStartedMs = Date.now();
+  const turnStartedMs = megaNowMs();
   const dispatchDeadlineMs = WORKFLOW_STARTED_MS +
     (MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) * 1000;
   if (!megaMeasurementCalibration.ready &&
@@ -4878,7 +5148,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const pool = await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
   const d = await planMegaCandidateTurn(currentRound, remaining, pool);
   if (!d) return { stop: true, reason: 'no mega candidate direction was planned' };
-  const dispatchRemainingS = (dispatchDeadlineMs - Date.now()) / 1000;
+  // Charge modeled orchestration overhead for this turn (calibration recovery + pool sampling +
+  // planning agents all consumed real wall time above).
+  megaAdvanceMs(MEGA_PREP_MODEL_MS);
+  const dispatchRemainingS = (dispatchDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && dispatchRemainingS < 600) {
     return {
       stop: true,
@@ -4890,8 +5163,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     ? Math.min(turnStartedMs + MEGA_CANDIDATE_TIMEOUT_S * 1000, dispatchDeadlineMs)
     : turnStartedMs + MEGA_CANDIDATE_TIMEOUT_S * 1000;
   const turnBudgetS = (turnDeadlineMs - turnStartedMs) / 1000;
-  const prepElapsedS = (Date.now() - turnStartedMs) / 1000;
-  const availableAfterPrepS = (turnDeadlineMs - Date.now()) / 1000;
+  const prepElapsedS = (megaNowMs() - turnStartedMs) / 1000;
+  const availableAfterPrepS = (turnDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && availableAfterPrepS < 600) {
     return {
       stop: true,
@@ -4900,9 +5173,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         `Engineer was started`,
     };
   }
+  // Stage 4: the validated_skill deep-fusion lane may take a deeper engineer slice than the default
+  // 60% split (up to the requested fusion timeout, hard-capped at 85% of the turn). The second min-arg
+  // (`availableAfterPrepS - 360`) is deliberately unchanged, so the verify reserve is preserved for
+  // every lane. When MEGA_FUSION_ENGINEER_TIMEOUT_S is 0 (default) this is exactly `turnBudgetS * 0.60`.
+  const engineerFractionCapS = (MEGA_FUSION_ENGINEER_TIMEOUT_S > 0 && d.candidate_source === 'validated_skill')
+    ? Math.min(MEGA_FUSION_ENGINEER_TIMEOUT_S, Math.floor(turnBudgetS * 0.85))
+    : Math.floor(turnBudgetS * 0.60);
   const engineerBudgetS = MEGA_PRODUCTION
     ? Math.max(240, Math.min(
-      Math.floor(turnBudgetS * 0.60),
+      engineerFractionCapS,
       Math.floor(availableAfterPrepS - 360))) : MEGA_CANDIDATE_TIMEOUT_S;
   const commandBudgetS = Math.max(180, engineerBudgetS - 60);
 
@@ -4961,12 +5241,20 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         timeout_ms: engineerBudgetS * 1000, timeout_marker: true, max_retries: 1 });
 
     if (eng && eng.__agent_timed_out) {
-      megaUnsafeTimeout = eng;
-      return {
-        stop: true,
-        reason: `candidate agent ${eng.label || candidateId} exceeded its production timeout; ` +
-          `stopping without recovery/fallback so a still-running agent cannot overlap another lane`,
-      };
+      // BANK-AND-CONTINUE (was: hard-stop the whole wave). A single candidate agent hitting its
+      // production timeout is almost always a starved GPU lease — the gpu_lock.sh group mutex
+      // (--wait-timeout) serializes leases, so a busy pool makes the agent WAIT rather than overlap,
+      // and it burns its budget in the queue. Killing the wave here threw away the rest of the round
+      // budget (the observed 6/9-round waste). Instead: drop the timed-out marker, fall through to the
+      // read-only recovery + authoring-bank below, charge the clock (megaAdvanceMs, unchanged), and let
+      // the loop dispatch the next round. The group mutex still prevents any still-running agent from
+      // overlapping the next lease, so dropping the hard-stop cannot cause lease overlap. We do NOT set
+      // megaUnsafeTimeout: a mid-loop candidate timeout must not suppress finalist validation of a
+      // later good candidate. The lane's committed WIP is preserved on disk and re-restored next wave.
+      log(`Mega round ${currentRound}: candidate ${eng.label || candidateId} hit its production ` +
+        `timeout; banking lane WIP as authoring and continuing to the next round ` +
+        `(lease serialized by the group mutex — no overlap).`);
+      eng = null;
     }
     if (!eng || eng.claim_complete !== true) {
       const recovered = await agentT(
@@ -4984,6 +5272,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       if (recovered && recovered.claim_complete === true) eng = recovered;
     }
   }
+  // The Engineer (and any recovery) consumed up to its configured budget of real wall time;
+  // charge it so the verify budget below and the loop dispatch deadline shrink deterministically.
+  megaAdvanceMs(engineerBudgetS * 1000);
 
   const engineerStatus = String(eng && eng.candidate_status || '');
   const preVerifyStatus = engineerStatus === 'runnable' ? 'runnable' : 'authoring';
@@ -5007,10 +5298,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
 
   let ver = null;
-  const turnRemainingS = turnBudgetS - (Date.now() - turnStartedMs) / 1000;
+  const turnRemainingS = turnBudgetS - (megaNowMs() - turnStartedMs) / 1000;
   const verifyBudgetS = MEGA_PRODUCTION
     ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
-      Math.floor((dispatchDeadlineMs - Date.now()) / 1000 - 60)))
+      Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60)))
     : MEGA_CANDIDATE_TIMEOUT_S;
   const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
@@ -5029,11 +5320,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
           BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           VERIFY_TIER: 'score', MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
-          SPECIALTY: 'distributed', TARGET_SHAPE: {
-            launches: LAUNCH_TARGET,
-            stages_fused: ['dispatch', 'gemm1', 'gemm2', 'combine'],
-            require_overlap: false,
-          },
+          SPECIALTY: 'distributed', TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
           REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
           REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
@@ -5044,16 +5331,19 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: VERIFY_SCHEMA,
         timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
     if (ver && ver.__agent_timed_out) {
-      megaUnsafeTimeout = ver;
-      return {
-        stop: true,
-        reason: `verify agent ${ver.label || candidateId} exceeded its production timeout; ` +
-          `stopping before any recovery or competing GPU work`,
-      };
+      // BANK-AND-CONTINUE (was: hard-stop). Same reasoning as the candidate-agent timeout above: a
+      // verify that runs out of its (dynamically sized) budget is a starved lease, not a corrupt
+      // result. Drop the timed-out verification, fall through to the read-only verify-recovery, and
+      // leave the lane banked as authoring with no score so a later round can retry it. The group
+      // mutex still serializes the next lease; we do not set megaUnsafeTimeout, so a later verified
+      // candidate can still be finalized.
+      log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} hit its production ` +
+        `timeout; discarding the incomplete verification and continuing (lane stays authoring WIP).`);
+      ver = null;
     }
     if (!ver || ver.claim_complete !== true) {
       const recoveryBudgetS = MEGA_PRODUCTION
-        ? Math.max(0, Math.floor(turnBudgetS - (Date.now() - turnStartedMs) / 1000 - 60))
+        ? Math.max(0, Math.floor(turnBudgetS - (megaNowMs() - turnStartedMs) / 1000 - 60))
         : 300;
       if (recoveryBudgetS >= 30) {
         const recoveredVer = await agentT(
@@ -5071,6 +5361,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       }
     }
   }
+  // Charge the verify slice (only when Verify actually ran) so later turns and the closeout see
+  // the shared turn budget shrink as it is spent.
+  if (shouldVerify) megaAdvanceMs(verifyBudgetS * 1000);
 
   let record = meta;
   if (ver) {
@@ -5152,7 +5445,7 @@ while (dispatched < BUDGET &&
   phase('Optimize');
 
   if (MODE === 'mega') {
-    const elapsedS = (Date.now() - WORKFLOW_STARTED_MS) / 1000;
+    const elapsedS = (megaNowMs() - WORKFLOW_STARTED_MS) / 1000;
     if (elapsedS >= MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) {
       stopReason = `${MEGA_PROFILE} dispatch deadline reached after ${Math.round(elapsedS / 60)} minutes; ` +
         `preserving ${Math.round(MEGA_FINAL_RESERVE_S / 60)} minutes for finalist validation.`;
@@ -6534,9 +6827,9 @@ if (MODE === 'mega') {
   const finalistOrder = [...finalistMap.values()];
   const runFinalistBatch = async (batch, label) => {
     if (!batch.length || !megaMeasurementCalibration.ready) return null;
-    const batchStartedMs = Date.now();
+    const batchStartedMs = megaNowMs();
     const remainingS = MEGA_TIME_BUDGET_S -
-      (Date.now() - WORKFLOW_STARTED_MS) / 1000 - MEGA_CLOSEOUT_RESERVE_S;
+      (megaNowMs() - WORKFLOW_STARTED_MS) / 1000 - MEGA_CLOSEOUT_RESERVE_S;
     if (remainingS < 600) {
       log(`MEGA finalist skipped: only ${Math.max(0, Math.round(remainingS))}s remain before the ` +
         `closeout reserve; candidate state is preserved for the next production invocation.`);
@@ -6544,6 +6837,9 @@ if (MODE === 'mega') {
     }
     const finalistTimeoutS = Math.min(MEGA_FINAL_TIMEOUT_S, remainingS);
     const batchDeadlineMs = batchStartedMs + finalistTimeoutS * 1000;
+    // We are committed to running this finalist batch; charge its budget to the deterministic
+    // clock so a subsequent fallback batch sees the closeout window shrink.
+    megaAdvanceMs(finalistTimeoutS * 1000);
     const result = await agentT(
       roleAgent('director', 'select_mega',
         MEGA_PRODUCTION
@@ -6567,7 +6863,10 @@ if (MODE === 'mega') {
       { phase: 'Validate', label, schema: MEGA_SELECTION_SCHEMA,
         timeout_ms: finalistTimeoutS * 1000, timeout_marker: true, max_retries: 1 });
     if (result && (result.__agent_timed_out || result.claim_complete === true)) return result;
-    const recoveryRemainingS = Math.floor((batchDeadlineMs - Date.now()) / 1000);
+    // Recovery is a cheap read-only reconciliation (no GPU command, no lease). The finalist
+    // agent's budget was already charged to the deterministic clock above, so model a fixed
+    // bounded recovery window here rather than deriving it from a live elapsed read.
+    const recoveryRemainingS = Math.min(300, Math.max(0, Math.floor(finalistTimeoutS)));
     if (recoveryRemainingS < 30) return result;
     const recovered = await agentT(
       roleAgent('director', 'recover_mega',

@@ -393,6 +393,18 @@ launches combine on its own is **three** launches and must report `launches_cand
 field: omitting it leaves criterion 1 unjudged, which reads the same as an unfused candidate slipping
 through. `how_counted` is the evidence — a trace record count or a launch-marker tally — because a
 count with no method is a guess.
+
+**`TARGET_SHAPE` may be a MULTI-LEVER topology, not just a launch count.** Besides `launches`,
+`stages_fused` and `require_overlap`, it can carry `combine_mode` (`queue` = combine folded as a third
+ticketed queue), `g2_waves` (the GEMM2 reclaim wave scheme), and the concurrency knobs
+`site1{work_shards,dispatch_cu}` / `site2{persist_cu,skew_cu}` / `combine_knobs{block_num,warp_num}`.
+When these levers are present, hold the candidate to the WHOLE topology it claimed, not only the launch
+count: confirm `stages_fused` are actually co-resident, that `combine_mode:queue` really runs combine as
+a ticketed queue (not a fourth launch), and — through the bench's own instrumentation, never a per-stage
+roofline — that the claimed `site1/site2/combine` knobs are the ones the kernel took. Reflect what you
+found in `launch_shape.stages_fused` and `notes`; a candidate whose realized topology does not match the
+levers it claimed is not a clean pass even if `launches_cand` hits the target. Absent levers are simply
+inherited from the base shape and need no separate check.
 Be skeptical and exact. Your number becomes the official round result.
 
 Write `evidence_manifest.json` only after every referenced log is closed, then atomically rename the

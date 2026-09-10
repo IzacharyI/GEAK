@@ -113,3 +113,12 @@ missing latency, speedup, or replay counts. The orchestrator will recover a newe
   "notes": "measured facts and unresolved work"
 }
 ```
+
+**`topology_sig` is the human-readable mirror of the structured topology descriptor** (`MEGA_TOPOLOGY_SCHEMA`:
+`launches`, `fused_stages`, `combine_mode`, `g2_waves`, `site1{work_shards,dispatch_cu}`,
+`site2{persist_cu,skew_cu}`, `combine_knobs{block_num,warp_num}`). Keep the two consistent: each
+`key=value` clause in `topology_sig` must name a real lever the candidate actually realizes on hardware —
+`launches=N` = measured launch count, `combine=queue` = combine folded as a third ticketed queue,
+`g2_waves=useful8` = the GEMM2 reclaim wave scheme, and any `site1_*/site2_*/combine_*` clause = the
+concurrency knob you set. If the direction carries a `DIRECTION.target_topology`, realize exactly those
+levers and echo them back; do not claim a lever in `topology_sig` that the kernel does not truly take.

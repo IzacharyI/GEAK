@@ -292,6 +292,17 @@ for three waves while every round re-planned from the profile.
    - Under `MEGA_PROFILE=production`, fit one useful implementation+score attempt inside
      `CANDIDATE_TIMEOUT_S`; do not spend the round building audit-only overlap/attribution instruments.
      Under `audit`, those mechanism measurements may be planned explicitly.
+   - **Multi-lever topology (`target_topology`).** For a mega direction, prefer describing the WHOLE
+     fused-kernel topology as a lever VECTOR rather than a single on/off switch. A direction that proposes
+     a topology or concurrency change SHOULD carry an optional `target_topology` object — a superset of
+     `target_shape`: `launches`, `fused_stages`, `combine_mode` (`queue` = combine folded as a third
+     ticketed queue), `g2_waves` (GEMM2 wave/reclaim count), and the concurrency knobs the bench exposes —
+     `site1: {work_shards, dispatch_cu}` (stage-1 dispatch), `site2: {persist_cu, skew_cu}` (stage-2
+     persistence/skew), `combine_knobs: {block_num, warp_num}`. Change only the levers your direction is
+     actually about and say why in `notes`; leave the rest out so the base topology is inherited. OMIT
+     `target_topology` entirely for a pure "continue this lane" or baseline direction — that keeps the
+     verify target at the established shape. (The descriptor only flows when the wave enables the topology
+     levers; otherwise the workflow uses the established shape, so emitting it is always safe.)
 
 Return JSON:
 ```json
@@ -315,7 +326,12 @@ Return JSON:
      "cost_budget_pct": 3.0,
      "target_shape": {"launches": 2,
        "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
-       "require_overlap": true}}
+       "require_overlap": true},
+     "target_topology": {"launches": 2,
+       "fused_stages": ["dispatch", "gemm1", "gemm2", "combine"],
+       "combine_mode": "queue", "g2_waves": 8,
+       "site2": {"persist_cu": 0, "skew_cu": 0},
+       "notes": "OPTIONAL multi-lever topology; include only levers this direction changes, omit for a pure continue"}}
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",
@@ -667,8 +683,15 @@ Rules:
    the pool frees, the single lease goes to **executing the banked ON path end-to-end and reading its
    candidate `mega_e2e` against the baseline on the target guard** — the win/no-win question — before
    any attribution/overlap coverage. Warm the JIT cache OUTSIDE the lease (a prior lease-free round, or
-   a warm `AITER_JIT_DIR`), run the arm detached so a short tool timeout cannot kill a cold cold-compile
-   mid-arm, and only then spend device time on the number that decides the round.
+   a warm `AITER_JIT_DIR`) so a cold compile does not eat the arm; run the long lease through
+   `gpu_lock.sh --run-timeout <generous>` so ONE foreground call spans the whole cold-compile+run
+   without a short per-tool timeout cutting it. **"Detached" must NEVER mean a `nohup`/`setsid`/`&`
+   driver that reparents to init** — such a driver outlives the agent that spawned it, keeps relaunching
+   leases, and pins the entire pool for hours (wf_afc743de-008/cont9, 2026-09-09: a `posctl_driver.sh`
+   reparented to `ppid==1` and held all 8 cards after its benchmark_engineer timed out). If a step
+   genuinely must outlive a single tool call, use the harness's own background-task mechanism (it dies
+   with the agent) — not an OS-detached process — and kill it + move its workspace aside before you
+   return. Only then spend device time on the number that decides the round.
    **When your inputs carry `GPU_POOL`, the script has already taken this sample for you and its
    verdict is binding, not advisory.** `GPU_POOL.verdict` is one of `free` / `occupied` / `unknown`,
    against the per-card floor in `GPU_MIN_FREE_GIB`. On `occupied` **or** `unknown` you plan the round

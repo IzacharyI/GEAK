@@ -20,6 +20,37 @@ from typing import Callable, Mapping, Optional, Sequence, Tuple
 
 TIMEOUT_EXIT_CODE = 124
 
+# Command-line tokens that identify a leaked child of one of OUR dead leases. Only a
+# reparented (ppid==1) process, in our own pid namespace, whose cwd is under the run's
+# state_dir AND whose cmdline matches one of these, is ever eligible to be reaped. This
+# is deliberately narrow: a live lease's workers have a live parent (ppid != 1), so they
+# are structurally excluded; anything we cannot see in /proc or cannot attribute is left
+# untouched (a busy pool is NOT proof of a foreign tenant — see the skill's GPU-pool
+# hygiene section).
+_ORPHAN_CMD_SIGNATURES = (
+    "test_mega_moe_v2",
+    "torchrun",
+    "gpu_lease",
+    "mega_moe",
+    # positive-control drivers: a benchmark_engineer that runs a cold-JIT control arm "detached"
+    # (tech_lead role guidance) can leave a driver script that reparents to init (ppid==1) and keeps
+    # relaunching leases, pinning the whole pool. These carry our own unique script/workspace names,
+    # so matching them cannot hit a foreign proc. (wf_afc743de-008/cont9, 2026-09-09.)
+    "posctl_driver",
+    "be_posctl",
+)
+
+# Control workspaces are deliberately built OUTSIDE the run tree — under /tmp/<unique> (see
+# roles/benchmark_engineer.md §"WHERE the control workspace lives") — so their orphans do NOT resolve
+# under a lease's reap_root (the STATE_DIR). These prefixes are the additional cwd roots under which an
+# orphan is still unambiguously OURS. Kept narrow + combined with ppid==1 + same-namespace + a cmdline
+# signature above, so a foreign tenant is never eligible.
+_ORPHAN_CONTROL_CWD_PREFIXES = (
+    "/tmp/be_posctl_",
+    "/tmp/geak_control_",
+    "/tmp/geak_control_retired_",
+)
+
 
 class GpuRequest:
     def __init__(
@@ -149,12 +180,22 @@ class GpuLease:
         wait_timeout_s: float,
         poll_interval_s: float = 0.2,
         idle_checker: Optional[Callable[[int], bool]] = None,
+        reap_root: Optional[Path] = None,
+        reap_interval_s: float = 10.0,
     ):
         self.request = request
         self.lock_dir = Path(lock_dir)
         self.wait_timeout_s = max(0.0, float(wait_timeout_s))
         self.poll_interval_s = max(0.001, float(poll_interval_s))
         self.idle_checker = idle_checker
+        # Where OUR leaked orphans live (the run's state_dir). Default: the lock_dir's
+        # parent, which is under state_dir, so candidates/*/tree resolves inside it.
+        # A busy pool triggers a reap of our own leaks before we ever dead-wait.
+        self.reap_root = (
+            Path(reap_root) if reap_root is not None else self.lock_dir.parent
+        )
+        self.reap_interval_s = max(0.0, float(reap_interval_s))
+        self._last_reap_monotonic = None
         self._gpu_fds = []
         self._selected_ids = None
         self.lease_id = f"{os.getpid()}-{time.time_ns()}"
@@ -195,6 +236,9 @@ class GpuLease:
         attempted = False
         rejected_groups = set()
         self._write_request()
+        # Clear OUR OWN leaked orphans up front so a self-inflicted busy pool does not
+        # turn into a dead-wait to timeout. Foreign/unattributable procs are untouched.
+        self._maybe_reap()
         try:
             while True:
                 if attempted and time.monotonic() >= deadline:
@@ -218,12 +262,36 @@ class GpuLease:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._raise_timeout()
+                # Pool still busy: retry our own-orphan reap (throttled) before waiting,
+                # in case a leak appeared or survived the first pass.
+                self._maybe_reap()
                 time.sleep(min(self.poll_interval_s, remaining))
         except BaseException:
             self.release()
             raise
         finally:
             self.request_path.unlink(missing_ok=True)
+
+    def _maybe_reap(self) -> None:
+        if self.reap_root is None:
+            return
+        now = time.monotonic()
+        if (
+            self._last_reap_monotonic is not None
+            and (now - self._last_reap_monotonic) < self.reap_interval_s
+        ):
+            return
+        self._last_reap_monotonic = now
+        try:
+            reaped = reap_own_orphans(self.reap_root)
+        except Exception:
+            return
+        if reaped:
+            sys.stderr.write(
+                f"[gpu_lease] reaped {len(reaped)} own orphan(s) under "
+                f"{self.reap_root}: {','.join(str(pid) for pid in reaped)}\n"
+            )
+            sys.stderr.flush()
 
     def _raise_timeout(self) -> None:
         ids = ",".join(str(gpu_id) for gpu_id in self.request.pool_ids)
@@ -398,6 +466,81 @@ def _pid_is_live(pid: int) -> bool:
         return False
 
 
+def _proc_ppid(pid: int) -> Optional[int]:
+    try:
+        suffix = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1]
+        # After the ")" the fields are: state ppid pgrp ... -> ppid is index 1.
+        return int(suffix.strip().split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _proc_cwd(pid: int) -> Optional[str]:
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return None
+
+
+def _proc_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return ""
+    return raw.replace(b"\x00", b" ").decode("utf-8", "replace")
+
+
+def reap_own_orphans(
+    reap_root: Path,
+    *,
+    signatures: Sequence[str] = _ORPHAN_CMD_SIGNATURES,
+    extra_roots: Sequence[str] = _ORPHAN_CONTROL_CWD_PREFIXES,
+    killer: Callable[[int, int], None] = os.kill,
+) -> Sequence[int]:
+    """Kill only OUR reparented leaks under ``reap_root``; return the pids reaped.
+
+    Safe by construction: a pid is eligible ONLY if it is visible in this /proc, is an
+    orphan (ppid==1), lives in our own pid namespace (a cross-namespace kill would just
+    fail — and unattributable is not the same as foreign), its cwd resolves under
+    ``reap_root`` OR under one of ``extra_roots`` (control workspaces built under /tmp,
+    outside the run tree), and its cmdline matches a known leaked-worker signature. A live
+    lease's workers have a live parent (ppid != 1), so they are never touched.
+    """
+    root = str(Path(reap_root).resolve())
+    extra = tuple(extra_roots or ())
+    my_namespace = _pid_namespace()
+    reaped = []
+    try:
+        pids = [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+    except OSError:
+        return reaped
+    for pid in pids:
+        if pid == os.getpid():
+            continue
+        if _proc_ppid(pid) != 1:
+            continue
+        cwd = _proc_cwd(pid)
+        if cwd is None:
+            continue
+        resolved = str(Path(cwd))
+        under_root = resolved == root or resolved.startswith(root + os.sep)
+        under_extra = any(resolved.startswith(prefix) for prefix in extra)
+        if not under_root and not under_extra:
+            continue
+        cmdline = _proc_cmdline(pid)
+        if not any(token in cmdline for token in signatures):
+            continue
+        # Only kill what we could actually kill: same pid namespace as us.
+        if _pid_namespace_for_pid(pid) != my_namespace:
+            continue
+        try:
+            killer(pid, signal.SIGKILL)
+            reaped.append(pid)
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+    return reaped
+
+
 def parse_amd_smi_device_map(
     payload: str, *, pci_root: Path = Path("/sys/bus/pci/devices")
 ) -> Mapping[int, Path]:
@@ -432,6 +575,7 @@ def run_command(
     term_grace_s: float,
     env: Optional[Mapping[str, str]] = None,
     idle_checker: Optional[Callable[[int], bool]] = None,
+    reap_root: Optional[Path] = None,
 ) -> int:
     if not command:
         raise ValueError("command must not be empty")
@@ -457,6 +601,7 @@ def run_command(
             lock_dir=lock_dir,
             wait_timeout_s=wait_timeout_s,
             idle_checker=idle_checker,
+            reap_root=reap_root,
         ) as lease:
             visible = ",".join(str(gpu_id) for gpu_id in lease.selected_ids)
             child_env.update(
@@ -507,14 +652,22 @@ def run_command(
                     return_code = process.wait(
                         timeout=max(0.0, float(run_timeout_s))
                     )
-                _terminate_process_group(process, term_grace_s=term_grace_s)
+                _terminate_and_reap(
+                    process, term_grace_s=term_grace_s, reap_root=reap_root
+                )
                 return _shell_exit_code(return_code)
             except subprocess.TimeoutExpired:
-                _terminate_process_group(process, term_grace_s=term_grace_s)
+                # Deadlocked / runaway bench that blew --run-timeout: killpg the child
+                # group, then reap the reparented ranks so a hang cannot pin the pool.
+                _terminate_and_reap(
+                    process, term_grace_s=term_grace_s, reap_root=reap_root
+                )
                 return TIMEOUT_EXIT_CODE
             except BaseException:
                 if process is not None:
-                    _terminate_process_group(process, term_grace_s=term_grace_s)
+                    _terminate_and_reap(
+                        process, term_grace_s=term_grace_s, reap_root=reap_root
+                    )
                 raise
     finally:
         for signum, previous in previous_handlers.items():
@@ -544,6 +697,49 @@ def _terminate_process_group(
         except ProcessLookupError:
             pass
     process.wait()
+
+
+def _terminate_and_reap(
+    process: subprocess.Popen,
+    *,
+    term_grace_s: float,
+    reap_root: Optional[Path] = None,
+) -> None:
+    """Kill the child's own process group, THEN sweep reparented mega-worker orphans.
+
+    ``start_new_session=True`` puts the child in its own group, but torchrun starts
+    each rank in a NEW session of its own, so the GPU-holding ranks are NOT in the
+    child's group: ``killpg(child_pgid)`` reaches torchrun and its immediate group
+    but leaves the ranks alive. On their parent's death they reparent to ppid==1 and
+    keep spinning on the cards -- a hung bench that blows the run-timeout would
+    otherwise pin the whole pool for hours (a self-inflicted hang once starved the
+    pool ~4.3h and was misread as a foreign tenant). The sweep reuses the exact
+    narrow signature of reap_own_orphans() (ppid==1 + cwd under reap_root + mega
+    cmdline + our namespace), so foreign/unattributable procs are never touched.
+    Bounded and best-effort: reparenting is not instantaneous, so poll for a few
+    seconds until two consecutive sweeps come back empty.
+    """
+    _terminate_process_group(process, term_grace_s=term_grace_s)
+    if reap_root is None:
+        return
+    deadline = time.monotonic() + 10.0
+    empty_sweeps = 0
+    while time.monotonic() < deadline and empty_sweeps < 2:
+        try:
+            reaped = reap_own_orphans(reap_root)
+        except Exception:
+            reaped = []
+        if reaped:
+            sys.stderr.write(
+                f"[gpu_lease] post-terminate reaped {len(reaped)} reparented "
+                f"orphan(s) under {reap_root}: "
+                f"{','.join(str(pid) for pid in reaped)}\n"
+            )
+            sys.stderr.flush()
+            empty_sweeps = 0
+        else:
+            empty_sweeps += 1
+        time.sleep(0.5)
 
 
 def _process_group_exists(pgid: int) -> bool:
@@ -583,6 +779,15 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--lock-dir",
         default=os.environ.get("GEAK_GPU_LOCK_DIR", "/tmp/team_gpu_locks"),
+    )
+    run.add_argument(
+        "--reap-root",
+        default=os.environ.get("GEAK_GPU_REAP_ROOT"),
+        help=(
+            "state_dir whose reparented (ppid==1) mega workers may be reaped when the "
+            "pool is busy; defaults to the lock-dir parent. Only OUR own leaked orphans "
+            "under this path are ever killed."
+        ),
     )
     run.add_argument("--wait-timeout", type=float, default=1200.0)
     run.add_argument("--run-timeout", type=float, default=900.0)
@@ -658,6 +863,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             run_timeout_s=args.run_timeout,
             term_grace_s=args.term_grace,
             idle_checker=idle_checker,
+            reap_root=Path(args.reap_root) if args.reap_root else None,
         )
     except CommandStartError as error:
         print(f"ERROR: {error}", file=sys.stderr)

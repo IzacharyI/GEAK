@@ -465,6 +465,15 @@ So, when a `POSITIVE_CONTROL` names a patch:
 - Build the control workspace **outside the run tree** — outside the common ancestor of the task dir,
   `EVAL_DIR` and the workflow dir. `/tmp/<something unique>` is fine; anywhere under the project root
   is not, however deeply nested or oddly named.
+- **NEVER run the control from a reparenting detached driver** (`nohup … &`, `setsid`, `disown`, a
+  background `.sh` that keeps launching leases). Such a driver survives YOUR death — and this phase is
+  interruptible (it can hit its timeout mid-control) — so on interruption it reparents to `ppid==1`,
+  keeps relaunching leases, and pins the whole pool for hours (this happened 2026-09-09: a
+  `posctl_driver.sh` held all 8 cards after the agent timed out). Run each control arm as a FOREGROUND
+  `gpu_lock.sh --run-timeout <generous>` call — one call spans the cold JIT + the pairs — and warm the
+  dosed variant's JIT in a prior step so the compile does not blow a single tool window. If something
+  truly must outlive one tool call, use the harness background-task mechanism (dies with you), never an
+  OS-detached process, and kill it before returning.
 - **Move it aside when the control finishes** (`mv`, not `rm` — deletion prompts and blocks background
   runs). Do not leave it for "reproducibility": the patch itself is the reproducible artifact.
 - **"Aside" means out of `/tmp` too, not renamed inside it.** `/tmp` is outside the run tree, which is

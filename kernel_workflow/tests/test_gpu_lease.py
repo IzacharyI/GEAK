@@ -1388,3 +1388,40 @@ def test_manager_sigkill_does_not_release_locks_while_launcher_survives(tmp_path
             time.sleep(0.02)
 
     assert run_attempt(tmp_path / "locks", "0", 1) == "acquired"
+
+
+def test_reap_own_orphans_only_kills_our_reparented_leaks(tmp_path, monkeypatch):
+    gpu_lease = load_gpu_lease()
+
+    root = tmp_path / "state_dir"
+    under = str(root / "candidates" / "cand_a" / "tree")
+    outside = str(tmp_path / "somewhere_else")
+    my_ns = "pid:[4026531836]"
+
+    # pid -> (ppid, cwd, cmdline, namespace)
+    fake = {
+        11: (1, under, "python test_mega_moe_v2.py --bs 8192", my_ns),   # our orphan -> reap
+        12: (1, under, "torchrun --nproc 8 mega_run", my_ns),            # our orphan -> reap
+        21: (4321, under, "python test_mega_moe_v2.py", my_ns),          # live parent -> spare
+        22: (1, outside, "python test_mega_moe_v2.py", my_ns),           # not under root -> spare
+        23: (1, under, "python unrelated_service.py", my_ns),            # wrong signature -> spare
+        24: (1, under, "python test_mega_moe_v2.py", "pid:[4026999999]"),  # other ns -> spare
+    }
+
+    monkeypatch.setattr(gpu_lease.os, "listdir", lambda path: [str(p) for p in fake])
+    monkeypatch.setattr(gpu_lease, "_proc_ppid", lambda pid: fake.get(pid, (None,))[0])
+    monkeypatch.setattr(gpu_lease, "_proc_cwd", lambda pid: fake[pid][1])
+    monkeypatch.setattr(gpu_lease, "_proc_cmdline", lambda pid: fake[pid][2])
+    monkeypatch.setattr(gpu_lease, "_pid_namespace", lambda: my_ns)
+    monkeypatch.setattr(
+        gpu_lease, "_pid_namespace_for_pid", lambda pid: fake[pid][3]
+    )
+
+    killed = []
+    reaped = gpu_lease.reap_own_orphans(
+        root, killer=lambda pid, sig: killed.append((pid, sig))
+    )
+
+    assert sorted(reaped) == [11, 12]
+    assert sorted(pid for pid, _ in killed) == [11, 12]
+    assert all(sig == signal.SIGKILL for _, sig in killed)

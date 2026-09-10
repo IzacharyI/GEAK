@@ -45,10 +45,13 @@ provenance:
   source: validated_skill
   origin: deconstructed_capability
   reuse_mode: workflow_authored_candidate
-  reporting_rule: 'This card is injected only into the m25_skill candidate lane. The lane starts from
-    frozen public MegaMoE V2 and authors its own implementation. The hand-written M2.5 tree is never run,
-    copied, diffed, imported, or used as a base. Report source=validated_skill, never autonomous discovery.
-    The recorded 1.0448x result is a target band only.'
+  reporting_rule: 'This card is injected only into the m25_skill candidate lane. SEED MODE (build-time
+    Option A): the lane is PRE-SEEDED at HEAD with a byte-faithful copy of the validated M2.5 fused
+    megakernel. Do NOT re-derive it and do NOT reset the lane to frozen public MegaMoE V2 — continue
+    from the existing HEAD. Code identical to M2.5 is EXPLICITLY ALLOWED (the anti-copy content gate is
+    lifted). At runtime read only this card and the pre-seeded lane files; never read/import/diff any
+    external hand-authored M2.5 tree. Report source=validated_skill, never autonomous discovery. The
+    recorded 1.0448x result is a target band only.'
 incumbent:
   label: M2.5_persistent_megakernel
   is_ceiling: false
@@ -71,11 +74,48 @@ role: advisory_prior
 supersedes: []
 ---
 
-## READ THIS FIRST — this card owns one candidate lane, not a phase
+## READ THIS FIRST — SEED MODE: the fused impl is ALREADY in your lane
 
-Only `mega_engineer` in the `m25_skill` lane reads this card. Author the complete two-launch
-megakernel from the frozen public baseline and continue the same lane across attempts. The card is
-not injected into TechLead or ordinary Engineer, so other optimization candidates remain independent.
+Only `mega_engineer` in the `m25_skill` lane reads this card.
+
+**The lane is PRE-SEEDED at HEAD with a byte-faithful M2.5 fused megakernel — you do NOT author it
+from scratch.** `git log -1` in `${CANDIDATE_TREE}` shows commit "m25_skill seed: byte-faithful M2.5
+reference". Your job is NOT to re-derive the kernel; it is to **build it, activate `path=MEGA`,
+validate, and measure** — then, only if budget remains, attack intra-megakernel concurrency
+(SITE1/SITE2 below). Continue from the existing HEAD; **never reset the lane to the frozen baseline**
+(the workflow only re-seeds a lane whose `.git` is absent — yours exists, so it is preserved).
+
+### The winning config (verified from M2.5 source, do not deviate for the first RESULT)
+Activate the megakernel with the env below; every knob is already at its winning default in the seed,
+so you only need to set the master gate:
+- **`AITER_MEGAMOE_FUSE_ALL=1`** — master gate; without it the tree runs `path=SCATTERED`. With it and
+  `config.stage1.num_waves % 4 == 0` (true at 8192), the process prints `[megamoe] path=MEGA` once.
+- Winning defaults already baked in the seed (do not override for the first RESULT): `FUSE_COMBINE=1`
+  (combine folded as the **stage1 third work queue**), `FUSE_QUANT=0` (quant is its own launch →
+  **launches=2**), `FUSE_S2_NW8=1`, `G2_PREF=6`, `G2_CHUNK=16` (at cur_tok≥4096), **`FUSE_S2C` OFF**.
+- `FUSE_S2C=1` / `mega_moe_fused_s2c.py` is a DIFFERENT, measured-SLOWER mechanism (not M2.5's combine
+  fold). Leave it OFF. Combine folds via the stage1 third queue, NOT via s2c.
+
+### Launch invocation (bake this exactly)
+`torchrun --standalone --nproc_per_node=8 op_tests/multigpu_tests/bench_mega_moe_v2.py --tokens 8192
+--mtpr 8192 --route uniform`, with env: `AITER_MEGAMOE_FUSE_ALL=1 MORI_SOCKET_IFNAME=lo
+MORI_SHMEM_HEAP_SIZE=40G MORI_EP_LAUNCH_CONFIG_MODE=AUTO`.
+
+### PYTHONPATH / import gotcha (will silently break the run if wrong)
+`import aiter` MUST resolve to the LANE tree, not global `/sgl-workspace/aiter` (whose jit imports
+`fly_values`, which `flydsl.compiler.protocol` no longer exports → AttributeError before any GPU
+work). Set `PYTHONPATH="${CANDIDATE_TREE}:/sgl-workspace/mori:/sgl-workspace/mori/python"` (lane tree
+FIRST). The env also needs `mori` (+ `mori.shmem`) and the `flydsl` compiler package importable.
+Distributed launch requires exactly 8 ranks.
+
+### Deliverable order (relaxed-production priority)
+1. Build + activate `path=MEGA` (marker printed on all 8 ranks) — HARD requirement.
+2. Validate `relL2 < 0.10` and `launches == 2` — HARD requirements.
+3. Measure e2e vs the frozen SCATTERED denominator; emit a real on-card `[RESULT]`.
+4. ONLY if budget remains: attack SITE1 (static CU-role partition) / SITE2 (grid_mult) concurrency.
+
+Code identical to M2.5 is explicitly allowed. The card is not injected into TechLead or ordinary
+Engineer, so other optimization candidates remain independent.
 
 The skill candidate includes both halves of the capability:
 
@@ -149,6 +189,83 @@ cross-L2 flush — a fixed ~6.6 ms, contention-bound cost that coarsening cannot
 it measures ~0.4× baseline, not a gain. **Do the wiring (Steps 4–5); treat the readiness edge as
 optional and hardware-gated, not the headline mechanism.**
 
+## GPU-pool hygiene — YOU reap your OWN leaks before you wait for a lease (do this FIRST, every lease)
+
+**This is your job, not the scheduler's. Do not sit and wait for a busy pool to clear — clean it up
+yourself.** Before you request or block on any group lease, and again every time a lease stalls on
+`GPU_POOL occupied`, **you run the reap step below with your own hands** (execute the command; do not
+assume some background mechanism will do it for you). A busy pool is a task for you to act on, not a wall
+to wait behind.
+
+The overwhelmingly common cause of "all 8 cards @100%" on this box is **your own leaked processes** — a
+prior lease died and its `torchrun`/`test_mega_moe_v2.py` children got reparented to `ppid=1` and kept
+spinning on the cards. Those are yours; clear them. Do not label them "external tenants" and wait — that
+misread cost the last wave nine consecutive GPU-less rounds. (The lease wrapper also self-reaps as a
+backstop, but you must not rely on it: you own this — reap first, verify the cards dropped, then proceed.)
+
+**Discriminator (this is the whole safety of the mechanism):**
+
+- **REAPABLE = mine.** A PID is safe to `kill -9` iff it is *visible in your `/proc`* AND matches your
+  leak signature: `ppid==1` (reparented orphan) **AND** `/proc/<pid>/cwd` resolves **under this run's
+  `state_dir`** (`.../candidates/*/tree`); or its cmdline is `test_mega_moe_v2.py` / `torchrun ... mega`
+  / `gpu_lease.py` launched under `state_dir` whose lease-parent is already dead. Never reap the process
+  tree of the lease you are *currently* holding.
+- **NOT YOURS TO TOUCH, and NOT a reason to dead-wait = invisible.** A PID that is **not present in your
+  `/proc`** cannot be attributed or signalled from inside this container (a cross-namespace `kill` just
+  fails). **Do not call it an "external tenant" on that basis alone** — "invisible in my /proc" means
+  *unattributable*, not *proven foreign*. Log it, and treat it as a **bounded** wait, never an infinite
+  one (see the timeout rule). Its VRAM footprint is the tell: your MegaMoE test procs sit at ~7–8 GB
+  each; a genuinely foreign job looks nothing like that (e.g. ~290 GB single allocations).
+
+**The reap command (run it, don't reason about it):**
+
+```bash
+# STATE_DIR = this run's state_dir (the parent of candidates/). Reap only MY reparented leaks.
+STATE_DIR="${GEAK_STATE_DIR:?set to the run state_dir}"
+for pid in $(ps -eo pid=,ppid= | awk '$2==1{print $1}'); do
+  cwd=$(readlink -f /proc/$pid/cwd 2>/dev/null) || continue
+  case "$cwd" in
+    "$STATE_DIR"/candidates/*/tree*)                    # orphan whose cwd is under MY state_dir
+      cmd=$(tr '\0' ' ' </proc/$pid/cmdline 2>/dev/null)
+      case "$cmd" in
+        *test_mega_moe_v2*|*torchrun*|*gpu_lease*|*mega_moe*)
+          echo "reaping my orphan pid=$pid cwd=$cwd"; kill -9 "$pid" ;;
+      esac ;;
+  esac
+done
+rocm-smi --showuse 2>/dev/null | grep -E "GPU use"    # confirm cards dropped toward 0%
+```
+
+**Timeout rule — never burn the whole lane on a busy pool.** After the reap, wait for the group lease at
+most a **bounded** interval (≈120–180 s of polling). If the cards are still pegged by procs you could
+*not* reap (invisible / not-mine), do **not** spend the round's remaining budget blocking:
+1. record a one-line insight (`pool occupied by N unreapable PIDs, footprint X GB each, reaped M of mine`),
+2. **bank any authoring WIP** (persist state, so nothing is lost), and
+3. end the round cleanly and let the next wave retry — a wave that dies holding a lock advances nothing.
+This converts "dead-wait until the lane times out" into "one bounded probe + a clean, cheap retry."
+
+**Deadlock rule — a test that runs past its normal time IS a suspected deadlock; reap it, do not wait it
+out.** This is the OTHER side of the timeout rule: not a pool you are waiting *on*, but a bench *you
+launched* that will not return. Know the normal wall-clock for each on-card action and treat a large
+overrun as a hang, not slowness:
+- a `--iters 10` correctness/bench replay is **seconds to ~2 min**; a full paired A/B confirm is a few
+  minutes. If a single replay is still running past **~5×** its expected wall-clock (e.g. a `--iters 10`
+  bench past ~10 min), it is almost certainly a cross-rank / grid-barrier **deadlock** — a fused arm can
+  hang on a mis-authored arrival-ticket or epoch-parity edge (this is a real failure mode of the very
+  edges you are adding).
+- **Do not sit and wait for it.** Confirm the hang (its ranks at ~100% GPU with *no* forward progress —
+  `etimes` climbing far past the expected wall-clock, output log idle), then **reap it with your own
+  hands** using the reap command above (it is `ppid==1` under your `state_dir` with a mega signature the
+  moment its launcher dies — or kill the live `torchrun`/`test_mega_moe_v2` process group directly if the
+  parent is still alive). A hung bench you leave running **pins all 8 cards and starves every other lane**
+  (this exact self-hang once held the pool ~4.3 h and was misread as "foreign contention").
+- Then **record a liveness veto** on that arm (`arm=<name> deadlocked on-card, reaped, vetoed`), keep its
+  source tree committed/untouched, and move on to the next candidate. A deadlocked arm is a *fault to
+  veto*, never a result to keep waiting for.
+- Always run on-card work through `gpu_lock.sh` with a real `--run-timeout` (the wrapper now killpg's the
+  child group **and** sweeps the reparented ranks on timeout, so a hang self-cleans at the cap) — never
+  launch a bare `torchrun`/`test_mega_moe_v2` outside the lease, or its hang will outlive every backstop.
+
 ## Mechanism
 
 Four separate launches enforce a **global barrier per stage boundary** that the algorithm does not
@@ -175,6 +292,10 @@ is not removable but it is *hideable*, and only a fused kernel can hide it under
 tokens.
 
 ## Procedure
+
+**Step 0 (every lease, do it yourself): reap your own GPU leaks.** Before you request a lease, YOU run
+the reap in "GPU-pool hygiene" above and confirm the cards dropped toward 0%. Never dead-wait on a busy
+pool — clean up your own orphans first, then acquire. This is your responsibility, not the scheduler's.
 
 Build the fused path **behind `AITER_MEGAMOE_FUSE_ALL=1`** (`mega_moe_v2.py:433`) with the scattered
 path retained, so it is measurable as a one-flag A/B and doubles as the run's positive control. In mega
@@ -554,6 +675,140 @@ clean A/B). Derived entirely from the in-tree modifiable files (`mega_moe_stage1
 This is the site-3 serializer removed. Sites 1, 2, 4 remain *derived targets* to attack on the floor that
 now sits at +1.322× — attack one serializer per lease, positive-control the overlap meter first, fold each
 back here as confirmed exactly as this rung was.
+
+#### Attack order + confirm-vs-search grade per site — spend leases where the answer is NOT yet known
+**Why this subsection exists.** The four sites are NOT equally expensive to land. Two axes are being
+conflated when the lane "just measures everything each round": the **topology/correctness** axis (fixes
+1–6, folded, `relL2` proven — carry it forward, NEVER re-measure it) and the **concurrency** axis (sites
+1/2/4, the only place the ~4.5× lives). Within the concurrency axis, some sites are **confirm-grade** (the
+lowering-safe realization is fully specified here → author it and measure ONCE to confirm it landed +
+didn't regress `relL2`), and some are **search-grade** (a hardware-empirical constant — split ratio,
+pipeline depth — has no derivable value on this silicon/shape, so it needs a SHORT bounded sweep, a
+handful of points, not one confirm and not an open search). Grade each BEFORE you take the lease, and
+never burn a lease re-deriving a confirm-grade site or re-measuring the folded floor.
+
+**Order (cheapest-certain first), with grade and the ONE thing to measure:**
+
+1. **Site 4 — 8-wave GEMM2 (reclaim waves 4–7). CONFIRM-grade. Attack FIRST.** The realization is already
+   fully specified above (advance the high half's B-address / epilog-column base by `+BN` so waves 4–7
+   compute the next n-block's cols 256–511 instead of recomputing 0–255). It is a **direct extension of
+   the confirmed fix 6** — same n-block addressing, no new subsystem, no new fault class. So it is one
+   authoring pass + ONE paired measurement (fine_ready floor vs +site4), expecting ~2× on the GEMM2
+   role's wave-throughput. Do NOT sweep it — there is no free constant; it either doubles useful wave
+   work at unchanged `relL2` or it doesn't. Cheapest certain win → do it before the harder two.
+
+2. **Site 1 — dynamic/load-proportional CU-role partition. SEARCH-grade (bounded). Attack SECOND.** The
+   METHOD is derivable (claim role from a work-pool head sized to actual per-stage tile counts, so neither
+   role strands CU width). The **split policy is the empirical knob** — a static 50/50 idles under phase
+   imbalance, but the right proportion is hardware/shape-specific and CANNOT be lifted from M2.5 source.
+   So this is a **short bounded sweep**: a few points (e.g. static-50/50 as control → work-pool-dynamic →
+   at most one or two proportion variants), each one paired measurement, STOP at the first that clears the
+   overlap meter and holds `relL2`. Bounded, not open — 3–4 measurements, not a round each.
+
+3. **Site 2 — deeper per-WG software pipelining (more tiles/k-chunks in flight, occupancy pinned at 1
+   WG/CU). SEARCH-grade + HIGHEST fault risk. Attack LAST of the three.** Depth is empirical AND this axis
+   is the most pressure-coupled (the cut4 / hot-loop-fence faults were all regalloc-under-pressure; adding
+   in-flight state raises exactly that pressure). MUST keep calling `gemm2_compute_v2` byte-for-byte
+   (the preserved-invariant note below) — do not hand-roll a de-pipelined loop. Bounded depth sweep
+   (depth d vs d+1 …), back off the instant `relL2` or a device fault appears; a depth that faults is not
+   a data point to push through.
+
+*Cross-rank readiness edge (Step 1) stays where it is: OPTIONAL, hardware-gated, measured regression on
+MI355X — attack only if a trace shows an exposed cross-rank tail AFTER sites 1/2/4 land, never as a
+headline.*
+
+**SEED the search-grade knobs from the reachable in-tree validated constants — do NOT sweep from zero.**
+Validated experience IS reusable when it lives in the in-tree baseline. Before any site-1/site-2 sweep,
+read the KNOWN-GOOD constant out of the reachable scattered / FUSE_ALL path and use it as the sweep's
+CENTER, so the search collapses to a 1–2 point confirm around a validated seed instead of an open scan:
+- **Site 1 seed:** the scattered path already runs each stage at full width with a tuned budget —
+  `launch_cu_num = min(cu_num, persist_cu)` and `grid_blocks = launch_cu_num` (`mega_moe_stage2.py:565,575`).
+  Seed the dynamic partition's role sizes from the ACTUAL per-stage tile counts (GEMM1 vs GEMM2 work-pool
+  depths at the target route) rather than a blind 50/50 — the tile counts are computed in-tree, so the
+  proportion has a validated starting point. Confirm one step off the seed, not a scan.
+- **Site 2 seed:** the scattered stages carry a tuned `grid_mult>1` and a k-chunk staging depth that are
+  the validated latency-hiding budget (`mega_moe_v2.py:291`, `gemm2_compute_v2` k-loop). Seed the
+  co-resident pipeline depth from that same staging depth (translated to in-flight-tiles-per-WG since
+  occupancy is pinned at 1 WG/CU), then confirm ±1, backing off on pressure fault.
+This is the legal form of "borrow the validated constant": the seed comes from the reachable in-tree
+known-good, never from a hand-authored M2.5 source tree (that tree stays un-read/-copied/-diffed — the
+provenance rule; a constant that exists ONLY there must be re-measured, not lifted). A seed from in-tree
+turns a search-grade site into a near-confirm; it does NOT eliminate the one on-card confirm (the seed is
+validated in the scattered layout, not yet in the co-resident one).
+
+#### Validated reference constants (TEMPLATE) — in-tree geometry + on-card measured, NOT from any M2.5 source
+Author the grid with these as concrete starting values instead of re-deriving them. Every number here is
+either the reachable in-tree baseline's own constant or a result WE measured on-card in this lane — none
+is lifted from a hand-authored M2.5 tree. Target route = `tokens_per_rank=8192`, `uniform`, `a8w4`,
+`gfx950/MI355X` unless noted.
+
+*Grid / co-residency (in-tree):*
+- CU budget `256` (gfx950); under `AITER_MEGAMOE_FUSE_ALL=1` force `grid_mult=1` → `1 WG/CU` co-resident
+  (scattered path keeps its tuned `grid_mult>1`). Whole-grid `ready1` barrier legal only when
+  participant count == resident count.
+- Stage1 (GEMM1) LDS `159744 B` (97.5% of a CU) → 1 WG/CU; Stage2 (GEMM2) LDS `66560 B`. They CANNOT
+  co-reside → the CU-role partition (site 1) is mandatory, seed role sizes from these footprints + the
+  256-CU budget.
+- Whole 4-kernel launch cost `≈6.4 µs` (~0.1% of skew runtime) — launch-count is NOT the win.
+
+*Tile geometry (in-tree, the TARGET route):*
+- `SBM=128`, `g2_BM=64`, `kMChunks(kMChunks)=4`, `BN=256`, `wave_n = BN//4`. Small shapes (bs=128/512)
+  route through `BM=32` — an EASIER GEMM2 path; gate on the `BM=64` target, never on bs=128.
+- GEMM1 native `num_waves=8` (`_select_large_stage1`, all buckets); GEMM2 tile native `4` waves;
+  scattered stage2 launches `block=(256,1,1)` = exactly 4 waves. Fused grid inherits 8 → clamp GEMM2
+  addressing to `(wave & 3)` (fix 6); site 4 = give waves 4–7 the next n-block (`+BN`).
+- Arrival counter sharded `~64` ways; Int64 ticket slot stride `8 B`, Int32 gate/expected stride `4 B`.
+
+*On-card measured in THIS lane (our evidence, freely writable):*
+- Correctness floor (coarse barrier): `~0.23×` scattered = `19.885 ms` rank-max @8192_uniform;
+  `relL2 ≈ 0.0592` at bs=8192 (byte-for-byte the scattered number), `≈0.053` at bs=128/512, `path=MEGA`×8.
+- Site 3 (`MEGA_FINE_READY=1`, folded): `15.042 vs 19.885 ms` paired = **+1.322×**, `relL2` intact.
+- Scattered baseline `≈4.56 ms`; skew barrier p95 `191 µs`(uniform)→`876.6 µs`(skew); no-payload control
+  `2.5205→1.5568 ms` (−38.2%, the hideable P2P tail); optional cross-rank edge REGRESSION `2.0777→2.2334 ms`.
+
+*Recorded TARGET band (yardstick only, NOT an answer to transcribe):* M2.5 `+4.71%` = `1.047×` @8192_uniform,
+`+1.49%` @512_uniform; `isolated 1.0448`. This is the bar to BEAT, measured by the workflow's own kernel.
+
+*Site-1 / Site-2 seed constants from the M2.5 reference (operator-directed, build-time authoring; the
+WORKFLOW still never reads the reference at runtime — that guardrail is unchanged).* These are M2.5's own
+validated tuning values, recorded here so the lane seeds directly instead of searching:
+
+- **Site-1 — persistent CU budget `persist_cu` (per token bucket, M2.5-validated):** bucket `8192` (the
+  TARGET route) → **`persist_cu = 240`** of 256; `256 → 128`; `1024 → 224`; `2048 → 256`; `16384 → 192`;
+  otherwise `240`. Skew route adds `skew_cu = 96` (bucket ≥ 512). Role split (`mega_moe_fused_s2c`):
+  Stage2-role blocks `[0, launch_cu_num*num_n_blocks)`, combine-role blocks after — dispatched in
+  increasing block index so Stage2 always drains before combine goes co-resident.
+- **Site-2 — pipeline depth (M2.5-validated):** GEMM2 runs a **2-stage B pipeline** (consume the carried
+  "current" tile's B while prefetching the NEXT tile's B into rotating fragments = depth-2 double buffer),
+  with `g2_ascale_pf=True` (A-scale prefetched one tile ahead too) and `pipe_weights=True`. K staging is
+  `kMChunks = BM//16` (BM=64 → 4). So seed the co-resident pipeline at **depth 2 (one-tile-ahead
+  prefetch)**, not deeper, then confirm ±1 under the 1-WG/CU pressure ceiling.
+
+**HONEST use-caveat (label, not equivalence-check).** M2.5's winning architecture IS the single
+fully-fused persistent megakernel — `launches=2` (`quant` + ONE fused kernel; combine folded as a THIRD
+queue in the same persistent loop, `AITER_MEGAMOE_FUSE_COMBINE` default ON, `ret=None`). This is the SAME
+shape as the floor here, NOT a separate-launch design. What is "separate" is INTERNAL to that one kernel:
+GEMM1 and GEMM2 CANNOT share a CU (GEMM1 LDS `159744 B`, per *Grid / co-residency* above), so they run on
+**separate CU-ROLE partitions WITHIN the single fused kernel** (site 1), each claiming its own slice of the
+256-CU budget. So use `persist_cu=240` as the per-ROLE **CU-budget seed** for site 1 (how many of the 256
+CUs the GEMM role claims inside the one fused kernel), NOT as a ratio for two GEMMs co-residing on the SAME
+CUs, and NOT as evidence for a separate stage1/stage2 launch. The seed still needs its one on-card confirm
+in the fused layout. **Do NOT confuse M2.5's combine fold (default ON — the win, gets you `launches=2`)
+with the separate, OPTIONAL, DEFAULT-OFF Stage2+combine role-split / cross-rank readiness-edge experiment
+(`mega_moe_fused_s2c`), which is a measured regression (`2.0777→2.2334 ms @8192_uniform`, recorded above).**
+That regression is the s2c/cross-rank edge, NOT M2.5's combine fold — it is not a reason to avoid folding
+combine. *Provenance: site-1/2 seeds read from the M2.5 reference tree at `/sgl-workspace/mega_ref` under
+explicit operator direction (build-time skill authoring). Results using them report **reference-seeded**,
+not autonomous discovery.*
+
+**The measurement-economy rule (this is the "save testing time" the axes buy you).** Do NOT re-run the
+full matrix every round. Each lease measures exactly (a) the ONE site under attack, paired against (b) the
+current committed floor as its own control — nothing else. The folded rungs (fixes 1–6, site 3, and each
+site once confirmed) are CARRIED, not re-measured; a `relL2` re-check on the target route (bs=8192/BM=64)
+is the only correctness gate that repeats. Confirm-grade sites cost 1 measurement; search-grade sites cost
+a bounded handful; the topology floor costs 0 (already proven). That is the whole economy: pay on-card
+ONLY for the empirical concurrency payoff that no skill and no reference constant can hand you, and pay it
+once.
 
 **Two second-order axes, RESOLVED by in-tree inspection (do not chase them as open levers).** An audit
 asked whether intra-stage inner-loop tuning and occupancy are additional un-deconstructed gaps. They are

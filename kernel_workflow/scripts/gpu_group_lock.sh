@@ -103,9 +103,24 @@ else
     REQUEST_ARGS+=(--pool "$POOL_IDS" --count "$GPU_COUNT")
 fi
 
+# Reap OUR OWN leaked mega workers when the pool is busy, instead of dead-waiting to
+# timeout (a self-inflicted busy pool starved 9 consecutive rounds once). gpu_lease.py
+# only ever kills ppid==1 orphans, in our namespace, whose cwd is under this root and
+# whose cmdline matches a mega-worker signature -- foreign/unattributable procs are
+# untouched. Root at the run's state_dir so every candidate tree is covered; derive it
+# from the candidate-tree cwd (<state_dir>/candidates/<name>/tree) when not set.
+REAP_ROOT="${GEAK_GPU_REAP_ROOT:-}"
+if [ -z "$REAP_ROOT" ]; then
+    case "$PWD" in
+        */candidates/*/tree) REAP_ROOT="${PWD%/candidates/*/tree}" ;;
+        *) REAP_ROOT="$PWD" ;;
+    esac
+fi
+
 exec python3 "$SCRIPT_DIR/gpu_lease.py" run \
     "${REQUEST_ARGS[@]}" \
     --lock-dir "${GEAK_GPU_LOCK_DIR:-/tmp/team_gpu_locks}" \
+    --reap-root "$REAP_ROOT" \
     --wait-timeout "$WAIT_TIMEOUT" \
     --run-timeout "$RUN_TIMEOUT" \
     --term-grace "$TERM_GRACE" \
