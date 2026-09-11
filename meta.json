@@ -1,5 +1,5 @@
 {
-  "task_name": "triton2flydsl_gemm_fp8blk_n4096_k512",
+  "task_name": "triton2flydsl_gemm_fp8blk_n4096_k2048",
   "op_kind": "gemm",
   "language": "triton",
   "live_backend": "triton",
@@ -9,7 +9,7 @@
   ],
   "math_contract": "Y[M,N] = (X[M,K]*x_scale) @ (W[N,K]*w_scale).T with 128x128 fp8 block-scale dequant, fp32 accumulation, bf16 output",
   "dtype": "fp8_e4m3fnuz_blockscale",
-  "regime": "MI300/gfx942 Dense GEMM W=fp8/A=fp8; N=4096, K=512; decode M=8 + prefill M=32768 (one kernel, two cases)",
+  "regime": "MI300/gfx942 Dense GEMM W=fp8/A=fp8; N=4096, K=2048; decode M=8 + prefill M=32768 (one kernel, two cases)",
   "entry_point": "kernel_src:gemm",
   "baseline_callable": "baseline_src.gemm_fp8_blockscale:gemm",
   "baseline_frozen": true,
@@ -22,20 +22,20 @@
       "sig": "decode_m8",
       "m": 8,
       "n": 4096,
-      "k": 512,
+      "k": 2048,
       "seed": 1008
     },
     {
       "sig": "prefill_m32768",
       "m": 32768,
       "n": 4096,
-      "k": 512,
+      "k": 2048,
       "seed": 33768
     }
   ],
-  "baseline_src_sha256": "75af0cfb89fb35b05deea693eb7bfbaf3025a07006548d599223e44a38417e56",
+  "baseline_src_sha256": "8fab737073dd0337bfe9942593ba47a390ae53eca6fe501cc884b44d5a4f7183",
   "harness_lib_sha256": "fe8e18f4cba1313cc5033ae47950fb6154f6680e050d77436f7c5bb4095fd7f2",
   "unittest_sha256": "05e7a89321b1432f8028adc5fc6cfb17b941cfe2d0f63f7bfa499fc0af7f9c72",
   "reference_io_sha256": "",
-  "notes": "MI300/gfx942 Dense fp8 block-scale GEMM, weight (N=4096,K=512). Denominator: aiter-Triton gemm_a8w8_blockscale with gfx942 GEMM-A8W8_BLOCKSCALE config frozen per M for decode(M=8) and prefill(M=32768); 128x128 block scales; no mutable tuning DB consulted at eval. One FlyDSL kernel scored on both cases (geomean); ON-only, 10 author lanes."
+  "notes": "MI300/gfx942 Dense fp8 block-scale GEMM, weight (N=4096,K=2048). Denominator: aiter-Triton gemm_a8w8_blockscale with gfx942 GEMM-A8W8_BLOCKSCALE config frozen per M for decode(M=8) and prefill(M=32768); 128x128 block scales; no mutable tuning DB consulted at eval. One FlyDSL kernel scored on both cases (geomean); ON-only, 10 author lanes."
 }
