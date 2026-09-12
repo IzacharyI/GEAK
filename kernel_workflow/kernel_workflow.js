@@ -276,6 +276,23 @@ const MEGA_TOPOLOGY_LEVERS = String(A.mega_topology_levers != null ? A.mega_topo
 // is byte-identical to the pre-Stage-5 lane. Search lanes never see it. This is the lever aimed at goal 2
 // ("M2.5 a STABLE candidate") in the standing goal hierarchy.
 const MEGA_STABILITY_EDIT = String(A.mega_stability_edit != null ? A.mega_stability_edit : 'false') === 'true';
+// Staged-authoring authorization (default OFF = byte-identical prompt). The validated_skill lane in the
+// PRODUCTION workflow reliably scaffold-and-bails: it emits its StructuredOutput to end the turn far under
+// its lease (2-min turns observed, gpu_used=false, HEAD unmoved from the scaffold) because the skill's
+// "author the COMPLETE 2-launch topology in one design" doctrine reads as all-or-nothing, so the agent
+// declines to author the body at all. The stand-alone derive-smoke (which STRIPPED that escape: forbid
+// scaffold-and-bail + STAGED on-card build+run each stage) reached STAGE 3 on-card (path=MEGA x8,
+// relL2=0.0298) and is folding combine — proving the blocker is the turn discipline, not authorization or
+// skill content. When this flag is ON, ONLY the validated_skill lane gets an explicit STAGED-AUTHORING
+// authorization appended to its Engineer prompt: forbid scaffold-and-bail, author the NEXT single stage
+// (dispatch -> +GEMM1 -> +flat GEMM2 grid coarse-barrier -> +combine 3rd ticketed queue -> ret=None launch
+// drop), build+run it on-card before emitting, commit the verified stage, carry next_blocker to the next
+// stage. Intermediates stay candidate_status:"authoring" fault-localizers, NEVER returned runnable/scored
+// and NEVER a committed terminal topology (the "no intermediate terminal" rule is preserved). OFF (default):
+// the appended block is '' -> the prompt and resume cache-key are byte-identical to the pre-flag lane, and
+// search lanes (role=engineer, not mega_engineer) never see it. This is the lever aimed at goal 3 / the
+// autonomous close-loop: make mode=mega itself DERIVE M2.5 instead of hand-driving a smoke.
+const MEGA_STAGED_AUTHORING = String(A.mega_staged_authoring != null ? A.mega_staged_authoring : 'false') === 'true';
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
 // the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
 // graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
@@ -532,6 +549,15 @@ if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis 
 //                    perf bench emphasizes so the isolated target aligns with e2e.
 //   MAX_NO_IMPROVE   consecutive non-improving rounds before stopping (default 2 = current behavior).
 const STATE_DIR = String(A.state_dir || '').replace(/\/+$/, '');
+// Fast-test cache (mega + STATE_DIR only): see the "Fast-test cache" helpers before the Benchmark
+// phase. Default OFF = byte-identical; inert without a STATE_DIR to persist across waves. When ON it
+// REUSES a prior wave's front-matter measurements (positive-control calibration + profile replays) —
+// the ~40min on-card cost of the front matter — GATED on a validity key. It NEVER touches the scoring
+// denominator: the per-candidate paired A/B re-pins the scattered baseline fresh every turn (see the
+// "Benchmark is NEVER incremental" note below and pairedGuardReadout), so cached front-matter numbers
+// are advisory context + the instrument-validity gate ONLY, never the number a speedup is divided by.
+const MEGA_FAST_TEST = MODE === 'mega' && !!STATE_DIR &&
+  String(A.mega_fast_test != null ? A.mega_fast_test : 'false') === 'true';
 const SHARED_KB = String(A.shared_kb || '').trim();
 const GLOBAL_KB = String(A.global_kb || '').trim();   // run-global cross-KERNEL technique blackboard (deep)
 const E2E_FEEDBACK = String(A.e2e_feedback || '').trim();
@@ -687,6 +713,26 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   provenance: { type: 'string' },
   next_blocker: { type: 'string' },
   notes: { type: 'string' },
+  // Optional single-lever A/B switch declaration, mirroring ENG_SCHEMA.activation. The mega lane gates
+  // each concurrency serializer (e.g. SITE-3 fine-ready) behind a DEFAULT-OFF env flag; declaring it here
+  // as {mode:"switch", switch_name, switch_value} lets verify export it in the CANDIDATE arm only (base
+  // arm stays serial) so the authored lever is actually MEASURED instead of reading as the serial floor.
+  // Only threaded to verify when MEGA_TOPOLOGY_LEVERS is on → absent/off is byte-identical to before.
+  activation: obj({
+    mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
+    path_marker: { type: 'string' }, marker_how: { type: 'string' },
+    // COUPLED multi-lever activation (MEGA_TOPOLOGY_LEVERS deep-fusion lane). M2.5's speedup is NOT any
+    // single lever — it is the concurrency SITES co-designed and always-on as ONE grid, and measured
+    // one-at-a-time each site fails (SITE-3-alone regresses, SITE-1-static is a dud, SITE-2 was never
+    // attempted). So the deep lease authors SITE-1-dynamic + SITE-3-fine + SITE-2-pipeline TOGETHER and
+    // declares EVERY lever here; verify (4d) then exports the WHOLE set in the CAND arm only so the
+    // coupled grid is measured, not the serial floor. The single switch_name/switch_value above stays
+    // valid for a lone-lever turn; switches[] is the coupled form (honored when mode:"switch").
+    switches: {
+      type: 'array',
+      items: obj({ switch_name: { type: 'string' }, switch_value: { type: 'string' } }, []),
+    },
+  }, []),
 }, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete']);
 
 // Mismatch #2 fix (Stage-3 foundation). A structured, MULTI-LEVER description of a WHOLE fused-kernel
@@ -1016,6 +1062,30 @@ const MEGA_ANALYSIS_SCHEMA = obj({
   fusion_note: { type: 'string' },       // fusion-aware "what to overlap/fuse next" (replaces roofline per-stage call)
   summary_path: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
+
+// Fast-test cache LOAD result (mega only). The load agent reads STATE_DIR/fast_test_cache, recomputes
+// the CURRENT validity key from disk (frozen base revision + bench harness hash + control spec + guards)
+// and compares it to the key stored beside the cached artifacts. `key_valid` is the honesty gate:
+// ONLY an exact match may reuse a prior wave's on-card measurements. `bench`/`analysis` carry the
+// reconstructed payloads (same shape the live Benchmark/Profile agents return — obj() allows the full
+// field set through additionalProperties) so the script splices them in with NO downstream change.
+const FAST_TEST_LOAD_SCHEMA = obj({
+  cache_present: { type: 'boolean' },   // any cache artifact found at all
+  key_valid: { type: 'boolean' },       // cache present AND its stored key matches the current key
+  current_key: { type: 'string' }, cached_key: { type: 'string' },
+  note: { type: 'string' },
+  bench: { type: 'object', additionalProperties: true },     // reconstructed BENCH_SCHEMA payload (CACHE_KIND=bench)
+  analysis: { type: 'object', additionalProperties: true },  // reconstructed MEGA_ANALYSIS payload (CACHE_KIND=profile)
+}, ['cache_present', 'key_valid']);
+
+// Fast-test cache PUBLISH result (mega only). The publish agent copies THIS wave's freshly-measured
+// artifacts (baseline_timing.json, setup_ab_control*.json, COMMANDMENT.md, mega_analysis/*.json) into
+// STATE_DIR/fast_test_cache and writes fast_test_key.json = the validity key computed from disk.
+const FAST_TEST_PUBLISH_SCHEMA = obj({
+  published: { type: 'boolean' }, key: { type: 'string' },
+  cache_dir: { type: 'string' }, files: { type: 'array', items: { type: 'string' } },
+  note: { type: 'string' },
+}, ['published']);
 
 const ANALYSIS_RESULT_SCHEMA = obj({
   status: { type: 'string', enum: ['ready', 'degraded'] },
@@ -3697,10 +3767,62 @@ const KK_LANGUAGE = (analysis && analysis.kk_language) || '';
 const KK_REFS = (analysis && Array.isArray(analysis.kk_refs)) ? analysis.kk_refs : [];
 
 // ===========================================================================
+// Fast-test cache (mega + STATE_DIR). Skips the expensive on-card front matter (positive-control
+// calibration + profile replays) by REUSING a prior wave's measurement artifacts, GATED on a validity
+// key. All disk I/O goes through an agent (scripts have no fs), reusing the benchmark_engineer role
+// that already reconstructs the return JSON from disk in PHASE=recover. When MEGA_FAST_TEST is OFF
+// both helpers make NO agent() call and return null/undefined, so the agent() call sequence — and thus
+// the resume cache key — is byte-identical to the pre-feature build.
+const FAST_TEST_CACHE_DIR = STATE_DIR ? `${STATE_DIR}/fast_test_cache` : '';
+async function fastTestCacheLoad(kind /* 'bench' | 'profile' */) {
+  if (!MEGA_FAST_TEST) return null;
+  const res = await agentT(
+    roleAgent('benchmark_engineer', 'fast_test_load',
+      `FAST-TEST CACHE LOAD (${kind}). NO GPU, NO lease: read the cache and validate its key, measure ` +
+      `nothing. Reconstruct the ${kind === 'bench' ? 'benchmark' : 'mega_analysis'} payload from the ` +
+      `cached artifacts ONLY if the stored key matches the key you recompute from disk now.`, {
+        CACHE_DIR: FAST_TEST_CACHE_DIR, CACHE_KIND: kind, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR,
+        FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+        BENCH_HARNESS: `${CANONICAL}/op_tests/multigpu_tests/bench_mega_moe_v2.py`,
+        TARGET_GUARDS, REGRESSION_GUARDS,
+        ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
+      }),
+    { phase: 'Benchmark', label: `fast_test_load:${kind}`, schema: FAST_TEST_LOAD_SCHEMA,
+      timeout_ms: 300000, max_retries: 1 });
+  if (!res || res.key_valid !== true) {
+    log(`Fast-test cache MISS (${kind}): ` +
+        `${res ? (res.note || (res.cache_present ? 'stored key mismatches current key' : 'no cache on disk')) : 'load agent returned nothing'}` +
+        ` — running the real ${kind} phase fresh (and re-publishing).`);
+    return null;
+  }
+  log(`Fast-test cache HIT (${kind}): reusing prior on-card artifacts (key ${String(res.cached_key || '').slice(0, 12)}…). ${res.note || ''}`);
+  return res;
+}
+async function fastTestCachePublish() {
+  if (!MEGA_FAST_TEST) return;
+  const res = await agentT(
+    roleAgent('benchmark_engineer', 'fast_test_publish',
+      'FAST-TEST CACHE PUBLISH. NO GPU, NO lease: copy THIS wave\'s freshly-measured artifacts into the ' +
+      'cache and write the validity key, so a later fast-test wave can reuse them. Copy files, measure ' +
+      'nothing.', {
+        CACHE_DIR: FAST_TEST_CACHE_DIR, EVAL_DIR, MEGA_ANALYSIS_DIR: `${EVAL_DIR}/mega_analysis`,
+        SKILL_DIR: WORKFLOW_DIR, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+        BENCH_HARNESS: `${CANONICAL}/op_tests/multigpu_tests/bench_mega_moe_v2.py`,
+        TARGET_GUARDS, REGRESSION_GUARDS,
+        ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
+      }),
+    { phase: 'Profile', label: 'fast_test_publish', schema: FAST_TEST_PUBLISH_SCHEMA,
+      timeout_ms: 300000, max_retries: 1 });
+  if (res && res.published) log(`Fast-test cache PUBLISHED to ${res.cache_dir || FAST_TEST_CACHE_DIR} (key ${String(res.key || '').slice(0, 12)}…, ${(res.files || []).length} files).`);
+  else log(`Fast-test cache publish did not complete: ${res ? (res.note || 'no confirmation') : 'agent returned nothing'}.`);
+}
+
+// ===========================================================================
 // PHASE: Benchmark setup (Benchmark Engineer)
 // ===========================================================================
 phase('Benchmark');
-const bench = await agentT(
+const benchCache = await fastTestCacheLoad('bench');
+const bench = benchCache ? benchCache.bench : await agentT(
   roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
@@ -4061,7 +4183,10 @@ if (MODE === 'mega' && PC_PASSED) {
 // ===========================================================================
 phase('Profile');
 let profileSummary;
-if (MODE === 'mega') {
+const profileCache = await fastTestCacheLoad('profile');
+if (profileCache) {
+  profileSummary = profileCache.analysis;
+} else if (MODE === 'mega') {
   // MEGA-NATIVE ANALYSIS (replaces the generic rocprof roofline). The roofline classifies a fused
   // megakernel WRONG: under co-resident fusion the stage1 and stage2_combine timers both RISE while
   // rank-max e2e falls (combine folded into the megakernel, its barrier deleted), so a "per-stage got
@@ -4083,9 +4208,14 @@ if (MODE === 'mega') {
       ...RESUME_INPUT,
     }),
     { phase: 'Profile', label: 'profile_engineer:mega_analysis', schema: MEGA_ANALYSIS_SCHEMA,
-      // 900s: the native analysis leases the 8-GPU group and runs bench_mega_moe_v2.py three times
-      // (rank-json / xgmi / combine-wait replays). One-time pre-loop cost, does not draw MEGA_CLOCK_MS.
-      ...(MEGA_PRODUCTION ? { timeout_ms: 900000, timeout_marker: true, max_retries: 1 } : {}) });
+      // 2400s (40min): the native analysis leases the 8-GPU group and runs bench_mega_moe_v2.py THREE
+      // times (rank-json / xgmi / combine-wait replays). The prior 900s (15min) was marginal — three
+      // cold bench replays + JIT + lease acquisition ran right at the edge and a variance-slow run
+      // exceeded it (killed cont16/wf_73886e5f-394 on a fast_test analysis-cache MISS, dying in front
+      // matter before ANY candidate round; see memory mega-production-agent-timeouts). Raised to match
+      // the benchmark_engineer cap's generosity. One-time pre-loop cost, does NOT draw MEGA_CLOCK_MS, so
+      // a larger cap costs zero candidate rounds — it is a pure hung-guard ceiling.
+      ...(MEGA_PRODUCTION ? { timeout_ms: 2400000, timeout_marker: true, max_retries: 1 } : {}) });
 } else {
   profileSummary = await agentT(
     roleAgent('profile_engineer', 'baseline', 'Profile the baseline and classify the bottleneck.', {
@@ -4114,6 +4244,12 @@ if (profileSummary) {
   };
 }
 log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (dispatch_count=${profileSummary ? profileSummary.dispatch_count : '?'})`);
+
+// Persist this wave's front-matter measurements (benchmark + mega_analysis artifacts) into the
+// fast-test cache so a LATER `mega_fast_test` wave can skip re-measuring them. Only when at least one
+// front stage ran FRESH this wave — a full cache hit already reused an up-to-date cache. No-op (no
+// agent() call) when MEGA_FAST_TEST is off.
+if (MEGA_FAST_TEST && (!benchCache || !profileCache)) await fastTestCachePublish();
 
 // ===========================================================================
 // PHASE: Optimization loop (budget-controlled)
@@ -5225,6 +5361,65 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `Driving slow-state occupancy toward baseline is now an explicit promotion sub-goal alongside the ` +
       `M2.5 band; a stable in-band rank-max is the target, not a fast-state-only median. `
     : '';
+  // Staged-authoring: only the validated_skill lane, and only when authorized. When MEGA_STAGED_AUTHORING
+  // is false (default) this is '' -> the prompt is byte-identical to the pre-flag lane (resume cache-key
+  // preserved). Search lanes (role=engineer) never see it. Encodes the derive-smoke's winning discipline.
+  const stagedAuthoringBlock = (MEGA_STAGED_AUTHORING && source === 'validated_skill')
+    ? `STAGED-AUTHORING AUTHORIZED: do NOT scaffold-and-bail. This turn holds a real GPU lease; you may ` +
+      `NOT emit your structured result with only scaffolding, characterization, or planning as progress ` +
+      `while the pool is free — spend the lease EXECUTING. The complete 2-launch topology is the target, ` +
+      `but when it exceeds one turn, author the NEXT single stage in this fixed order: dispatch -> +GEMM1 ` +
+      `-> +flat GEMM2 (grid-wide GEMM1->GEMM2 coarse barrier) -> +combine as the 3rd ticketed queue -> ` +
+      `ret=None launch drop (launches==2). Before you emit, BUILD and RUN the current stage on-card ` +
+      `through the EP8 lease wrapper and record a real on-card result (path=MEGA, relL2, launches); commit ` +
+      `the verified stage; set next_blocker to the next stage. A staged build-up is a fault-localizer path, ` +
+      `NOT a deliverable: intermediates stay candidate_status:"authoring", are NEVER returned runnable or ` +
+      `scored, and are NEVER committed as a terminal topology. This SUPERSEDES reading the skill's "author ` +
+      `the complete topology in one design / do not invent intermediate half-fused topologies" (mega-mode ` +
+      `note #1) as a ban on TRANSIENT build stages: that note bans committing an intermediate SHAPE as a ` +
+      `carried-forward deliverable and bans FREELANCING low-level arithmetic (the actual r12 cause per ` +
+      `notes #2/#3), NOT verified staging. Implement the skill's EXACT arrival-ticket/epoch-parity/spin-wait ` +
+      `arithmetic (never freelance); per-stage on-card build+run CATCHES a latent substrate fault (the r12 ` +
+      `class, e.g. mega_moe_stage1.py spin-wait init) EARLIER than one all-at-once author, so staged ` +
+      `verification is the safer path, not the riskier one. Deadlock rule: if an on-card arm hangs past ` +
+      `its command timeout it is a cross-rank/grid-barrier deadlock on a mis-authored arrival-ticket / ` +
+      `epoch-parity edge — let the wrapper reap it, diagnose the address arithmetic, do not wedge the pool. ` +
+      `Only a real on-card [RESULT] counts; never narrate an unmeasured launches=2. `
+    : '';
+  // ACTIVATION-SWITCH channel (default-off, gated by MEGA_TOPOLOGY_LEVERS). The load-bearing fix for
+  // "authored concurrency never speeds up": a concurrency serializer gated behind a DEFAULT-OFF env flag
+  // measures byte-identical to the serial floor unless verify exports that flag in the candidate arm. The
+  // inherited (ENG_SCHEMA) path already does this via activation.mode:"switch"; the mega lane never had
+  // the channel. Instruct the lane to DECLARE its lever as an activation switch so verify (step 4d) sets
+  // switch_name=switch_value for the CAND arm only and leaves the base arm serial for a true A/B contrast.
+  const activationSwitchBlock = (MEGA_TOPOLOGY_LEVERS && source === 'validated_skill')
+    ? `COUPLED-CONCURRENCY ACTIVATION REQUIRED (this is a DEEP-FUSION lease — do NOT do one lever per turn). ` +
+      `M2.5's +4.71% is NOT any single lever: it is the concurrency SITES co-designed and ALWAYS-ON as ONE ` +
+      `grid. Measured one-at-a-time each site FAILS and that is a trap you have already fallen into — ` +
+      `SITE-4 useful8 helps (~7.35ms) but SITE-3 fine-ready ALONE regresses (it only adds atomic traffic ` +
+      `with nothing to overlap until a real producer/consumer partition exists), SITE-1 as a STATIC tail% ` +
+      `partition is a measured DUD (partition-on-serial-dep null), and SITE-2 pipelining was never attempted. ` +
+      `The sites are COUPLED: SITE-3's overlap needs SITE-1's real partition to have anything to overlap, and ` +
+      `SITE-2's deeper pipeline raises the register/LDS pressure SITE-3's fences must survive. So in THIS ` +
+      `lease author them TOGETHER as one grid: (1) SITE-1 as a DYNAMIC / load-proportional CU partition — ` +
+      `claim role from the work-pool head sized to the ACTUAL per-stage tile counts, NOT the static tail% that ` +
+      `already measured a dud — gated AITER_MEGAMOE_ROLE_PARTITION; (2) SITE-3 fine per-SBM readiness that ` +
+      `ACTUALLY overlaps GEMM1||GEMM2 on that partition, gated AITER_MEGAMOE_FINE_READY; (3) SITE-2 depth-2 ` +
+      `per-WG software prefetch pipeline behind a new DEFAULT-OFF flag (e.g. AITER_MEGAMOE_PIPELINE_DEPTH). ` +
+      `Rule the build with the in-kernel PHASE METER (skill "overlap_instrument" / phase-meter section): ` +
+      `measure REAL GEMM1||GEMM2 overlap, never per-stage roofline (stage timers rise while e2e falls). ` +
+      `Gate EACH lever behind its own DEFAULT-OFF env flag AND declare ALL of them together as ` +
+      `activation:{mode:"switch", switches:[{switch_name:"AITER_MEGAMOE_ROLE_PARTITION",switch_value:"1"}, ` +
+      `{switch_name:"AITER_MEGAMOE_FINE_READY",switch_value:"1"}, {switch_name:"<SITE2_FLAG>",switch_value:"1"}], ` +
+      `path_marker:"<a string grep finds on the concurrent path>", marker_how:"<the grep/command>"}. ` +
+      `WHY: verify runs a paired A/B; with mode:"switch"+switches[] it exports the WHOLE set for the CANDIDATE ` +
+      `arm ONLY and leaves the base arm serial, so the COUPLED grid is finally MEASURED. If you declare only ` +
+      `one switch (or leave activation UNDECLARED), verify measures the rest OFF → your candidate reads as the ` +
+      `~0.447x serial floor no matter how correct the code is (this is exactly why r3:a50 authored fine-ready ` +
+      `yet measured 10.5ms). Staged on-card build+run each lever as you add it (catch the r12-class substrate ` +
+      `fault early), but the DELIVERABLE arm has ALL coupled levers ON together. Return the activation object ` +
+      `with switches[] alongside topology_sig. `
+    : '';
   const existing = megaCandidateById(candidateId);
   const baseCandidateId = (existing && existing.base_id) || d.base_candidate_id || 'frozen_baseline';
   const attempts = (existing ? existing.attempts : 0) + 1;
@@ -5272,6 +5467,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
       `lane root), correctness, absolute_score, per_case, topology_sig, next_blocker and notes. ` +
       stabilityEditBlock +
+      stagedAuthoringBlock +
+      activationSwitchBlock +
       `The entire candidate turn shares one ${Math.round(turnBudgetS)}s budget; this Engineer gets ` +
       `${engineerBudgetS}s and every GPU command is bounded by ${commandBudgetS}s. A timeout or ` +
       `force-emit returns claim_complete:false and status authoring; it is not score 0.`,
@@ -5365,6 +5562,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           REQUIRE_GRAPH_CAPTURE: '1',
           REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
           ACCURACY_METRIC, ACCURACY_THRESHOLD,
+          // Thread the lane's activation-switch declaration so verify (4d) exports the concurrency env
+          // flag in the CAND arm only. Gated by MEGA_TOPOLOGY_LEVERS: off → this input is absent →
+          // the verify prompt + agentT cache key are byte-identical to before (search lane unaffected).
+          ...(MEGA_TOPOLOGY_LEVERS
+            ? { ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED' }
+            : {}),
         }),
       { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: VERIFY_SCHEMA,
         timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });

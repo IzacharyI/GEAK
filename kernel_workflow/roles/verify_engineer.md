@@ -152,6 +152,14 @@ denominator.
      confirm the marker if one was given.
    - `mode: "switch"` → set `switch_name=switch_value` for the CANDIDATE arm only, and leave it unset
      for the base arm. Setting it for both is the same bug in a different place.
+     - **COUPLED form — `switches: [{switch_name,switch_value}, ...]`.** A deep-fusion candidate reaches
+       M2.5 only by turning on the concurrency SITES TOGETHER (SITE-1 dynamic partition + SITE-3 fine-ready
+       + SITE-2 pipeline are coupled; any one alone measures at or below the serial floor). When `switches`
+       is present you MUST export **every** `switch_name=switch_value` in the array for the CANDIDATE arm
+       only, all in the same environment, and leave the base arm with none of them. Exporting a subset is
+       the same void-experiment bug as exporting none: the coupled grid never runs and the candidate reads
+       the ~0.447x serial floor. Confirm each declared flag is actually set in the cand-arm command you run,
+       and record the full exported set (all names+values) in `activation_evidence`.
    - `UNDECLARED` → do not assume default-ON. Establish activation yourself: the cheapest reliable
      check is a temporary one-line marker at the entry of the changed function, or `git diff --stat`
      plus a profile/log observation showing the changed path in the run. If you cannot establish it
@@ -405,6 +413,14 @@ roofline — that the claimed `site1/site2/combine` knobs are the ones the kerne
 found in `launch_shape.stages_fused` and `notes`; a candidate whose realized topology does not match the
 levers it claimed is not a clean pass even if `launches_cand` hits the target. Absent levers are simply
 inherited from the base shape and need no separate check.
+
+A fused-megakernel concurrency lever (SITE-3 fine-ready, SITE-4 useful8, …) is gated behind a DEFAULT-OFF
+env flag, so it only runs when that flag is exported. The candidate declares it in `ACTIVATION` as
+`mode:"switch"` — honor step 4d exactly: export `switch_name=switch_value` for the CANDIDATE arm ONLY and
+leave the base arm serial. If you skip the switch, the cand arm runs the serial floor and you will
+(correctly, but uselessly) score the lever as no-change — so a candidate claiming `combine_mode:queue` or
+a `site*` lever with a switch declared MUST have that switch set in its arm, and you confirm via the
+bench's own instrumentation (never a per-stage roofline) that the concurrent path actually ran.
 Be skeptical and exact. Your number becomes the official round result.
 
 Write `evidence_manifest.json` only after every referenced log is closed, then atomically rename the

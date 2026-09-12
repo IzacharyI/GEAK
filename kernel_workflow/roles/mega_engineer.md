@@ -66,6 +66,39 @@ below a stable in-band rank-max.
   baseline rate is an explicit part of reaching `scored`. Commit the edit to this lane like any other WIP;
   never touch another lane.
 
+## Staged authoring (only when the prompt carries `STAGED-AUTHORING AUTHORIZED`)
+
+By default this lane may return `authoring` with only source/compile progress — which has repeatedly
+degenerated into **scaffold-and-bail**: a turn emits its structured result 2 minutes in, far under its
+lease, with the body never authored (`gpu_used=false`, HEAD unmoved from the scaffold), because "author
+the complete 2-launch topology in one design" is read as all-or-nothing. When — and only when — the
+Engineer prompt contains the literal phrase `STAGED-AUTHORING AUTHORIZED`, this discipline is in force:
+
+- **No scaffold-and-bail.** A turn holding a GPU lease may NOT emit its structured result with only
+  scaffolding, characterization, or planning as progress while the pool is free. Spend the lease
+  executing. If the lease was denied / the pool was contended, bank what exists and say so in `notes`.
+- **Author the NEXT single stage**, in this fixed order, when the complete fold exceeds one turn:
+  dispatch → +GEMM1 → +flat GEMM2 (grid-wide GEMM1→GEMM2 coarse barrier) → +combine as the 3rd ticketed
+  queue → `ret=None` launch drop (`launches==2`). Read `PRIOR_CANDIDATE.next_blocker` for where you are.
+- **Build + run on-card before you emit.** Compile and run the current stage through the EP8 lease
+  wrapper and record a real on-card result (`path=MEGA`, relL2, launches). Commit the verified stage;
+  set `next_blocker` to the next stage.
+- **Staging is a fault-localizer path, not a deliverable.** Intermediates stay `candidate_status:"authoring"`,
+  are NEVER returned `runnable`/`scored`, and are NEVER committed as a *terminal* topology — the terminal
+  target is always the complete 2-launch shape (this preserves the "no intermediate terminal topology"
+  rule above; a cut ladder localizes faults, it is not the candidate).
+- **This supersedes the skill's "one design / no intermediate topologies" as a ban on transient stages.**
+  Mega-mode note #1 bans committing an intermediate *shape* as a carried-forward deliverable and (notes
+  #2/#3) bans *freelancing* the low-level arithmetic — that freelanced arithmetic + an unhardened
+  `mega_moe_stage1.py` spin-wait init is the real r12 cause, NOT the act of staging. Implement the skill's
+  EXACT arrival-ticket/epoch-parity/spin-wait arithmetic; a per-stage on-card build+run CATCHES an
+  r12-class latent fault EARLIER than one all-at-once author, so verified staging is the safer path.
+- **Deadlock rule.** If an on-card arm hangs past its command timeout it is a cross-rank / grid-barrier
+  deadlock on a mis-authored arrival-ticket / epoch-parity edge — let the wrapper reap it, diagnose the
+  address arithmetic (implement the skill's spec exactly; hardening `mega_moe_stage1.py`'s spin-wait init
+  is in scope), do not wedge the pool. Only a real on-card `[RESULT]` counts; never narrate an unmeasured
+  `launches=2`.
+
 ## Inputs
 
 - `CANDIDATE_ID`, `CANDIDATE_SOURCE`, `BASE_CANDIDATE_ID`
@@ -132,6 +165,7 @@ missing latency, speedup, or replay counts. The orchestrator will recover a newe
   "absolute_score": 1.0448,
   "per_case": [{"name": "8192_uniform", "speedup": 1.0448}],
   "activation_on_hardware": "yes|no|unknown",
+  "activation": {"mode": "switch", "switches": [{"switch_name": "AITER_MEGAMOE_ROLE_PARTITION", "switch_value": "1"}, {"switch_name": "AITER_MEGAMOE_FINE_READY", "switch_value": "1"}, {"switch_name": "AITER_MEGAMOE_PIPELINE_DEPTH", "switch_value": "2"}], "switch_name": "AITER_MEGAMOE_FINE_READY", "switch_value": "1", "path_marker": "fine_ready gate", "marker_how": "grep in the built kernel / a log marker on the concurrent path"},
   "path_marker": "MEGA==8",
   "launches": 2,
   "liveness_replays": 30,
@@ -151,3 +185,33 @@ missing latency, speedup, or replay counts. The orchestrator will recover a newe
 `g2_waves=useful8` = the GEMM2 reclaim wave scheme, and any `site1_*/site2_*/combine_*` clause = the
 concurrency knob you set. If the direction carries a `DIRECTION.target_topology`, realize exactly those
 levers and echo them back; do not claim a lever in `topology_sig` that the kernel does not truly take.
+
+**AUTHOR THE COUPLED GRID AND DECLARE ALL ITS SWITCHES, or your concurrency work measures as the SERIAL
+FLOOR.** M2.5's +4.71% is NOT any single lever — it is the concurrency SITES co-designed and ALWAYS-ON
+as one grid. Measured one-at-a-time each site fails, and that is a trap already fallen into: SITE-4
+useful8 helps (~7.35ms) but SITE-3 fine-ready ALONE regresses (atomic traffic with nothing to overlap),
+SITE-1 as a STATIC tail% partition is a measured DUD (partition-on-serial-dep null), SITE-2 pipelining
+was never attempted. **The sites are COUPLED:** SITE-3's overlap needs SITE-1's REAL producer/consumer
+partition to have anything to overlap; SITE-2's deeper pipeline raises the register/LDS pressure SITE-3's
+fences must survive. So in a deep-fusion lease author them TOGETHER:
+- **SITE-1 as a DYNAMIC / load-proportional CU partition** — claim role from the work-pool head sized to
+  the ACTUAL per-stage tile counts, NOT the static tail% that already measured a dud — gate
+  `AITER_MEGAMOE_ROLE_PARTITION` (default `"0"`).
+- **SITE-3 fine per-SBM readiness that ACTUALLY overlaps GEMM1||GEMM2 on that partition** — gate
+  `AITER_MEGAMOE_FINE_READY` (default `"0"`).
+- **SITE-2 depth-2 per-WG software prefetch pipeline** — gate a new default-off flag, e.g.
+  `AITER_MEGAMOE_PIPELINE_DEPTH` (default `"1"` = off, `"2"` = one-tile-ahead).
+
+Rule the build with the in-kernel **PHASE METER** (see `overlap_instrument.md` / the skill's phase-meter
+section): measure REAL GEMM1||GEMM2 overlap, never per-stage roofline — stage timers rise while `mega_e2e`
+falls, so summing them is meaningless. Gate each lever behind its own DEFAULT-OFF flag so the runnable
+launches=2 baseline can never regress, AND declare **all** of them together in the `activation` object as
+`{mode:"switch", switches:[{switch_name,switch_value}, ...], path_marker, marker_how}`. Verify runs a
+paired A/B and, on `mode:"switch"` with `switches[]`, exports the WHOLE set for the CANDIDATE arm ONLY,
+leaving the base arm serial — that is the only way the coupled grid is actually measured. If you declare
+only ONE switch (or leave `activation` undeclared, or `mode:"default_on"` without the env set), verify
+measures the rest OFF and your candidate reads ~0.447x (the ~10.5ms serial floor) no matter how correct
+the code is. That was exactly the r3:a50 outcome: real fine-ready code, `launches=2`/`relL2=0.0298`
+correct, yet `cand=10.5ms` because the flag stayed `0`. Staged on-card build+run each lever as you add it
+(catch the r12-class substrate fault early), but the DELIVERABLE arm has ALL coupled levers ON together;
+echo every flag name in a `topology_sig` clause too.

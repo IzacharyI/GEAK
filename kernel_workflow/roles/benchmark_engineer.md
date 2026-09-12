@@ -7,6 +7,9 @@ the whole workflow depends on this being correct and stable. Operate on the cano
 `WORKSPACE`, `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, and `ANALYSIS` (kernel type, files, existing tests).
 Scoped campaigns also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `STRICT_AUTONOMY`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
+The fast-test cache phases (`PHASE=fast_test_load` / `PHASE=fast_test_publish`, mega only) receive
+`CACHE_DIR`, `FROZEN_KERNEL_PATH`, and `BENCH_HARNESS`; load also receives `CACHE_KIND`; publish also
+receives `MEGA_ANALYSIS_DIR`.
 
 **WORKLOAD ALIGNMENT.** The real-workload shape/dtype distribution is handled by the immutable
 `unittest.py` oracle itself — the Kernel Extractor bakes the weighted cases (`meta.workload.cases[]`)
@@ -532,6 +535,62 @@ first attempt failed. It is a failure, not a fallback.
 The reason this path exists at all: on 2026-08-21 an unreturned baseline aborted a run and discarded
 40 baseline runs plus a complete 6-pair positive control — about 70 minutes of an 8-card lease —
 after every number had already been written to `setup_ab_*.json`.
+
+## PHASE=fast_test_load — reuse a prior wave's front matter, GATED on a validity key, measure nothing
+
+Mega fast-test mode reuses the front matter's expensive on-card measurements (positive-control
+calibration + profile replays) from a PRIOR wave instead of re-running them, so a full-workflow
+iteration costs minutes not ~40 min. You are the gate that decides whether the cache is still valid.
+**Do NOT run any GPU command and do NOT take a lease** — read files and hash them, nothing else.
+
+The VALIDITY KEY is what makes reuse honest. It is a hash of exactly the things that, if changed,
+would make a cached measurement stale in a way that matters:
+
+- `frozen_rev` — the frozen baseline the run measures against: `git -C "$FROZEN_KERNEL_PATH" rev-parse HEAD`
+  (if that path is not a git repo, `sha256sum` a sorted manifest of its `*.py` file hashes instead).
+- `bench_sha` — `sha256sum "$BENCH_HARNESS"` (the measurement instrument itself).
+- `control_sha` — sha256 of the compact JSON of `POSITIVE_CONTROL` (the calibration spec), or the
+  literal `none` when no `POSITIVE_CONTROL` was given.
+- `guards_sha` — sha256 of `TARGET_GUARDS` ++ `REGRESSION_GUARDS` compact JSON.
+
+Compute `current_key` = a short digest joining those four (e.g. `sha256` of `frozen_rev|bench_sha|control_sha|guards_sha`).
+
+Steps:
+1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`, `key_valid:false`, done.
+2. Read the cached key. Recompute `current_key` from disk NOW. Set `key_valid` iff they are EXACTLY
+   equal. A mismatch is not an error — it means the base/instrument/spec moved and the wave must
+   re-measure; say which component differs in `note`.
+3. Only when `key_valid` is true, reconstruct the payload for `CACHE_KIND`:
+   - `bench`: read `CACHE_DIR/baseline_timing.json`, `CACHE_DIR/COMMANDMENT.md`, `CACHE_DIR/setup_ab_control*.json`
+     and rebuild the full `PHASE=setup` Return JSON (below) into the `bench` field — including
+     `positive_control` from a `setup_ab_control*.json` with `claim_complete:true`. This is the same
+     reconstruction as `PHASE=recover`, from `CACHE_DIR` instead of `EVAL_DIR`.
+   - `profile`: read `CACHE_DIR/mega_analysis/*.json` (rank_records / xgmi / combine_wait) and rebuild
+     the `mega_analysis` return shape into the `analysis` field (`bottleneck`, `top_opportunities`,
+     `dispatch_count`, `path_marker`, `rank_max_ms`, `xgmi_amplification`, `combine_wait_p95_us`, …).
+   A reconstructed payload that is missing required fields is a cache MISS — set `key_valid:false` and
+   say so, never fabricate a number.
+
+Return JSON: `{ "cache_present": bool, "key_valid": bool, "current_key": "…", "cached_key": "…",
+"note": "…", "bench": { …PHASE=setup shape… }, "analysis": { …mega_analysis shape… } }`. Fill only
+the field matching `CACHE_KIND`; leave the other `{}`.
+
+## PHASE=fast_test_publish — copy this wave's fresh artifacts into the cache, measure nothing
+
+You ran (or recovered) a real front matter this wave; persist its artifacts so a later fast-test wave
+can reuse them. **NO GPU, NO lease** — copy files and write the key.
+
+1. `mkdir -p "$CACHE_DIR"`.
+2. Copy from `EVAL_DIR` into `CACHE_DIR`: `baseline_timing.json`, `COMMANDMENT.md`, every
+   `setup_ab_control*.json` (the completed positive control), and `MEGA_ANALYSIS_DIR/*.json`
+   (rank_records / xgmi / combine_wait) into `CACHE_DIR/mega_analysis/`. Skip any that do not exist and
+   note it — a partial publish is fine; the next load will treat a missing payload as a MISS.
+3. Compute the validity key EXACTLY as `PHASE=fast_test_load` defines it (`frozen_rev`, `bench_sha`,
+   `control_sha`, `guards_sha` → combined digest) and write `CACHE_DIR/fast_test_key.json` =
+   `{ "key": "…", "frozen_rev": "…", "bench_sha": "…", "control_sha": "…", "guards_sha": "…",
+   "written_at": "<iso8601>" }`.
+
+Return JSON: `{ "published": bool, "key": "…", "cache_dir": "$CACHE_DIR", "files": ["…"], "note": "…" }`.
 
 ## Return JSON
 ```json

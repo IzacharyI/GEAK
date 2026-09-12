@@ -45,13 +45,18 @@ provenance:
   source: validated_skill
   origin: deconstructed_capability
   reuse_mode: workflow_authored_candidate
-  reporting_rule: 'This card is injected only into the m25_skill candidate lane. SEED MODE (build-time
-    Option A): the lane is PRE-SEEDED at HEAD with a byte-faithful copy of the validated M2.5 fused
-    megakernel. Do NOT re-derive it and do NOT reset the lane to frozen public MegaMoE V2 — continue
-    from the existing HEAD. Code identical to M2.5 is EXPLICITLY ALLOWED (the anti-copy content gate is
-    lifted). At runtime read only this card and the pre-seeded lane files; never read/import/diff any
-    external hand-authored M2.5 tree. Report source=validated_skill, never autonomous discovery. The
-    recorded 1.0448x result is a target band only.'
+  reporting_rule: 'This card is injected only into the m25_skill candidate lane. SPEC/DERIVE MODE:
+    this card is the COMPLETE implementation spec (exact shapes, tiles, CU partition, FUSE flags,
+    combine-queue protocol — see "## IMPLEMENTATION SPEC" below). The lane AUTHORS the M2.5 fused
+    megakernel FROM THIS SPEC. A byte-faithful M2.5 tree is retained ONLY as a read-only VALIDATION
+    ORACLE (cross-check correctness/perf against it); it is NOT the delivered artifact. If your lane
+    .git already holds the seed commit at HEAD, that tree is BOTH your oracle and, on THIS wave, your
+    working base — build/activate/validate/measure it; never reset it to frozen public MegaMoE V2.
+    Full clean-base derivation from this spec is for a fresh wave started from public V2. Code
+    identical to M2.5 is permitted (anti-copy content gate lifted) but the deliverable must be authored
+    per this spec, not copied from an external hand-authored tree; never read/import/diff any external
+    M2.5 tree at runtime. Report source=validated_skill, never autonomous discovery. The recorded
+    1.0448x result is a target band only.'
 incumbent:
   label: M2.5_persistent_megakernel
   is_ceiling: false
@@ -74,25 +79,31 @@ role: advisory_prior
 supersedes: []
 ---
 
-## READ THIS FIRST — SEED MODE: the fused impl is ALREADY in your lane
+## READ THIS FIRST — DERIVE MODE: author the fused megakernel from this spec (seed = oracle)
 
 Only `mega_engineer` in the `m25_skill` lane reads this card.
 
-**The lane is PRE-SEEDED at HEAD with a byte-faithful M2.5 fused megakernel — you do NOT author it
-from scratch.** `git log -1` in `${CANDIDATE_TREE}` shows commit "m25_skill seed: byte-faithful M2.5
-reference". Your job is NOT to re-derive the kernel; it is to **build it, activate `path=MEGA`,
-validate, and measure** — then, only if budget remains, attack intra-megakernel concurrency
-(SITE1/SITE2 below). Continue from the existing HEAD; **never reset the lane to the frozen baseline**
-(the workflow only re-seeds a lane whose `.git` is absent — yours exists, so it is preserved).
+**Author the M2.5 fused megakernel FROM THE SPEC in this card** — every shape, tile, CU count, FUSE
+flag, and the combine-queue protocol is stated below (see "## IMPLEMENTATION SPEC" for the exact
+numbers). Your job is to **implement it, activate `path=MEGA`, validate, and measure**, then — only if
+budget remains — attack intra-megakernel concurrency (SITE1/SITE2 below).
 
-### The winning config (verified from M2.5 source, do not deviate for the first RESULT)
-Activate the megakernel with the env below; every knob is already at its winning default in the seed,
-so you only need to set the master gate:
-- **`AITER_MEGAMOE_FUSE_ALL=1`** — master gate; without it the tree runs `path=SCATTERED`. With it and
-  `config.stage1.num_waves % 4 == 0` (true at 8192), the process prints `[megamoe] path=MEGA` once.
-- Winning defaults already baked in the seed (do not override for the first RESULT): `FUSE_COMBINE=1`
-  (combine folded as the **stage1 third work queue**), `FUSE_QUANT=0` (quant is its own launch →
-  **launches=2**), `FUSE_S2_NW8=1`, `G2_PREF=6`, `G2_CHUNK=16` (at cur_tok≥4096), **`FUSE_S2C` OFF**.
+**Seed = validation ORACLE, not the deliverable.** A byte-faithful M2.5 tree exists as a read-only
+oracle to cross-check correctness/perf. If `git log -1` in `${CANDIDATE_TREE}` shows the seed commit
+at HEAD, that tree is your oracle AND, on THIS wave, your working base — build/validate/measure it;
+**never reset it to the frozen baseline** (the workflow only re-seeds a lane whose `.git` is absent).
+On a fresh wave started from public MegaMoE V2 you author from this spec on a clean base.
+
+### The winning config (target these EXACT values for the first RESULT)
+Route = `--tokens 8192 --mtpr 8192 --route uniform` → the `_select_large_*` config path (`mtpr≥1024`,
+`mtpr_class=MAX_MTPR_CLASS`). Master gate + defaults:
+- **`AITER_MEGAMOE_FUSE_ALL=1`** — master gate; without it the tree runs `path=SCATTERED`. Gate
+  condition = env==1 **AND** `config.stage1.num_waves % 4 == 0` (true at 8192, num_waves=8). Then the
+  process prints `[megamoe] path=MEGA` once (`mega_moe_v2.py:440-447`).
+- FUSE defaults (implement these values): `FUSE_COMBINE=1` (combine folded as the **stage1 third work
+  queue** → `ret=None`, launches=2), `FUSE_QUANT=0` (quant is its own launch → **launches=2**),
+  `FUSE_S2_NW8=1`, `G2_PREF=6` (nw8; `ticket%pref==0` may preempt to a ready GEMM2 pair), `G2_CHUNK=16`
+  (at cur_tok≥4096; GEMM2 head handed out in 16-pair chunks), **`FUSE_S2C` OFF**.
 - `FUSE_S2C=1` / `mega_moe_fused_s2c.py` is a DIFFERENT, measured-SLOWER mechanism (not M2.5's combine
   fold). Leave it OFF. Combine folds via the stage1 third queue, NOT via s2c.
 
@@ -112,10 +123,133 @@ Distributed launch requires exactly 8 ranks.
 1. Build + activate `path=MEGA` (marker printed on all 8 ranks) — HARD requirement.
 2. Validate `relL2 < 0.10` and `launches == 2` — HARD requirements.
 3. Measure e2e vs the frozen SCATTERED denominator; emit a real on-card `[RESULT]`.
-4. ONLY if budget remains: attack SITE1 (static CU-role partition) / SITE2 (grid_mult) concurrency.
+4. Build the FULL coupled concurrency grid (ALL of Site1/Site2/Site3/Site4, at the EXACT params in the
+   IMPLEMENTATION SPEC), all levers ON, as the second half of the SAME reproduction — this is NOT optional
+   optimization, it is what closes the ~0.23× floor to the M2.5 band. Correctness (1–3) is banked FIRST
+   for risk, then the concurrency grid is built to spec, not searched. See "★ THIS LANE REPRODUCES, IT
+   DOES NOT OPTIMIZE" below.
+
+> **★ THIS LANE REPRODUCES, IT DOES NOT OPTIMIZE — read before you touch the concurrency half.**
+> The `m25_skill` lane's job is to REPRODUCE M2.5, whose winning config is FULLY SPECIFIED in this card
+> (every shape, tile, CU count, `persist_cu=240`, pipeline `depth=2`, role split, useful8 form). Those
+> numbers are **prior knowledge, not search seeds.** So: (a) BUILD the whole coupled grid — framework →
+> implementation → all four concurrency sites — from those exact values, **all levers ON, in one design**;
+> (b) do **NOT** sweep a param, do **NOT** A/B whether each site "helps," do **NOT** gate a site behind a
+> default-off flag in the measured arm; the only A/B is `path=MEGA` (the full grid) vs `SCATTERED` (the
+> positive control). (c) The **only** on-card loop is to make the spec-faithful build RUN CORRECTLY — fix
+> the FlyDSL lowering faults (regalloc / LDS, e.g. SEG3) — that is DEBUGGING, not optimization; "no
+> optimization" does NOT mean "no leases," it means "no param search." (d) Measure ONCE it runs: does the
+> full-grid `path=MEGA` beat SCATTERED and land in `1.0403..1.0477`. The "attack order / confirm-vs-search
+> grade / one-serializer-per-lease / seed-and-confirm-±1" apparatus in the concurrency section below is for
+> a DIFFERENT job — pushing BEYOND M2.5 (true optimization). For REPRODUCTION it does not apply: you
+> already have the answer, build it.
 
 Code identical to M2.5 is explicitly allowed. The card is not injected into TechLead or ordinary
 Engineer, so other optimization candidates remain independent.
+
+## IMPLEMENTATION SPEC — exact numbers (author from these; the seed tree is the oracle to cross-check)
+
+Target route throughout: `tokens_per_rank=8192, mtpr=8192, route=uniform` → the `_select_large_*`
+config path. Every number below is the value the derived kernel must produce; cross-check against the
+oracle tree, do not copy it blind.
+
+**Problem shape (a8w4, `p2p_quant="fp8_blockwise_1x32"`):** `model_dim=7168` (GEMM1 K / GEMM2 N),
+`inter_dim=3072` (GEMM1 N / GEMM2 K), `experts_per_rank=48` (config-rounded to 64 via
+`EXPERT_CONFIG_GRANULARITY`). `P2P_FP8_MIN_MTPR=1024`, `MAX_MTPR_CLASS=32768`.
+
+**Stage1 (dispatch + GEMM1) geometry:** `SBM(sort_block_m)=128`; GEMM1 `tile_n=512` (inter_dim≥2048),
+`tile_k=256` (`A_K_STEP_BYTES==256`) → `K_ITERS=model_dim//256=28`; `num_waves=8` →
+`TOTAL_THREADS=512`-thread blocks; `grid_mult=1` (large path forces 1 WG/CU co-resident);
+`num_dispatch_cu=96`; `work_shards=4` (GEMM1 & GEMM2 work heads 4-way sharded, one 64-byte L2 line
+each via `+shard*64`); `payload_chunk_rows=384` at 8192. GEMM1 body = FP8×FP4 grouped GEMM over the 28
+K-tiles, CShuffle → f32 slab, SwiGLU epilogue, write-through output; publishes per-m-tile completion
+counter `s2_ctr[m_block]`.
+
+**Stage2 (GEMM2) geometry:** `block_m(BM)=64` (because SBM==128; BM must divide SBM), `block_n(BN)=256`
+(model_dim≥4096), `block_k(BK)=256`; `NW=4` → `wave_n=BN//NW=64`, `rows_per_wave=BM//NW=16`;
+`kMChunks=BM//16=4`, `kHalves=BK//128=2`; 16 scaled-MFMA `(opselA,opselB)` atoms; `ascale_prefetch=True`,
+`pipe_weights=True`, 2-stage B pipeline. **Fused nw8 override:** BN widens to `256*(num_waves//4)=512`,
+NW=8 — keeps the 4-wave geometry per 64-col band across 8 waves. GEMM2 tile (`run_unit`) = map BM
+sub-tile → Stage1 SBM metadata row (`m_row//SBM → tile_row_base`) → gather routed A rows → dequant →
+scaled-MFMA (reuse `gemm2_compute_v2` byte-for-byte) → CShuffle → P2P scatter → arrival
+`atomic_add_system`.
+
+**CU partition (256-CU gfx950 budget):** Stage2 `persist=True`, `persist_cu=240`, `skew_cu=96`
+(bucket≥512). Roles assigned by an atomic entry-ticket: ticket 0 = owner, `1..96` = dispatch producers,
+rest = GEMM1/GEMM2 consumers; COMBINE is the third queue, claimable only once **both** GEMM queues are
+locally empty (deadlock-free).
+
+**LDS budget — the per-CU limit on gfx950 is 163840 B (160 KB), NOT 65536.** Stage1 uses **159744 B**
+(97.5% of a CU → 1 WG/CU): `lds_pool = max(2*a_lds_size, cs_size*4)` with `a_lds_size=SBM*256=32768`,
+`cs_size=SBM*(tile_n//2)=128*256=32768` → `cs_size*4=131072` (the f32 CShuffle slab dominates), plus
+`A_scale=SBM*(model_dim//32)=128*224=28672` → 131072+28672=159744. Standalone Stage2 uses **66560 B** =
+`c_lds_bytes=BM*BN*4=65536` + ready/peer slots. **65536 B is the GEMM2 CShuffle slab, not the hardware
+limit** — assert per-tile LDS ≤ 163840; the fused GEMM2 slab ALIASES the GEMM1 pool (the two roles
+never hold LDS simultaneously — a work-loop barrier separates them).
+
+**launches=2 structure:** launch 1 = quant (`FUSE_QUANT=0`, separate; `per_1x32_mx_quant≈0.9µs`);
+launch 2 = the persistent megakernel wiring dispatch→GEMM1→GEMM2→combine. With `FUSE_COMBINE=1` the
+trailing `combine_no_stage1` launch is dropped (`ret=None`) → launches==2.
+
+**Combine (3rd queue) protocol:** claim counters `c_ctr[0]`=claim head, `c_ctr[1]`=generation.
+Per-destination-token arrival counter `tok_ready[tok*4*shard]`, incremented cross-rank by the producer
+`atomic_add_system(peer_ready_base + lid*4*shard, 1)` (system scope for cross-XCD L2 visibility) when a
+tile's last n-block closes. Combine waits `int32_wait_until_greater_than(tok_ready, topk*epoch-1)`, then
+reduces `topk` partials in **f32** with the hidden dim split across `warps_per_tok` warps.
+`_TOK_READY_SHARD` de-false-sharing stride = 1 (dense) default, 16 int32 (one 64-byte line) under
+`AITER_MEGAMOE_COMBINE_SHARD=1` (measured NOT a beat-path — keep default 1). **The arrival counter is
+never cleared** (see Step 3).
+
+**Precision (a8w4):** MX group `GROUP=32` (1×32), scales `E8M0`; A elem = fp8 `Float8E4M3FN` (max 448)
+or fp4 `Float4E2M1FN` (max 6), B = fp4; per-row A scale groups = `model_dim//32=224`; fp4 conv
+`rocdl.cvt_scalef32_pk_fp4_f32`, fp8 conv `rocdl.cvt_pk_fp8_f32`.
+
+### CONFIG DERIVATION — the parameterized selector (derive the numbers, don't memorize 8192's)
+
+Every geometry number above is the OUTPUT of one pure function of the route. Author the config as this
+selector so the kernel DERIVES its geometry for ANY `(tokens, mtpr)` — the target route is just one
+evaluation, and any other supported shape falls out of the same tree. This is
+`select_mega_moe_config(tokens, mtpr, experts_per_rank=48, model_dim=7168, inter_dim=3072)`. Every branch
+below is verifiable field-for-field against the oracle's `mega_moe_config.py`; do not memorize, evaluate.
+
+**Step A — bucketize + classify (route → discrete config keys):**
+- `TOKEN_BUCKETS = (1,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768)`;
+  `bucket = nearest_token_bucket(tokens)` = the nearest bucket (ties → the larger). tokens=8192 → 8192.
+- `mtpr_class = mtpr if mtpr <= P2P_FP8_MIN_MTPR(1024) else MAX_MTPR_CLASS(32768)`. mtpr=8192 → 32768.
+- `experts_class = round_up(experts_per_rank, 64)` (EXPERT_CONFIG_GRANULARITY). 48 → 64.
+- **Regime split:** `mtpr_class == 32768` → the **large / a8w4 P2P** regime
+  (`p2p_quant="fp8_blockwise_1x32"`, the M2.5 target). `mtpr_class ≤ 255` → fixed-slot; else → bounded;
+  both use `p2p_quant="none"` and are NOT the M2.5 path. **The M2.5 target route is ALWAYS the large
+  regime** (any `mtpr > 1024` classifies to 32768). Guards: fixed-slot rejects bucket>128 and >64 experts.
+
+**Step B — large Stage1 (`_select_large_stage1(bucket, experts_class, inter_dim)`), by bucket:**
+- bucket ≤ 4: `SBM=32, tile_n=256, num_waves=4, mfma_amajor=async_a_copy=False`.
+- 4 < bucket ≤ 128: `SBM=32`; `tile_n = 512 if inter_dim≥2048 else 256`; `num_waves=8`; `mfma=async=True`.
+- 128 < bucket ≤ 2048: `SBM=64`; `tile_n = 512 if inter_dim≥2048 else 256`; `num_waves=8`; `mfma=async=True`.
+- **bucket > 2048 (incl. 8192): `SBM=128`; `tile_n=512` (inter_dim=3072≥2048); `num_waves=8`; `mfma=async=True`.**
+- Common: `grid_mult=1`; `use_tile_resource=True`; `tile_k=256` (default); `b_nt = 3 if 1<bucket≤256 else 0`;
+  `work_shards = 1 if bucket≤32 else (8 if bucket==2048 else 4)` → **4 at 8192** (2048 is the ONLY bucket
+  that takes 8); `external_grouping = (bucket==4 or bucket≥256)`; `external_counting = (bucket≥256)`;
+  `payload_chunk_rows = 256 if bucket==512 else 384` → **384**; `payload_tile_ready=True`.
+- `num_dispatch_cu = _scale_dispatch_cu(_large_dispatch_cu(bucket), experts_class)` where
+  `_large_dispatch_cu`: `{≤1:224, ≤4:128, ≤8:192, ≤32:64, ≤64:160, ≤128:192, ≤256:160, ==8192:96,
+  ≥16384:32, else:64}` and `_scale_dispatch_cu(d,e) = min(224, d * ceil(e/64))`. 8192 → `min(224, 96*1)=96`.
+
+**Step C — large Stage2 (`_select_large_stage2(bucket, SBM, model_dim)`):**
+- `persist_cu = {1024:224, 2048:256, 16384:192, else:240}` → **240** at 8192.
+- `block_n = 128 if (bucket==256 or model_dim<4096) else 256` → **256** (model_dim=7168).
+- `block_m = 64 if SBM==128 else 32` → **64**. (`MegaMoEConfig.__post_init__` asserts BM divides SBM: 64|128 ✓.)
+- `persist=True`; `block_k=256`; `use_nt = (bucket≤128)` → False; `persist_strided = (512≤bucket≤2048)` → False;
+  `skew_cu = 96 if bucket≥512 else 0` → **96**; `ascale_prefetch=True`, `b_hoist=True`, `pipe_weights=True`
+  (defaults). `fuse_combine=False` in the config object — the combine fold is the RUNTIME
+  `AITER_MEGAMOE_FUSE_COMBINE` path (stage1 third queue), NOT this `mega_moe_fused_s2c` flag.
+
+**Worked target (tokens=8192, mtpr=8192, experts=48, 7168×3072):** large regime →
+Stage1(SBM=128, tile_n=512, num_waves=8, grid_mult=1, dispatch_cu=96, work_shards=4, payload_chunk_rows=384)
++ Stage2(BM=64, BN=256, BK=256, persist_cu=240, skew_cu=96) + p2p_quant=fp8_blockwise_1x32 — exactly the
+values in "IMPLEMENTATION SPEC" above. **Close-loop check:** evaluating this selector in the oracle tree
+must reproduce these fields verbatim; if your derived selector disagrees on any field, the selector is
+wrong, not the number.
 
 The skill candidate includes both halves of the capability:
 
@@ -147,9 +281,9 @@ whole reason this fork exists:
 2. **Concrete machinery, not lossy-by-design.** The persistent_fusion card states its address
    arithmetic is "generic on purpose … not code to transcribe" and points only at line-refs, because
    its leak-sweep KEEP forced it to stay lossy. **That KEEP is lifted for mega mode.** This card spells
-   out the exact arrival-ticket / epoch-parity / spin-wait address arithmetic below, authored from the
-   reachable in-tree baseline. You reproduce it faithfully instead of re-deriving it — re-derivation is
-   exactly what produced the r12 defect.
+   out the exact arrival-ticket / epoch-parity / spin-wait address arithmetic below. You implement it
+   exactly as specified (cross-checking the oracle tree) instead of freelancing the low-level
+   arithmetic — free re-derivation of this substrate is exactly what produced the r12 defect.
 3. **Fixing the baseline substrate is a first-class action.** `mega_moe_stage1.py` was inherited by the
    last wave as "clean substrate" and never suspected until r12 traced the fatal fault into its
    spin-wait address init. In mega mode, hardening that init **is allowed and expected** — it is not
@@ -314,11 +448,16 @@ staircase.
 2. **Replace the consumer barrier.** In `flydsl_dispatch_combine_intranode_kernel.py`, swap the Stage-2
    all-rank barrier for a per-token `wait_until_equals(arrival[tok], topk_expected[tok])` followed by
    `fence_system_acquire()` immediately before that token's Stage-3 reduction.
-3. **Break the single-buffer hazard.** `shmem_comb_inp_tok` is single-buffered and zeroed once at
-   construction. That reuse is the *actual reason* the barrier was required, so removing the barrier
-   without fixing it is a stale-read bug that passes single-shot correctness. Double-buffer it with a
-   parity index (reuse dispatch's proven epoch/parity discipline), and reset arrival counters for the
-   *next* parity, never the current one.
+3. **Arrival discipline — M2.5 NEVER clears the arrival counter (clearing it is what wedged M1.5).**
+   The per-destination-token arrival counter `tok_ready[tok]` is MONOTONIC: combine waits
+   `int32_wait_until_greater_than(tok_ready[tok], topk*epoch - 1)` and the target RISES by `topk` each
+   launch (`_tok_ready_target = expected*epoch`); the owner PADS out-of-window tokens up to
+   `topk*epoch` so stale windows can't stall (`mega_moe_stage1.py:598-617`). The ONLY counter that
+   self-clears is the per-m-tile completion counter, cleared by its owner at tile close
+   (`mega_moe_stage2.py:406-415`). Do NOT double-buffer `comb_inp` with a parity RESET of the arrival
+   counter as if it were M2.5's mechanism — that parity double-buffer is a SEPARATE, deferred r12-class
+   optimization, not how M2.5 stays correct. (comb_inp reuse across launches is safe in M2.5 precisely
+   because the monotonic `topk*epoch` target gates each token's read to its own generation.)
 4. **Absorb GEMM1 with a CU-role partition, not an LDS union.** Stage1 sits at `159744 B` LDS (97.5% of
    a CU) → 1 WG/CU; Stage2 needs `66560 B`. They cannot co-reside. Assign disjoint CTA sets to GEMM1 and
    GEMM2 roles via the existing arrival-ticket mechanism (`mega_moe_stage1.py:210-225`), each with its
@@ -376,10 +515,10 @@ one top loop until all three queues drain:
                                                     #   index by SBM (m_row//SBM -> tile_row_base)
         elif role is GEMM2:
             wait_until(ready1[deps(item)]); acquire(scope=agent)
-            r = gemm2(item)     # FLAT per-tile compute — port the body of `run_unit` from the in-tree,
-                                #   reachable `mega_moe_stage2.py` (the a8w4 MXFP4 GEMM2 tile: routed-token
-                                #   gather -> dequant -> MFMA -> epilog) into this work-pool role, ONE plain
-                                #   tile per claimed ticket. This is the genuinely UNBUILT join — author it
+            r = gemm2(item)     # FLAT per-tile compute — author `run_unit` per the IMPLEMENTATION SPEC
+                                #   (BM=64/BN=256/BK=256, a8w4 MXFP4 GEMM2 tile: routed-token
+                                #   gather -> dequant -> MFMA -> epilog), ONE plain tile per claimed ticket;
+                                #   cross-check against the oracle's `mega_moe_stage2.py`. The genuinely UNBUILT join — author it
                                 #   flat, NOT as a g2-collapse write layout. NO collapse = no shared-consumer
                                 #   gather under SGPR pressure = the cut4 fault is never created (that is the
                                 #   whole bet: cut3's flat GEMM1-through path is already clean+correct on-card).
@@ -387,17 +526,17 @@ one top loop until all three queues drain:
             # Cross-rank publish OPTIONAL/hardware-gated/LAST (Step 1). Base form: leave the all-rank
             # barrier as COMBINE's gate behind the fallback flag.
         elif role is COMBINE:                       # the THIRD queue (Step 5), not a phase:
-            wait_until(arrival[item] == topk_expected[item])
+            wait_until(tok_ready[item] > topk*epoch - 1)   # MONOTONIC target; NEVER reset the counter
             acquire(scope=system)
-            out[item] = reduce_topk(inp[item, parity])
-            reset(arrival[item, other(parity)])     # reset the NEXT parity, never this one
+            out[item] = reduce_topk(inp[item])      # split hidden dim across warps_per_tok warps, f32 reduce
+            # no counter reset: target rose by topk this launch; owner pre-pads out-of-window tokens
 
     once_per_process: emit "path=MEGA"
 
 **Concrete arrival-ticket / epoch-parity / spin-wait address arithmetic.** This is the exact machinery
-the persistent_fusion card left lossy. It is authored from the reachable in-tree baseline
-`mega_moe_stage1.py` (compact-dispatch owner/producer handshake, lines ~185–282). Reproduce it
-faithfully; do not re-derive it. Identifiers below are the baseline's own.
+the persistent_fusion card left lossy. Author it per the arithmetic below (the compact-dispatch
+owner/producer handshake); cross-check against the oracle tree's `mega_moe_stage1.py`, lines ~185–282.
+The identifiers below are the canonical ones.
 
 *Setup (per workgroup, top of kernel):*
 
@@ -444,10 +583,12 @@ faithfully; do not re-derive it. Identifiers below are the baseline's own.
 
 Three invariants separate "passes single-shot" from "passes the 1000-replay stress":
 
-- **Parity discipline (Step 3).** COMBINE reads parity `P` while the next generation fills `P`'s
-  complement; the counter reset touches the complement, never `P`. This is the ABA-safe flip above
-  (`next_parity_lane = old_parity ^ 1`, expected updated on the *next* lane). Skipping it is the stale
-  read the barrier was hiding — correct on iteration 1, desynced on iteration 2.
+- **Epoch-gate parity discipline (the dispatch/GEMM handshake — NOT combine arrival).** The owner
+  UPDATES the per-parity expected count on the complement lane while every WG reads the current lane
+  `P`: `expected[next] += fz_npes`, never a reset of the lane being read. This is the ABA-safe flip
+  above (`next_parity_lane = old_parity ^ 1`, expected updated on the *next* lane). Skipping it is the
+  stale gate read — correct on iteration 1, desynced on iteration 2. (This is distinct from the combine
+  arrival counter, which is MONOTONIC and never reset — Step 3.)
 - **Disjoint roles (Step 4).** GEMM1 at `159744 B` LDS and GEMM2 at `66560 B` cannot co-reside; the
   partition is by block, enforced by the ticket, never by an LDS overlay.
 - **Combine is a queue, not a barrier-gated phase (Step 5).** Its items unlock per-token as partials
@@ -562,6 +703,17 @@ ready to discard a localization when the instrument under it is shown to be brok
 
 ### The concurrency M2.5 has that the correctness-floor does NOT — deconstructed from the scattered path
 
+> **★ FRAMING FOR THE REPRODUCTION LANE (`m25_skill`): the rest of this section is a DECONSTRUCTION, not a
+> search plan.** Everything below explains WHAT each concurrency site is and gives its EXACT M2.5 param
+> (persist_cu=240, depth=2, useful8 form, role split). For REPRODUCTION you BUILD all of them ON, to those
+> values, in one design — you do NOT execute the "attack one site per lease / search-grade sweep /
+> seed-and-confirm-±1" methodology those subsections describe. That methodology exists for OPTIMIZING
+> BEYOND M2.5 and for the blind (non-skill) lanes; it is the very "one-lever-per-lease, default-off,
+> isolated-A/B" flow that STRUCTURALLY cannot assemble M2.5's coupled always-on grid (measured: each site
+> alone fails its own A/B — see "★ CROSS-WAVE CORRECTIONS" below). Read the site descriptions and the
+> params; ignore the "grade each before you take the lease" procedure — you are reproducing, the answer is
+> already here.
+
 **Read this as the SECOND HALF of the deconstruction.** The six fixes above make the fused operator
 *correct* — same 2-launch shape as M2.5, all shapes relL2-clean, `path=MEGA` ×8. They do NOT make it
 *fast*: the correctness-floor measures **~0.23× the scattered baseline** (19.9 ms vs 4.56 ms @
@@ -623,6 +775,9 @@ just delete. The win is the realization that keeps correctness AND recovers the 
    direct extension of a confirmed fix, not a new subsystem.
 
 #### D1 CONFIRMED on-card (optimize round_1, +1.322× over the coarse-barrier floor) — the site-3 realization, folded like fixes 1–6
+> ⚠️ **CAVEAT (see "★ CROSS-WAVE CORRECTIONS" below):** this +1.322× was measured over the COARSE-BARRIER
+> floor. On the true co-resident fused path, fine-ready ALONE (without Site-1's real dynamic partition)
+> REGRESSES +20.6% — the sites are COUPLED. Do not treat +1.322× as a standalone fused-path win.
 
 Site 3's *derived target* (fine-grained per-SBM readiness) is now a **replay-confirmed construction**:
 `MEGA_FINE_READY=1` measured **15.042 vs 19.885 ms rank-max @8192_uniform (paired) = +1.322×** over the
@@ -836,6 +991,78 @@ REALIZATION of each derived target is what later attempts in this candidate lane
 exactly as fixes 1–6 were folded after replay. Until a target is on-card-confirmed it is labeled *derived
 target*, never asserted as the fix. Do not write a guessed concurrency edit in as fact — that repeats the
 retracted-assertion failure (methodology caution above).
+
+### ★ CROSS-WAVE CORRECTIONS & PITFALLS — what running this actually taught us (cont17–cont19, dated 2026-09-12)
+
+**Read this as an amendment to everything above.** The attack-order / one-serializer-per-lease / seed
+constants above are the DESIGN as first written; the items below are what SEVERAL production waves
+measured on-card afterward. Where an item conflicts with the guidance above, THIS section wins — it is
+later evidence. None of it was lifted from the M2.5 oracle tree (never read/imported/diffed at runtime);
+it is our own on-card measurement + the reachable in-tree lane state.
+
+**1. THE FOUR SITES ARE COUPLED — "attack one serializer per lease" is a fault-isolation rule, NOT the
+beat path. This is the single most important correction.** The attack-order and measurement-economy
+subsections above tell you to land one site per lease, each behind its own default-off flag, proven by an
+isolated paired A/B. That methodology CANNOT build M2.5's win, because the four sites are co-designed and
+always-on as ONE grid, and each one measured ALONE on the true co-resident fused path fails its own A/B:
+- **Site 4 (useful8) alone HELPS** — floor `~10.5 ms → ~7.35 ms` (~1.43×). Real, keep it.
+- **Site 3 (fine-ready) alone REGRESSES +20.6%** on the true fused path. ⚠️ The "**D1 CONFIRMED +1.322×**"
+  claim above was measured on the **coarse-barrier / un-fused stage1 floor**, a CONFOUND — on the real
+  co-resident fused grid, fine-ready without Site 1's real partition is pure added atomic traffic. Do NOT
+  trust the +1.322× as a fused-path number.
+- **Site 1 (role partition) as currently in the tree is a DUD** — it is a STATIC tail-% carve
+  (`AITER_MEGAMOE_ROLE_PARTITION` → `role_g2_pct=33`, tail blocks become GEMM2-role), which is exactly the
+  "price"/floor form the Site-1 paragraph says idles CUs — NOT the dynamic/load-proportional target.
+  Measured: role `10.69 ≈` floor `10.54`; the pct sweep 20/33/50/66 gets monotonically WORSE.
+  (Note the tree docstring MISLABELS it "dynamic CU-role partition" — it is a fixed % of `grid_x`; there
+  is NO `persist_cu` anywhere in the lane tree, only the % knob. The dynamic partition is UNBUILT.)
+- **Site 2 (pipeline depth) is ABSENT** — there is NO `AITER_MEGAMOE_PIPELINE*`/depth flag in the tree at
+  all; it was never implemented. Depth-2 lives fixed inside `gemm2_compute_v2`, not exposed. It must be
+  AUTHORED, there is no knob to flip.
+
+Coupling mechanism: Site 3's fine overlap needs Site 1's REAL dynamic producer/consumer partition to have
+anything to overlap; Site 2's deeper pipeline raises exactly the register/LDS pressure Site 3's fences
+must survive. **So author Site1-dynamic + Site3-fine + Site2-pipeline TOGETHER in ONE deep lease, ruled by
+the in-kernel PHASE METER below, and turn them ALL on together in the CANDIDATE arm.** The workflow now
+carries a coupled `activation.switches[]` channel (gated `MEGA_TOPOLOGY_LEVERS`) precisely so verify
+exports the whole flag set for the cand arm at once — exporting a subset measures the serial floor, same
+void-experiment as exporting none. The one-serializer-per-lease economy above still applies to *fault
+localization* (which cut faults), never to *landing the win*.
+
+**2. SEG3 SITE-1 codegen regalloc frame-sensitivity — a NEW fault class, distinct from the r12/cut4
+g2-collapse saga.** When you enable the launches=2 fused floor together with the SITE-1 role-partition
+code, it can fault at a peer base `+0x445000` SEG3 access. On-card bisect pinned it to a DETERMINISTIC
+codegen register-allocation regression triggered by SITE-1 adding params/locals to
+`compile_mega_moe_stage1` — flyc regalloc is FRAME-SENSITIVE to the function signature, and the extra
+frame exposes a latent `p2p_scatter` `payload_off` overshoot even though the emitted IR is byte-identical
+without SITE-1. This REFUTES the earlier "64KB LDS overflow" theory (setting `AITER_MEGAMOE_LDS_GUARD`
+faults identically). Fix (not yet landed — don't land blind): make the fused-floor function SIGNATURE
+byte-identical to the clean floor (read SITE-1 env INSIDE the function so it never enters the `@cache`
+signature) OR clamp the `p2p_scatter` `payload_off`. Frame-minimization alone is INSUFFICIENT — the
+sensitivity reaches the function signature itself. Runnable floor is pinned at the pre-SITE-1 commit.
+
+**3. `AITER_MEGAMOE_COMBINE_SHARD=1` HARD-HANGS (rc124) — it is DISQUALIFIED, not merely "not a beat."**
+The combine-shard paragraphs above say "keep default 1, not a beat-path." Stronger: turning the 16-int32
+de-false-sharing stride ON hangs on-card. Any apparent shard "win" seen once was a triple-POSITION
+artifact of a cold first-mega-launch (reversed-order A/B breaks it). Keep stride dense (default) and do
+NOT spend a lease on it. Always randomize arm order in mega A/B — cold-launch position confounds the first
+arm measured.
+
+**4. useful8 has TWO valid forms — the SPEC form and the LANE form differ; know which you're building.**
+The spec (Site 4 / fix-6 extension above) says widen BN→512 and give waves 4–7 the NEXT n-block's cols
+256–511 (`+BN`). The lane tree instead implements a same-tile **32-col 8-wave split** (`G2_NW=8`,
+`256//8=32` cols/wave) that KEEPS the LDS C slab at 65536 B to avoid overflowing the 131072 B pool. Both
+recover the idle waves; the 32-col split is the LDS-safe one. If you widen BN→512, you MUST re-check the
+Stage-2 LDS budget against 163840 B.
+
+**5. VERIFY BASELINE HEALTH before diagnosing any "slow-state / bimodal / un-ownable substrate."** An
+entire multi-wave saga chasing a "hard-slow shared substrate" was ultimately a MACHINE-PARAM regression:
+the frozen scattered baseline itself was running ~2× slow (~9 ms instead of ~4.71 ms). Before attributing
+slowness to the kernel, confirm the scattered denominator is healthy (`~4.71 ms` rank-max @8192_uniform);
+a contaminated machine invalidates every in-kernel slow-state conclusion. Relaunch on a healthy box.
+
+**6. The teardown SIGABRT is PRE-EXISTING, not a launches=2 regression.** It fires on the Stage-3
+(FUSE_COMBINE=0) path too. Do not chase it as a fold-specific fault.
 
 ### The ruler for this half — build it IN the kernel when the external A/B can't attribute overlap
 The one-flag A/B differential meter (fuse OFF vs ON, paired rank-max — also the run's positive control)
