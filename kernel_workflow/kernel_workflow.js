@@ -859,6 +859,14 @@ function candidateClaimsPlanTarget(direction, planIr) {
   return Number.isFinite(planned) && Number.isFinite(declared) && declared === planned;
 }
 
+function authoringContractNeedsPreflight(direction, planIr, candidate, contractEnabled) {
+  if (!contractEnabled || !candidateClaimsPlanTarget(direction, planIr)) return false;
+  const c = candidate || {};
+  return !(c.structural_verified === true &&
+    String(c.structural_candidate_head || '') &&
+    String(c.structural_candidate_head) === String(c.head || ''));
+}
+
 // Convert the operator-neutral descriptor into Verify's historical TARGET_SHAPE vocabulary.
 function megaShapeFromTopology(topo) {
   if (!topo || typeof topo !== 'object') {
@@ -6175,6 +6183,15 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const baseHead = megaBaseHead(baseCandidateId, source);
   const outDir = `${EVAL_DIR}/round_${currentRound}/candidate_${candidateId}`;
   const priorForAgent = existing || null;
+  const candidateClaimsSkillTarget =
+    candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
+  const authorPreflightRequired = authoringContractNeedsPreflight(
+    d, analysis && analysis.mega_plan_ir, existing, CHECK_EXPERT_SKILL_CONTRACT
+  );
+  if (authorPreflightRequired) {
+    log(`Mega round ${currentRound}: full-target candidate ${candidateId} has no current exact-HEAD ` +
+      `structural pass; authoring is GPU-forbidden until independent contract verification.`);
+  }
   let eng = null;
   let laneWriterTimedOut = false;
   const role = 'engineer';
@@ -6189,7 +6206,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_TIMEOUT_S: commandBudgetS,
           SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
           KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
-          GPU_ID: GPU_RESOURCE.specForIndex(0), GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
+          GPU_ID: authorPreflightRequired
+            ? 'STRUCTURAL_PREFLIGHT_REQUIRED_NO_GPU'
+            : GPU_RESOURCE.specForIndex(0),
+          GPUS_PER_JOB: authorPreflightRequired
+            ? '0' : String(GPU_RESOURCE.gpusPerJob),
+          AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
+            authorPreflightRequired ? '1' : '0',
+          AUTHORING_STRUCTURAL_EVIDENCE_HEAD:
+            existing && existing.structural_candidate_head || '',
+          FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
           ...(MEGA_STRUCTURAL_ONLY ? {
             STRUCTURAL_ONLY: '1',
@@ -6206,6 +6232,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
             EXPERT_SKILL_CONTRACT_SHA256,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+            EXPERT_SKILL_CONTRACT_TOOL,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
           } : {}),
           codebase_context: `${EVAL_DIR}/codebase_context.md`,
@@ -6217,7 +6244,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
         }) +
-      `\n\nBefore any source edit, acquire the single-writer lane lock in your persistent shell: ` +
+      `\n\n${authorPreflightRequired
+        ? `AUTHORING CONTRACT PREFLIGHT IS REQUIRED AND GPU IS UNAVAILABLE THIS TURN. ` +
+          `The direction's request for on-card work is subordinate to this gate. Run the current ` +
+          `Expert Skill contract without a reference, repair required failures in category order, ` +
+          `commit a coherent source checkpoint, and return candidate_status=authoring. Do not run ` +
+          `rocm-smi, torchrun, a benchmark, a correctness command, or any GPU runtime import. `
+        : `The exact structural evidence HEAD is ${existing &&
+            existing.structural_candidate_head || '(none)'}. If production source changes, do not ` +
+          `use a GPU in the same turn; commit and return for independent structural Verify first. `}` +
+      `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
       `through the final commit/manifest write. If the lock is held, return incomplete without editing. ` +
       `Candidate-lane setup is part of this task. If ${tree}/.git does not exist, create ${tree}. ` +
@@ -6411,8 +6447,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
     ));
   }
-  const candidateClaimsSkillTarget =
-    candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
   const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
     (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&

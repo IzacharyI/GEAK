@@ -21,6 +21,9 @@ const validation = fs.readFileSync(path.join(
   ROOT, 'perf_knowledge', 'expert_skills', 'skills',
   'megamoe_ep_mega_fusion', 'validation.yaml',
 ), 'utf8');
+const engineer = fs.readFileSync(path.join(
+  ROOT, 'kernel_workflow', 'roles', 'engineer.md',
+), 'utf8');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -60,6 +63,13 @@ ok(!/role = source === 'validated_skill' \? 'mega_engineer'/.test(wf) &&
   'a special Skill executor is absent from dispatch');
 ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(wf),
   'no reserved reproduction lane is registered');
+ok(/authoringContractNeedsPreflight/.test(wf) &&
+   /STRUCTURAL_PREFLIGHT_REQUIRED_NO_GPU/.test(wf) &&
+   /AUTHORING_CONTRACT_PREFLIGHT_REQUIRED/.test(wf),
+  'a full-target author receives no GPU until exact-HEAD structural verification');
+ok(/fail-closed GPU prohibition/.test(engineer) &&
+   /If you edit any production[\s\S]*GPU authorization is revoked/.test(engineer),
+  'Engineer cannot use stale structural evidence or edit and benchmark in one turn');
 
 console.log(failures === 0
   ? '\nPASS: validated fusion knowledge guides the ordinary Mega lifecycle.'

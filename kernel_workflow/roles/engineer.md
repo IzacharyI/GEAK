@@ -31,7 +31,9 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   `STRUCTURAL_TARGET`. A Skill-enabled Mega lane may also provide
   `EXPERT_SKILL_PLANNER_EXTENSION`, `EXPERT_SKILL_BUNDLE_SHA256`,
   `EXPERT_SKILL_PLANNER_EXTENSION_SHA256`, and
-  `EXPERT_SKILL_CONTRACT_SHA256`; use its selected candidate checkpoint and
+  `EXPERT_SKILL_CONTRACT_SHA256`, `EXPERT_SKILL_CONTRACT_TOOL`,
+  `FROZEN_KERNEL_PATH`, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED`, and
+  `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`; use its selected candidate checkpoint and
   failure route as machine-readable context, while `DIRECTION` and
   `MEGA_PLAN_IR` remain the concrete contract. Continue that persistent tree; never
   recreate it or edit another lane. A matched Expert Skill may append normative
@@ -53,6 +55,25 @@ reachable implementation before inventing an equivalent form. Use
 `TASK_GRAPH` for dependency legality and `RESOURCE_TIMELINE` for scheduling
 headroom. Record any evidence-backed deviation explicitly in the result; an
 undeclared deviation is a structural failure, not Engineer discretion.
+
+For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` is a
+fail-closed GPU prohibition for the entire turn. `GPU_ID` is intentionally not
+a device in that state. Run the current contract against `CANDIDATE_TREE`,
+`FROZEN_KERNEL_PATH`, and the supplied `MEGA_PLAN_IR` without any reference
+tree. Repair required failures in this order:
+`plan → correctness → abi → lifecycle → resource/compiler → schedule →
+performance`. Commit a coherent source checkpoint and return
+`candidate_status:"authoring"` with the exact structured
+`contract_failures`; do not run `rocm-smi`, import a GPU runtime, acquire a
+lease, or execute correctness/benchmark commands. `claim_complete:true` is
+valid for that finalized static checkpoint and lets independent structural
+Verify populate the next round.
+
+When `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=0`, GPU work is authorized only for
+the exact `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`. If you edit any production
+source first, GPU authorization is revoked for the rest of the turn: commit
+and return for independent structural Verify. Never use a stale pass to
+compile or measure a changed HEAD.
 
 When `STRUCTURAL_ONLY=1`, do not acquire a GPU lease or run any GPU command.
 Complete the full target topology in source, run only AST/py_compile/static
