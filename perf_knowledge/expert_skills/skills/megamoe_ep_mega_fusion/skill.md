@@ -3,7 +3,7 @@ id: megamoe_ep_mega_fusion
 title: 'MegaMoE EP8 persistent tile-pipeline playbook'
 kind: expert_skill
 mode: mega
-revision: m25-v3
+revision: mega-ep-fusion-v1
 playbook_file: playbook.md
 contract_file: contract.yaml
 validation_file: validation.yaml
@@ -43,7 +43,7 @@ provenance:
   origin: deconstructed_capability
   reuse_mode: common_mega_candidate_lifecycle
 incumbent:
-  label: M2.5_persistent_megakernel
+  label: validated_persistent_megakernel
   is_ceiling: false
   measured_gain_vs_baseline_pct:
     tokens512_uniform: 1.49
@@ -65,7 +65,7 @@ current hardware evidence still override the playbook.
 
 Read repository-relative `playbook.md` as a detailed validated implementation
 guide and `contract.yaml` as its machine-readable preflight. The playbook records
-one design known to reach M2.5-class behavior, including synchronization and
+one design known to reach the validated performance band, including synchronization and
 geometry details plus the FlyDSL source shapes on which it was validated.
 Re-derive applicability from the current frozen source/task graph. Do not
 replace the direct fused ABI, nested emitter, unified queue loop, publication
@@ -76,7 +76,7 @@ and the deviation is recorded.
 
 Use for `mode=mega`, EP8 MegaMoE V2 on gfx950. With
 `use_expert_skills=false`, this skill package must be absent and the
-same roles derive candidates without M2.5 knowledge.
+same roles derive candidates without this validated fusion knowledge.
 
 ## Mechanism
 
@@ -89,7 +89,7 @@ explicit:
 - GEMM2/P2P and combine can likewise be phase-staggered across CTAs;
 - LDS/VGPR/CU residency, publication/acquire scope, monotone generations and
   graph replay safety are correctness constraints;
-- full fusion is the known M2.5 design, while a measured faster partial fusion
+- full fusion is the known validated design, while a measured faster partial fusion
   is also a valid Mega candidate.
 
 For the pinned baseline, the following are closed source shapes, not equivalent
@@ -104,7 +104,7 @@ Run the normal Mega analysis and candidate loop:
 
 1. Build the tile task graph and identify missing readiness edges.
 2. Use the playbook to prioritize a credible persistent pipeline; do not copy
-   or read an external M2.5 source tree.
+   or read an external implementation tree.
 3. Author resumable production-source checkpoints in the ordinary candidate
    lane.
 4. Debug JIT, direct correctness and graph liveness on the actual candidate.
@@ -118,7 +118,7 @@ evidence.
 
 ## Completion
 
-An M2.5-class full-fusion candidate confirms:
+A validated full-fusion candidate confirms:
 
 - `path=MEGA` on all eight ranks;
 - exactly two launches per rank;

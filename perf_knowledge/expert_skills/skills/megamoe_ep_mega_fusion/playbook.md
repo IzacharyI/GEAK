@@ -1,6 +1,6 @@
 ---
-playbook_id: megamoe_m25_tile_pipeline
-revision: m25-v3
+playbook_id: megamoe_ep_tile_pipeline
+revision: mega-ep-fusion-v1
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true
@@ -9,7 +9,7 @@ source: validated_knowledge
 oracle_role: post_authoring_comparison_only
 ---
 
-# MegaMoE M2.5 persistent-fusion playbook
+# MegaMoE EP persistent-fusion playbook
 
 This file is the independent implementation contract distilled from one
 validated tiled/instruction-pipelined design produced from the frozen public
@@ -54,12 +54,12 @@ The only campaign activation switch is:
 AITER_MEGAMOE_FUSE_ALL=1
 ```
 
-With that switch set, the complete M2.5 topology is selected whenever
+With that switch set, the complete validated topology is selected whenever
 `stage1.num_waves % 4 == 0`. `AITER_MEGAMOE_FUSE_COMBINE` may remain as a
 diagnostic opt-out, but its default is `"1"`. Quant fusion is not part of this
 playbook and remains off.
 
-For a scored BF16 M2.5 arm, require all ranks to resolve:
+For a scored BF16 full-fusion arm, require all ranks to resolve:
 
 ```text
 FUSE_ALL=1
@@ -75,8 +75,8 @@ quant-on is M3. Require the marker plus the BF16 two-launch observation.
 `forward_prequant` legitimately has no quant launch and is therefore a
 one-launch API; it is not the BF16 launch-count contract.
 
-Expose one host helper named `_m25_variant_enabled(config)` that resolves and
-validates this complete environment before launch. Do not let independent
+Expose one host helper that resolves and validates this complete environment
+before launch. Do not let independent
 call sites infer “MEGA” from `FUSE_ALL` alone.
 
 The candidate is complete only when all implementation checkpoints in section
@@ -85,7 +85,7 @@ topologies and not performance candidates.
 
 ## 2. Source boundary
 
-Start from the workflow-supplied frozen baseline tree. The M2.5 runtime
+Start from the workflow-supplied frozen baseline tree. The validated runtime
 structure is carried primarily by `mega_moe_v2.py`, `mega_moe_stage1.py`,
 `mega_moe_stage2.py`, and `gemm2.py`. Author only these production files when
 the corresponding call-chain change is required:
@@ -106,13 +106,13 @@ aiter/ops/flydsl/kernels/mega_moe/quant.py
 ```
 
 `mega_moe_fused_s2c.py` is an earlier Stage2+combine infrastructure/control,
-not a requirement for the final M2.5 Stage1-hosted third queue. The quant
-emitter is optional M3 infrastructure; M2.5 keeps quant as its own launch.
+not a requirement for the final Stage1-hosted third queue. The quant
+emitter is optional infrastructure; the validated target keeps quant as its own launch.
 Neither file may be required merely because it differs in a later oracle tree.
 
 Do not edit tests or benchmarks and do not commit scripts, logs, caches, dumps,
 or evidence to the candidate tree. Store all such artifacts in `OUTPUT_DIR`.
-Do not read or diff an external M2.5 source tree. The implementation must be
+Do not read or diff an external implementation tree. The implementation must be
 authored from this playbook and the frozen baseline.
 
 ## 3. Fixed 8192-uniform configuration
@@ -173,7 +173,7 @@ publish_tok_ready  = true when combine is fused
 Compile-time validation MUST enforce
 `publish_tok_ready implies p2p_write_through` and require nonzero peer-ready
 and tile-close pointers. If a different implementation uses cached P2P stores,
-it must add a system release before the ready atomic; the validated M2.5 path
+it must add a system release before the ready atomic; the validated path
 uses write-through stores instead.
 
 Do not apply a generic 64 KiB LDS cutoff to this gfx950 design. The target
@@ -242,7 +242,7 @@ Int32 `max_m_blocks`, seven combine pointers, and two optional quant pointers.
 Zero placeholders are valid only when the corresponding role is compiled out;
 an active fused Stage2 or combine role rejects missing/zero required pointers.
 Host tuple order, kernel parameter order and launcher forwarding must match
-exactly. A clean M2.5-only implementation may omit later wait-stat/M3 fields,
+exactly. A clean full-fusion implementation may omit later wait-stat/quant-ingress fields,
 but must declare that ABI deviation explicitly.
 
 The fused kernel returns no Python value. With combine enabled, the host uses a
@@ -497,7 +497,7 @@ The publication lives in the same unified `kind/unit` work loop immediately
 after `_do_scheduled_tile(unit)`. It uses the direct `s2_ctr` kernel argument.
 Do not tunnel the counter through an extended dispatch-pointer table or move
 GEMM2 into a second post-loop drain: both change the compiler frame and are not
-the validated M2.5 source shape.
+the validated source shape.
 
 Do not add and repeatedly benchmark a producer-only readiness activation
 switch while Stage2 still launches separately. The counter has no consumer in
@@ -826,7 +826,7 @@ For a candidate implementing the complete reference design:
 - finalist tier runs all target/regression guards and the configured jittered
   replay contract.
 
-The recorded M2.5 band is a reproduction target, not permission to skip any
+The recorded validation band is a target, not permission to skip any
 correctness or stability gate.
 
 For the per-token cross-rank arrival protocol, finalist liveness means at
@@ -848,7 +848,7 @@ candidate with the pinned oracle:
 python kernel_workflow/tools/expert_skill_contract.py \
   --contract perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion/contract.yaml \
   --baseline <frozen-baseline> \
-  --reference <read-only-M2.5-oracle> \
+  --reference <read-only-reference-tree> \
   --candidate <independently-authored-tree> \
   --authoring-manifest <pre-comparison-generation-manifest.json> \
   --require independent

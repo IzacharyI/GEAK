@@ -60,7 +60,7 @@ ok(api.normalizeMegaCandidate({ id: 'integrated', source: 'integrated' }).source
   'integrated source is accepted');
 ok(api.normalizeMegaCandidate({ id: 'legacy', source: 'validated_skill' }).status === 'rejected',
   'validated_skill is not a separate candidate source');
-ok(api.normalizeMegaCandidate({ id: 'm25_skill_v1', source: 'search' }).source_id_valid,
+ok(api.normalizeMegaCandidate({ id: 'guided_fusion_v1', source: 'search' }).source_id_valid,
   'candidate ids are not reserved for a reproduction lane');
 ok(!api.validMegaCandidateId('../escape') && !api.validMegaCandidateId('a/b'),
   'candidate ids cannot escape their state directory');

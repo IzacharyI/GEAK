@@ -35,8 +35,10 @@ Inputs in your prompt: `KERNEL_PATH_ORIG`, `EXP_ROOT` (base dir for timestamped 
 `MODE` (`optimize` default | `author` | `mega`). In `author` mode you also get `TARGET_LANGUAGE` and `OP_SPEC`.
 `STRICT_AUTONOMY` is present only for a proof run.
 
-In mega mode, the hand-authored M2.5 tree is not an input: do not search for, run, copy or expose it.
-Only workflow-authored candidate trees under the candidate registry may reach final selection.
+In mega mode, an external implementation/reference tree is not an authoring
+input: do not search for, run, copy or expose it. An optional verifier-only
+reference never reaches planning or authoring roles. Only workflow-authored
+candidate trees under the candidate registry may reach final selection.
 
 When `STRICT_AUTONOMY` is present, before copying anything run
 `git -C "$SKILL_DIR/.." rev-parse HEAD` and `git -C "$SKILL_DIR/.." status --porcelain`.

@@ -47,9 +47,9 @@ ok(/run the three regression guards/.test(director) &&
    /required liveness/.test(director),
   'finalists pay the complete guard and liveness contract');
 ok(/isolated:\s*1\.0448/.test(validation) &&
-   /do not copy[\s\S]*external M2\.5 source tree/i.test(skill) &&
+   /do not copy[\s\S]*external implementation tree/i.test(skill) &&
    !/megamoe_ep_mega_fusion|1\.0448/.test(src),
-  'the M2.5 target belongs to Skill data, never workflow core or an oracle arm');
+  'the validated target belongs to Skill data, never workflow core or a reference arm');
 
 console.log('\n# final output independently checks the selected score');
 ok(/finalPrimary > 1\.0/.test(src) && /mega_deliverable = !!\(megaSelection/.test(src),

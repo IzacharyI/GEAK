@@ -1044,7 +1044,8 @@ the Director-materialized selected candidate, not a mutable global floor.
    - **Mega candidate portfolio** — when present, list every candidate id, source, base lineage,
      lifecycle status, absolute score, and why it was or was not a finalist. Quote
      `MEGA_SELECTION.selected_candidate_id`; do not infer a winner from the last round. State that
-     the hand-written M2.5 tree was not an input and that 1.0448x was a recorded target only.
+     no external implementation tree was an authoring input and that any
+     `EXPERT_SKILL_TARGET_SCORE/BAND` was report-only.
      A candidate at `<=1.0x` may be documented as runnable WIP but must never appear as final output.
    - **Autonomy acceptance** — required when `STRICT_AUTONOMY` is true. State
      `AUTONOMY_ACCEPTANCE_REACHED` verbatim. If false, headline status is

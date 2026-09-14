@@ -68,7 +68,7 @@ continuation changes structured state/args, not the fixed task prompt.
 
 `mode=mega` is one tiled/instruction-pipelined megakernel lifecycle. With
 `use_expert_skills=true`, its ordinary Analyze/Plan/Author roles receive the
-matched M2.5 knowledge; matched semantic/compiler-shape `MUST` rules override
+matched Expert Skill knowledge; matched semantic/compiler-shape `MUST` rules override
 generic heuristics, while hardware evidence remains authoritative. With
 `false`, the same roles and gates run without it. There is no reproduction
 sub-mode or dedicated skill lane. Full and partial fusion candidates may
@@ -77,7 +77,7 @@ baseline. Packaged knowledge, roles and tools remain repository-relative.
 
 When GPUs are unavailable, `tools/expert_skill_contract.py` evaluates a
 skill-local declarative `contract.yaml` against an already-authored candidate
-and its MegaPlanIR. The generic checker contains no M2.5 rules; operator-specific
+and its MegaPlanIR. The generic checker contains no operator-specific rules; Skill-local
 pointer, queue, counter, geometry and source-shape constraints live beside the
 matched Skill. An optional read-only reference may calibrate copy detection, but
 is never passed to Planner or Engineer. This tier verifies source structure

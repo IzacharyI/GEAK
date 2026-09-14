@@ -64,7 +64,7 @@ skills:
 - id: megamoe_ep_mega_fusion
   file: skills/megamoe_ep_mega_fusion/skill.md
   scope: kernel
-  revision: m25-v3
+  revision: mega-ep-fusion-v1
   playbook_file: skills/megamoe_ep_mega_fusion/playbook.md
   contract_file: skills/megamoe_ep_mega_fusion/contract.yaml
   validation_file: skills/megamoe_ep_mega_fusion/validation.yaml

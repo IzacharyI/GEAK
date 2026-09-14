@@ -111,7 +111,6 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
 def test_generic_engine_contains_no_operator_specific_contract():
     source = TOOL.read_text()
     assert "megamoe_ep_mega_fusion" not in source
-    assert "M2.5" not in source
     assert "mega_moe_stage1.py" not in source
     assert "AITER_MEGAMOE" not in source
 

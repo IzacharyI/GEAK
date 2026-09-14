@@ -49,7 +49,7 @@ ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
   'skill injection cannot create a reproduction candidate source');
 const disabled = makeBlock(false);
 ok(disabled('mega_search_lead') === '' && disabled('engineer') === '',
-  'with Expert Skills off the same roles receive no M2.5 knowledge');
+  'with Expert Skills off the same roles receive no matched fusion knowledge');
 
 console.log('\n# no reproduction scheduler or reserved skill lane');
 ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(src),
@@ -109,7 +109,7 @@ ok(/EXPERT_SKILL_REFERENCE_PATH,/.test(src) &&
    !/Advance candidate lane \$\{candidateId\}[\s\S]{0,2500}EXPERT_SKILL_REFERENCE_PATH/.test(src),
   'an optional reference is passed only to post-authoring Verify, never Author');
 ok(/EXPERT_SKILL_CONTRACT_TOOL/.test(src) &&
-   !/M25_STRUCTURAL|MEGA_RECIPE|m25_structural_contract|recipe_v1/.test(src),
+   !/megamoe_ep_mega_fusion|mega_moe_stage1/.test(src),
   'the core workflow exposes a generic Expert Skill contract interface');
 ok(/candidateClaimsSkillTarget/.test(src) &&
    /contractBlocksRuntime/.test(src) &&

@@ -28,7 +28,7 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
-console.log('\n# the M2.5 package is matched normative knowledge');
+console.log('\n# the validated fusion package is matched normative knowledge');
 ok(/role: normative_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
   'skill declares normative constraints inside the common Mega lifecycle');
@@ -43,7 +43,7 @@ ok(/normative: true/.test(playbook) &&
 ok(/schema_version: expert-skill-contract-v1/.test(contract) &&
    /host_ready_pointer_identity/.test(contract) &&
    /combine_transport_and_work_domain/.test(contract),
-  'the generic checker receives declarative M2.5 invariants');
+  'the generic checker receives declarative Skill invariants');
 ok(/schema_version: expert-skill-validation-v1/.test(validation) &&
    /status: validated/.test(validation),
   'measured validation status is separate from prose');
@@ -62,6 +62,6 @@ ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(wf),
   'no reserved reproduction lane is registered');
 
 console.log(failures === 0
-  ? '\nPASS: M2.5 knowledge guides the ordinary Mega lifecycle.'
+  ? '\nPASS: validated fusion knowledge guides the ordinary Mega lifecycle.'
   : `\nFAIL: ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

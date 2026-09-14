@@ -222,7 +222,7 @@ denominator.
    - `mode: "switch"` → set `switch_name=switch_value` for the CANDIDATE arm only, and leave it unset
      for the base arm. Setting it for both is the same bug in a different place.
      - **COUPLED form — `switches: [{switch_name,switch_value}, ...]`.** A deep-fusion candidate reaches
-       M2.5 only by turning on the concurrency SITES TOGETHER (SITE-1 dynamic partition + SITE-3 fine-ready
+       its validated target only by turning on the concurrency SITES TOGETHER (SITE-1 dynamic partition + SITE-3 fine-ready
        + SITE-2 pipeline are coupled; any one alone measures at or below the serial floor). When `switches`
        is present you MUST export **every** `switch_name=switch_value` in the array for the CANDIDATE arm
        only, all in the same environment, and leave the base arm with none of them. Exporting a subset is

@@ -8,7 +8,7 @@
 # written after two incidents and it does stop those two incidents. It does not stop the general case,
 # because the reference is not only a checkout. On this project the same answer was ALSO reachable as:
 #
-#   1. artifacts/control/m25_fusion_reference.patch  -- the reference diff itself, handed to the
+#   1. artifacts/control/fusion_reference.patch      -- the reference diff itself, handed to the
 #      benchmark engineer on purpose for the positive control, sitting in the run tree
 #   2. kernelworkflow-out/<wave1>/                   -- a previous wave's full output, workspaces and all
 #   3. artifacts/geak_runs/<older waves>/            -- SIBLINGS OF THE CURRENT EVAL DIR, i.e. inside the
