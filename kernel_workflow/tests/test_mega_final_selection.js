@@ -9,6 +9,13 @@ const director = fs.readFileSync(path.join(wf, 'roles', 'director.md'), 'utf8');
 const task = fs.readFileSync(
   path.join(wf, 'tasks', 'megamoe_v2_ep8_mega', 'GEAK_TASK.md'), 'utf8',
 );
+const args = JSON.parse(fs.readFileSync(
+  path.join(wf, 'tasks', 'megamoe_v2_ep8_mega', 'launch_args.json'), 'utf8',
+));
+const skill = fs.readFileSync(
+  path.join(wf, '..', 'perf_knowledge', 'expert_skills', 'skills',
+    'megamoe_ep_mega_fusion', 'skill.md'), 'utf8',
+);
 
 let failures = 0;
 const ok = (value, message) => {
@@ -41,8 +48,11 @@ ok(/A source label[\s\S]*never relaxes a[\s\S]*quality gate/.test(director) &&
 ok(/run the three regression guards/.test(director) &&
    /required liveness/.test(director),
   'finalists pay the complete guard and liveness contract');
-ok(/is a target only/.test(task) && /Never read, run, copy, diff, import/.test(task),
-  'the M2.5 number is a target and its implementation is not an oracle arm');
+ok(args.expert_skill_recorded_low === 1.0403 &&
+   args.expert_skill_recorded_score === 1.0448 &&
+   /do not copy[\s\S]*external M2\.5 source tree/i.test(skill) &&
+   !/M2\.5|contract|resume|STATE\.json/.test(task),
+  'the M2.5 target belongs to Skill data, never the fixed task or an oracle arm');
 
 console.log('\n# final output independently checks the selected score');
 ok(/finalPrimary > 1\.0/.test(src) && /mega_deliverable = !!\(megaSelection/.test(src),

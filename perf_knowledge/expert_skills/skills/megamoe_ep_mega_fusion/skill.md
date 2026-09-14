@@ -3,7 +3,7 @@ id: megamoe_ep_mega_fusion
 title: 'MegaMoE EP8 persistent tile-pipeline playbook'
 kind: expert_skill
 mode: mega
-revision: m25-v2
+revision: m25-v3
 playbook_file: playbook.md
 contract_file: contract.yaml
 validation_file: validation.yaml

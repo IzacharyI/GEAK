@@ -32,6 +32,10 @@ ok(/Calibration is intentionally NOT restored as authority/.test(src) &&
 ok(/megaStateSequenceBase = Math\.max\(0, Number\(ps\.state_sequence\)\)/.test(src) &&
    /megaStateSequenceBase \+ Number\(currentRound\) \* 10/.test(src),
   'state sequence advances from the prior wave instead of resetting with round 1');
+ok(/const staleContract = CHECK_EXPERT_SKILL_CONTRACT/.test(src) &&
+   /n\.structural_contract_revision !== EXPERT_SKILL_REVISION/.test(src) &&
+   /invalidating structural evidence/.test(src),
+  'a changed Skill contract invalidates old structural evidence without prompt prose');
 
 console.log('\n# each lane owns persistent source state');
 ok(/STATE_DIR}\/candidates\/\$\{candidateId\}\/tree/.test(src),
@@ -54,6 +58,9 @@ ok(/working_snapshot: \{/.test(src) &&
    /topology: next\.topology/.test(src) &&
    /changed_files: next\.changed_files/.test(src),
   'unverified candidate progress is persisted as a structured working snapshot');
+ok(/structural_contract_revision: structuralPass/.test(src) &&
+   /structural_contract_sha256: structuralPass/.test(src),
+  'new structural evidence is bound to the exact contract revision and digest');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

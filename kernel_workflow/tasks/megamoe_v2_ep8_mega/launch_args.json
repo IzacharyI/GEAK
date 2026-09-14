@@ -24,7 +24,7 @@
   "mega_closeout_reserve_s": 900,
   "_objective_comment": "Mega uses one candidate lifecycle for all knowledge configurations. Candidates may fully or partially fuse stages, but must implement tile/instruction scheduling, remain a complete runnable operator, and beat the frozen baseline on rank-max operator_e2e.",
   "expert_skill_id": "megamoe_ep_mega_fusion",
-  "expert_skill_revision": "m25-v2",
+  "expert_skill_revision": "m25-v3",
   "expert_skill_baseline_commit": "8775229e003af030abea7c50d2ed9e956311843d",
   "expert_skill_accuracy_cases": ["128", "512", "8192"],
   "expert_skill_playbook": "${SKILL_DIR}/../perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion/playbook.md",

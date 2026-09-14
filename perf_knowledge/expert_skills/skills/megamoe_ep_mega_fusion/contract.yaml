@@ -1,6 +1,6 @@
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: m25-v2
+revision: m25-v3
 description: Declarative source and MegaPlanIR preflight for the validated M2.5-class target.
 
 source:
@@ -48,7 +48,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: m25-v2
+      value: m25-v3
     - id: target_two_launches
       path: target_launches
       op: eq

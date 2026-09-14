@@ -45,7 +45,8 @@ This is a GPU-free post-authoring gate.
 Return the structural schema: candidate id/head, `claim_complete`, report path,
 `structural_compatible`, `independent_structure_pass`,
 `capability_eligible`, copy flags, provenance status, feature counts and an
-actionable `next_blocker`. Return `plan_consistent:true` only when the tool
+actionable `next_blocker`, plus the tool's exact `contract_revision` and
+`contract_sha256`. Return `plan_consistent:true` only when the tool
 reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,
 `accuracy_verified:false`, and `performance_verified:false`; this phase proves
 source structure only.

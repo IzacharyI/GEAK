@@ -685,6 +685,8 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   runtime_verified: { type: 'boolean' },
   score_complete: { type: 'boolean' },
   structural_report: { type: 'string' },
+  structural_contract_revision: { type: 'string' },
+  structural_contract_sha256: { type: 'string' },
   attempt_id: { type: 'string' },
   evidence_manifest: { type: 'string' },
   correctness: { type: 'string' },
@@ -728,6 +730,8 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   reference_copy_detected: { type: 'boolean' },
   reference_copy_suspected: { type: 'boolean' },
   provenance_status: { type: 'string' },
+  contract_revision: { type: 'string' },
+  contract_sha256: { type: 'string' },
   plan_consistent: { type: 'boolean' },
   semantic_features_passed: { type: 'number' },
   semantic_features_total: { type: 'number' },
@@ -3048,6 +3052,8 @@ function normalizeMegaCandidate(raw) {
     runtime_verified: c.runtime_verified === true,
     score_complete: c.score_complete === true,
     structural_report: String(c.structural_report || ''),
+    structural_contract_revision: String(c.structural_contract_revision || ''),
+    structural_contract_sha256: String(c.structural_contract_sha256 || ''),
     attempt_id: String(c.attempt_id || ''),
     changed_files: Array.isArray(c.changed_files) ? c.changed_files.map(String) : [],
     evidence_manifest: String(c.evidence_manifest || ''),
@@ -3135,6 +3141,8 @@ function megaRegistryForSearch(registry) {
       runtime_verified: c.runtime_verified,
       score_complete: c.score_complete,
       structural_report: c.structural_report,
+      structural_contract_revision: c.structural_contract_revision,
+      structural_contract_sha256: c.structural_contract_sha256,
       absolute_score: c.absolute_score,
       per_case: c.per_case,
       topology_sig: c.topology_sig,
@@ -5392,8 +5400,24 @@ if (setup.resumed && setup.prior_state) {
         log(`MEGA candidate state rejected: id=${n.id || '(empty)'} source=${String(c && c.source || '')}.`);
         continue;
       }
+      const staleContract = CHECK_EXPERT_SKILL_CONTRACT &&
+        n.structural_verified &&
+        n.structural_contract_revision !== EXPERT_SKILL_REVISION;
+      if (staleContract) {
+        log(`MEGA candidate ${n.id}: invalidating structural evidence from ` +
+          `${n.structural_contract_revision || 'an unversioned contract'}; current Expert Skill ` +
+          `contract revision is ${EXPERT_SKILL_REVISION}.`);
+      }
       megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, {
         ...n,
+        ...(staleContract ? {
+          structural_verified: false,
+          structural_report: '',
+          structural_contract_revision: '',
+          structural_contract_sha256: '',
+          next_blocker: `re-run Expert Skill contract ${EXPERT_SKILL_REVISION} on exact HEAD ` +
+            `${n.head || n.working_head || '(missing)'} before device verification`,
+        } : {}),
         // State may carry evidence and a head, never authority to redirect the lane outside its root.
         tree: megaLaneTree(n.id),
       });
@@ -5937,6 +5961,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       ...meta,
       structural_verified: structuralPass,
       structural_report: structural && structural.report_path || '',
+      structural_contract_revision: structuralPass
+        ? String(structural && structural.contract_revision || EXPERT_SKILL_REVISION) : '',
+      structural_contract_sha256: structuralPass
+        ? String(structural && structural.contract_sha256 || '') : '',
       next_blocker: structuralPass
         ? meta.next_blocker
         : (structural && structural.next_blocker) ||

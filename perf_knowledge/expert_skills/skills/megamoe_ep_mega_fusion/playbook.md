@@ -1,6 +1,6 @@
 ---
 playbook_id: megamoe_m25_tile_pipeline
-revision: m25-v2
+revision: m25-v3
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true
