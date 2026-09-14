@@ -70,10 +70,13 @@ valid for that finalized static checkpoint and lets independent structural
 Verify populate the next round.
 
 When `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=0`, GPU work is authorized only for
-the exact `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`. If you edit any production
-source first, GPU authorization is revoked for the rest of the turn: commit
-and return for independent structural Verify. Never use a stale pass to
-compile or measure a changed HEAD.
+the exact `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`. A temporary compile-time
+cut-point/probe may modify the working tree only to collect diagnostic
+evidence: it is not a candidate, earns no correctness/performance credit, and
+must be completely restored to the exact verified HEAD before another normal
+run. Once you apply a production fix, GPU authorization is revoked for the
+rest of the turn: commit and return for independent structural Verify. Never
+compile or measure a changed candidate HEAD using a stale pass.
 
 When `STRUCTURAL_ONLY=1`, do not acquire a GPU lease or run any GPU command.
 Complete the full target topology in source, run only AST/py_compile/static

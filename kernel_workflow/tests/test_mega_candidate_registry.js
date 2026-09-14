@@ -88,6 +88,37 @@ console.log('\n# WIP cannot overwrite verified evidence');
   ok(registry[0].working_head === 'new-head',
     'new authoring progress is retained separately');
 }
+{
+  const structural = {
+    id: 'structural', source: 'search', status: 'authoring',
+    tree: '/state/structural', head: 'sealed-head', claim_complete: false,
+    checkpoint_complete: true, structural_verified: true,
+    structural_report: '/eval/structure.json',
+    structural_skill_id: 'skill',
+    structural_candidate_head: 'sealed-head',
+    structural_candidate_tree_digest: 'tree-digest',
+    structural_skill_bundle_sha256: 'bundle-digest',
+    structural_planner_extension_sha256: 'planner-digest',
+    structural_contract_revision: 'v1',
+    structural_contract_sha256: 'contract-digest',
+  };
+  let registry = [structural];
+  registry = api.upsertMegaCandidate(registry, {
+    id: 'structural', source: 'search', status: 'authoring',
+    tree: '/state/structural', head: 'sealed-head', claim_complete: false,
+    next_blocker: 'device runtime fault',
+  });
+  ok(registry[0].structural_verified &&
+     registry[0].structural_candidate_head === 'sealed-head' &&
+     registry[0].structural_contract_sha256 === 'contract-digest',
+  'an incomplete runtime attempt preserves exact-HEAD structural evidence');
+  registry = api.upsertMegaCandidate(registry, {
+    id: 'structural', source: 'search', status: 'authoring',
+    tree: '/state/structural', head: 'changed-head', claim_complete: false,
+  });
+  ok(!registry[0].structural_verified,
+    'a changed source HEAD still revokes structural evidence');
+}
 
 console.log('\n# selection is knowledge-blind and absolute-to-frozen');
 {

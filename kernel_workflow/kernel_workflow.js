@@ -3406,11 +3406,35 @@ function normalizeMegaCandidate(raw) {
 
 function upsertMegaCandidate(registry, incoming) {
   const list = Array.isArray(registry) ? registry.map(normalizeMegaCandidate) : [];
-  const next = normalizeMegaCandidate(incoming);
+  let next = normalizeMegaCandidate(incoming);
   if (!next.id) return list;
   const i = list.findIndex((c) => c.id === next.id);
   if (i < 0) return [...list, next];
   const prev = list[i];
+  const sameStructuralHead = prev.structural_verified === true &&
+    !!prev.structural_candidate_head &&
+    next.head === prev.structural_candidate_head &&
+    next.head === prev.head;
+  // Runtime failure is evidence about an already-sealed source checkpoint, not a source mutation.
+  // Keep that exact-HEAD structural authority across incomplete/failed runtime attempts. A changed
+  // HEAD cannot satisfy this predicate and must pay independent structural Verify again.
+  if (sameStructuralHead && !next.structural_verified) {
+    next = normalizeMegaCandidate({
+      ...next,
+      checkpoint_complete: prev.checkpoint_complete,
+      structural_verified: true,
+      structural_report: prev.structural_report,
+      structural_skill_id: prev.structural_skill_id,
+      structural_candidate_head: prev.structural_candidate_head,
+      structural_candidate_tree_digest: prev.structural_candidate_tree_digest,
+      structural_skill_bundle_sha256: prev.structural_skill_bundle_sha256,
+      structural_planner_extension_sha256: prev.structural_planner_extension_sha256,
+      structural_contract_revision: prev.structural_contract_revision,
+      structural_contract_sha256: prev.structural_contract_sha256,
+      contract_failures: next.contract_failures.length
+        ? next.contract_failures : prev.contract_failures,
+    });
+  }
   // Never combine a new unverified HEAD/status with an older verified score. Preserve the complete
   // snapshot and record only where lane-local WIP has advanced; Director checks out `head`, not
   // `working_head`, for final measurement.
@@ -6251,8 +6275,11 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           `commit a coherent source checkpoint, and return candidate_status=authoring. Do not run ` +
           `rocm-smi, torchrun, a benchmark, a correctness command, or any GPU runtime import. `
         : `The exact structural evidence HEAD is ${existing &&
-            existing.structural_candidate_head || '(none)'}. If production source changes, do not ` +
-          `use a GPU in the same turn; commit and return for independent structural Verify first. `}` +
+            existing.structural_candidate_head || '(none)'}. Temporary compile-time diagnostic ` +
+          `instrumentation may run only for bisection, earns no candidate evidence, and must be ` +
+          `fully restored to that exact HEAD before a normal run. Once a production fix is applied, ` +
+          `GPU authorization is revoked for the rest of the turn: commit and return for independent ` +
+          `structural Verify first. `}` +
       `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
       `through the final commit/manifest write. If the lock is held, return incomplete without editing. ` +

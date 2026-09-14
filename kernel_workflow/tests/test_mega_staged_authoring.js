@@ -68,8 +68,9 @@ ok(/authoringContractNeedsPreflight/.test(wf) &&
    /AUTHORING_CONTRACT_PREFLIGHT_REQUIRED/.test(wf),
   'a full-target author receives no GPU until exact-HEAD structural verification');
 ok(/fail-closed GPU prohibition/.test(engineer) &&
-   /If you edit any production[\s\S]*GPU authorization is revoked/.test(engineer),
-  'Engineer cannot use stale structural evidence or edit and benchmark in one turn');
+   /temporary compile-time[\s\S]*earns no correctness\/performance credit/.test(engineer) &&
+   /Once you apply a production fix[\s\S]*GPU authorization is revoked/.test(engineer),
+  'Engineer may bisect reversibly but cannot use stale evidence after a production fix');
 
 console.log(failures === 0
   ? '\nPASS: validated fusion knowledge guides the ordinary Mega lifecycle.'
