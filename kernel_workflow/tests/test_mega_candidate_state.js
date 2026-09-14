@@ -22,6 +22,10 @@ ok(/Array\.isArray\(ps\.candidate_registry\)/.test(src) &&
    /for \(const c of ps\.candidate_registry\)/.test(src) &&
    /upsertMegaCandidate\(megaCandidateRegistry, \{/.test(src),
   'resume merges every prior candidate rather than replacing the registry');
+ok(/const MEGA_RESUME_STATE = MODE === 'mega'/.test(src) &&
+   /STATE_DIR, MEGA_RESUME_STATE/.test(src) &&
+   /MEGA_RESUME_STATE=true[\s\S]{0,320}MUST[\s\S]{0,180}prior_state/.test(director),
+  'a machine-readable continuation flag outranks stale fresh-run task prose');
 ok(/Calibration is intentionally NOT restored as authority/.test(src) &&
    !/megaMeasurementCalibration = \{ \.\.\.megaMeasurementCalibration, \.\.\.ps\.measurement_calibration \}/.test(src),
   'prior calibration is audit data and cannot authorize a new wave');
@@ -41,10 +45,14 @@ ok(/Mega candidate-registry exception/.test(director) &&
    /resumed:true` plus `prior_state`/.test(director) &&
    /even when[\s\S]*`STATE_DIR\/best` is absent/.test(director),
   'Director restores candidate state without requiring a legacy global best');
-ok(/persisted\.state_written === true/.test(src) &&
-   /persisted\.state_sequence/.test(src) &&
-   /MEGA STATE PERSIST FAILED/.test(src),
+ok(/MEGA STATE PERSIST FAILED/.test(src) &&
+   /return false;/.test(src) &&
+   /candidate state for round \$\{currentRound\} could not be persisted/.test(src),
   'a round cannot advance without a confirmed monotonic state write');
+ok(/working_snapshot: \{/.test(src) &&
+   /recipe_revision: next\.recipe_revision/.test(src) &&
+   /completed_steps: next\.completed_steps/.test(src),
+  'unverified recipe progress is persisted as a structured working snapshot');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

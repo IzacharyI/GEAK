@@ -138,6 +138,10 @@ use path_to_GEAK/e2e_workflow to optimize inference for /models/Qwen3.5-27B-FP8,
 Director → TechLead → specialist engineers (algorithm / memory / compute / host_runtime), multi-round and
 budget-controlled, with each patch independently verified before it's accepted.
 
+It also provides `mode=mega` for tiled/instruction-pipelined persistent-kernel portfolios. Expert
+Skills are optional advisory knowledge for the same candidate lifecycle, not a separate mode; see
+[`kernel_workflow/README.md`](kernel_workflow/README.md).
+
 ### Example
 
 ```

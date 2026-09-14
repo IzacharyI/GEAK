@@ -8,6 +8,42 @@ absolute per-case latencies. The script trusts only your numbers.
 Mega candidate lanes may instead provide `CANDIDATE_TREE`. That is an immutable whole-tree candidate:
 copy and verify it directly; never apply it to another candidate or mutate it.
 
+## PHASE=verify_structure
+
+This is a GPU-free post-authoring gate.
+
+## Inputs (verify_structure)
+
+`CANDIDATE_ID`,
+`CANDIDATE_SOURCE`, `CANDIDATE_TREE`, `EXPECTED_HEAD`,
+`FROZEN_KERNEL_PATH`, `STRUCTURAL_ORACLE_PATH`,
+`STRUCTURAL_CONTRACT_TOOL`, `STRUCTURAL_VERIFY_DIR`,
+`ORACLE_WAS_HIDDEN`, `MEGA_PLAN_IR`, and `SKILL_DIR`.
+
+1. Do not run a GPU command, import the GPU runtime, or edit candidate source.
+2. Verify the lane is clean and its HEAD equals `EXPECTED_HEAD`.
+3. Before reading any oracle file, compute the production-boundary digest using
+   the checked-in contract module and atomically write
+   `STRUCTURAL_VERIFY_DIR/authoring_manifest.json` with
+   `sealed_before_oracle_comparison:true`,
+   `oracle_exposed_during_authoring:false` only when
+   `ORACLE_WAS_HIDDEN=1`, and that digest.
+4. Atomically write the supplied `MEGA_PLAN_IR` to
+   `STRUCTURAL_VERIFY_DIR/mega_plan_ir.json`. Then run
+   `STRUCTURAL_CONTRACT_TOOL` with the frozen baseline, read-only oracle,
+   candidate, manifest and `--plan-json` file. Write `structural_result.json`.
+5. Exact/near oracle copying, failed provenance seal, missing plan structure or
+   any semantic/compiler-shape failure means `capability_eligible:false`.
+   Never copy oracle bytes into the candidate.
+
+Return the structural schema: candidate id/head, `claim_complete`, report path,
+`structural_compatible`, `independent_structure_pass`,
+`capability_eligible`, copy flags, provenance status, feature counts and an
+actionable `next_blocker`. Return `plan_consistent:true` only when the tool
+reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,
+`accuracy_verified:false`, and `performance_verified:false`; this phase proves
+source structure only.
+
 ## PHASE=verify
 
 ## Inputs
@@ -35,9 +71,18 @@ copy and verify it directly; never apply it to another candidate or mutate it.
   `LAUNCH_TARGET` carry the
   machine-enforced campaign contract. When `STRICT_AUTONOMY` is true, missing evidence is a failed
   terminal contract, not a benign default.
+- `SEARCH_ACCEPTS_PARTIAL_FUSION=1` means a search candidate may score with a
+  launch count between `LAUNCH_TARGET` and the frozen baseline count. It must
+  still be a complete runnable operator and strictly reduce launches; this flag
+  is omitted when a candidate explicitly claims the exact full-fusion target.
 - `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
   provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
   content digests and reveal neither source location nor reference-only filenames.
+- `RECIPE_FILE`, `RECIPE_REVISION`, `RECIPE_COMPLETE`, `RECIPE_ACCURACY_CASES`, and
+  `RECIPE_SOURCE_FILES` identify a validated reproduction.
+  `DIRECT_GRAPH_ACCURACY=1` forbids transitive correctness evidence.
+- `GRAPH_CONTRACT_TOOL` and `GRAPH_CONTRACT_REPLAYS` name the checked-in,
+  machine-independent graph correctness/liveness runner.
 - **DEEP-MODE (optional — only if `HARNESS_ADDENDUM` is present; a normal run omits it):** in addition to
   the oracle correctness + unweighted geomean, also re-measure and report the addendum's e2e-aligned
   weighted geomean and ENFORCE its hard gates (decode-no-regress, memory-footprint cap, cudagraph-safe);
@@ -93,6 +138,20 @@ denominator.
 2. Read `COMMANDMENT.md` for the exact correctness + full-benchmark commands + parse hint.
 3. Run the already lease-wrapped CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
    never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.
+   When `DIRECT_GRAPH_ACCURACY=1`, emit one `accuracy_results` row for every
+   `RECIPE_ACCURACY_CASES` entry by capturing/replaying the candidate path and comparing its output
+   directly with the task's numeric reference. Candidate-vs-floor,
+   drain-vs-floor, a triangle-bound estimate, or accuracy inherited from another HEAD is not
+   evidence. Run `GRAPH_CONTRACT_TOOL` from the candidate environment in one EP8 lease:
+   `torchrun --standalone --nproc_per_node=8 GRAPH_CONTRACT_TOOL --candidate-tree "$WS"
+   --accuracy-cases <RECIPE_ACCURACY_CASES> --liveness-cases <RECIPE_ACCURACY_CASES>
+   --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
+   --rtol <ACCURACY_THRESHOLD> --json-output "$VERIFY_DIR/graph_contract.json"`.
+   Use the MORI/JIT environment from COMMANDMENT and an outer wall timeout. Consume only an atomic
+   JSON with `claim_complete:true`. The known MORI post-result teardown may make torchrun nonzero
+   after that file is complete; no other nonzero/fatal is admissible. If the harness cannot execute
+   the candidate under graph capture, report correctness pending/failed; do not substitute an
+   indirect equivalence.
 4. Run the already lease-wrapped FULL_BENCHMARK entry verbatim. Parse per-case
    latency using the parse hint. Run it **twice** and keep the better/median if the two disagree by
    >5% (note the variance).
@@ -152,6 +211,13 @@ denominator.
      confirm the marker if one was given.
    - `mode: "switch"` → set `switch_name=switch_value` for the CANDIDATE arm only, and leave it unset
      for the base arm. Setting it for both is the same bug in a different place.
+     - **Validated recipe form.** When `RECIPE_COMPLETE=true`, the supplied activation is
+       orchestrator-owned. Export it exactly, force `AITER_MEGAMOE_FUSE_ALL=0` on the frozen base,
+       and reject a result that adds an internal tuning switch or changes the recipe revision.
+       Configure the A/B plan per arm: candidate requires eight `MEGA` markers; the public frozen
+       baseline may predate path markers, so it expects zero markers and is identified by the
+       explicit `FUSE_ALL=0` command plus its frozen source identity. Do not require a fabricated
+       `SCATTERED` marker from that baseline.
      - **COUPLED form — `switches: [{switch_name,switch_value}, ...]`.** A deep-fusion candidate reaches
        M2.5 only by turning on the concurrency SITES TOGETHER (SITE-1 dynamic partition + SITE-3 fine-ready
        + SITE-2 pipeline are coupled; any one alone measures at or below the serial floor). When `switches`
@@ -235,6 +301,13 @@ denominator.
    tell, and a candidate whose footprint is unknown is held back rather than offered. Report it
    whatever the status is — a `regression` or a `harness_modified` patch still has a footprint, and
    `harness_modified` is in fact the case where the list matters most.
+   When `RECIPE_SOURCE_FILES` is supplied, derive touched paths from the candidate repository root
+   commit through `EXPECTED_HEAD` and require the set to be a subset of that exact list. A test,
+   benchmark, script, log, dump, cache, or evidence file in the candidate diff is
+   `status:"harness_modified"` even when its kernel measurement is good.
+   Independently inspect the source against every ordered checkpoint in the supplied normative
+   recipe. Return `recipe_steps_verified` only as the exact ordered prefix you actually confirmed;
+   a validated recipe is `verified` only when that list ends in `recipe_complete`.
 
 5b. **Provenance check (when `KNOWN_REFERENCE_HASHES` or `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
    rewrites, compare it against the same-named file under each reference path. If any file is
@@ -319,6 +392,17 @@ transcribe completed bytes; it may never fill a missing measurement.
   "candidate_source": "<CANDIDATE_SOURCE>",
   "candidate_tree": "<CANDIDATE_TREE or assembled WS>",
   "candidate_head": "<EXPECTED_HEAD>",
+  "recipe_revision": "<RECIPE_REVISION or empty>",
+  "recipe_complete": true,
+  "recipe_steps_verified": ["host_wiring", "shared_emitters", "startup_state", "unified_gemm_drain", "combine_queue", "bucket_safety", "recipe_complete"],
+  "activation": {
+    "mode": "switch",
+    "switch_name": "AITER_MEGAMOE_FUSE_ALL",
+    "switch_value": "1",
+    "path_marker": "path=MEGA",
+    "marker_how": "one on-device path=MEGA marker per EP8 rank",
+    "switches": [{"switch_name": "AITER_MEGAMOE_FUSE_ALL", "switch_value": "1"}]
+  },
   "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized|inactive",
   "correctness": "pass|fail",
   "verified_geomean": 0.0,
@@ -393,14 +477,17 @@ report it, functionalAcceptance holds the candidate to `value < threshold` mecha
 sitting on top of a relL2 of 0.4 is refused. Omit it only when there is genuinely no reference output
 to compare against; a run that never reports it falls back to the `correctness` string unchanged.
 
-**`launch_shape` carries acceptance criterion 1 (fully fused, TWO launches).** Count the kernel
+**`launch_shape` carries the realized fusion shape.** Count the kernel
 launches per EP rank for ONE operator call, both arms, in the same collection: `launches_base` for
-the tree you started from, `launches_cand` for the candidate. The target is 2 — the fused megakernel
+the tree you started from, `launches_cand` for the candidate. The project target is 2 — the fused megakernel
 plus the one separate pre-dispatch quant launch. A candidate that fused dispatch+gemm1 but still
-launches combine on its own is **three** launches and must report `launches_cand:3`, not omit the
-field: omitting it leaves criterion 1 unjudged, which reads the same as an unfused candidate slipping
-through. `how_counted` is the evidence — a trace record count or a launch-marker tally — because a
-count with no method is a guess.
+launches combine on its own is **three** launches and must report
+`launches_cand:3`, not omit the field. With `SEARCH_ACCEPTS_PARTIAL_FUSION=1`,
+that three-launch shape may score if it is correct and faster than frozen;
+without the flag—especially for `validated_skill`—it must equal the target.
+Omitting the count leaves fusion unjudged. `how_counted` is the evidence — a
+trace record count or launch-marker tally — because a count with no method is
+a guess.
 
 **`TARGET_SHAPE` may be a MULTI-LEVER topology, not just a launch count.** Besides `launches`,
 `stages_fused` and `require_overlap`, it can carry `combine_mode` (`queue` = combine folded as a third

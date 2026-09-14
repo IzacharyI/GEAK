@@ -26,14 +26,33 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   AMD operator×backend SOTA base, resolved by the TechLead for THIS kernel (see the next section).
 - **MEGA candidate lane (only when `CANDIDATE_ID` is present):** `BASE_TREE`,
   `BASE_HEAD`, `CANDIDATE_TREE`, `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
-  `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`. Continue that persistent tree; never recreate it or edit another lane. The exact
-  M2.5 recipe is intentionally absent from ordinary search lanes.
+  `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`, `TASK_GRAPH`,
+  `RESOURCE_TIMELINE`, and `MEGA_PLAN_IR`; optionally `STRUCTURAL_ONLY` and
+  `STRUCTURAL_TARGET`. Continue that persistent tree; never
+  recreate it or edit another lane. A matched Expert Skill may append normative
+  M2.5 constraints, but the lane remains ordinary `search`/`integrated`.
 
 In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
 can be optimized later, but it is never a final result. Finalists require absolute speedup greater
-than 1.0 versus frozen MegaMoE V2. Write an atomic evidence manifest and set
-`claim_complete:true` only after all measurements are final; missing data is `claim_complete:false`,
-never zero.
+than 1.0 versus frozen MegaMoE V2. `claim_complete` describes this turn's
+artifact, not terminal candidate quality: after a coherent source checkpoint,
+commit, manifest and `candidate_result.json` are final, set it true with
+`candidate_status:"authoring"` and correctness/performance `pending`. Set it
+false only when the turn or a referenced artifact is interrupted/partial.
+Missing measurements are null/pending, never zero.
+
+For a Mega candidate, treat `MEGA_PLAN_IR` as the source-authoring contract:
+map every queue/event/ABI/resource lifetime and source-shape constraint to a
+reachable implementation before inventing an equivalent form. Use
+`TASK_GRAPH` for dependency legality and `RESOURCE_TIMELINE` for scheduling
+headroom. Record any evidence-backed deviation explicitly in the result; an
+undeclared deviation is a structural failure, not Engineer discretion.
+
+When `STRUCTURAL_ONLY=1`, do not acquire a GPU lease or run any GPU command.
+Complete the full target topology in source, run only AST/py_compile/static
+checks, commit and return a complete source checkpoint for independent
+structural Verify. Do not stop at a partial launch shape and do not claim
+runtime correctness, activation, liveness or performance.
 
 ## Load only the knowledge for your specialty (keeps context focused)
 - algorithm  → `hip_optimization.md` (P0/P1) or `triton_optimization.md`, + `geomean_levers.md`
@@ -151,6 +170,41 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    lineage, not a shared floor. Continue its HEAD, keep its complete two-launch target coherent, and
    never modify another registry candidate. Slow correct work remains runnable WIP; it may continue
    but cannot become final output until absolute speedup is greater than 1.0 versus frozen MegaMoE V2.
+   A diagnostic, no-payload arm, profile, or overlap meter is temporary evidence, not a search
+   candidate: do not return an instrumentation-only patch/result. The same turn must author or
+   improve selectable runnable source and run a real candidate-vs-frozen target measurement.
+   Full fusion is not required for search admission: a partial fusion is a valid candidate when the
+   external operator is complete, correctness passes, and paired rank-max performance beats the
+   frozen baseline. A candidate topology may span resumable authoring turns. Every such turn must land at
+   least one coherent, importable production-source checkpoint in the candidate tree; an empty
+   commit that only says the fold is large or localizes files is invalid. Mark an intermediate
+   source checkpoint `authoring` and continue it next turn. Do not wait to write source until the
+   full topology and all GPU validation can fit in one turn.
+   When fusing serialized compute stages, preserve dependency order per CTA
+   without recreating it grid-wide: an empty local shard lets that CTA move to
+   ready downstream work while other CTAs may remain upstream. Do not insert a
+   global stage drain/barrier or a permanent GEMM1/GEMM2 CU split merely
+   because both stages use MFMA; read `distributed_fusion.md` Lever 1b.
+   If the prompt includes a detailed advisory Expert Skill reference, treat its
+   validated mechanism as a prior rather than repeatedly redesigning unused
+   scaffolding. Spend at most the first quarter of the turn on helper
+   refactoring; then wire the next unresolved tile-pipeline edge into its real
+   caller and run the earliest meaningful compile/on-card smoke.
+   When that reference declares a matched normative source-shape profile, its
+   `MUST`/`MUST NOT` rules override generic knowledge and your preferred
+   equivalent rewrite. If no GPU is available, finish a coherent source
+   checkpoint for later independent structural verification; do not read the
+   source oracle yourself and do not claim hardware, accuracy, liveness,
+   launch-shape, or performance success.
+   Do not spend repeated leases on a producer-only readiness switch whose
+   consumer is absent. A readiness edge is one checkpoint only when its
+   producer publication and consuming wait are both wired into the candidate
+   path; validate that pair under the candidate's real activation.
+   Production source and commit messages must not cite local memory cards,
+   historical wave/attempt IDs, handoff notes, or external run labels. Express
+   any retained invariant directly from current source, the enabled Expert
+   Skill, or current-run evidence, and remove such references when continuing
+   a dirty WIP tree.
    Ordinary search lanes do not receive the exact M2.5 recipe. Never seek or read any hand-authored
    M2.5 source tree outside the candidate workspace.
 
@@ -295,7 +349,9 @@ evidence manifest is complete:
 }
 ```
 
-An interrupted attempt returns `claim_complete:false`; it does not claim `absolute_score:0`.
+An interrupted attempt returns `claim_complete:false`; it does not claim
+`absolute_score:0`. A completed source-only authoring checkpoint returns
+`claim_complete:true` even though its correctness and score remain pending.
 
 If you achieved no speedup but produced a buildable, correct implementation, still submit its patch
 and the measured regression honestly. Omit `patch_file` only when no buildable/correct source change

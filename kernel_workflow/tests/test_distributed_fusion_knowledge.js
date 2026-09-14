@@ -127,8 +127,14 @@ console.log(`\n# knowledge/${KNOWLEDGE} content`);
 const doc = read('knowledge', KNOWLEDGE);
 const required = [
   [/removes a \*wait\*, not[\s\S]{0,40}\*launch\*/, 'Lever 3: fusion pays for waits, not launches'],
+  [/CTA-local phase pipeline/i, 'same-engine stages retain the CTA-local pipeline mechanism'],
+  [/my shard is empty[\s\S]{0,160}never evidence that the whole grid drained/i,
+    'local shard exhaustion cannot become a global drain'],
+  [/static `max\(A\/f, B\/\(1-f\)\)`[\s\S]{0,180}cannot reject/i,
+    'the static same-engine bound does not reject phase-staggered scheduling'],
   [/acquire fence/i, 'every wait pairs with an acquire fence'],
-  [/system-scope atomics/, 'publication uses system scope on multi-die parts'],
+  [/rank-local edge[\s\S]{0,100}agent scope/i, 'rank-local publication uses agent scope'],
+  [/peer-rank edge[\s\S]{0,100}system scope/i, 'cross-rank publication uses system scope'],
   [/write-through/i, 'write-through stores as the cheap alternative to a release fence'],
   [/every participant index must land inside/i, 'residency invariant is stated as an invariant'],
   [/coordinator → workers → coordinator/, 'acyclicity rule names the cycle'],
@@ -140,6 +146,13 @@ const required = [
   [/no measured overlap change is suspicious/, 'unexplained latency wins are rejected'],
 ];
 for (const [re, what] of required) ok(re.test(doc), what);
+const partition = read('knowledge', 'resource_partition.md');
+ok(/Same engine, static split/.test(partition) &&
+   /does \*\*not\*\* disprove a\s+phase-staggered CTA pipeline/i.test(partition),
+   'resource-partition same-engine math is scoped to static roles');
+const megaLead = read('roles', 'mega_search_lead.md');
+ok(/Reject the third only with dependency or same-timeline evidence/.test(megaLead),
+   'Mega search planning cannot dismiss CTA-local overlap from MFMA labels alone');
 
 // Anti-patterns must stay measured, not folkloric: each carries a number so a future round can
 // tell "we tried it and it cost X" apart from "someone thought this was a bad idea".

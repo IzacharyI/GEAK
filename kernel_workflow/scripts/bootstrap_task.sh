@@ -112,9 +112,16 @@ else note WAIT "VRAM: only ${minfree} GiB free on the tightest card, need >=150.
 # (3) MORI. The kernels call mori_shmem at TRACE time, so its absence is not a run-time import
 #     error you can catch — it aborts inside codegen.
 if [ -z "$MORI_ROOT_IN" ]; then
-  for c in /sgl-workspace/mori "$HOME/mori" /opt/mori; do
-    [ -d "$c/python/mori" ] || [ -d "$c/mori" ] && { MORI_ROOT_IN="$c"; break; }
-  done
+  MORI_ROOT_IN="$(python3 - <<'PY' 2>/dev/null || true
+from pathlib import Path
+import mori
+module = Path(mori.__file__).resolve()
+for parent in module.parents:
+    if (parent / "python" / "mori").is_dir() or (parent / "mori").is_dir():
+        print(parent)
+        break
+PY
+)"
 fi
 if [ -n "$MORI_ROOT_IN" ] && [ -d "$MORI_ROOT_IN" ]; then
   if PYTHONPATH="$MORI_ROOT_IN:$MORI_ROOT_IN/python:${PYTHONPATH:-}" python -c "import mori" 2>/dev/null; then
@@ -133,11 +140,31 @@ if [ -z "$JIT_DIR_IN" ]; then
     [ -d "$c" ] && { JIT_DIR_IN="$c"; break; }
   done
 fi
-if [ -n "$JIT_DIR_IN" ] && [ -d "$JIT_DIR_IN" ] && [ -n "$(ls -A "$JIT_DIR_IN" 2>/dev/null)" ]; then
-  note ok "JIT cache: $JIT_DIR_IN (populated)"
+if [ -z "$JIT_DIR_IN" ] || [ ! -d "$JIT_DIR_IN" ]; then
+  note FAIL "JIT cache: ${JIT_DIR_IN:-unset} is missing. Pass --jit-dir or set AITER_JIT_DIR to a prebuilt standalone writable cache."; fit=1
+elif [ ! -w "$JIT_DIR_IN" ]; then
+  note FAIL "JIT cache: $JIT_DIR_IN is not writable. Candidate variants need an isolated writable cache."; fit=1
+elif ! find "$JIT_DIR_IN" -maxdepth 4 -type f \( -name '*.so' -o -name build.ninja -o -name CMakeCache.txt \) -print -quit 2>/dev/null | grep -q .; then
+  note FAIL "JIT cache: $JIT_DIR_IN has no compiled artifact/build manifest; an arbitrary populated directory is not an AITER cache."; fit=1
 else
-  note warn "JIT cache: ${JIT_DIR_IN:-unset} is missing or empty. The first run will rebuild AITER's C++ modules from scratch, inside the lease. Warm it OUTSIDE a lease first, or expect the first round to measure nothing."
-  JIT_DIR_IN="${JIT_DIR_IN:-$HOME/.aiter/jit}"
+  note ok "JIT cache: $JIT_DIR_IN (writable, compiled artifacts present)"
+fi
+if [ -n "$BASELINE" ] && [ -d "$BASELINE" ] && [ -n "$JIT_DIR_IN" ]; then
+  baseline_probe="$(cd "$BASELINE" 2>/dev/null && pwd || true)"
+  jit_probe="$(cd "$JIT_DIR_IN" 2>/dev/null && pwd || true)"
+  case "$jit_probe/" in
+    "$baseline_probe/"*)
+      note FAIL "JIT cache: must be outside the frozen baseline checkout"; fit=1 ;;
+  esac
+  if [ "$fit" = 0 ] && ! env \
+      PYTHONPATH="$BASELINE:$MORI_ROOT_IN:$MORI_ROOT_IN/python:${PYTHONPATH:-}" \
+      AITER_JIT_DIR="$JIT_DIR_IN" \
+      python3 -c "import aiter; from aiter.ops.flydsl.kernels.mega_moe import MegaMoEV2" \
+      >/dev/null 2>&1; then
+    note FAIL "AITER import: frozen baseline cannot import MegaMoEV2 with the supplied MORI/JIT environment"; fit=1
+  else
+    [ "$fit" = 0 ] && note ok "AITER import: MegaMoEV2 resolves under the supplied runtime roots"
+  fi
 fi
 
 fi  # end probe
@@ -161,6 +188,12 @@ with open(sys.argv[1]) as f:
 print("1" if str(v).lower() == "true" else "0")
 PY
 )"
+RECIPE_BASELINE_COMMIT="$(python3 - "$TASK_DIR/launch_args.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    print(str(json.load(f).get("mega_recipe_baseline_commit", "")).strip())
+PY
+)"
 if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
   if [ "$STRICT_TASK" = 1 ]; then
     die "strict_autonomy task refuses non-empty --out $OUT; use a NEW empty workspace (strict mode ignores --force)" 1
@@ -169,6 +202,15 @@ if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
 fi
 
 BASELINE="$(cd "$BASELINE" && pwd)"
+if [ -n "$RECIPE_BASELINE_COMMIT" ]; then
+  [ "$(git -C "$BASELINE" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] ||
+    die "recipe task requires --baseline to be a git checkout/worktree at $RECIPE_BASELINE_COMMIT" 1
+  baseline_head="$(git -C "$BASELINE" rev-parse HEAD 2>/dev/null || true)"
+  [ "$baseline_head" = "$RECIPE_BASELINE_COMMIT" ] ||
+    die "recipe baseline HEAD $baseline_head does not match required $RECIPE_BASELINE_COMMIT" 1
+  [ -z "$(git -C "$BASELINE" status --porcelain --untracked-files=all)" ] ||
+    die "recipe baseline $BASELINE is dirty; use a clean detached checkout at $RECIPE_BASELINE_COMMIT" 1
+fi
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 PARENT="$(dirname "$OUT")"
 EXP_ROOT="${EXP_ROOT:-$PARENT/geak_runs}"
@@ -209,7 +251,11 @@ echo "assembling '$TASK' into $OUT"
 # The workspace IS the aiter that gets imported (every command sets PYTHONPATH="$PWD"), so it has to
 # be a real copy, not a symlink or a worktree of the baseline — an engineer editing it must not be
 # able to reach back and mutate the denominator.
-tar -C "$BASELINE" -cf - --exclude=.git . | tar -C "$OUT" -xf -
+if [ -n "$RECIPE_BASELINE_COMMIT" ]; then
+  git -C "$BASELINE" archive "$RECIPE_BASELINE_COMMIT" | tar -C "$OUT" -xf -
+else
+  tar -C "$BASELINE" -cf - --exclude=.git . | tar -C "$OUT" -xf -
+fi
 
 ARGS_KNOWN_REF="$KNOWN_REF"
 [ "$STRICT_TASK" = 1 ] && ARGS_KNOWN_REF=""

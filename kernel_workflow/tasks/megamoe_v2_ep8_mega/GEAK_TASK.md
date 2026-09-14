@@ -9,12 +9,11 @@ its own path — every command below sets `PYTHONPATH="$PWD"` so the copy you ar
 > copies. If you are reading unsubstituted `${...}` placeholders below, the workspace was assembled
 > by hand and those are the values you must supply — see "Environment prerequisites".
 
-> **This is MEGA mode (`mode=mega`) — one shared loop with independent whole-kernel candidate lanes.**
-> The reserved `m25_skill` lane uses `mega_engineer` plus `megamoe_ep_mega_fusion` to reconstruct
-> M2.5 from the frozen public baseline. Other TechLead/Engineer lanes run independently and do not
-> receive that exact recipe. A slow or broken lane never overwrites or blocks another lane. All
-> selectable source is authored by the workflow; the hand-written M2.5 tree is never run, copied,
-> diffed, imported, or used as a base. Its recorded 1.0448x result is only a target.
+> **This is MEGA mode (`mode=mega`) — one shared tiled-megakernel candidate lifecycle.**
+> `use_expert_skills` changes only the advisory knowledge supplied to the common
+> Analyze/Plan/Author roles. It does not select a reproduction sub-mode. All selectable source is
+> authored by the workflow from the frozen public baseline; the hand-written M2.5 tree is never run,
+> copied, diffed, imported, or used as a base.
 
 ## Environment prerequisites
 
@@ -26,7 +25,7 @@ abort inside the communication runtime rather than a clear error. Required:
 | 8 × gfx950 (MI355X) on one node, XGMI | the op is an 8-rank intra-node collective; EP8 is baked into the guards | `rocm-smi --showproductname` |
 | **MORI** checkout at `${MORI_ROOT}` | the symmetric heap and `mori_shmem` primitives the kernels call | `python -c "import mori"` with it on `PYTHONPATH` |
 | ≥150 GiB free VRAM per card at launch | the heap needs ~62 GiB/card at t=0, but that is a floor, not a window — an arm that starts with just enough dies if a co-tenant grows | `/sys/class/drm/card*/device/mem_info_vram_{total,used}` |
-| a prebuilt AITER JIT cache at `${AITER_JIT_DIR}` | pointing this at a fresh directory triggers a full C++ rebuild inside your first lease | directory exists and is populated |
+| a prebuilt standalone writable AITER JIT cache at `${AITER_JIT_DIR}` | candidate JIT variants must be emitted without writing into the frozen baseline | contains a compiled artifact/build manifest, is writable, and is outside the baseline tree |
 
 `bootstrap_task.sh --check` verifies all four and refuses to assemble a workspace that cannot run.
 
@@ -79,33 +78,34 @@ The intersection {focus} ∩ {modifiable} ∩ {needed} MUST be non-empty; the on
 by your own analysis, guarantees it — a required edge in an on-path file is never a reason to fall back
 to the dead lane.
 
-## DIRECTIVE — independent candidate lanes
+## DIRECTIVE — one Mega candidate lifecycle
 
 Mega uses one budget loop:
 
-The default `production` profile has six candidate turns and a three-hour wall target, reserving the
-last 60 minutes for final validation and lightweight closeout. It stops earlier after a calibrated `>1.0x` candidate and two
-independent search attempts. Cold-start scheduling is `skill, skill, search, skill, search, skill`;
-if the skill candidate scores early, every remaining reserved turn becomes search. `audit` is the
-explicit long-running profile.
+The default `production` profile has six candidate turns and an eight-hour modeled target, reserving the
+last two hours for full finalist validation and lightweight closeout. Every candidate follows the
+same Analyze → Plan → Author → Verify lifecycle and persists its own HEAD.
 
-1. **`m25_skill` lane (`mega_engineer`)** reconstructs the complete M2.5 capability from the skill.
-   It keeps its own persistent HEAD and receives reserved attempts, but never blocks other lanes.
-2. **Search lanes (`tech_lead` / `engineer`)** explore other complete megakernel implementations or
-   optimize an existing candidate. They do not receive the exact M2.5 skill recipe.
-3. Correct-but-slow candidates remain runnable WIP. They may continue, but cannot enter final
+1. With `use_expert_skills=true`, the matched MegaMoE Expert Skill is advisory context for the same
+   Analyze/Plan/Author roles. It should make M2.5-class structure and performance reproducible, but
+   creates no special candidate source, lane, role, scheduler, or acceptance gate.
+2. With `use_expert_skills=false`, the lifecycle is byte-identical except that no M2.5 skill or
+   recipe is visible. The agents derive candidates from frozen source, the tile task graph, generic
+   knowledge, and their own measurements.
+3. A candidate is a tiled/instruction-pipelined megakernel, not merely a wrapper that reduces launch
+   count. Full fusion and profitable partial fusion are both admissible when the external operator
+   is complete, resources/dependencies are explicitly scheduled, and it beats the frozen baseline.
+4. Correct-but-slow candidates remain runnable WIP. They may continue, but cannot enter final
    selection until their absolute `8192_uniform` speedup is greater than 1.0 versus frozen
    MegaMoE V2.
-4. Final Director validation reruns the fastest candidates under one contract and chooses the best
+5. Final Director validation reruns the fastest candidates under one contract and chooses the best
    measured implementation. Source/provenance never relaxes correctness or performance.
 
-### Skill-lane boundary
+### Expert-knowledge toggle
 
-The exact M2.5 deconstruction is intentionally absent from this shared task text. Only
-`mega_engineer` receives it through the reserved skill-lane injection. Lane-local WIP commits are
-required for recovery, but a partial launch shape remains `authoring`, never a finalist. Ordinary
-search roles must derive their own complete megakernel candidates from the task graph and public
-baseline.
+Expert knowledge changes the information available to the common planner/engineer, not the workflow
+mode. A controlled capability comparison therefore runs fresh states with the flag ON and OFF; it
+does not compare a “reproduction lane” with a “search lane.”
 
 ## The optimization target
 
@@ -114,20 +114,19 @@ The four stages are **strictly serialized** — measured kernel-level overlap is
 That is the observation. *Why* they are serialized, which of the orderings between them are required
 by the data and which are artifacts of how the code is written today, at what granularity a consumer
 could begin, what enforces each ordering now, and where the critical path actually runs — the Analyze
-phase must still work this out and defend each fused edge against it. This is a **mega** run: you MAY
-use the generic `moe_bottleneck` analysis and workflow knowledge. The exact
-`megamoe_ep_mega_fusion` recipe is reserved for `mega_engineer` in the `m25_skill` lane and must not
-be read or propagated by Analyze, TechLead, or ordinary search Engineers. Search candidates must be
-justified by their own task-graph analysis rather than restating that recipe.
+phase must still work this out and defend each fused edge against it. This is a **mega** run: use
+the task graph, generic workflow knowledge, measurements, and—when enabled—the matched
+`megamoe_ep_mega_fusion` Expert Skill as an advisory prior. The skill does not replace analysis or
+create a separate lane.
 
-The end state the acceptance bar requires is a **two-launch** shape: the `quant` ingress stays its
+The full-fusion project target is a **two-launch** shape: the `quant` ingress stays its
 own launch, and the remaining three stages become **one persistent kernel per rank** with genuine
-compute/communication overlap. That is the *goal*. Authoring a complete topology and getting it to
-run clean on-card is the work.
+compute/communication overlap. A faster complete partial-fusion operator may be selected before that
+target is reached; launch count alone never compensates for a slowdown.
 
 Start from `SKILL_DIR/knowledge/tile_task_graph.md` — the Analyze phase must emit the tile-level
 dependency graph as an artifact (nodes, edges, edge scope, what enforces each edge today, critical
-path, slack) before the one-shot topology is committed. Then `SKILL_DIR/knowledge/fusion_preconditions.md`,
+path, slack) before candidates are committed. Then `SKILL_DIR/knowledge/fusion_preconditions.md`,
 which gives you the test each candidate edge has to pass — including the conditions under which the
 answer is legitimately "this edge does not pay". Then `SKILL_DIR/knowledge/resource_partition.md` for
 who gets the CUs once anything overlaps.
@@ -137,7 +136,7 @@ correctness invariants (acquire fence pairing, residency, reset-free counters, a
 measured anti-patterns, and the measurement discipline for this exact operator. Two things that
 bound this task:
 
-- **Launch count is not the objective.** Two launches is the acceptance shape, not the goal; a
+- **Launch count is not the objective.** Two launches is the full-fusion target; a
   fused kernel that is slower than four launches cannot be final output. The hard performance bar is
   beating frozen MegaMoE V2 (`speedup > 1.0`); recorded M2.5 (+4.71%) is the target, not executable
   input or a mandatory floor.
@@ -183,17 +182,18 @@ bound this task:
 
 This task's launch template sets `capability_eval=false` and `strict_autonomy=false`. The frozen
 public AITER tree is the optimization **starting point and the denominator**, not an answer to fence
-off — read it freely. Analyze and ordinary search lanes use generic workflow knowledge and the
-`moe_bottleneck` analysis skill. The exact M2.5 deconstruction is injected separately into
-`mega_engineer` and is not part of this shared task prompt.
+off — read it freely. All candidates use the common Mega planner and Engineer.
+With Expert Skills enabled they may consult the matched M2.5 knowledge; with the flag disabled no
+M2.5 skill/recipe content is injected.
 
 The recorded M2.5 result (`1.0448x`, observed `1.0403..1.0477`) is a target only. The hand-authored
 implementation is not an oracle arm and not an input. Never read, run, copy, diff, import, or use as
-a base any hand-authored M2.5 source tree outside the candidate workspace. Reproduction means
-authoring from the public baseline plus this skill.
+a base any hand-authored M2.5 source tree outside the candidate workspace. Skill-enabled M2.5
+reproduction still uses the common Mega lifecycle and authors from the public baseline.
 
-A terminal candidate is accepted only when the same independently verified candidate has: exactly two
-launches per rank; a positive `8192_uniform` operator rank-max result versus frozen MegaMoE V2
+A terminal candidate is accepted only when the same independently verified candidate has a measured
+fusion shape (full fusion reaches exactly two launches; partial fusion strictly reduces the frozen
+launch count), a positive `8192_uniform` operator rank-max result versus frozen MegaMoE V2
 (`speedup > 1.0`; the recorded M2.5 band remains the project target); no
 regression on the other three guards; numeric `relL2 < 0.10` evidence; graph-safe arrival-jittered
 liveness over at least 256 replays (Hard constraint 2, terminal read); distinct JIT artifact hashes
@@ -203,9 +203,10 @@ launch-change attribution are optional diagnostics in the default production pro
 gates; `mega_profile=audit` may make both mandatory. Slow candidates remain isolated WIP and can continue in later attempts,
 but they cannot become final output.
 
-The candidate registry preserves every lane's source, base, HEAD, evidence and score. The skill lane
-failing or timing out does not end the wave. Search candidates continue, and final selection considers
-only workflow-authored candidates with complete calibrated evidence.
+The candidate registry preserves every lane's source, base, HEAD, evidence and score. A normal
+candidate failure remains isolated WIP. An orchestration timeout stops that invocation because the underlying
+agent cannot be cancelled safely; it does not invalidate search candidates or their state. Final
+selection considers only workflow-authored candidates with complete calibrated evidence.
 
 Run `bootstrap_task.sh --task megamoe_v2_ep8_mega` to assemble the workspace. No `MARKER_FILE`,
 `--known-reference`, or containment preflight is needed in this mode.
@@ -227,8 +228,9 @@ cd <workspace> && bash $SKILL_DIR/scripts/gpu_lock.sh \
 These are production limits. An audit invocation may explicitly restore 1800/3600-second lease
 limits and a 50-minute command timeout.
 
-`AITER_JIT_DIR` points at a **shared, prebuilt, read-only** module cache. Leave it as-is; do not
-point it at a fresh directory (that triggers a full C++ rebuild) and do not write into it.
+`AITER_JIT_DIR` points at a **standalone, prebuilt, writable** module cache outside every AITER
+checkout. Do not point it at a fresh directory (full rebuild inside the lease), the frozen baseline,
+or a candidate source tree.
 
 **Correctness** (`<script> <args>`):
 
@@ -242,6 +244,12 @@ Prints one line per batch size:
 the target benchmark must all appear and have `relL2 < 0.10`. For the fused terminal, force its
 candidate path on the 8192 case and require the candidate path marker; a correctness pass obtained
 through SCATTERED fallback is activation failure, not fusion correctness.
+
+Validated-recipe score/finalist verification additionally runs
+`SKILL_DIR/tools/mega_graph_contract.py` under EP8. It directly compares
+graph-captured candidate output against the numeric reference for 128/512/8192
+and mutates routing inputs between graph replays for uniform and
+rank-mixed-skew. An eager-only or drain-vs-floor equivalence is not a substitute.
 
 **Performance**:
 

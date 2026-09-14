@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // mega_fast_test: a full-workflow fast-test mode that REUSES a prior wave's expensive front-matter
-// measurements (positive-control calibration + profile replays) instead of re-running them, so a
+// measurements (positive-control calibration) instead of re-running them, so a
 // scorable full-workflow iteration costs minutes not ~40 min.
 //
 // The three properties this test pins, because each is a way the feature could silently go wrong:
@@ -42,13 +42,15 @@ ok(/async function fastTestCacheLoad\(kind[^)]*\)\s*\{\s*\n\s*if \(!MEGA_FAST_TE
 ok(/async function fastTestCachePublish\(\)\s*\{\s*\n\s*if \(!MEGA_FAST_TEST\) return;/.test(src),
    'fastTestCachePublish returns before any agent() when the flag is off');
 
-console.log('\n# 3. the Benchmark/Profile dispatch is preserved as the cache-miss branch');
+console.log('\n# 3. benchmark cache miss measures; Mega pre-candidate profile stays executable');
 ok(/const benchCache = await fastTestCacheLoad\('bench'\);\s*\nconst bench = benchCache \? benchCache\.bench : await agentT\(/.test(src),
    'the real benchmark agentT() call is the else-branch of the bench cache (unchanged prompt/opts when off)');
-ok(/const profileCache = await fastTestCacheLoad\('profile'\);\s*\nif \(profileCache\) \{\s*\n\s*profileSummary = profileCache\.analysis;\s*\n\} else if \(MODE === 'mega'\) \{/.test(src),
-   'the real mega profile call is preserved behind an else-if of the profile cache');
-ok(/if \(MEGA_FAST_TEST && \(!benchCache \|\| !profileCache\)\) await fastTestCachePublish\(\);/.test(src),
-   'a fresh front stage re-publishes the cache; a full hit does not');
+ok(/const profileCache = MODE === 'mega' \? null : await fastTestCacheLoad\('profile'\);/.test(src) &&
+   /if \(MODE === 'mega'\)[\s\S]{0,900}profiler_used: 'benchmark-only'/.test(src) &&
+   !/roleAgent\('profile_engineer', 'mega_analysis'/.test(src),
+   'Mega does not run fused-only flags against a pre-candidate frozen baseline');
+ok(/if \(MEGA_FAST_TEST && !benchCache\) await fastTestCachePublish\(\);/.test(src),
+   'a fresh benchmark still publishes reusable calibration artifacts');
 
 console.log('\n# 4. reuse is gated on a validity key recomputed from disk (honesty gate)');
 ok(/key_valid: \{ type: 'boolean' \}/.test(src) &&
@@ -57,7 +59,11 @@ ok(/key_valid: \{ type: 'boolean' \}/.test(src) &&
 ok(/frozen_rev/.test(bench) && /bench_sha/.test(bench) &&
    /control_sha/.test(bench) && /guards_sha/.test(bench),
    'the key hashes the frozen base rev + bench harness + control spec + guards');
-ok(/Recompute `current_key` from disk NOW\. Set `key_valid` iff they are EXACTLY/.test(bench) &&
+ok(/python3 "\$FAST_TEST_KEY_TOOL"/.test(bench) &&
+   /geak-fast-test-key-v1/.test(bench) &&
+   /do not reimplement or infer its\s+serialization/i.test(bench),
+   'both phases delegate key serialization to one checked-in deterministic tool');
+ok(/Recompute `current_key` from disk NOW/.test(bench) &&
    /never fabricate a number/.test(bench),
    'the role recomputes the key at load time and refuses to fabricate a missing cached number');
 ok(/NO GPU, NO lease/.test(bench),
@@ -71,7 +77,10 @@ ok(/const bench = benchCache \? benchCache\.bench/.test(src) &&
    'a cached BASELINE_PER_CASE only re-enters as advisory context, not as a paired-A/B reading');
 
 console.log('\n# 6. every fast-test input the role declares is actually threaded (contract mirror)');
-for (const name of ['CACHE_DIR', 'CACHE_KIND', 'FROZEN_KERNEL_PATH', 'BENCH_HARNESS', 'MEGA_ANALYSIS_DIR']) {
+for (const name of [
+  'CACHE_DIR', 'CACHE_KIND', 'FROZEN_KERNEL_PATH', 'BENCH_HARNESS',
+  'MEGA_ANALYSIS_DIR', 'FAST_TEST_KEY_TOOL', 'CONTROL_JSON', 'GUARDS_JSON',
+]) {
   ok(bench.includes('`' + name + '`') && src.includes(name + ':'),
      `${name} is declared in benchmark_engineer.md Inputs and passed by a helper`);
 }

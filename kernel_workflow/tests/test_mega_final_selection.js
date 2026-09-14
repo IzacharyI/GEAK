@@ -19,8 +19,10 @@ const ok = (value, message) => {
 console.log('\n# final selection receives only workflow-authored, above-baseline candidates');
 ok(/c\.absolute_score > 1\.0/.test(src),
   'portfolio filter rejects every candidate at or below frozen MegaMoE V2');
-ok(/source: 'validated_skill'/.test(src) && /candidate_source: raw\.candidate_source/.test(src),
-  'skill and open-search candidates enter the same registry');
+ok(/candidate_source: raw\.candidate_source/.test(src) &&
+   /Candidate source remains search\/integrated/.test(src) &&
+   !/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(src),
+  'Expert Skills alter knowledge, not candidate source or registry lifecycle');
 ok(!/source: 'validated_artifact'/.test(src),
   'no hand-authored implementation is registered as a selectable source');
 
@@ -51,6 +53,8 @@ ok(/validation\.materialization_matches === true/.test(src) &&
 ok(src.lastIndexOf('persistMegaCandidateState(round, true)') >
    src.indexOf("roleAgent('director', 'validate'"),
   'finalist state is persisted only after independent final validation');
+ok(/realizedLaunches >= targetLaunches[\s\S]*realizedLaunches < baselineLaunches/.test(src),
+  'a faster complete partial fusion may pass final search arbitration');
 
 console.log(failures === 0
   ? '\nPASS: final Mega output is the fastest fully verified workflow-authored speedup.'

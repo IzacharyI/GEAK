@@ -86,20 +86,42 @@ for (const m of src.matchAll(/roleAgent\(\s*'([a-z_]+)',\s*'([a-z_]+)'/g)) {
   ok(keys.includes('DIRECTION') && keys.includes('KERNEL_PATH'),
      `the hand-built engineer prompt was located and parsed (${keys.length} keys)`);
 }
-// Mega candidate lanes also dispatch through a dynamic role variable (`mega_engineer` for the skill
-// lane, ordinary `engineer` for search), so the literal roleAgent scanner cannot attribute them.
+// Mega candidate lanes dispatch through a role variable whose value is the common `engineer`, so the
+// literal roleAgent scanner cannot attribute it.
 {
   const at = src.indexOf('Advance candidate lane ${candidateId}');
   const start = src.lastIndexOf('eng = await agentT(', at);
   const seg = src.slice(start, at + 3200);
   const keys = [...seg.matchAll(KEY_RE)].map((k) => k[1]);
-  for (const role of ['engineer', 'mega_engineer']) {
+  for (const role of ['engineer']) {
     if (!passedByRole.has(role)) passedByRole.set(role, new Set());
     for (const k of keys) passedByRole.get(role).add(k);
   }
   ok(keys.includes('CANDIDATE_ID') && keys.includes('BASE_TREE') &&
      keys.includes('PRIOR_CANDIDATE'),
   `the Mega candidate prompt was located and parsed (${keys.length} keys)`);
+}
+// Mega Analyze selects a role with a mode-gated expression. Attribute the identical input object to
+// both possible roles; the static literal scanner above intentionally cannot parse this form.
+{
+  const needle = "roleAgent(MODE === 'mega' ? 'mega_search_lead' : 'tech_lead'";
+  let at = src.indexOf(needle);
+  while (at >= 0) {
+    const seg = src.slice(at, balanced(src, src.indexOf('(', at)));
+    const keys = new Set([...seg.matchAll(KEY_RE)].map((k) => k[1]));
+    for (const s of seg.matchAll(/\.\.\.([A-Z][A-Z0-9_]{2,})\b/g)) {
+      for (const k of spreadKeys(s[1])) keys.add(k);
+    }
+    if (seg.includes('RESUME_INPUT')) {
+      for (const k of spreadKeys('RESUME_INPUT')) keys.add(k);
+    }
+    for (const role of ['tech_lead', 'mega_search_lead']) {
+      if (!passedByRole.has(role)) passedByRole.set(role, new Set());
+      for (const k of keys) passedByRole.get(role).add(k);
+      passedByPhase.set(`${role}:analyze`, keys);
+    }
+    at = src.indexOf(needle, at + needle.length);
+  }
 }
 ok(passedByPhase.size >= 15, `found ${passedByPhase.size} roleAgent call sites to check`);
 ok(passedByPhase.has('analysis_engineer:analyze_profile'),

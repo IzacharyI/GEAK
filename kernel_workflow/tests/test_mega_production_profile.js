@@ -19,14 +19,18 @@ const ok = (value, message) => {
 console.log('\n# production is the bounded default');
 ok(args.mega_profile === 'production' && args.budget === 6,
   'default profile uses six candidate turns');
-ok(args.mega_time_budget_s === 10800 && args.mega_final_reserve_s === 3600 &&
+ok(args.mega_time_budget_s === 28800 && args.mega_final_reserve_s === 7200 &&
    args.mega_closeout_reserve_s === 900,
-  'wall target is three hours with sixty minutes reserved for final validation and closeout');
-ok(args.mega_candidate_timeout_s === 1200 && args.mega_final_timeout_s === 1200,
+  'modeled target is eight hours with two hours reserved for finalist validation');
+ok(args.mega_candidate_timeout_s === 3600 && args.mega_final_timeout_s === 7200,
   'candidate and finalist calls have separate bounded timeouts');
-ok(args.mega_skill_initial_burst === 2 && args.mega_skill_interval === 2 &&
-   args.mega_skill_max_attempts === 4,
-  'cold start reserves rounds 1,2,4,6 for skill and rounds 3,5 for open search');
+ok(args.use_expert_skills === 'true' &&
+   args.mega_skill_author_timeout_s == null && args.mega_score_timeout_s == null &&
+   args.mega_skill_candidate_id == null && args.mega_search_enabled == null,
+  'Expert Skills are knowledge for the common lifecycle, not special lane/scheduler configuration');
+ok(6 * args.mega_candidate_timeout_s <=
+   args.mega_time_budget_s - args.mega_final_reserve_s,
+  'modeled dispatch window can reach all six common candidate turns');
 
 console.log('\n# valid output triggers early convergence');
 ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
@@ -53,9 +57,9 @@ ok(/Production identity-only tier/.test(director),
   'Director documents the no-duplicate-GPU validation contract');
 ok(/timeout_marker: true/.test(src) && /MEGA SAFE STOP/.test(src),
   'a timed-out candidate/finalist stops safely instead of overlapping recovery or fallback GPU work');
-ok(/turnDeadlineMs = MEGA_PRODUCTION[\s\S]{0,180}Math\.min\(turnStartedMs \+ MEGA_CANDIDATE_TIMEOUT_S/.test(src) &&
-   /availableAfterPrepS = \(turnDeadlineMs - Date\.now\(\)\)/.test(src),
-  'candidate preparation, Engineer, Verify and state share one deadline without double-counting prep');
+ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src) &&
+   /MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE/.test(src),
+  'skill-enabled and skill-disabled Mega candidates use the same Engineer lifecycle');
 ok(/max_retries: 1/.test(src),
   'bounded production calls cannot multiply their wall budget through API retries');
 ok(/LANE_MANIFEST: laneManifest/.test(src) && /lane\.json/.test(director),

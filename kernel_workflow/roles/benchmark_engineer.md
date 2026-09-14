@@ -9,7 +9,9 @@ Scoped campaigns also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_M
 `STRICT_AUTONOMY`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
 The fast-test cache phases (`PHASE=fast_test_load` / `PHASE=fast_test_publish`, mega only) receive
 `CACHE_DIR`, `FROZEN_KERNEL_PATH`, and `BENCH_HARNESS`; load also receives `CACHE_KIND`; publish also
-receives `MEGA_ANALYSIS_DIR`.
+receives `MEGA_ANALYSIS_DIR`. Both receive `FAST_TEST_KEY_TOOL`,
+`CONTROL_JSON`, and `GUARDS_JSON`; the checked-in tool is the sole authority
+for key computation.
 
 **WORKLOAD ALIGNMENT.** The real-workload shape/dtype distribution is handled by the immutable
 `unittest.py` oracle itself — the Kernel Extractor bakes the weighted cases (`meta.workload.cases[]`)
@@ -208,6 +210,11 @@ guard, and any `setup_ab_control*.json` with `claim_complete: true` — that is 
 control and re-running it is the single most expensive redundant act available to you. Say in `notes`
 which files you reused and which measurements are fresh.
 
+This reuse scope is exact: current `EVAL_DIR`, or `CACHE_DIR` only in
+`PHASE=fast_test_load`. In ordinary `PHASE=setup`, do not scan/copy a sibling
+directory under `EXP_ROOT`, a prior wave, or a path found in prior state. The
+key-validated fast-test cache is the only cross-wave calibration channel.
+
 **`setup_ab_*.json` has a required shape, because it outlives the run.** These files are the corpus
 `SKILL_DIR/scripts/replay_runs.js` re-decides finished runs from, on no GPU — which is how a change to
 the gate arithmetic is validated without spending another lease. Every record needs, at minimum:
@@ -261,9 +268,12 @@ Then run it exactly as `how` describes, changing nothing else, on the guard name
 whole suite if none):
 
 - Use the **same interleaving discipline** the COMMANDMENT requires of real candidates: A,B,A,B,
-  **≥5 pairs**, paired delta, rank-max on multi-rank.
+  at least `POSITIVE_CONTROL.required_control_pairs` (default 5) pairs, paired delta, rank-max on
+  multi-rank.
 - Include a **null arm** (byte-identical work, e.g. the flag set to its no-op value) in the same
-  interleave. Report its delta as `null_arm_pct`. The control is only interpretable next to it.
+  interleave. Collect at least `POSITIVE_CONTROL.required_null_pairs` (default 8 in Mega mode);
+  never choose an intermediate count. Report its delta as `null_arm_pct`. The control is only
+  interpretable next to it.
 - Report the **median paired delta** as `measured_pct`, signed so that **positive = faster**.
 - **The null arm is per-guard, and it needs the same ≥5 pairs the control does — on every guard a
   candidate will later be judged on, not only on the control's guard.** A null arm measured at n=3 on
@@ -496,6 +506,17 @@ If the control cannot be run at all (path missing, lease unobtainable), return
 omitted field or a synthetic zero. Write the evidence manifest first and atomically publish the
 complete control claim last.
 
+Before setting `claim_complete:true`, mechanically assert all of:
+
+- `len(control_pairs_pct) >= POSITIVE_CONTROL.required_control_pairs` (default 5);
+- `len(null_pairs_pct) >= POSITIVE_CONTROL.required_null_pairs` (default 8);
+- non-empty `attempt_id`;
+- non-empty `evidence_manifest` pointing to a final manifest whose referenced logs exist.
+
+If any assertion is false, keep `claim_complete:false` and collect the missing pairs/artifacts in
+the same foreground lease. Never label a six-pair intermediate complete when eight null pairs were
+requested.
+
 Save `EVAL_DIR/baseline_timing.json` (the `count`/`dims`/`dtypes`/`weight_source` fields appear only
 when a WORKLOAD_SPEC drove the cases; `baseline_weighted_total_ms = Σ count_i·latency_i`):
 ```json
@@ -543,17 +564,22 @@ calibration + profile replays) from a PRIOR wave instead of re-running them, so 
 iteration costs minutes not ~40 min. You are the gate that decides whether the cache is still valid.
 **Do NOT run any GPU command and do NOT take a lease** — read files and hash them, nothing else.
 
-The VALIDITY KEY is what makes reuse honest. It is a hash of exactly the things that, if changed,
-would make a cached measurement stale in a way that matters:
+The VALIDITY KEY is what makes reuse honest. Do not reimplement or infer its
+serialization. Run the checked-in authority exactly:
 
-- `frozen_rev` — the frozen baseline the run measures against: `git -C "$FROZEN_KERNEL_PATH" rev-parse HEAD`
-  (if that path is not a git repo, `sha256sum` a sorted manifest of its `*.py` file hashes instead).
-- `bench_sha` — `sha256sum "$BENCH_HARNESS"` (the measurement instrument itself).
-- `control_sha` — sha256 of the compact JSON of `POSITIVE_CONTROL` (the calibration spec), or the
-  literal `none` when no `POSITIVE_CONTROL` was given.
-- `guards_sha` — sha256 of `TARGET_GUARDS` ++ `REGRESSION_GUARDS` compact JSON.
+```bash
+python3 "$FAST_TEST_KEY_TOOL" \
+  --frozen "$FROZEN_KERNEL_PATH" \
+  --bench "$BENCH_HARNESS" \
+  --control-json "$CONTROL_JSON" \
+  --guards-json "$GUARDS_JSON"
+```
 
-Compute `current_key` = a short digest joining those four (e.g. `sha256` of `frozen_rev|bench_sha|control_sha|guards_sha`).
+Its JSON output contains `key`, `frozen_rev`, `bench_sha`, `control_sha`,
+`guards_sha`, and `algorithm`. `frozen_rev` is path-independent; JSON
+canonicalization is internal to the tool. The load and publish phases must both
+use this output verbatim. Hand-written `find`, alternate `json.dumps`, ignored
+comment fields, or a remembered prior digest are pipeline failures.
 
 Steps:
 1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`, `key_valid:false`, done.
@@ -588,6 +614,7 @@ can reuse them. **NO GPU, NO lease** — copy files and write the key.
 3. Compute the validity key EXACTLY as `PHASE=fast_test_load` defines it (`frozen_rev`, `bench_sha`,
    `control_sha`, `guards_sha` → combined digest) and write `CACHE_DIR/fast_test_key.json` =
    `{ "key": "…", "frozen_rev": "…", "bench_sha": "…", "control_sha": "…", "guards_sha": "…",
+   "algorithm": "geak-fast-test-key-v1",
    "written_at": "<iso8601>" }`.
 
 Return JSON: `{ "published": bool, "key": "…", "cache_dir": "$CACHE_DIR", "files": ["…"], "note": "…" }`.

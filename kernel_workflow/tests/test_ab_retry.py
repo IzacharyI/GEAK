@@ -1,25 +1,9 @@
-"""Tests for tools/ab_retry.py -- the retrying interleaved A/B runner.
+"""CPU-only tests for the portable retrying interleaved A/B runner.
 
-Two things are tested and they are tested for different reasons.
-
-The RETRY behaviour is what the tool was written for: wave 15 round 2 lost six verify
-legs to a transient out-of-memory between torchrun launches, the frozen driver recorded
-rc!=0 and advanced, the losses landed on whichever guards the schedule happened to
-reach, and a reproduced +3.6% scored zero. A leg must therefore count only if an
-attempt succeeded, and a leg that never succeeds must appear in `dropped_legs` rather
-than be silently absent -- an absent leg is indistinguishable from a leg that was never
-scheduled, which is how a partial claim reads as a complete one.
-
-The kernel_time block is what makes the tool feed the attribution gate. This is the
-kernel workflow, so the number that decides a win is the changed kernel's own time
-against the kernels it replaced. Wave 15 round 3 promoted a candidate on +4.24%
-end-to-end whose fused kernel was 2.18% SLOWER than the two it replaced; the entire
-claim sat in the gaps between launches. test_e2e_win_on_slower_kernels_is_visible
-reconstructs exactly that shape and asserts the driver reports both numbers, so the
-contradiction is on the page instead of having to be noticed.
-
-Stdlib + pytest only: no torch, no GPU, no bench. The bench is replaced by --fake-cmd,
-which the tool supports for this purpose.
+The suite checks retry/drop visibility, path markers, arm rotation, fused-kernel
+attribution, strict post-result teardown handling, timeout decoding, and
+environment-supplied runtime roots. The real benchmark is replaced by
+``--fake-cmd``; no torch or GPU is required.
 """
 import importlib.util
 import json
@@ -49,7 +33,7 @@ def _rec(arm, guard, e2e, s1, s2):
 # --------------------------------------------------------------------------- kernel_time
 
 def test_e2e_win_on_slower_kernels_is_visible():
-    """The wave-15 shape: end-to-end improves while the kernels get worse."""
+    """End-to-end can improve while separately timed kernel sums get worse."""
     m = _load()
     g = [_rec("base", "8192_uniform", 4.5, 3.0, 1.0),
          _rec("cand", "8192_uniform", 4.3, 3.1, 1.0),
@@ -89,19 +73,27 @@ def test_half_filled_record_set_does_not_crash():
 # --------------------------------------------------------------------------- end to end
 
 FAKE = r"""#!/bin/bash
+if [[ -n "$FAKE_TIMEOUT" ]]; then sleep 2; fi
 if [[ "$FAKE_TAG" == *_cand ]]; then S1=3.1; S2=1.0; E=4.3; else S1=3.0; S2=1.0; E=4.5; fi
 if [[ -n "$FAKE_FAIL_ARM" && "$FAKE_TAG" == *_$FAKE_FAIL_ARM ]]; then
   echo "hip failed with out of memory" >&2; exit 255
 fi
-for r in 0 1; do echo "[megamoe] path=MEGA rank=$r"; done
+for r in 0 1; do echo "[default$r]:[megamoe] path=MEGA"; done
 echo "[RESULT] tokens=8192 mega_e2e=${E}/${E}ms stage1=${S1}/${S1}ms stage2_combine=${S2}/${S2}ms"
+if [[ -n "$FAKE_MORI_TEARDOWN" ]]; then
+  if [[ -n "$FAKE_OTHER_FATAL" ]]; then echo "hip failed with out of memory" >&2; fi
+  if [[ -n "$FAKE_OTHER_EXCEPTION" ]]; then echo "ImportError: broken candidate import" >&2; fi
+  echo "python3: mori/include/mori/shmem/internal.hpp:121: void mori::shmem::ShmemStates::CheckStatusValid(): Assertion \`false' failed." >&2
+  exit 1
+fi
+if [[ -n "$FAKE_GENERIC_POST_RESULT_FAIL" ]]; then exit 1; fi
 """
 
 PLAN = {"guards": ["8192_uniform"], "blocks": 2, "iters": 3, "base_arm": "base",
         "arms": [{"name": "base", "tree": "/tmp"}, {"name": "cand", "tree": "/tmp"}]}
 
 
-def _run(tmp, env_extra=None, attempts=1):
+def _run(tmp, env_extra=None, attempts=1, timeout=1200):
     fake = os.path.join(tmp, "fake.sh")
     open(fake, "w").write(FAKE)
     plan = os.path.join(tmp, "plan.json")
@@ -112,7 +104,8 @@ def _run(tmp, env_extra=None, attempts=1):
     p = subprocess.run([sys.executable, TOOL, "--plan", plan, "--out", out,
                         "--fake-cmd", f"bash {fake}", "--expect-markers", "2",
                         "--expect-path", "MEGA",
-                        "--attempts", str(attempts), "--retry-sleep", "0"],
+                        "--attempts", str(attempts), "--retry-sleep", "0",
+                        "--timeout", str(timeout)],
                        capture_output=True, text=True, env=env, timeout=180)
     return p, json.load(open(out))
 
@@ -179,6 +172,51 @@ def test_marker_value_violation_voids_the_leg():
             doc["dropped_legs"][0]["reason"]
 
 
+def test_exact_mori_teardown_after_complete_result_is_accepted_and_recorded():
+    with tempfile.TemporaryDirectory() as tmp:
+        p, doc = _run(tmp, {"FAKE_MORI_TEARDOWN": "1"})
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert doc["n_dropped"] == 0
+        assert doc["records"]
+        assert all(r["accepted_post_result_teardown"] for r in doc["records"])
+        assert all(r["rc"] == 1 for r in doc["records"])
+
+
+def test_generic_nonzero_after_result_remains_void():
+    with tempfile.TemporaryDirectory() as tmp:
+        _p, doc = _run(tmp, {"FAKE_GENERIC_POST_RESULT_FAIL": "1"})
+        assert doc["n_dropped"] == 4
+        assert all(d["reason"] == "rc=1" for d in doc["dropped_legs"])
+
+
+def test_mori_teardown_does_not_mask_an_unrelated_fatal_error():
+    with tempfile.TemporaryDirectory() as tmp:
+        _p, doc = _run(tmp, {
+            "FAKE_MORI_TEARDOWN": "1",
+            "FAKE_OTHER_FATAL": "1",
+        })
+        assert doc["n_dropped"] == 4
+        assert all(d["reason"] == "rc=1" for d in doc["dropped_legs"])
+
+
+def test_mori_teardown_does_not_mask_an_unlisted_python_exception():
+    with tempfile.TemporaryDirectory() as tmp:
+        _p, doc = _run(tmp, {
+            "FAKE_MORI_TEARDOWN": "1",
+            "FAKE_OTHER_EXCEPTION": "1",
+        })
+        assert doc["n_dropped"] == 4
+        assert all(d["reason"] == "rc=1" for d in doc["dropped_legs"])
+
+
+def test_timeout_bytes_are_decoded_and_retried_as_void():
+    with tempfile.TemporaryDirectory() as tmp:
+        p, doc = _run(tmp, {"FAKE_TIMEOUT": "1"}, timeout=1)
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert doc["n_dropped"] == 4
+        assert all(d["reason"] == "rc=124" for d in doc["dropped_legs"])
+
+
 def test_rotation_changes_arm_position_between_blocks():
     """A fixed arm-within-block position manufactured ~1pp of separation on a null."""
     m = _load()
@@ -186,12 +224,37 @@ def test_rotation_changes_arm_position_between_blocks():
     assert [a for _, a in seq] == ["base", "cand", "cand", "base"]
 
 
-def test_jit_dir_is_overridable_and_defaults_to_a_cache_not_a_checkout():
-    """Pointing AITER_JIT_DIR at an AITER checkout is a write path into the baseline."""
+def test_runtime_roots_come_from_environment_not_repository_paths():
     src = open(TOOL).read()
-    assert 'os.environ.get(\n        "AB_RETRY_JIT_DIR"' in src or \
-           'os.environ.get("AB_RETRY_JIT_DIR"' in src
-    assert "aiter_jit_cache" in src
+    assert 'os.environ.get("AB_RETRY_MORI_ROOT")' in src
+    assert 'os.environ.get("MORI_ROOT"' in src
+    assert 'os.environ.get("AB_RETRY_JIT_DIR")' in src
+    assert 'os.environ.get("AITER_JIT_DIR")' in src
+    assert 'AB_RETRY_MORI_ROOT", "/"' not in src
+    assert 'AB_RETRY_JIT_DIR", "/"' not in src
+
+
+def test_real_run_requires_external_jit_cache(monkeypatch, tmp_path):
+    m = _load()
+    monkeypatch.delenv("AB_RETRY_JIT_DIR", raising=False)
+    monkeypatch.delenv("AITER_JIT_DIR", raising=False)
+    rc, out, _wall = m._attempt(
+        str(tmp_path), {}, "8192_uniform", 1, "", "x", 1, "", 1,
+    )
+    assert rc == 2
+    assert "set AB_RETRY_JIT_DIR or AITER_JIT_DIR" in out
+
+
+def test_real_run_rejects_jit_cache_inside_candidate(monkeypatch, tmp_path):
+    m = _load()
+    jit = tmp_path / "jit"
+    jit.mkdir()
+    monkeypatch.setenv("AB_RETRY_JIT_DIR", str(jit))
+    rc, out, _wall = m._attempt(
+        str(tmp_path), {}, "8192_uniform", 1, "", "x", 1, "", 1,
+    )
+    assert rc == 2
+    assert "outside the candidate tree" in out
 
 
 if __name__ == "__main__":

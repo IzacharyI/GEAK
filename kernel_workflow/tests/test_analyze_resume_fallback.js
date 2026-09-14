@@ -40,36 +40,72 @@ const LADDER = { candidate_directions: [
   { id: 'D0', title: 'D0 Instrumentation' },
   { id: 'D2', title: 'D2 Per-token readiness' },
 ] };
+const MEGA_COMPLETE = {
+  ...LADDER,
+  task_graph: { nodes: [{ id: 'g1' }], edges: [{ from: 'g1', to: 'g2' }] },
+  resource_timeline: { pipes: [{ stage: 'g1', pipe: 'mfma', utilization_pct: null }] },
+  mega_plan_ir: {
+    regions: [{ id: 'g1' }], queues: [{ id: 'q1' }], events: [{ id: 'e1' }],
+    source_shape_constraints: ['one unified loop'],
+    resource_contract: {
+      arch: 'gfx950', wave_size: 64, threads_per_workgroup: 512, num_waves: 8,
+      lds: { group_segment_bytes: 160400, limit_bytes: 163840 },
+    },
+    schedule_contract: {
+      unified_gemm_loop: true,
+      carried_scalars: ['consumer_active', 'g2_pend', 'g2_next'],
+      work_shards: 4, num_dispatch_cu: 96, combine_third_queue: true,
+    },
+    abi: { direct_fused_args: true, argument_order: ['s2', 'combine'] },
+  },
+};
 
 console.log('\n# the wave-15 shape');
 {
-  const d = analyzeResumeDegenerate(true, { kernel_type: 'flydsl', candidate_directions: [] });
+  const d = analyzeResumeDegenerate(true, { kernel_type: 'flydsl', candidate_directions: [] }, false);
   ok(d.retry === true, 'a resumed analyze that returns an empty ladder triggers the full re-run');
-  ok(/INCREMENTAL_RESUME/.test(d.reason) && /roadmap/.test(d.reason),
+  ok(/ANALYZE RESUME DEGENERATE/.test(d.reason) && /candidate_directions/.test(d.reason),
      'and the reason names the flag and the artifact, so the log says what happened rather than that something happened');
 }
 {
-  ok(analyzeResumeDegenerate(true, {}).retry === true,
+  ok(analyzeResumeDegenerate(true, {}, false).retry === true,
      'a missing candidate_directions key is the same failure as an empty one');
-  ok(analyzeResumeDegenerate(true, null).retry === true,
+  ok(analyzeResumeDegenerate(true, null, false).retry === true,
      'and so is no analysis object at all');
-  ok(analyzeResumeDegenerate(true, { candidate_directions: [{}, { title: '' }] }).retry === true,
+  ok(analyzeResumeDegenerate(true, { candidate_directions: [{}, { title: '' }] }, false).retry === true,
      'rungs with neither id nor title are not a ladder — this is the same filter the ladder gate uses');
+}
+{
+  const incomplete = analyzeResumeDegenerate(false, LADDER, true);
+  ok(incomplete.retry === true && /task_graph\/resource_timeline/.test(incomplete.reason),
+    'a fresh Mega analysis missing its required structured graph is repaired before Benchmark');
+}
+{
+  const incomplete = analyzeResumeDegenerate(
+    false,
+    { ...MEGA_COMPLETE, mega_plan_ir: null },
+    true,
+    true,
+  );
+  ok(incomplete.retry === true && /mega_plan_ir/.test(incomplete.reason),
+    'a Mega analysis without a lowerable typed plan is repaired before Benchmark');
+  ok(analyzeResumeDegenerate(false, MEGA_COMPLETE, true, true).retry === false,
+    'a complete graph/resource/typed-plan contract proceeds without another Analyze');
 }
 
 console.log('\n# it must not fire anywhere else');
 {
-  ok(analyzeResumeDegenerate(false, { candidate_directions: [] }).retry === false,
+  ok(analyzeResumeDegenerate(false, { candidate_directions: [] }, false).retry === false,
      'a FIRST wave with no ladder is a real finding and must not be retried into silence');
-  ok(analyzeResumeDegenerate(true, LADDER).retry === false,
+  ok(analyzeResumeDegenerate(true, LADDER, false).retry === false,
      'a resumed wave that did inherit its ladder proceeds untouched — the fast path is the point');
-  ok(!analyzeResumeDegenerate(true, LADDER).reason,
+  ok(!analyzeResumeDegenerate(true, LADDER, false).reason,
      'and says nothing, so the log is not noisy on the normal path');
 }
 
 console.log('\n# it is wired in, once, and before anything reads the ladder');
 {
-  ok(/const d = analyzeResumeDegenerate\(INCREMENTAL, analysis\)/.test(src),
+  ok(/const d = analyzeResumeDegenerate\(\s*\n?\s*INCREMENTAL, analysis, MODE === 'mega'/.test(src),
      'the check is called with the resume flag and the analyze result');
   ok(/let analysis = await agentT\(/.test(src),
      '`analysis` is a let, so the recovered full analysis can replace the degenerate one');

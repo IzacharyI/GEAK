@@ -80,6 +80,37 @@ let its machine-readable two-launch/overlap/accuracy/liveness/guard contract dec
 bootstrap from a trusted shell with `MARKER_FILE` set; reference paths supplied there are converted
 to opaque hashes and are not persisted in launch args.
 
+For production candidate generation use `tasks/megamoe_v2_ep8_mega` explicitly:
+
+```bash
+bash scripts/bootstrap_task.sh --task megamoe_v2_ep8_mega \
+  --baseline /path/to/clean/public-aiter-checkout \
+  --out /path/to/new/workspace \
+  --state-dir /path/to/new/state \
+  --mori-root /path/to/mori \
+  --jit-dir /path/to/standalone-writable-aiter-cache
+```
+
+`mode=mega` is one tiled/instruction-pipelined megakernel lifecycle. With
+`use_expert_skills=true`, its ordinary Analyze/Plan/Author roles receive the
+matched M2.5 knowledge; matched semantic/compiler-shape `MUST` rules override
+generic heuristics, while hardware evidence remains authoritative. With
+`false`, the same roles and gates run without it. There is no reproduction
+sub-mode or dedicated skill lane. Full and partial fusion candidates may
+compete when they are complete runnable operators and beat the frozen
+baseline. Packaged knowledge, roles and tools remain repository-relative.
+
+When GPUs are unavailable, `tools/m25_structural_contract.py --require
+independent` can compare an already-authored candidate with a read-only M2.5
+oracle. The author must not see the oracle. This tier verifies source structure
+only; exact oracle identity is rejected as capability evidence, and
+correctness/liveness/performance remain unverified.
+
+For workflow-integrated post-authoring checks, pass
+`m25_structural_oracle_path` (the read-only verifier-only oracle). Mega seals
+and checks each source checkpoint before runtime Verify; the oracle path is
+never passed to Planner or Engineer.
+
 ### Validating a change to the workflow itself
 `scripts/replay_runs.js` re-decides finished runs with today's decision logic, on no GPU:
 
@@ -138,7 +169,7 @@ Workflow({
     eval_dir: "",              // optional, override the output dir for this single run
     apply_to_original: "false",// optional; if "true", write the validated patch back to kernel_path
     // --- author mode (write a fresh implementation from scratch, then optimize it) ---
-    mode: "optimize",          // optional: "optimize" (default, edit an existing kernel) | "author"
+    mode: "optimize",          // "optimize" (default) | "author" | "mega" (isolated candidate portfolio)
     target_language: "triton", // author mode: triton (always) | flydsl | hip | ck — the language to write
     op_spec: {},               // author mode: op contract; may include resource.gpus_per_job/job_gpu_ids
     perf_knowledge_dir: "",  // optional: AMD authoring knowledge base the author_engineer reads

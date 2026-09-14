@@ -92,8 +92,9 @@ console.log('\n# wiring: the no-hardware stop is orthogonal, live under working_
      /const MAX_NO_HARDWARE = [^;]*A\.max_no_hardware[^;]*MAX_NO_IMPROVE[^;]*;/.test(src),
      'a dedicated noHardware counter exists (separate from noImprove/noEvidence); its cap defaults to ' +
      'MAX_NO_IMPROVE but is independently overridable via max_no_hardware (no-hardware cap decoupling)');
-  ok(/if \(touched\) noHardware = 0;\s*\n\s*else noHardware\+\+;/.test(src),
-     'it resets when a candidate reached the device (activation_on_hardware=yes) and increments when none did');
+  ok(/const hardwareWasDue = !!shouldVerify;/.test(src) &&
+     /if \(reachedHardware\) noHardware = 0;\s*\n\s*else if \(hardwareWasDue\) noHardware \+= 1;/.test(src),
+     'it counts a miss only after a complete candidate reaches Verify; source-only authoring checkpoints are exempt');
   ok(/if \(noHardware >= MAX_NO_HARDWARE\) \{[\s\S]*?break;\s*\n\s*\}/.test(src),
      'at the cap it sets stopReason and BREAKS the loop — the operator chose hard-stop, not warn-and-continue');
   ok(/while \(dispatched < BUDGET &&\s*\(MODE === 'mega' \|\| WORKING_KERNEL \|\|/.test(src),

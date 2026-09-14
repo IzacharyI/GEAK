@@ -20,6 +20,7 @@ const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const BOOT = path.join(ROOT, 'scripts', 'bootstrap_task.sh');
 const TASK_DIR = path.join(ROOT, 'tasks', 'megamoe_v2_ep8');
+const MEGA_TASK_DIR = path.join(ROOT, 'tasks', 'megamoe_v2_ep8_mega');
 
 let failures = 0;
 let markerFile = '';
@@ -102,6 +103,12 @@ ok(r.code === 1 && /does not look like an AITER checkout/.test(r.out),
 r = run(['--no-probe', '--baseline', base, '--out', path.join(tmp, 'x3'), '--task', 'no_such_task']);
 ok(r.code === 1 && /no task template at/.test(r.out) && /have:/.test(r.out),
    'an unknown task names the templates that do exist');
+const megaArgs = JSON.parse(fs.readFileSync(path.join(MEGA_TASK_DIR, 'launch_args.json'), 'utf8'));
+r = run(['--no-probe', '--baseline', base, '--out', path.join(tmp, 'x4'),
+  '--task', 'megamoe_v2_ep8_mega']);
+ok(r.code === 1 && /recipe task requires --baseline to be a git checkout\/worktree/.test(r.out) &&
+   /^[0-9a-f]{40}$/.test(megaArgs.mega_recipe_baseline_commit),
+  'versioned recipe refuses a synthetic or unversioned denominator');
 
 console.log('\n# a real assembly resolves every placeholder');
 const ws = path.join(tmp, 'ws');

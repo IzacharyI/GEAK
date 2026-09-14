@@ -123,10 +123,13 @@ each stage as a demand vector over those resources; the lower bound is the maxim
 binding engine, plus dependencies that prohibit overlap. This distinction decides whether a fusion
 can pay:
 
-- **Same engine** (two GEMMs, both MFMA-bound). A static `f/(1-f)` CU split of two throughput-limited
-  stages of durations A and B runs in `max(A/f, B/(1-f))`, minimized at `A+B` — exactly the serial
-  time. Overlap buys *nothing*; the only lever is raising one stage's throughput. Say this plainly
-  when it is the case, and do not confuse it for the next case.
+- **Same engine, static split** (two GEMMs, both MFMA-bound). A static `f/(1-f)` CU split of two
+  throughput-limited stages of durations A and B runs in `max(A/f, B/(1-f))`, minimized at `A+B` —
+  exactly the serial time. This disproves a permanent role partition; it does **not** disprove a
+  phase-staggered CTA pipeline. If each CTA switches to ready downstream work when its own upstream
+  shard drains, other CTAs may still execute the upstream stage. That schedule fills partial-wave
+  tails and can overlap downstream VMEM/P2P/epilogue work without claiming two simultaneous units of
+  MFMA throughput. Evaluate its span and tail occupancy; do not close it from engine labels alone.
 - **Different binding engines.** If measured counters show the stages do not contend on any binding
   resource, summing their times overstates the floor: the smaller engine's work may hide under the
   larger's. The prize is `serial − max_engine_floor`, and it is captured only if the consumer really

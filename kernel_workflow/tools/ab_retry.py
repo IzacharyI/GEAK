@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
-"""Retrying interleaved A/B runner for MegaMoE V2 EP8.
+"""Portable retrying interleaved A/B runner for MegaMoE V2 EP8.
 
-Written by wave 15 round 3's engineer, merged into the workflow repo unchanged in
-behaviour so that later waves do not have to rediscover it. Machine paths are
-environment overrides, build_doc() emits attribution diagnostics, and marker checks
-bind both count and expected path value.
+Runtime paths come only from the environment. The runner emits attribution
+diagnostics and binds both marker count and expected path value.
 
-Why this exists (w15 r2 post-mortem): the frozen EVAL_DIR/tools/ab_runner.py records
-rc!=0 and ADVANCES. Six verify legs died on transient
-  [/sgl-workspace/mori/src/shmem/init.cpp:233] hip failed with out of memory
-between consecutive torchrun launches (exitcode 255 on all 8 ranks, pool clean
-afterwards), the losses landed on whichever guards the schedule happened to reach,
-and the round scored zero on a reproduced +3.6% win.
-
-Differences from the frozen driver -- and nothing else; the bench command, the
-[RESULT] regex and the marker regex are copied verbatim so the numbers stay
-comparable to the baseline table:
+Measurement contract:
   1. RETRY: any attempt with rc!=0, a parse failure, or a marker-count violation
      is retried up to --attempts times with --retry-sleep seconds between tries.
      A leg counts ONLY if an attempt succeeded.
@@ -27,9 +16,11 @@ comparable to the baseline table:
   4. INCREMENTAL: the full aggregate doc (records + pairs + dropped legs +
      claim_complete) is rewritten after EVERY leg, so a kill at any point leaves a
      complete, readable claim rather than a fragment.
-  5. ROTATION: --rotate emits the sequence with arm-within-block position rotated
-     per block (w15 r1: a fixed position manufactured ~1 pp of spurious complete
-     separation on a byte-identical null).
+  5. ROTATION: --rotate changes arm-within-block position to avoid systematic
+     first-arm/cache bias.
+  6. KNOWN POST-RESULT TEARDOWN: rc 1/-6 is accepted only when a complete
+     [RESULT] precedes MORI's exact CheckStatusValid assertion. Every other nonzero
+     exit remains VOID, and the accepted rc is retained in the record.
 
 This file does NOT modify ab_runner.py, the bench, or the COMMANDMENT.
 """
@@ -46,8 +37,22 @@ RESULT_RE = re.compile(
     r"\[RESULT\].*?tokens=(\d+).*?mega_e2e=([0-9.]+)/([0-9.]+)ms.*?"
     r"stage1=([0-9.]+)/([0-9.]+)ms stage2_combine=([0-9.]+)/([0-9.]+)ms"
 )
-MARKER_RE = re.compile(r"^\[megamoe\] .*$", re.M)
-PATH_MARKER_RE = re.compile(r"^\[megamoe\] path=(\S+) rank=(\d+)", re.M)
+MARKER_RE = re.compile(r"^.*?\[megamoe\]\s+path=\S+.*$", re.M)
+PATH_MARKER_RE = re.compile(r"\[megamoe\]\s+path=(\S+)")
+MORI_POST_RESULT_TEARDOWN_RE = re.compile(
+    r"mori/(?:include|src)/mori/shmem/[^\n:]+:\d+:.*?"
+    r"ShmemStates::CheckStatusValid\(\): Assertion [`']false['`] failed\."
+)
+UNRELATED_FATAL_RE = re.compile(
+    r"hip failed with out of memory|out of memory|memory access fault|"
+    r"segmentation fault|device-side assert|"
+    r"(?:Runtime|Value|Type|Key|Index|Assertion|ZeroDivision)Error:",
+    re.IGNORECASE,
+)
+PYTHON_EXCEPTION_RE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)):"
+)
+UNRELATED_SIGNAL_RE = re.compile(r"\bSignal (?!6\b)\d+\b", re.IGNORECASE)
 
 GUARDS = {
     "8192_uniform": ("8192", "uniform"),
@@ -76,12 +81,9 @@ def pool_free_gib():
 def wait_for_pool(min_free_gib, wait_s, poll_s=15):
     """Block until EVERY card has min_free_gib free, or give up. Returns (ok, sample).
 
-    w15 r3: two of eight cards were pinned at 258/288 GiB by a foreign tenant in
-    another container (invisible in this container's /proc, must not be reaped).
-    The 8-rank collective needs MORI_SHMEM_HEAP_SIZE=40G on ALL eight, so ranks 5
-    and 6 died at mori/src/shmem/init.cpp:233 'hip failed with out of memory'.
-    Launching into an unready pool burns ~60 s per attempt and produces a VOID leg,
-    so gate the attempt on the pool instead of discovering it from the exit code.
+    A foreign process may be invisible in this container's PID namespace while
+    still holding VRAM. Gate every collective launch on per-card free memory
+    instead of discovering contention from a distributed OOM.
     """
     if not min_free_gib:
         return True, pool_free_gib()
@@ -100,14 +102,30 @@ def wait_for_pool(min_free_gib, wait_s, poll_s=15):
 def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, timeout):
     tokens, route = GUARDS[guard]
     env = dict(os.environ)
-    # Machine-level settings. Defaults are this machine's; each is overridable so the
-    # driver is not pinned to one host. AITER_JIT_DIR must stay a standalone cache
-    # directory -- pointing it at any AITER CHECKOUT, including the frozen baseline's
-    # own aiter/jit, opens a write path back into the denominator.
-    mori = os.environ.get("AB_RETRY_MORI_ROOT", "/sgl-workspace/mori")
-    env["PYTHONPATH"] = f"{tree}:{mori}:{mori}/python"
-    env["AITER_JIT_DIR"] = os.environ.get(
-        "AB_RETRY_JIT_DIR", "/sgl-workspace/megamoe/aiter_jit_cache")
+    # Runtime roots are supplied by the caller/environment. Never bake a checkout
+    # or cache path into this repository.
+    mori = os.environ.get("AB_RETRY_MORI_ROOT") or os.environ.get("MORI_ROOT", "")
+    python_paths = [tree]
+    if mori:
+        python_paths.extend([mori, os.path.join(mori, "python")])
+    if env.get("PYTHONPATH"):
+        python_paths.extend(p for p in env["PYTHONPATH"].split(os.pathsep) if p)
+    env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(python_paths))
+    jit_dir = os.environ.get("AB_RETRY_JIT_DIR") or os.environ.get("AITER_JIT_DIR")
+    if jit_dir:
+        env["AITER_JIT_DIR"] = jit_dir
+    elif not fake_cmd:
+        return 2, (
+            "configuration error: set AB_RETRY_JIT_DIR or AITER_JIT_DIR to a "
+            "standalone writable cache outside the candidate tree\n"
+        ), 0.0
+    if jit_dir and not fake_cmd:
+        tree_real = os.path.realpath(tree)
+        jit_real = os.path.realpath(jit_dir)
+        if os.path.commonpath([tree_real, jit_real]) == tree_real:
+            return 2, (
+                "configuration error: AITER JIT cache must be outside the candidate tree\n"
+            ), 0.0
     env["MORI_SOCKET_IFNAME"] = os.environ.get("AB_RETRY_SOCKET_IFNAME", "lo")
     env["MORI_SHMEM_HEAP_SIZE"] = os.environ.get("AB_RETRY_SHMEM_HEAP", "40G")
     env.update({k: str(v) for k, v in env_extra.items()})
@@ -126,14 +144,23 @@ def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, time
         ]
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, cwd=tree, env=env, capture_output=True, text=True,
-                           timeout=timeout)
-        rc, out = p.returncode, p.stdout + p.stderr
+        # Keep stdout/stderr in one pipe so `[RESULT]` -> teardown ordering is real.
+        # Concatenating separately captured streams always places stdout first and can
+        # falsely turn a pre-result stderr failure into a post-result failure.
+        p = subprocess.run(
+            cmd, cwd=tree, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, timeout=timeout,
+        )
+        rc, out = p.returncode, p.stdout
     except subprocess.TimeoutExpired as e:
         rc = 124
-        out = (e.stdout or "") + (e.stderr or "")
-        if isinstance(out, bytes):
-            out = out.decode("utf-8", "replace")
+        chunks = []
+        for chunk in (e.stdout, e.stderr):
+            if isinstance(chunk, bytes):
+                chunks.append(chunk.decode("utf-8", "replace"))
+            elif chunk:
+                chunks.append(str(chunk))
+        out = "".join(chunks)
     if logdir:
         os.makedirs(logdir, exist_ok=True)
         with open(os.path.join(logdir, f"{tag}.a{attempt}.log"), "w") as f:
@@ -159,8 +186,19 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
         markers = sorted(set(MARKER_RE.findall(out)))
         paths = PATH_MARKER_RE.findall(out)
         m = RESULT_RE.search(out)
+        teardown = MORI_POST_RESULT_TEARDOWN_RE.search(out)
+        exception_types = set(PYTHON_EXCEPTION_RE.findall(out))
+        accepted_teardown = bool(
+            rc in (1, -6)
+            and m
+            and teardown
+            and m.end() < teardown.start()
+            and not UNRELATED_FATAL_RE.search(out)
+            and exception_types.issubset({"ChildFailedError"})
+            and not UNRELATED_SIGNAL_RE.search(out)
+        )
         void = None
-        if rc != 0:
+        if rc != 0 and not accepted_teardown:
             void = f"rc={rc}"
         elif not m:
             void = "no [RESULT] line"
@@ -168,7 +206,7 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
             void = f"marker count {len(paths)} != {expect_markers}"
         expected_paths = ({str(expect_paths)} if isinstance(expect_paths, str)
                           else {str(v) for v in (expect_paths or [])})
-        actual_paths = {p[0] for p in paths}
+        actual_paths = set(paths)
         if void is None and expected_paths and actual_paths != expected_paths:
             void = (f"path markers {sorted(actual_paths)} != expected "
                     f"{sorted(expected_paths)}")
@@ -178,14 +216,15 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
             rec = {
                 "guard": guard, "tree": tree,
                 "env": {k2: str(v) for k2, v in env_extra.items()},
-                "rc": 0, "wall_s": wall, "attempt": k, "attempts_used": k,
+                "rc": rc, "accepted_post_result_teardown": accepted_teardown,
+                "wall_s": wall, "attempt": k, "attempts_used": k,
                 "e2e_mean_ms": float(m.group(2)), "e2e_max_ms": float(m.group(3)),
                 "stage1_mean_ms": float(m.group(4)), "stage1_max_ms": float(m.group(5)),
                 "stage2_combine_mean_ms": float(m.group(6)),
                 "stage2_combine_max_ms": float(m.group(7)),
                 "markers": markers,
                 "n_path_markers": len(paths),
-                "path_marker_values": sorted(set(p[0] for p in paths)),
+                "path_marker_values": sorted(set(paths)),
             }
             rec["residual_max_ms"] = round(
                 rec["e2e_max_ms"] - rec["stage1_max_ms"] - rec["stage2_combine_max_ms"], 4)
@@ -216,9 +255,9 @@ def kernel_time_block(g, base, cand):
     confused with.
 
     A launch-structure change needs mechanism attribution next to its operator result.
-    Wave 15 round 3 reported +4.24% e2e while the separately captured/rank-reduced
-    stage timers summed to 4878us against 4774us. That disagreement must be visible,
-    but the sum is diagnostic rather than a generally valid fused-kernel score: the
+    End-to-end and separately captured stage timers can disagree under fusion; that
+    disagreement must be visible, but the sum is diagnostic rather than a generally
+    valid fused-kernel score: the
     timers may come from separate graphs and different rank maxima. This block reports:
 
       stage1_ms / stage2_combine_ms   the two per-kernel timers, rank-max, median over pairs

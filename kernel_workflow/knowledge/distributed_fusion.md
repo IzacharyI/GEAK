@@ -42,10 +42,12 @@ All three must hold, or use `geomean_levers.md` instead:
 
 Diagnostic that settles it in one measurement: run a **no-payload control** (same compute, peer
 stores removed). If the stage collapses, the transfer/visibility cost is real and currently
-*exposed*, i.e. not hidden under compute, and **that gap is your entire budget** — no overlap scheme
-can recover more than the control recovers. If the control barely moves, there is nothing for fusion
-to hide; stop here and report that. Run this before anything else; it is one measurement and it
-bounds the whole project.
+*exposed*, i.e. not hidden under compute, and **that gap is the budget for hiding this transfer** —
+no overlap scheme can recover more communication time than the control removes. If the control
+barely moves, there is nothing to hide on that payload/visibility edge; it does **not** rule out
+CTA-local tail filling or a better phase transition/resource partition (Lever 1b). Report the
+narrow conclusion and rank that edge behind the scheduling mechanisms. This measurement bounds the
+communication-hiding part of the project, not every possible benefit of fusion.
 
 ## Lever 1 — Enumerate the MISSING readiness edges before writing any code
 
@@ -69,6 +71,40 @@ interconnect, and they sit at different rows of the edge-scope table. Classify b
 
 **An edge that does not exist cannot be optimized — it must first be added.** Budget for that: the
 publication itself costs something (Levers 5 and 6 are about making it cheap).
+
+## Lever 1b — Build a CTA-local phase pipeline, not a grid-wide sequence
+
+Two stages using the same binding engine do not justify a permanent CU split, but that fact does not
+justify a global drain either. The useful persistent schedule is often a **phase-staggered CTA
+pipeline**:
+
+1. Give every compute CTA a shard of the upstream and downstream work queues.
+2. A CTA drains only its own upstream shard; when that shard has no claimable work, that CTA begins
+   downstream work whose readiness edge is satisfied.
+3. It does not wait for other shards or for in-flight upstream CTAs. Thus one CTA's local order stays
+   producer-before-consumer while the grid contains both stages concurrently.
+4. Apply the same rule at the next stage boundary: a CTA whose downstream shard is drained may enter
+   reduction/combine while other CTAs still execute downstream compute.
+
+The benefit is not imaginary simultaneous MFMA throughput. It is partial-wave tail filling,
+overlap of downstream VMEM/P2P/epilogue work, and removal of grid-wide idle intervals. Therefore the
+static `max(A/f, B/(1-f))` argument in `resource_partition.md` rejects only a fixed `f/(1-f)` role
+partition; it cannot reject this dynamic phase-staggered schedule.
+
+Load-bearing invariants:
+
+- queue heads are sharded or hierarchical; no single global claim atomic sits on every CTA's path;
+- “my shard is empty” is a CTA-local transition, never evidence that the whole grid drained;
+- all startup-role CTAs eventually join the compute queues after their startup duty;
+- each downstream item waits on its own producer readiness, with the required acquire;
+- no global “all producer work done” or “all downstream work done” barrier is inserted between the
+  queues;
+- the grid remains resident and the queue/readiness graph is acyclic.
+
+Reject a proposed fusion if its pseudocode performs `drain_all(stage1) -> barrier ->
+drain_all(stage2)`. It may have one launch and still preserve the original serialization. Require a
+same-timeline trace or block-level counters showing upstream and downstream CTA intervals overlap;
+stage timer sums are not valid evidence once this happens.
 
 ## Lever 2 — Replace whole-phase joins with per-item readiness (highest payoff *only* when the publication is cheaper than the wait it removes)
 
@@ -208,16 +244,17 @@ Corollary on the straggler reading: adding participants makes max-of-N *worse*, 
 them eventually runs out of bandwidth. Neither direction is the fix — the fix is Lever 2 (make it not
 a join at all) or Lever 3 (do not fuse it).
 
-## Lever 5 — Publication scope must match the cache-coherence domain count
+## Lever 5 — Publication scope must match the producer/consumer domain
 
-On a multi-die accelerator the LLC is **per die** (8 XCDs on MI355X). Two consequences that produce
-hangs rather than wrong answers, and reproduce only at some block counts:
+Classify the edge before choosing scope:
 
-1. A relaxed/plain load sees **only its own die's LLC**. The `*_wait_until_*` shmem helpers are
-   relaxed loads. An `atomic_add` at *agent* scope lands in the adder's L2, so a waiter on another
-   die never observes it. **Publish readiness with system-scope atomics; clear with a system-scope
-   store.**
-2. Because the wait is a relaxed load, it does **not** invalidate L1. Every wait must be paired with
+1. A rank-local edge between CTAs on the same GPU uses **agent scope**. Do not escalate an
+   intra-rank producer→consumer readiness counter to a system-scope RMW merely because the GPU has multiple
+   XCDs; that adds an unnecessary peer-visible operation and may be illegal for an ordinary
+   rank-local allocation.
+2. A peer-rank edge whose producer and consumer are different GPUs uses **system scope** and
+   peer-visible symmetric storage.
+3. Because a wait is a relaxed load, it does **not** invalidate L1. Every wait must be paired with
    an explicit **acquire fence** before the guarded data is consumed. No exceptions — this is the
    single most common source of "works at bs=128, garbage at bs=8192".
 
@@ -464,23 +501,28 @@ free.
 
 0. **Establish whether the kernel is compile-screenable** (Lever 10). It sets the cost of every
    iteration that follows, so it is the first thing to know and the cheapest to find out.
-1. **Run the no-payload control** and the DAG. No exposed wait ⇒ no fusion win available; stop.
+1. **Run the no-payload control** and the DAG. No exposed wait closes only the
+   communication-hiding claim; continue evaluating CTA-local tail filling and
+   launch-structure/resource-partition value.
 2. **Enumerate the missing readiness edges** (Lever 1). This is static and cheap.
-3. **Attack the largest exposed wait first** with per-item readiness (Lever 2) — usually the cross-rank
+3. **Test the CTA-local phase pipeline** (Lever 1b) whenever downstream items
+   become ready before the whole upstream grid drains. A shared MFMA engine
+   rejects a permanent CU split, not this schedule.
+4. **Attack the largest exposed wait first** with per-item readiness (Lever 2) — usually the cross-rank
    barrier, and usually most of the available gain — **but only after confirming the readiness
    publication is cheaper than that wait** (Lever 2's multi-die caveat + Lever 6). On an 8-XCD part a
    system-scope per-item atomic can cost more than the wait it removes; when it does, this lever is a
    regression and the gain is in the resource partition (item 3b), not here. Defer to the operator's
    expert skill for where this ranked when it was actually measured.
-   3b. **When the exposed cross-rank wait is already short**, skip straight to the launch-structure
+   4b. **When the exposed cross-rank wait is already short**, skip straight to the launch-structure
    wiring and CU-role partition (`resource_partition.md`) — co-residency of the stages with the right
    CU ownership, and folding combine in as a third concurrent queue, is what pays there. This is the
    headline mechanism on a well-tuned distributed operator, and it does **not** depend on a per-item
    cross-rank readiness edge.
-4. **Then the intra-rank producer→consumer edge**, agent scope, which is cheaper to publish.
-5. **Do not fuse launch-only phases at all** (Lever 3) unless something other than launch count pays
+5. **Then the intra-rank producer→consumer edge**, agent scope, which is cheaper to publish.
+6. **Do not fuse launch-only phases at all** (Lever 3) unless something other than launch count pays
    for it. If you build one to settle the question, land it default-off and labelled as a control.
-6. Levers 5–9 are **prerequisites, not options** — get scope, fence cost, residency, acyclicity and
+7. Levers 5–9 are **prerequisites, not options** — get scope, fence cost, residency, acyclicity and
    counter-reset right, or the above will hang rather than run slowly.
 
 Honest ceiling: perfectly hiding the *entire* worst-case combine wait was 13.46% of e2e, and the

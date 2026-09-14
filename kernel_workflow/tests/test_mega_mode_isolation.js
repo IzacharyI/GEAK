@@ -4,8 +4,11 @@
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.resolve(__dirname, '..', 'kernel_workflow.js'), 'utf8');
-const bootstrap = fs.readFileSync(
-  path.resolve(__dirname, '..', 'scripts', 'bootstrap_task.sh'), 'utf8',
+const searchLead = fs.readFileSync(
+  path.resolve(__dirname, '..', 'roles', 'mega_search_lead.md'), 'utf8',
+);
+const engineer = fs.readFileSync(
+  path.resolve(__dirname, '..', 'roles', 'engineer.md'), 'utf8',
 );
 
 let failures = 0;
@@ -14,44 +17,104 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
-const fn = src.match(/function expertSkillsBlock\(role\) \{[\s\S]*?\n\}\n\nfunction analysisSkillBlock/);
+const fn = src.match(
+  /function expertSkillsBlock\(role\) \{[\s\S]*?\n\}\n\nfunction analysisSkillBlock/,
+);
 if (!fn) throw new Error('cannot lift expertSkillsBlock');
 const functionText = fn[0].replace(/\n\nfunction analysisSkillBlock$/, '');
-const expertSkillsBlock = new Function(`
-  const USE_EXPERT_SKILLS = true;
-  const EXPERT_SKILL_ROLES = new Set(['tech_lead','engineer','deep_engineer','mega_engineer']);
+const makeBlock = (enabled) => new Function(`
+  const USE_EXPERT_SKILLS = ${enabled};
+  const EXPERT_SKILL_ROLES = new Set([
+    'tech_lead','author_engineer','engineer','deep_engineer','mega_search_lead'
+  ]);
   const EXPERT_SKILLS_DIR = '/skills';
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
   const MEGA_SKILL_ID = 'megamoe_ep_mega_fusion';
+  const MEGA_RECIPE_FILE = '/skills/skills/megamoe_ep_mega_fusion/recipe_v1.md';
+  const MEGA_RECIPE_REVISION = 'm25-repro-v2';
   const CAPABILITY_EVAL = false;
   ${functionText}
   return expertSkillsBlock;
 `)();
 
-console.log('\n# exact M2.5 recipe is isolated to its candidate lane');
-ok(expertSkillsBlock('mega_engineer').includes('/skills/skills/megamoe_ep_mega_fusion/skill.md'),
-  'mega_engineer receives the validated M2.5 deconstruction');
-ok(expertSkillsBlock('engineer') === '' && expertSkillsBlock('tech_lead') === '',
-  'ordinary search and planning do not receive the exact M2.5 recipe');
+console.log('\n# Expert Skills change knowledge, not Mega mode');
+const enabled = makeBlock(true);
+ok(enabled('mega_search_lead').includes('skill.md') &&
+   enabled('mega_search_lead').includes('recipe_v1.md'),
+  'the common Mega planner receives the matched skill/reference when enabled');
+ok(enabled('engineer').includes('NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE'),
+  'the common Engineer receives the same matched normative knowledge');
+ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
+  'skill injection cannot create a reproduction candidate source');
+const disabled = makeBlock(false);
+ok(disabled('mega_search_lead') === '' && disabled('engineer') === '',
+  'with Expert Skills off the same roles receive no M2.5 knowledge');
 
-console.log('\n# Mega uses the shared budget loop, not a blocking pre-loop gate');
-ok(/if \(MODE === 'mega'\) \{[\s\S]{0,800}const turn = await runMegaCandidateTurn/.test(src),
-  'the shared optimization loop dispatches one Mega candidate turn');
-ok(/if \(false && MODE === 'mega'\)/.test(src) === false,
-  'there is no executable false-gated Reproduce branch masquerading as the design');
-ok(!/validated_artifact|TRUSTED_CANDIDATES|m25_artifact/.test(src),
-  'hand-authored artifacts are absent from the candidate contract');
-ok(/mega mode refuses trusted_candidates/.test(bootstrap),
-  'bootstrap refuses attempts to register executable M2.5 source');
+console.log('\n# no reproduction scheduler or reserved skill lane');
+ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(src),
+  'Mega startup does not register a special skill candidate');
+ok(!/if \(USE_EXPERT_SKILLS && \(!MEGA_SEARCH_ENABLED/.test(src) &&
+   !/megaSkillLaneDue\(megaCandidateRegistry, currentRound/.test(src),
+  'candidate dispatch never branches into a reproduction schedule');
+ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src),
+  'all Mega candidates use the same authoring role');
+ok(/MEGA unified mode: Expert Skills are/.test(src),
+  'runtime reports a single lifecycle with a knowledge toggle');
 
-console.log('\n# final selection is a speedup, not correctness-only admission');
-ok(/c\.absolute_score > 1\.0/.test(src),
-  'candidate selection requires speedup above frozen MegaMoE V2');
-ok(/finalPrimary > 1\.0/.test(src),
-  'final deliverable independently rechecks the above-baseline condition');
+console.log('\n# autonomous candidates remain measurable and flexible');
+ok(/search plan rejected diagnostic-only direction/.test(src),
+  'diagnostic-only work cannot consume a candidate turn');
+ok(/fully fuse[\s\S]*or fuse only a profitable subset/.test(searchLead) &&
+   /partial-fusion\/enabling topology is valid/.test(searchLead),
+  'full and partial fusion may both become runnable performance candidates');
+ok(/complete runnable operator/.test(searchLead) &&
+   /external operator is complete, correctness passes/.test(engineer),
+  'partial fusion means a complete operator, not half-implemented source');
+ok(/allowPartialFusion: !isRecipeLane/.test(src) &&
+   /launches >= targetLaunches && launches < baseLaunches/.test(src),
+  'search scoring accepts a measured launch reduction while full fusion remains the target');
+ok(/let analysis = await agentT\(/.test(src) &&
+   /roleAgent\(MODE === 'mega' \? 'mega_search_lead' : 'tech_lead'/.test(src),
+  'Mega still performs its real Analyze phase');
+ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*'candidate_directions'[\s\S]*'task_graph'[\s\S]*'resource_timeline'/.test(src) &&
+   /schema: MODE === 'mega' \? MEGA_ANALYZE_SCHEMA : ANALYZE_SCHEMA/.test(src),
+  'Mega Analyze cannot return roadmap prose while omitting its structured pipeline artifacts');
+ok(/'task_graph', 'resource_timeline', 'mega_plan_ir'/.test(src) &&
+   /required mega_plan_ir missing/.test(src),
+  'Mega Analyze requires a lowerable typed plan, not only a roadmap');
+ok(/resource_contract: \{/.test(src) &&
+   /schedule_contract: \{/.test(src) &&
+   /group_segment_bytes/.test(src) &&
+   /carried_scalars/.test(src) &&
+   /stage2_pointer_count/.test(src),
+  'MegaPlanIR strongly types resource, schedule and ABI constraints');
+ok(/TASK_GRAPH: JSON\.stringify\(analysis\.task_graph\)/.test(src) &&
+   /RESOURCE_TIMELINE: JSON\.stringify\(analysis\.resource_timeline\)/.test(src) &&
+   /MEGA_PLAN_IR: JSON\.stringify\(analysis\.mega_plan_ir\)/.test(src),
+  'the dedicated Mega planner receives graph, resource and typed-plan artifacts');
+ok(!/MEGA_TOPOLOGY_LEVERS/.test(src) &&
+   /target_topology: targetTopology/.test(src),
+  'target_topology is no longer deleted by an experimental kill switch');
+ok(/Mega round \$\{currentRound\}: \$\{pg\.summary\}/.test(src) &&
+   /roadmapLadderGate\(LADDER, \[d\], LADDER_MEASURED\)/.test(src) &&
+   /strict Mega direction refused before authoring/.test(src),
+  'Mega runs pipe, ladder and strict gates before authoring');
+ok(/verify_structure/.test(src) &&
+   /structural_verified/.test(src) &&
+   /runtime_verified/.test(src) &&
+   /score_complete/.test(src),
+  'checkpoint, structural, runtime and scored completion are distinct');
+ok(/STRUCTURAL_ORACLE_PATH: M25_STRUCTURAL_ORACLE_PATH/.test(src) &&
+   !/Advance candidate lane \$\{candidateId\}[\s\S]{0,2500}STRUCTURAL_ORACLE_PATH/.test(src),
+  'the M2.5 oracle is passed only to post-authoring Verify, never Author');
+ok(/const MEGA_STRUCTURAL_ONLY = MODE === 'mega'/.test(src) &&
+   /STRUCTURAL_ONLY: '1'/.test(src) &&
+   /!MEGA_STRUCTURAL_ONLY/.test(src) &&
+   /structural-only acceptance reached/.test(src),
+  'structural-only mode forbids runtime Verify and stops on a complete source contract');
 
 console.log(failures === 0
-  ? '\nPASS: Mega skill production is isolated while all candidates share final selection.'
+  ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'
   : `\nFAIL: ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

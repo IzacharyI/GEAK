@@ -268,41 +268,10 @@ for three waves while every round re-planned from the profile.
    The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
    two-launch terminal have the same machine state.
 
-6c. **mode=mega — plan independent whole-kernel candidate lanes (mega-gated).**
-   Mega has no pre-loop Reproduce phase and no single mutable floor. You receive
-   `MEGA_CANDIDATE_REGISTRY`, which contains independent workflow-authored lineages:
-
-   - `m25_skill` is reserved for `mega_engineer`. It reconstructs M2.5 from the validated skill and
-     is scheduled by the orchestrator; do not plan or block on it.
-   - Your directions are `source=search` candidates. They do not receive the exact M2.5 recipe.
-     Set a stable `candidate_id` to continue a prior WIP lane, and `base_candidate_id` to the candidate
-     it builds on (`frozen_baseline` for a genuinely independent topology).
-   - Never point a direction at a hand-authored M2.5 tree. The only M2.5 input is the recorded target
-     `1.0448x` (observed band `1.0403..1.0477`); it is not executable source.
-   - A lane may be correct but slow. That is `runnable` WIP and can be improved in later rounds; it
-     does not change another lane or the selected incumbent.
-   - Final selection is source-blind: every candidate must pass the same correctness, path, launch,
-     liveness and guard contract, and **must have absolute speedup >1.0 versus frozen MegaMoE V2**.
-     Among those, the fastest verified candidate wins. Correctness alone never makes a slow candidate
-     the final output.
-   - Prefer continuing a named runnable lane with a measured bottleneck over re-deriving it. A new
-     direction is justified only by higher expected final speed or a distinct topology.
-   - Single-edge diagnostics may live inside a lane, but the candidate identity is always the complete
-     two-launch operator; never promote a half-fused shape as a finalist.
-   - Under `MEGA_PROFILE=production`, fit one useful implementation+score attempt inside
-     `CANDIDATE_TIMEOUT_S`; do not spend the round building audit-only overlap/attribution instruments.
-     Under `audit`, those mechanism measurements may be planned explicitly.
-   - **Multi-lever topology (`target_topology`).** For a mega direction, prefer describing the WHOLE
-     fused-kernel topology as a lever VECTOR rather than a single on/off switch. A direction that proposes
-     a topology or concurrency change SHOULD carry an optional `target_topology` object — a superset of
-     `target_shape`: `launches`, `fused_stages`, `combine_mode` (`queue` = combine folded as a third
-     ticketed queue), `g2_waves` (GEMM2 wave/reclaim count), and the concurrency knobs the bench exposes —
-     `site1: {work_shards, dispatch_cu}` (stage-1 dispatch), `site2: {persist_cu, skew_cu}` (stage-2
-     persistence/skew), `combine_knobs: {block_num, warp_num}`. Change only the levers your direction is
-     actually about and say why in `notes`; leave the rest out so the base topology is inherited. OMIT
-     `target_topology` entirely for a pure "continue this lane" or baseline direction — that keeps the
-     verify target at the established shape. (The descriptor only flows when the wave enables the topology
-     levers; otherwise the workflow uses the established shape, so emitting it is always safe.)
+6c. **Mega search planning is isolated.** In `mode=mega`, this role does not plan candidate
+   turns. The orchestrator dispatches `mega_search_lead.md`, which receives search-only state and no
+   validated reproduction recipe. Keep operator-specific reproduction details out of this shared
+   role.
 
 Return JSON:
 ```json
@@ -489,9 +458,8 @@ passed), **`OPEN_RUNGS`**, and `ROADMAP` (the path). A prerequisite is satisfied
 next rung.
 Plus **`CHAIN_DEBT`** and **`CHAIN_BASELINE`**, present only when a fusion chain is open (see
 "Multi-step fusions" below).
-In `mode=mega`, `MEGA_CANDIDATE_REGISTRY`, `MEASUREMENT_CALIBRATION`, and
-`DEFAULT_BASE_CANDIDATE`, `MEGA_PROFILE`, and `CANDIDATE_TIMEOUT_S` replace the idea of one mutable floor. Plan one `search` lane; do not plan
-the reserved skill lane, do not wait for it, and do not assume a slow lane is the global incumbent.
+In `mode=mega`, candidate planning is handled by `mega_search_lead.md`; this
+shared role receives no candidate portfolio or validated recipe.
 Strict runs also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `LAUNCH_TARGET`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`, and
