@@ -72,6 +72,11 @@ Return the ordinary analysis schema with this lowerable IR shape:
     "base_candidate_id": "frozen_baseline",
     "focus_files": ["production source"],
     "prompt": "implementation and measurement objective",
+    "target_shape": {
+      "launches": 1,
+      "stages_fused": ["region_a", "region_b"],
+      "require_overlap": true
+    },
     "target_topology": {
       "launch_count": 1,
       "included_regions": ["region_a", "region_b"],

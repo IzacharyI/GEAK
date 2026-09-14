@@ -952,7 +952,14 @@ const ANALYZE_SCHEMA = obj({
   candidate_directions: { type: 'array', items: obj({
     id: { type: 'string' },              // short, stable, quotable: D0, D1, ...
     title: { type: 'string' },
+    candidate_id: { type: 'string' },
+    candidate_source: { type: 'string', enum: ['search', 'integrated'] },
+    base_candidate_id: { type: 'string' },
+    specialty: { type: 'string' },
+    focus_files: { type: 'array', items: { type: 'string' } },
+    prompt: { type: 'string' },
     rationale: { type: 'string' },
+    rung_deviation: { type: 'string' },
     expected_speedup: { type: 'number' },
     gated_on: { type: 'array', items: { type: 'string' } },
     mandatory_arms: { type: 'array', items: { type: 'string' } },
@@ -975,6 +982,7 @@ const ANALYZE_SCHEMA = obj({
       required: ['launches'],
       additionalProperties: true,
     },
+    target_topology: MEGA_TOPOLOGY_SCHEMA,
   }, ['id', 'title', 'gated_on']) },
   // perf_knowledge resolution (REFERENCE ONLY): the operator/language this kernel maps to in the
   // AMD perf_knowledge base, plus the most relevant card paths, so engineers read focused context
@@ -1263,6 +1271,20 @@ const ANALYZE_SCHEMA = obj({
 }, ['kernel_type', 'roadmap_summary']);
 const MEGA_ANALYZE_SCHEMA = {
   ...ANALYZE_SCHEMA,
+  properties: {
+    ...ANALYZE_SCHEMA.properties,
+    candidate_directions: {
+      ...ANALYZE_SCHEMA.properties.candidate_directions,
+      items: {
+        ...ANALYZE_SCHEMA.properties.candidate_directions.items,
+        required: [...new Set([
+          ...(ANALYZE_SCHEMA.properties.candidate_directions.items.required || []),
+          'candidate_id', 'candidate_source', 'base_candidate_id', 'specialty',
+          'focus_files', 'prompt', 'target_shape', 'target_topology',
+        ])],
+      },
+    },
+  },
   required: [...new Set([
     ...(ANALYZE_SCHEMA.required || []),
     'modifiable_files', 'candidate_directions', 'prior_art',

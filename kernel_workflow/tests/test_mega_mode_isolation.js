@@ -91,6 +91,8 @@ ok(/let analysis = await agentT\(/.test(src) &&
 ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*'candidate_directions'[\s\S]*'task_graph'[\s\S]*'resource_timeline'/.test(src) &&
    /schema: MODE === 'mega' \? MEGA_ANALYZE_SCHEMA : ANALYZE_SCHEMA/.test(src),
   'Mega Analyze cannot return roadmap prose while omitting its structured pipeline artifacts');
+ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*candidate_directions:[\s\S]*'candidate_id'[\s\S]*'target_topology'/.test(src),
+  'Mega Analyze preserves Skill candidate identity and topology through StructuredOutput');
 ok(/'task_graph', 'resource_timeline', 'mega_plan_ir'/.test(src) &&
    /required mega_plan_ir invalid/.test(src),
   'Mega Analyze requires a lowerable typed plan, not only a roadmap');
