@@ -4,9 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.resolve(__dirname, '..', 'kernel_workflow.js'), 'utf8');
-const launch = JSON.parse(fs.readFileSync(
-  path.resolve(__dirname, '..', 'tasks', 'megamoe_v2_ep8_mega', 'launch_args.json'), 'utf8',
-));
 
 let failures = 0;
 const ok = (value, message) => {
@@ -23,12 +20,10 @@ ok(/candidate authoring may continue, but mega performance ranking/i.test(src),
   'an incomplete control blocks ranking rather than candidate authoring');
 
 console.log('\n# the null-only bypass is gone');
-ok(!Object.prototype.hasOwnProperty.call(launch.positive_control, 'measure_null_only'),
-  'Mega config does not pretend a null arm proves sensitivity');
 ok(!/measure_null_only/.test(src),
   'the orchestrator no longer has a null-only positive-control bypass');
-ok(launch.positive_control.abort_on_fail === false,
-  'a control problem preserves authoring progress instead of aborting the whole portfolio');
+ok(/const POSITIVE_CONTROL = \(A\.positive_control/.test(src),
+  'the caller supplies the control instead of a packaged operator task');
 
 console.log('\n# scores remain disabled until calibration passes');
 ok(/megaMeasurementCalibration\.ready\s*\?\s*selectMegaCandidate/.test(src),

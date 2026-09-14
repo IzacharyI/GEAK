@@ -412,7 +412,7 @@ const CONTAINMENT_PREFLIGHT = (A.containment_preflight &&
 const REFERENCE_LEAK_MARKER_FILE = String(A.reference_leak_marker_file || '');
 if (STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean !== true) {
   throw new Error(
-    'args.strict_autonomy requires a clean containment_preflight emitted by trusted bootstrap_task.sh');
+    'args.strict_autonomy requires a clean containment_preflight supplied by the trusted launcher');
 }
 // Trees whose contents would constitute an imported answer. Given to VERIFY (to compare against) and
 // deliberately NOT to engineers — handing them the list would be handing them the location.
@@ -2170,7 +2170,7 @@ let analysis = await agentT(
     } : {}),
     // The resume flag says "a prior wave already built the roadmap"; STATE_DIR is the only place
     // that roadmap and the open-rung list actually survive between waves, because EVAL_DIR is
-    // rebuilt from scratch by bootstrap_task.sh. roles/tech_lead.md's fast path already instructs
+    // rebuilt from scratch by the caller. roles/tech_lead.md's fast path already instructs
     // analyze to read `STATE_DIR` and `STATE.json` — until now it was never given either, so the
     // instruction could not be followed and the fast path had nothing to resume from.
     ...(STATE_DIR && MODE !== 'mega' ? { STATE_DIR } : {}),
@@ -2202,7 +2202,7 @@ if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
 // -- workflow scripts have no filesystem, so this file cannot see whether EVAL_DIR/roadmap.md was
 // found or whether the phase quietly returned an empty shell.
 //
-// Wave 15 is what that costs. bootstrap_task.sh assembles a FRESH EVAL_DIR, so the prior wave's
+// Wave 15 is what that costs. A fresh caller workspace has no prior wave roadmap, so the prior wave's
 // roadmap was not in it; analyze took the fast path, found nothing to read, and returned a valid
 // schema with no candidate_directions and no task_graph. Three rounds then ran with an empty ladder.
 // The engineers carried the D0..D3 rung ids forward from wave 14 by hand, out of their own memory,

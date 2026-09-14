@@ -55,38 +55,16 @@ Example (budget=6): round 1 = 3 directions, round 2 = 3; or 4 then 2; or stop af
 
 ## Invocation
 
-### Packaged tasks — start here if one fits
-`tasks/<name>/` holds a task the workflow already knows how to stand up: the task statement, and a
-`launch_args.json` recipe with a positive control that does not presuppose the answer. Both are
-templates; `scripts/bootstrap_task.sh` resolves them against the local machine.
+The public repository does not package operator/task presets. Call the Workflow
+with a real `args` object supplied by the invoking project. Keep task prompts,
+baseline paths, hardware configuration, state directories and experiment roots
+outside GEAK; only reusable roles, tools, contracts and Expert Skills belong
+here.
 
-```
-bash scripts/bootstrap_task.sh --check            # is this box even capable of the task?
-bash scripts/bootstrap_task.sh \
-  --baseline /path/to/frozen/baseline-checkout \
-  --out      /path/to/new/workspace
-```
-
-It probes for the hardware and runtime libraries the task needs, refuses to assemble a workspace the
-machine cannot run (exit 2), distinguishes that from "fit, but a co-tenant holds the VRAM right now"
-(exit 3 — assemble and wait), copies the baseline into a workspace an engineer may freely edit, and
-writes a `launch_args.json` with every path resolved. What it deliberately does **not** take is a
-previous run's artifacts: analyses, logs and accumulated patches are the workflow's *output*, and a
-task that needs them as input is a task that has been solved elsewhere and is now being replayed.
-
-The canonical packaged task is `tasks/megamoe_v2_ep8_mega` (MegaMoE V2,
-8-rank expert-parallel fusion). `bootstrap_task.sh` selects it by default.
-Historical strict-capability and optimize-only variants live in git history,
-not in the active task selector.
-
-```bash
-bash scripts/bootstrap_task.sh \
-  --baseline /path/to/clean/public-aiter-checkout \
-  --out /path/to/new/workspace \
-  --state-dir /path/to/new/state \
-  --mori-root /path/to/mori \
-  --jit-dir /path/to/standalone-writable-aiter-cache
-```
+The caller is responsible for preparing an editable workspace from its frozen
+baseline, validating its runtime/GPU prerequisites, and passing `task`,
+`kernel_path`, `exp_root`, `state_dir`, guards and measurement commands. A
+continuation changes structured state/args, not the fixed task prompt.
 
 `mode=mega` is one tiled/instruction-pipelined megakernel lifecycle. With
 `use_expert_skills=true`, its ordinary Analyze/Plan/Author roles receive the
@@ -340,9 +318,7 @@ knowledge/           optimization_strategies, hip/triton/wrapper, profiling_guid
                      amd_instinct (multi-card: gfx942/gfx950), self_monitoring, geomean_levers,
                      distributed_fusion (multi-launch multi-rank -> one persistent kernel),
                      jit_arm_isolation (making an env-gated A/B compile to two binaries)
-tasks/               packaged tasks: GEAK_TASK.md + launch_args.json, both templated
 scripts/             gpu_lock.sh, gpu_group_lock.sh, gpu_lease.py, profile_kernel.sh,
-                     bootstrap_task.sh (stand a packaged task up on a new machine),
                      replay_runs.js (re-decide finished runs with today's logic, no GPU),
                      reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment:
                      git addresses AND filesystem paths that open on this machine)

@@ -5,7 +5,7 @@
 // condition that it does the full analysis if no prior roadmap exists. kernel_workflow.js cannot
 // check that condition -- it has no filesystem -- so the only observable is the returned schema.
 //
-// Wave 15: bootstrap_task.sh assembles a fresh EVAL_DIR, the prior roadmap was not in it, the fast
+// Wave 15: the caller supplied a fresh EVAL_DIR, the prior roadmap was not in it, and the fast
 // path returned a valid schema with no candidate_directions, and three rounds ran with no ladder.
 // The rung ids were carried forward by hand from wave 14 by individual engineers, and D2 went
 // unspent for three waves. The LADDER MISSING caveat fired every round and changed nothing.

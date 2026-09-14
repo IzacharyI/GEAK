@@ -5,9 +5,6 @@ const fs = require('fs');
 const path = require('path');
 const wf = path.resolve(__dirname, '..');
 const src = fs.readFileSync(path.join(wf, 'kernel_workflow.js'), 'utf8');
-const args = JSON.parse(fs.readFileSync(
-  path.join(wf, 'tasks', 'megamoe_v2_ep8_mega', 'launch_args.json'), 'utf8',
-));
 const director = fs.readFileSync(path.join(wf, 'roles', 'director.md'), 'utf8');
 
 let failures = 0;
@@ -17,23 +14,21 @@ const ok = (value, message) => {
 };
 
 console.log('\n# production is the bounded default');
-ok(args.mega_profile === 'production' && args.budget === 6,
+ok(/const BUDGET = parseInt\(A\.budget != null \? A\.budget : 6/.test(src) &&
+   /A\.mega_profile \|\| 'production'/.test(src),
   'default profile uses six candidate turns');
-ok(args.mega_time_budget_s === 28800 && args.mega_final_reserve_s === 7200 &&
-   args.mega_closeout_reserve_s === 900,
+ok(/A\.mega_time_budget_s \|\|\s*\n\s*28800/.test(src) &&
+   /MEGA_PRODUCTION \? 7200 : 3600/.test(src) &&
+   /A\.mega_closeout_reserve_s \|\| 900/.test(src),
   'modeled target is eight hours with two hours reserved for finalist validation');
-ok(args.mega_candidate_timeout_s === 3600 && args.mega_final_timeout_s === 7200,
+ok(/A\.mega_candidate_timeout_s \|\|\s*\n\s*3600/.test(src) &&
+   /MEGA_PRODUCTION \? 7200 : 3600/.test(src),
   'candidate and finalist calls have separate bounded timeouts');
-ok(args.use_expert_skills === 'true' &&
-   args.expert_skill_id === 'megamoe_ep_mega_fusion' &&
-   args.expert_skill_playbook.endsWith('/playbook.md') &&
-   args.expert_skill_contract.endsWith('/contract.yaml') &&
-   args.expert_skill_validation.endsWith('/validation.yaml') &&
-   args.mega_skill_candidate_id == null && args.mega_search_enabled == null,
-  'Expert Skills use playbook/contract/validation in the common lifecycle');
-ok(6 * args.mega_candidate_timeout_s <=
-   args.mega_time_budget_s - args.mega_final_reserve_s,
-  'modeled dispatch window can reach all six common candidate turns');
+ok(/A\.expert_skill_id/.test(src) &&
+   /A\.expert_skill_playbook/.test(src) &&
+   /A\.expert_skill_contract/.test(src) &&
+   /A\.expert_skill_validation/.test(src),
+  'Expert Skill configuration is supplied by the caller, not a packaged task');
 
 console.log('\n# valid output triggers early convergence');
 ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
@@ -50,12 +45,11 @@ ok(/for \(let i = 0; i < finalistOrder\.length; i\+\+\)/.test(src) &&
   'final candidates are validated sequentially in score order');
 ok(/roleAgent\('director', 'recover_mega'/.test(src),
   'a completed finalist manifest is recovered without repaying GPU validation');
-ok(args.mega_final_top_k === 1 && args.mega_final_fallback_k === 2,
+ok(/MEGA_PRODUCTION \? 1 : 2/.test(src) &&
+   /MEGA_PRODUCTION \? 2 : MEGA_FINAL_TOP_K/.test(src),
   'one primary finalist is normal; a second is only a failure fallback');
-ok(args.mega_tie_noise_pct === 0,
-  'production validates the numerically fastest scored candidate first');
 ok(/A\.mega_tie_noise_pct != null \? A\.mega_tie_noise_pct : 1\.45/.test(src),
-  'runtime preserves an explicit zero instead of restoring the audit tie band');
+  'the caller may explicitly set a zero tie band');
 ok(/VALIDATION_TIER: MEGA_PRODUCTION \? 'identity_only' : 'full'/.test(src),
   'production second Director call checks identity instead of rerunning the GPU suite');
 ok(/Production identity-only tier/.test(director),
@@ -75,13 +69,6 @@ ok(/validation\.final_patch_verified === true/.test(src),
   'identity-only validation still proves the final patch reproduces the selected tree');
 ok(/APPLY_TO_ORIGINAL !== 'true'[\s\S]{0,120}validation\.applied_to_original/.test(src),
   'a requested apply-back must be confirmed before production reports delivery');
-
-console.log('\n# audit-only mechanism gates are not production blockers');
-ok(args.require_overlap === 'false' && args.require_attribution === 'false',
-  'overlap and attribution are diagnostics in production');
-ok(/mega_profile=audit/.test(args._audit_profile_overrides) &&
-   /require_overlap=true/.test(args._audit_profile_overrides),
-  'the exhaustive audit profile remains explicitly available');
 
 console.log(failures === 0
   ? '\nPASS: production is bounded for delivery while audit remains opt-in.'
