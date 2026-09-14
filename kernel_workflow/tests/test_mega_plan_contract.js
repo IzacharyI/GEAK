@@ -102,6 +102,11 @@ ok(verdict({
   },
 }, plan).pass,
 'an explicit partial-terminal deviation remains legal');
+ok(/const MEGA_PLAN_SCHEMA = \{[\s\S]*'candidate_id'[\s\S]*'candidate_source'[\s\S]*'target_topology'/.test(src) &&
+   /label: `mega:plan r\$\{currentRound\}`, schema: MEGA_PLAN_SCHEMA/.test(src),
+  'Mega plan StructuredOutput requires complete candidate identity and topology');
+ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,280}return \{[\s\S]{0,120}Mega direction refused before authoring/.test(src),
+  'every Mega run rejects an invalid topology before Engineer dispatch');
 
 console.log(failures ? `\nFAILED: ${failures}` :
   '\nPASS: Mega topology is an operator-neutral typed plan contract.');

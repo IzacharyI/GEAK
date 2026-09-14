@@ -1493,6 +1493,32 @@ const PLAN_SCHEMA = obj({
   },
 }, ['stop', 'directions']);
 
+const MEGA_PLAN_SCHEMA = {
+  ...PLAN_SCHEMA,
+  properties: {
+    ...PLAN_SCHEMA.properties,
+    directions: {
+      ...PLAN_SCHEMA.properties.directions,
+      items: {
+        ...PLAN_SCHEMA.properties.directions.items,
+        properties: {
+          ...PLAN_SCHEMA.properties.directions.items.properties,
+          candidate_source: {
+            type: 'string', enum: ['search', 'integrated'],
+          },
+        },
+        required: [...new Set([
+          ...(PLAN_SCHEMA.properties.directions.items.required || []),
+          'candidate_id', 'candidate_source', 'base_candidate_id',
+          'focus_files', 'roadmap_rung', 'step_role', 'gated_on',
+          'target_shape', 'target_topology',
+        ])],
+      },
+    },
+  },
+  required: [...new Set([...(PLAN_SCHEMA.required || []), 'reasoning'])],
+};
+
 const ENG_SCHEMA = obj({
   engineer_id: { type: 'string' }, specialty: { type: 'string' }, task: { type: 'string' },
   strategy: { type: 'string' }, speedup_geomean: { type: 'number' }, speedup_arithmetic: { type: 'number' },
@@ -6024,7 +6050,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         KERNEL_KNOWLEDGE_DIR: '', KK_OPERATOR: '', KK_LANGUAGE: '', KK_REFS: [], ...KB_INPUTS,
       }),
-    { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: PLAN_SCHEMA,
+    { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
       ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
   if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
     const wip = megaCandidateRegistry.find((c) =>
@@ -6141,13 +6167,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const topologyVerdict = megaTopologyVerdict(d, analysis && analysis.mega_plan_ir);
   if (!topologyVerdict.pass) {
     log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
+    return {
+      stop: true,
+      reason: `Mega direction refused before authoring: ${topologyVerdict.reason}`,
+    };
   }
   if (STRICT_AUTONOMY) {
     const strict = strictDirectionVerdict(d, LADDER, LADDER_MEASURED);
-    if (!strict.pass || !topologyVerdict.pass) {
+    if (!strict.pass) {
       return { stop: true, reason:
-        `strict Mega direction refused before authoring: ` +
-        `${!strict.pass ? strict.reason : topologyVerdict.reason}` };
+        `strict Mega direction refused before authoring: ${strict.reason}` };
     }
   }
   for (const rung of lg.planned) {
