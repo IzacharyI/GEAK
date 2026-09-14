@@ -95,10 +95,10 @@ plan:
       path: resource_contract.lds.aliasing
       op: eq
       value: max
-    - id: no_declared_scratch
+    - id: scratch_unverified_or_zero
       path: resource_contract.registers.scratch_bytes_max
-      op: eq
-      value: 0
+      op: in
+      value: [null, 0]
     - id: resident_workgroup
       path: resource_contract.residency.min_workgroups_per_cu
       op: gte

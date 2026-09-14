@@ -193,6 +193,24 @@ def test_plan_expression_is_machine_checked(tmp_path):
     assert any("threads" in error for error in result["plan_consistency_errors"])
 
 
+def test_plan_may_defer_compile_only_resource_measurement():
+    contract = _contract()
+    contract["plan"] = {
+        "required": True,
+        "assertions": [{
+            "id": "scratch_unverified_or_zero",
+            "path": "resource.scratch_bytes_max",
+            "op": "in",
+            "value": [None, 0],
+        }],
+    }
+    valid, errors, _ = MODULE.validate_plan(
+        contract, {"resource": {"scratch_bytes_max": None}}
+    )
+    assert valid
+    assert not errors
+
+
 def test_call_keyword_identity_rejects_payload_pointer_as_ready_pointer(tmp_path):
     contract = _contract()
     contract["checks"] = [
