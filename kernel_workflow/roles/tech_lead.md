@@ -224,7 +224,7 @@ for three waves while every round re-planned from the profile.
 
 6b. **WHOLE-FUSION-FIRST when a validated full-fusion playbook is in scope.** If your inputs carry a
    `validated`/`human_validated` full-fusion expert skill for THIS operator (e.g.
-   `megamoe_ep_persistent_fusion`, a distilled production playbook with a measured floor) AND the
+   `megamoe_ep_mega_fusion`, a distilled production playbook with a measured floor) AND the
    acceptance shape is a single fused kernel (`LAUNCH_TARGET` ≤ 2 with `REQUIRE_OVERLAP`), then the
    ladder's FIRST terminal rung MUST be the **complete fused kernel authored as one unit** following
    that playbook end-to-end — correctness and CUDA-graph safety FIRST (the playbook's double-buffer /
@@ -750,9 +750,11 @@ Rules:
      `worker_result.json` beside it)** — that file marks the most recent on-device fusion-edge authoring
      regardless of which team dir or round number it landed in. If it holds off-lease authoring for
      the same edge, BUILD ON THAT DIFF and aim the lease at the localized bug. For a hang on an
-     **intra-rank** readiness edge (GEMM1→GEMM2), the fix is almost never a scope change: the
-     `megamoe_ep_persistent_fusion` skill pins that edge at **agent scope** (`fence_agent_release` +
-     `atomic_add_agent`) — system scope there is the MI355X cross-L2 per-token regression, not a fix. A
+     **intra-rank** readiness edge (GEMM1→GEMM2), do not infer memory scope from the logical rank
+     boundary alone. The current `megamoe_ep_mega_fusion` playbook pins publication at
+     **system scope** because the relaxed MORI waiter may execute on another XCD: write-through stores,
+     `s_waitcnt(0)`, a block barrier, then `atomic_add_system`, without a separate per-tile system
+     flush. A
      hang whose `path=MEGA` marker is non-monotonic across cuts is a `wait_until` **target that is never
      reachable** (crash_bisection: the producer publishes a tile index / expected count the consumer's
      wait does not match), so the move is the skill's own probe method — print `ready1[item]`, the
@@ -763,9 +765,10 @@ Rules:
      whole-body GEMM2 fold across all six lane files (combine kernel + op included), and CUT8 **activated
      `path=MEGA` but DEADLOCKED** — the ladder bracketed it to the GEMM1→GEMM2 agent-scope `ready1`
      fence+atomic edge (CUT3 clean ↔ CUT4 hang; the mega marker was *non-monotonic* across cuts —
-     `mega=1` at CUT8/CUT5 but `mega=0` at CUT4). The scope is already correct per the skill (agent, the
-     right choice for this intra-rank edge); the deadlock is a `wait_until(ready1[...])` **target the
-     producer never reaches** — an expected-count / tile-index mismatch. The next lease's job is to
+     `mega=1` at CUT8/CUT5 but `mega=0` at CUT4). That legacy agent-scope choice is not current
+     authority; the present Skill contract requires the system-scope publication above. The observed
+     deadlock still identified a `wait_until(ready1[...])` **target the producer never reaches** — an
+     expected-count / tile-index mismatch. The next lease's job is to
      **probe that counter** (print `ready1`, expected, `total_work`) and fix the index/count, built on
      round_10's `best_patch.diff` — NOT to change the fence scope. A fresh GEMM2-fold author that ignores
      round_10 re-buys the same deadlock. Only

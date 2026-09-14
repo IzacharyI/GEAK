@@ -74,16 +74,13 @@ writes a `launch_args.json` with every path resolved. What it deliberately does 
 previous run's artifacts: analyses, logs and accumulated patches are the workflow's *output*, and a
 task that needs them as input is a task that has been solved elsewhere and is now being replayed.
 
-Available: `tasks/megamoe_v2_ep8` (MegaMoE V2, 8-rank expert-parallel fusion + compute/comm overlap).
-That task is a strict autonomy proof: use a new empty `--state-dir`, freeze a clean GEAK commit, and
-let its machine-readable two-launch/overlap/accuracy/liveness/guard contract decide success. Run
-bootstrap from a trusted shell with `MARKER_FILE` set; reference paths supplied there are converted
-to opaque hashes and are not persisted in launch args.
-
-For production candidate generation use `tasks/megamoe_v2_ep8_mega` explicitly:
+The canonical packaged task is `tasks/megamoe_v2_ep8_mega` (MegaMoE V2,
+8-rank expert-parallel fusion). `bootstrap_task.sh` selects it by default.
+Historical strict-capability and optimize-only variants live in git history,
+not in the active task selector.
 
 ```bash
-bash scripts/bootstrap_task.sh --task megamoe_v2_ep8_mega \
+bash scripts/bootstrap_task.sh \
   --baseline /path/to/clean/public-aiter-checkout \
   --out /path/to/new/workspace \
   --state-dir /path/to/new/state \

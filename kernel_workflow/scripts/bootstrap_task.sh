@@ -14,7 +14,7 @@
 #   bootstrap_task.sh --baseline <aiter checkout> --out <workspace> [options]
 #
 # Options:
-#   --task <name>        task template under tasks/ (default: megamoe_v2_ep8)
+#   --task <name>        task template under tasks/ (default: megamoe_v2_ep8_mega)
 #   --exp-root <dir>     where the run writes rounds   (default: <out>/../geak_runs)
 #   --state-dir <dir>    cross-round state             (default: <out>/../geak_state/<task>)
 #   --mori-root <dir>    MORI checkout                 (default: $MORI_ROOT, else probed)
@@ -39,7 +39,7 @@
 set -euo pipefail
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TASK=megamoe_v2_ep8
+TASK=megamoe_v2_ep8_mega
 BASELINE= OUT= EXP_ROOT= STATE_DIR= FORCE=0 CHECK_ONLY=0 PROBE=1
 MORI_ROOT_IN="${MORI_ROOT:-}"
 JIT_DIR_IN="${AITER_JIT_DIR:-}"

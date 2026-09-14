@@ -6,8 +6,8 @@
 # --------------------------------------------------------
 # The sweep looks for reference *content* copied into the run tree. This looks for the shorter path:
 # a knowledge card that simply tells the engineer where the finished implementation lives. On
-# 2026-08-21, with capability_eval on and use_expert_skills=true, the megamoe_ep_persistent_fusion
-# card opened its Procedure with
+# 2026-08-21, with capability_eval on and use_expert_skills=true, a now-retired
+# MegaMoE predecessor card opened its Procedure with
 #
 #     Reference implementation: `AITER` branch `geak/megamoe-v2-candidate`, HEAD `<9-hex sha>`.
 #

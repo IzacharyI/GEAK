@@ -40,23 +40,19 @@ const tg = read('knowledge', 'tile_task_graph.md');
 const po = read('knowledge', 'pipe_occupancy.md');
 const amd = read('knowledge', 'amd_instinct.md');
 const bench = read('roles', 'benchmark_engineer.md');
-const task = read('tasks', 'megamoe_v2_ep8', 'GEAK_TASK.md');
 
 console.log('\n# 1. per-stage timers are not summed once anything overlaps');
 {
-  // The knowledge, the role that writes the measurement contract, and the one task template that
-  // actually ships such timers must all carry it. Knowledge alone is not enough: the engineer who
-  // makes this mistake is reading COMMANDMENT.md, which the role writes.
+  // The knowledge and the role that writes the measurement contract must both carry it.
+  // The fixed task prompt deliberately contains no mechanism doctrine.
   ok(/becomes an artifact/.test(df) && /62\.4 → 102\.9/.test(df),
      'distributed_fusion carries the mechanism and the measured instance');
   ok(/never `Σ stage_i`|never sum them/.test(df),
      'and states the prohibition, not merely the observation');
-  ok(/inflates while the span shrinks|rises while e2e falls|inflates while `mega_e2e` falls/.test(df + bench + task),
+  ok(/inflates while the span shrinks|rises while e2e falls/.test(df + bench),
      'the inverted signal is named as EVIDENCE OF OVERLAP, so the timers are kept rather than dropped');
   ok(/diagnostic and are never summed/.test(bench),
      'benchmark_engineer must put it in METRIC — that is the text the optimize loop reads');
-  ok(/stop being comparable the moment anything overlaps/.test(task),
-     'the task template names its own two sub-timers so this is not left as a generality');
 }
 
 console.log('\n# 2. the win is attributed, or the megakernel may have been the wrong build');
