@@ -106,9 +106,9 @@ ok(r.code === 1 && /no task template at/.test(r.out) && /have:/.test(r.out),
 const megaArgs = JSON.parse(fs.readFileSync(path.join(MEGA_TASK_DIR, 'launch_args.json'), 'utf8'));
 r = run(['--no-probe', '--baseline', base, '--out', path.join(tmp, 'x4'),
   '--task', 'megamoe_v2_ep8_mega']);
-ok(r.code === 1 && /recipe task requires --baseline to be a git checkout\/worktree/.test(r.out) &&
-   /^[0-9a-f]{40}$/.test(megaArgs.mega_recipe_baseline_commit),
-  'versioned recipe refuses a synthetic or unversioned denominator');
+ok(r.code === 1 && /Expert Skill task requires --baseline to be a git checkout\/worktree/.test(r.out) &&
+   /^[0-9a-f]{40}$/.test(megaArgs.expert_skill_baseline_commit),
+  'versioned Expert Skill refuses a synthetic or unversioned denominator');
 
 console.log('\n# a real assembly resolves every placeholder');
 const ws = path.join(tmp, 'ws');

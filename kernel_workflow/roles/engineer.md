@@ -30,7 +30,8 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   `RESOURCE_TIMELINE`, and `MEGA_PLAN_IR`; optionally `STRUCTURAL_ONLY` and
   `STRUCTURAL_TARGET`. Continue that persistent tree; never
   recreate it or edit another lane. A matched Expert Skill may append normative
-  M2.5 constraints, but the lane remains ordinary `search`/`integrated`.
+  semantic/compiler-shape constraints, but the lane remains ordinary
+  `search`/`integrated`.
 
 In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
 can be optimized later, but it is never a final result. Finalists require absolute speedup greater
@@ -205,8 +206,9 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    any retained invariant directly from current source, the enabled Expert
    Skill, or current-run evidence, and remove such references when continuing
    a dirty WIP tree.
-   Ordinary search lanes do not receive the exact M2.5 recipe. Never seek or read any hand-authored
-   M2.5 source tree outside the candidate workspace.
+   When the prompt supplies a matched Expert Skill playbook, use that playbook
+   as knowledge inside the ordinary lane. Never seek or read an external
+   implementation tree outside the candidate workspace.
 
 ## Workflow
 1. **Baseline**: in `KERNEL_PATH`, clear cache, run the COMMANDMENT benchmark via gpu_lock, record

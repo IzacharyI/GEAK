@@ -7,9 +7,9 @@
 > candidate to reproduce, never a mandate, and never overrides your isolated A/B vs the oracle.
 
 ## What expert skills are
-Human-authored, validated kernel recipes under `EXPERT_SKILLS_DIR` — especially **migration skills**
+Human-authored, validated kernel playbooks under `EXPERT_SKILLS_DIR` — especially **migration skills**
 (port an op from one backend/DSL to another, e.g. TileLang→Triton, →FlyDSL) and authored-kernel
-playbooks. They are *recipes with regulated steps*, not facts; they let you reproduce a known win
+guides. They are *playbooks with regulated steps*, not facts; they let you reproduce a known win
 faster but can never reduce a result below your measured baseline.
 
 ## How to use them
@@ -21,8 +21,8 @@ faster but can never reduce a result below your measured baseline.
    - migration skills: `from_backend`→`to_backend` fits this run's `mode`/`target_language`
      (e.g. authoring Triton from a TileLang source → a `tilelang→triton` skill applies)
    - `validation_status == validated` (ignore draft/failed; `stale` = plain reference only)
-3. For each match, Read the skill file and treat its `Procedure` as a **high-prior author/optimize
-   candidate**: follow its kernel structure and the named lever, honor `Knobs & pitfalls` and
+3. For each match, read `skill.md` plus its optional `playbook_file`; treat the described mechanism
+   as a **high-prior author/optimize candidate**. Honor its kernel structure, named lever, pitfalls,
    `Do-no-harm notes`, then measure against the immutable oracle as usual. The skill's
    `expects.isolated_speedup_min` is a sanity reference, not an acceptance shortcut.
 4. Always write your own measured baseline first; the skill seeds the optimization direction, it does

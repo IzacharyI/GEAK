@@ -7,9 +7,9 @@ const wfDir = path.resolve(__dirname, '..');
 const wf = fs.readFileSync(path.join(wfDir, 'kernel_workflow.js'), 'utf8');
 const engineer = fs.readFileSync(path.join(wfDir, 'roles', 'engineer.md'), 'utf8');
 const verify = fs.readFileSync(path.join(wfDir, 'roles', 'verify_engineer.md'), 'utf8');
-const reference = fs.readFileSync(path.join(
+const playbook = fs.readFileSync(path.join(
   wfDir, '..', 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'recipe_v1.md'), 'utf8');
+  'megamoe_ep_mega_fusion', 'playbook.md'), 'utf8');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -28,10 +28,10 @@ ok(/patch must be ON by default/i.test(engineer),
   'the common Engineer must make the authored candidate path measurable');
 
 console.log('\n# Expert Skill constraints are normative knowledge, not a special lane');
-ok(/AITER_MEGAMOE_FUSE_ALL=1/.test(reference) &&
-   /normative: true/.test(reference) &&
-   /normative_scope: semantic_and_compiler_shape/.test(reference),
-  'the matched reference makes semantic/source-shape constraints normative');
+ok(/AITER_MEGAMOE_FUSE_ALL=1/.test(playbook) &&
+   /normative: true/.test(playbook) &&
+   /normative_scope: semantic_and_compiler_shape/.test(playbook),
+  'the matched playbook makes semantic/source-shape constraints normative');
 ok(/SEARCH_ACCEPTS_PARTIAL_FUSION/.test(verify),
   'Verify can measure a different full or partial fusion activation');
 ok(!/roles\/mega_engineer\.md/.test(wf) &&

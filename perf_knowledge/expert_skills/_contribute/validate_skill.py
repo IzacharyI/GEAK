@@ -43,7 +43,26 @@ def load(skill_id):
     return path, yaml.safe_load(m.group(1)), m.group(2), txt
 
 
-def static_check(fm, body):
+def _skill_file(skill_path, fm, key):
+    value = str(fm.get(key) or "").strip()
+    if not value:
+        return None
+    if os.path.isabs(value) or ".." in value.split(os.sep):
+        raise ValueError(f"{key} must be relative to the skill directory")
+    return os.path.join(os.path.dirname(skill_path), value)
+
+
+def load_validation(skill_path, fm):
+    path = _skill_file(skill_path, fm, "validation_file")
+    if path is None:
+        return None, fm.get("validation") or {}
+    if not os.path.isfile(path):
+        return path, {}
+    data = yaml.safe_load(open(path)) or {}
+    return path, data if isinstance(data, dict) else {}
+
+
+def static_check(skill_path, fm, body):
     errs = []
     for k in ("id", "scope", "match", "expects"):
         if k not in fm:
@@ -65,6 +84,64 @@ def static_check(fm, body):
             errs.append(f"missing body section: ## {sec}")
         elif not _section_filled(body, sec):
             errs.append(f"body section '## {sec}' is empty / placeholder only")
+    for key in ("playbook_file", "contract_file", "validation_file"):
+        if not fm.get(key):
+            continue
+        try:
+            referenced = _skill_file(skill_path, fm, key)
+        except ValueError as exc:
+            errs.append(str(exc))
+            continue
+        if not referenced or not os.path.isfile(referenced):
+            errs.append(f"{key} does not exist: {fm.get(key)!r}")
+    contract_path = None
+    try:
+        contract_path = _skill_file(skill_path, fm, "contract_file")
+    except ValueError:
+        pass
+    if contract_path and os.path.isfile(contract_path):
+        try:
+            contract = yaml.safe_load(open(contract_path)) or {}
+            if contract.get("schema_version") != "expert-skill-contract-v1":
+                errs.append("contract_file must use schema_version expert-skill-contract-v1")
+            if contract.get("skill_id") != fm.get("id"):
+                errs.append("contract_file skill_id must match skill.md id")
+            if str(contract.get("revision") or "") != str(fm.get("revision") or ""):
+                errs.append("contract_file revision must match skill.md revision")
+            if not contract.get("checks"):
+                errs.append("contract_file checks must be non-empty")
+        except (OSError, yaml.YAMLError) as exc:
+            errs.append(f"cannot parse contract_file: {exc}")
+    playbook_path = None
+    try:
+        playbook_path = _skill_file(skill_path, fm, "playbook_file")
+    except ValueError:
+        pass
+    if playbook_path and os.path.isfile(playbook_path):
+        try:
+            match = FM_RE.match(open(playbook_path).read())
+            if not match:
+                errs.append("playbook_file must have YAML frontmatter")
+            else:
+                playbook = yaml.safe_load(match.group(1)) or {}
+                if str(playbook.get("revision") or "") != str(fm.get("revision") or ""):
+                    errs.append("playbook_file revision must match skill.md revision")
+        except (OSError, yaml.YAMLError) as exc:
+            errs.append(f"cannot parse playbook_file: {exc}")
+    try:
+        validation_path, validation = load_validation(skill_path, fm)
+    except ValueError as exc:
+        errs.append(str(exc))
+        validation_path, validation = None, {}
+    if validation_path:
+        if validation.get("schema_version") != "expert-skill-validation-v1":
+            errs.append("validation_file must use schema_version expert-skill-validation-v1")
+        if validation.get("skill_id") != fm.get("id"):
+            errs.append("validation_file skill_id must match skill.md id")
+        if str(validation.get("revision") or "") != str(fm.get("revision") or ""):
+            errs.append("validation_file revision must match skill.md revision")
+        if validation.get("status") not in ("draft", "validated", "stale", "failed", "mega_only"):
+            errs.append("validation_file status is invalid")
     return errs
 
 
@@ -89,7 +166,15 @@ def emit_plan(skill_id, fm, args):
     else:
         print("# EFFICACY (kernel_workflow, isolated A/B vs the immutable oracle):")
         print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
-        print(f"  kernel_path=<OP_TASK_DIR> workflow_dir={GEAK}/kernel_workflow use_expert_skills=true")
+        extras = [f"expert_skill_id={skill_id}"]
+        for key in ("playbook_file", "contract_file", "validation_file"):
+            if fm.get(key):
+                arg = key.replace("_file", "")
+                extras.append(
+                    f"expert_skill_{arg}={os.path.join(SKILLS_DIR, skill_id, str(fm[key]))}"
+                )
+        print(f"  kernel_path=<OP_TASK_DIR> workflow_dir={GEAK}/kernel_workflow "
+              f"use_expert_skills=true {' '.join(extras)}")
         print(f"  target_language={(fm.get('match') or {}).get('to_backend') or 'triton'}")
         print(f"  task='reproduce expert_skill:{skill_id}; beat oracle, hold parity'")
     print("\nThen stamp the result with:  validate_skill.py", skill_id,
@@ -119,23 +204,31 @@ def record(path, fm, body, txt, args):
     if not args.artifact:
         sys.exit("ERROR: --artifact <eval_dir> required to record a result")
 
-    fm.setdefault("validation", {})
-    fm["validation"]["status"] = "validated" if ok else "failed"
-    fm["validation"]["last_verified"] = args.date or ""
-    fm["validation"]["gpu"] = args.gpu or ""
-    fm["validation"]["model"] = args.model or ""
-    fm["validation"]["measured"] = {
+    validation_path, validation = load_validation(path, fm)
+    validation["status"] = "validated" if ok else "failed"
+    validation["last_verified"] = args.date or ""
+    validation["gpu"] = args.gpu or ""
+    validation["model"] = args.model or ""
+    validation["measured"] = {
         "isolated": args.isolated if args.isolated is not None else "",
         "e2e_pct": args.e2e_pct if args.e2e_pct is not None else "",
         "parity": args.parity or "",
     }
-    fm["validation"]["artifact"] = args.artifact
-    with open(path, "w") as f:
-        f.write("---\n")
-        f.write(yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=100))
-        f.write("---\n")
-        f.write(body)
-    print(f"recorded: status={fm['validation']['status']}" + (f" ({'; '.join(reasons)})" if reasons else ""))
+    validation["artifact"] = args.artifact
+    if validation_path:
+        validation.setdefault("schema_version", "expert-skill-validation-v1")
+        validation.setdefault("skill_id", fm.get("id"))
+        validation.setdefault("revision", fm.get("revision", "v1"))
+        with open(validation_path, "w") as f:
+            yaml.safe_dump(validation, f, sort_keys=False, allow_unicode=True, width=100)
+    else:
+        fm["validation"] = validation
+        with open(path, "w") as f:
+            f.write("---\n")
+            f.write(yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=100))
+            f.write("---\n")
+            f.write(body)
+    print(f"recorded: status={validation['status']}" + (f" ({'; '.join(reasons)})" if reasons else ""))
     os.system(f"python3 {os.path.join(HERE, 'scaffold.py')} --reindex >/dev/null 2>&1")
     if not ok:
         sys.exit(1)
@@ -160,7 +253,7 @@ def main():
     if a.record:
         return record(path, fm, body, txt, a)
     # default / --static
-    errs = static_check(fm, body)
+    errs = static_check(path, fm, body)
     if errs:
         print("STATIC FAIL:")
         for e in errs:

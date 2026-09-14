@@ -1,11 +1,11 @@
 ---
 name: add-expert-skill-to-geak
-description: Contribute a human-authored, e2e-validated optimization recipe (an "expert skill") to GEAK — scaffold, fill, validate by scope, and open a PR.
+description: Contribute a human-authored, e2e-validated optimization playbook (an "expert skill") to GEAK — scaffold, fill, validate by scope, and open a PR.
 ---
 
 # Skill: add an expert skill to GEAK
 
-Use this when a human expert has a **reusable optimization recipe** worth capturing so the
+Use this when a human expert has a **reusable optimization playbook** worth capturing so the
 `e2e_workflow` / `kernel_workflow` can reproduce it automatically — e.g. "port MLA decode from TileLang
 to Triton on gfx942", or "the FlyDSL fp8 a8w8 blockscale down-proj playbook (+67% e2e)".
 
@@ -25,9 +25,10 @@ python _contribute/scaffold.py --id <slug> --operator <op> --scope <kernel|e2e> 
   it). The scaffolder rejects unknown operators.
 - `--scope kernel` → validated by `kernel_workflow` (isolated A/B vs the oracle), consumed by the kernel
   layer. `--scope e2e` → validated by `e2e_workflow` (Director same-session A/B), consumed by routing.
-- This writes `skills/<slug>/skill.md` (status: `draft`) and regenerates `index.yaml`.
+- This writes `skills/<slug>/skill.md` plus `validation.yaml` (status: `draft`) and regenerates
+  `index.yaml`.
 
-### 2. Fill the recipe
+### 2. Fill the playbook
 Edit `skills/<slug>/skill.md`. The body sections are required and must be non-empty:
 - **When to use** — the exact bottleneck/shape/arch.
 - **Mechanism** — *why* it works (hardware/numerics/scheduling) so it transfers.
@@ -49,7 +50,7 @@ python _contribute/validate_skill.py <slug> --record --artifact <eval_dir> \
 - **Do-no-harm**: also run the control scenario from `_emit-plan` (a model/shape that does NOT match
   the selector) with `use_expert_skills=true` and confirm `|e2e delta|` stays within the noise band —
   i.e. the skill is inert when not triggered. Record that eval dir in the skill's Sources.
-- `--record` writes the `validation:` block and reindexes; only `validated` skills are auto-applied.
+- `--record` writes `validation.yaml` and reindexes; only `validated` skills are auto-applied.
 
 ### 4. Open a PR
 ```bash

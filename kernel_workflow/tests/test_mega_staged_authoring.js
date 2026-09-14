@@ -9,9 +9,17 @@ const skill = fs.readFileSync(path.join(
   ROOT, 'perf_knowledge', 'expert_skills', 'skills',
   'megamoe_ep_mega_fusion', 'skill.md',
 ), 'utf8');
-const reference = fs.readFileSync(path.join(
+const playbook = fs.readFileSync(path.join(
   ROOT, 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'recipe_v1.md',
+  'megamoe_ep_mega_fusion', 'playbook.md',
+), 'utf8');
+const contract = fs.readFileSync(path.join(
+  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
+  'megamoe_ep_mega_fusion', 'contract.yaml',
+), 'utf8');
+const validation = fs.readFileSync(path.join(
+  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
+  'megamoe_ep_mega_fusion', 'validation.yaml',
 ), 'utf8');
 
 let failures = 0;
@@ -24,13 +32,21 @@ console.log('\n# the M2.5 package is matched normative knowledge');
 ok(/role: normative_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
   'skill declares normative constraints inside the common Mega lifecycle');
-ok(/reference_file: recipe_v1\.md/.test(skill) &&
-   /detailed validated reference/.test(skill),
-  'skill points to the detailed M2.5 design reference');
-ok(/normative: true/.test(reference) &&
-   /normative_scope: semantic_and_compiler_shape/.test(reference) &&
-   /does not create a reproduction mode,[\s\S]{0,80}reserved lane/.test(reference),
+ok(/playbook_file: playbook\.md/.test(skill) &&
+   /contract_file: contract\.yaml/.test(skill) &&
+   /validation_file: validation\.yaml/.test(skill),
+  'skill points to separate human, machine and evidence artifacts');
+ok(/normative: true/.test(playbook) &&
+   /normative_scope: semantic_and_compiler_shape/.test(playbook) &&
+   /does not create a reproduction mode,[\s\S]{0,80}reserved lane/.test(playbook),
   'normative implementation constraints do not create a reproduction sub-mode');
+ok(/schema_version: expert-skill-contract-v1/.test(contract) &&
+   /host_ready_pointer_identity/.test(contract) &&
+   /combine_transport_and_work_domain/.test(contract),
+  'the generic checker receives declarative M2.5 invariants');
+ok(/schema_version: expert-skill-validation-v1/.test(validation) &&
+   /status: validated/.test(validation),
+  'measured validation status is separate from prose');
 ok(/CTA.*local shard drains[\s\S]*without a global stage barrier/i.test(skill),
   'expert knowledge carries the tile-pipeline mechanism, not merely launch fusion');
 
@@ -41,7 +57,7 @@ ok(/Candidate source remains search\/integrated/.test(wf),
   'expert guidance does not introduce a validated-skill candidate');
 ok(!/role = source === 'validated_skill' \? 'mega_engineer'/.test(wf) &&
    /const role = 'engineer'/.test(wf),
-  'the special recipe executor is absent from dispatch');
+  'a special Skill executor is absent from dispatch');
 ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(wf),
   'no reserved reproduction lane is registered');
 

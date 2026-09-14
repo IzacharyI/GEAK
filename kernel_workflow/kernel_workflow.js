@@ -209,9 +209,9 @@ if (!['optimize', 'author', 'mega'].includes(MODE)) {
 }
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
-// Mega is a portfolio of independent WORKFLOW-AUTHORED whole-kernel candidates, not a Reproduce
-// gate followed by a different optimizer contract. The hand-authored M2.5 tree is never registered,
-// run, copied or used as a base. Its independently recorded number is only a target band.
+// Mega is a portfolio of independent WORKFLOW-AUTHORED whole-kernel candidates, not a reproduction
+// gate followed by a different optimizer contract. A matched Expert Skill supplies knowledge and an
+// optional declarative contract; external reference trees are never candidate bases.
 const MEGA_PROFILE = String(A.mega_profile || 'production').trim();
 if (!['production', 'audit'].includes(MEGA_PROFILE)) {
   throw new Error(`args.mega_profile must be 'production' or 'audit', got '${MEGA_PROFILE}'`);
@@ -225,13 +225,6 @@ const MEGA_CANDIDATE_TIMEOUT_S = Math.max(300, Number(A.mega_candidate_timeout_s
   3600));
 const MEGA_STRUCTURAL_ONLY = MODE === 'mega' &&
   String(A.mega_structural_only != null ? A.mega_structural_only : 'false') === 'true';
-// Validated-skill reproduction gets an authoring deadline independent from score Verify. Search lanes
-// keep a shared whole-candidate turn below. Intermediate recipe checkpoints do not reserve a Verify
-// slice; once the recipe is complete, score verification receives its own bounded window.
-const MEGA_SKILL_AUTHOR_TIMEOUT_S = Math.max(600, Number(A.mega_skill_author_timeout_s ||
-  (MEGA_PRODUCTION ? 1700 : 3600)));
-const MEGA_SCORE_TIMEOUT_S = Math.max(600, Number(A.mega_score_timeout_s ||
-  (MEGA_PRODUCTION ? 2400 : 3600)));
 const MEGA_FINAL_TIMEOUT_S = Math.max(600, Number(A.mega_final_timeout_s ||
   (MEGA_PRODUCTION ? 7200 : 3600)));
 const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
@@ -239,13 +232,15 @@ const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
 const MEGA_FINAL_RESERVE_S = Math.max(600, Math.min(MEGA_TIME_BUDGET_S / 2,
   Number(A.mega_final_reserve_s || (MEGA_PRODUCTION ? 7200 : 3600))));
 const MEGA_CLOSEOUT_RESERVE_S = Math.max(300, Number(A.mega_closeout_reserve_s || 900));
-const MEGA_SKILL_ID = String(A.mega_skill_id || 'megamoe_ep_mega_fusion');
-const MEGA_RECIPE_REVISION = String(A.mega_recipe_revision || 'm25-repro-v2');
-const MEGA_RECIPE_BASELINE_COMMIT = String(A.mega_recipe_baseline_commit ||
-  '8775229e003af030abea7c50d2ed9e956311843d');
-const MEGA_M25_RECORDED_SCORE = Number(A.mega_m25_recorded_score || 1.0448);
-const MEGA_M25_RECORDED_LOW = Number(A.mega_m25_recorded_low || 1.0403);
-const MEGA_M25_RECORDED_HIGH = Number(A.mega_m25_recorded_high || 1.0477);
+const EXPERT_SKILL_ID = String(A.expert_skill_id || '');
+const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || 'v1');
+const optionalNumber = (value) => {
+  const number = Number(value);
+  return value == null || value === '' || !Number.isFinite(number) ? null : number;
+};
+const EXPERT_SKILL_RECORDED_SCORE = optionalNumber(A.expert_skill_recorded_score);
+const EXPERT_SKILL_RECORDED_LOW = optionalNumber(A.expert_skill_recorded_low);
+const EXPERT_SKILL_RECORDED_HIGH = optionalNumber(A.expert_skill_recorded_high);
 const MEGA_FINAL_TOP_K = Math.max(1, Number(A.mega_final_top_k ||
   (MEGA_PRODUCTION ? 1 : 2)));
 const MEGA_FINAL_FALLBACK_K = Math.max(MEGA_FINAL_TOP_K,
@@ -315,52 +310,30 @@ const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
 const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
-const MEGA_RECIPE_FILE = String(A.mega_recipe_file ||
-  `${EXPERT_SKILLS_DIR}/skills/${MEGA_SKILL_ID}/recipe_v1.md`);
+const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
+  ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
+const EXPERT_SKILL_PLAYBOOK_FILE = String(A.expert_skill_playbook || '');
+const EXPERT_SKILL_CONTRACT_FILE = String(A.expert_skill_contract || '');
+const EXPERT_SKILL_VALIDATION_FILE = String(A.expert_skill_validation || '');
+const EXPERT_SKILL_CONTRACT_TOOL = String(A.expert_skill_contract_tool ||
+  `${WORKFLOW_DIR}/tools/expert_skill_contract.py`);
+const EXPERT_SKILL_REFERENCE_PATH = String(A.expert_skill_reference_path || '').replace(/\/+$/, '');
+const CHECK_EXPERT_SKILL_CONTRACT = MODE === 'mega' && USE_EXPERT_SKILLS &&
+  !!EXPERT_SKILL_ID && !!EXPERT_SKILL_CONTRACT_FILE &&
+  String(A.verify_expert_skill_contract != null
+    ? A.verify_expert_skill_contract : 'true') === 'true';
+const REQUIRE_EXPERT_SKILL_CONTRACT = CHECK_EXPERT_SKILL_CONTRACT &&
+  (MEGA_STRUCTURAL_ONLY ||
+    String(A.require_expert_skill_contract || 'false') === 'true');
+if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
+  throw new Error('mega_structural_only requires an enabled Expert Skill contract');
+}
 const MEGA_GRAPH_CONTRACT_TOOL = String(A.mega_graph_contract_tool ||
   `${WORKFLOW_DIR}/tools/mega_graph_contract.py`);
-const M25_STRUCTURAL_CONTRACT_TOOL = String(A.m25_structural_contract_tool ||
-  `${WORKFLOW_DIR}/tools/m25_structural_contract.py`);
-const M25_STRUCTURAL_ORACLE_PATH = String(A.m25_structural_oracle_path || '').replace(/\/+$/, '');
-const REQUIRE_M25_STRUCTURAL_VERIFY = MODE === 'mega' && !!M25_STRUCTURAL_ORACLE_PATH;
-if (MEGA_STRUCTURAL_ONLY && !REQUIRE_M25_STRUCTURAL_VERIFY) {
-  throw new Error('mega_structural_only requires m25_structural_oracle_path');
-}
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
-const MEGA_RECIPE_SOURCE_FILES = argList(A.mega_recipe_source_files &&
-  A.mega_recipe_source_files.length ? A.mega_recipe_source_files : [
-  'aiter/ops/flydsl/kernels/communication_ops_utils.py',
-  'aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py',
-  'aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py',
-  'aiter/ops/flydsl/kernels/mega_moe/gemm1.py',
-  'aiter/ops/flydsl/kernels/mega_moe/gemm2.py',
-  'aiter/ops/flydsl/kernels/mega_moe/gemm_util.py',
-  'aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py',
-  'aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py',
-  'aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py',
-  'aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py',
-]);
-const MEGA_RECIPE_ACTIVATION = Object.freeze({
-  mode: 'switch',
-  switches: Object.freeze([
-    Object.freeze({ switch_name: 'AITER_MEGAMOE_FUSE_ALL', switch_value: '1' }),
-  ]),
-  switch_name: 'AITER_MEGAMOE_FUSE_ALL',
-  switch_value: '1',
-  path_marker: 'path=MEGA',
-  marker_how: 'one on-device path=MEGA marker per EP8 rank',
-});
-const MEGA_RECIPE_STEPS = Object.freeze([
-  'host_wiring',
-  'shared_emitters',
-  'startup_state',
-  'unified_gemm_drain',
-  'combine_queue',
-  'bucket_safety',
-  'recipe_complete',
-]);
-const MEGA_RECIPE_ACCURACY_CASES = Object.freeze(argList(
-  A.mega_recipe_accuracy_cases || ['128', '512', '8192'],
+const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
+const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
+  A.expert_skill_accuracy_cases || [],
 ));
 // Only planning + authoring roles consult skills; every other role gets no injection. Mega uses the
 // same Search Lead/Engineer roles with the flag on or off.
@@ -713,11 +686,6 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   score_complete: { type: 'boolean' },
   structural_report: { type: 'string' },
   attempt_id: { type: 'string' },
-  recipe_revision: { type: 'string' },
-  recipe_attempts: { type: 'number' },
-  recipe_complete: { type: 'boolean' },
-  completed_steps: { type: 'array', items: { type: 'string' } },
-  next_step: { type: 'string' },
   evidence_manifest: { type: 'string' },
   correctness: { type: 'string' },
   build: { type: 'boolean' },
@@ -737,8 +705,8 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   provenance: { type: 'string' },
   next_blocker: { type: 'string' },
   notes: { type: 'string' },
-  // Search candidates may declare their own activation. Validated-skill reproduction receives the
-  // immutable recipe activation from the orchestrator and persists it through registry/finalist state.
+  // Every candidate owns an explicit activation manifest; Expert Skills provide knowledge, not a
+  // separate source type or orchestrator-owned activation.
   activation: obj({
     mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
     path_marker: { type: 'string' }, marker_how: { type: 'string' },
@@ -749,7 +717,7 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   }, []),
 }, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete']);
 
-const M25_STRUCTURAL_VERIFY_SCHEMA = obj({
+const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   candidate_id: { type: 'string' },
   candidate_head: { type: 'string' },
   claim_complete: { type: 'boolean' },
@@ -1049,7 +1017,7 @@ const ANALYZE_SCHEMA = obj({
     additionalProperties: true,
     properties: {
       plan_version: { type: 'string' },
-      reference_revision: { type: ['string', 'null'] },
+      expert_skill_revision: { type: ['string', 'null'] },
       target_launches: { type: 'number' },
       regions: { type: 'array', items: obj({
         id: { type: 'string' }, role: { type: 'string' },
@@ -1411,8 +1379,6 @@ const ENG_SCHEMA = obj({
 const VERIFY_SCHEMA = obj({
   status: { type: 'string' }, correctness: { type: 'string' },
   claim_complete: { type: 'boolean' }, attempt_id: { type: 'string' },
-  recipe_revision: { type: 'string' }, recipe_complete: { type: 'boolean' },
-  recipe_steps_verified: { type: 'array', items: { type: 'string' } },
   evidence_manifest: { type: 'string' }, candidate_id: { type: 'string' },
   candidate_source: { type: 'string' }, candidate_tree: { type: 'string' },
   candidate_head: { type: 'string' },
@@ -1666,13 +1632,9 @@ const MEGA_SELECTION_SCHEMA = obj({
   materialized_from_head: { type: 'string' },
   selected_score: { type: 'number' },
   selected_patch: { type: 'string' },
-  tie_kept_skill: { type: 'boolean' },
   candidates: { type: 'array', items: obj({
     candidate_id: { type: 'string' }, source: { type: 'string' },
     tree: { type: 'string' }, head: { type: 'string' }, score: { type: 'number' },
-    recipe_revision: { type: 'string' }, recipe_complete: { type: 'boolean' },
-    completed_steps: { type: 'array', items: { type: 'string' } },
-    next_step: { type: 'string' },
     status: { type: 'string' },
     touched_files: { type: 'array', items: { type: 'string' } },
     activation: obj({
@@ -1840,18 +1802,19 @@ async function agentT(p, o) {
 // pointer telling the agent to Read the fragment + query the skills index (scripts have no fs access).
 function expertSkillsBlock(role) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
-  if (MODE === 'mega') {
+  if (MODE === 'mega' && EXPERT_SKILL_DIR) {
     if (!['mega_search_lead', 'engineer', 'deep_engineer'].includes(role)) return '';
     return `\n\n## MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE\n` +
-      `Read ${EXPERT_SKILLS_DIR}/skills/${MEGA_SKILL_ID}/skill.md and its detailed reference ` +
-      `${MEGA_RECIPE_FILE}. Use them as validated design knowledge while still performing the ordinary ` +
+      `Read ${EXPERT_SKILL_DIR}/skill.md` +
+      (EXPERT_SKILL_PLAYBOOK_FILE ? ` and its detailed playbook ${EXPERT_SKILL_PLAYBOOK_FILE}` : '') +
+      `. Use them as validated design knowledge while still performing the ordinary ` +
       `tile-task-graph analysis, candidate planning, source authoring, and measurement loop. They do not ` +
       `create a reproduction lane or special candidate source, and they do not override current ` +
-      `source constraints or measured results. When the recipe match and baseline revision apply, its ` +
+      `source constraints or measured results. When the skill match and baseline revision apply, its ` +
       `MUST/MUST NOT semantic and compiler-shape rules override generic knowledge and role improvisation. ` +
       `Candidate source remains search/integrated.` +
       (role === 'engineer'
-        ? ` The detailed reference is a known-working mechanism prior, not a request to repeatedly ` +
+        ? ` The playbook is a known-working mechanism prior, not a request to repeatedly ` +
           `redesign its scaffolding. Time-box helper refactors to the first quarter of the turn; then wire ` +
           `the next unresolved tile-pipeline edge into the real caller and run the earliest meaningful ` +
           `compile/on-card smoke. A turn that only rearranges an unused emitter has not advanced the candidate.`
@@ -3042,25 +3005,11 @@ function normalizeMegaWorkingSnapshot(raw) {
     head: String(w.head || ''),
     status: String(w.status || ''),
     patch: String(w.patch || ''),
-    recipe_revision: String(w.recipe_revision || ''),
-    recipe_attempts: Math.max(0, Number(w.recipe_attempts || 0)),
-    recipe_complete: w.recipe_complete === true,
-    completed_steps: Array.isArray(w.completed_steps) ? w.completed_steps.map(String) : [],
-    next_step: String(w.next_step || ''),
     activation: normalizeMegaActivation(w.activation),
     topology: w.topology && typeof w.topology === 'object' && !Array.isArray(w.topology)
       ? { ...w.topology } : {},
     changed_files: Array.isArray(w.changed_files) ? w.changed_files.map(String) : [],
   };
-}
-function mergeMegaRecipeSteps(previous, reported) {
-  const prev = Array.isArray(previous) ? previous.map(String) : [];
-  const next = Array.isArray(reported) ? reported.map(String) : [];
-  const validPrefix = (steps) => steps.length <= MEGA_RECIPE_STEPS.length &&
-    steps.every((step, index) => step === MEGA_RECIPE_STEPS[index]);
-  if (!validPrefix(prev)) return [];
-  if (!validPrefix(next) || next.length < prev.length) return prev;
-  return next;
 }
 function normalizeMegaCandidate(raw) {
   const c = raw || {};
@@ -3073,6 +3022,7 @@ function normalizeMegaCandidate(raw) {
   const status = (!sourceValid || !idValid || !sourceIdValid) ? 'rejected'
     : (candidateStates.includes(c.status) ? c.status : 'authoring');
   const score = Number(c.absolute_score);
+  const launches = Number(c.launches);
   return {
     id: String(c.id || ''),
     id_valid: idValid,
@@ -3099,11 +3049,6 @@ function normalizeMegaCandidate(raw) {
     score_complete: c.score_complete === true,
     structural_report: String(c.structural_report || ''),
     attempt_id: String(c.attempt_id || ''),
-    recipe_revision: String(c.recipe_revision || ''),
-    recipe_attempts: Math.max(0, Number(c.recipe_attempts || 0)),
-    recipe_complete: c.recipe_complete === true,
-    completed_steps: Array.isArray(c.completed_steps) ? c.completed_steps.map(String) : [],
-    next_step: String(c.next_step || ''),
     changed_files: Array.isArray(c.changed_files) ? c.changed_files.map(String) : [],
     evidence_manifest: String(c.evidence_manifest || ''),
     final_tree: String(c.final_tree || ''),
@@ -3126,6 +3071,7 @@ function normalizeMegaCandidate(raw) {
     guards_pass: c.guards_pass !== false,
     artifact_distinct: c.artifact_distinct === true,
     measurement_pass: c.measurement_pass === true,
+    launches: Number.isInteger(launches) && launches > 0 ? launches : null,
     attempts: Math.max(0, Number(c.attempts || 0)),
     next_blocker: String(c.next_blocker || ''),
     notes: String(c.notes || ''),
@@ -3152,11 +3098,6 @@ function upsertMegaCandidate(registry, incoming) {
         head: next.head || next.working_head || prev.working_head,
         status: next.status || next.working_status || prev.working_status,
         patch: next.patch,
-        recipe_revision: next.recipe_revision,
-        recipe_attempts: next.recipe_attempts,
-        recipe_complete: next.recipe_complete,
-        completed_steps: next.completed_steps,
-        next_step: next.next_step,
         activation: next.activation,
         topology: next.topology,
         changed_files: next.changed_files,
@@ -3178,35 +3119,8 @@ function upsertMegaCandidate(registry, incoming) {
   return list;
 }
 
-function megaRecipeSnapshot(candidate) {
-  const c = normalizeMegaCandidate(candidate);
-  const w = normalizeMegaWorkingSnapshot(c.working_snapshot);
-  return w.recipe_revision ? w : {
-    head: c.head,
-    status: c.status,
-    patch: c.patch,
-    recipe_revision: c.recipe_revision,
-    recipe_attempts: c.recipe_attempts,
-    recipe_complete: c.recipe_complete,
-    completed_steps: c.completed_steps,
-    next_step: c.next_step,
-    activation: c.activation,
-    topology: c.topology,
-    changed_files: c.changed_files,
-  };
-}
-
 function megaRegistryForSearch(registry) {
   return (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate).map((c) => {
-    if (c.source === 'validated_skill') {
-      return {
-        id: c.id,
-        source: c.source,
-        status: c.status,
-        absolute_score: c.absolute_score,
-        attempts: c.attempts,
-      };
-    }
     return {
       id: c.id,
       source: c.source,
@@ -3233,22 +3147,20 @@ function megaRegistryForSearch(registry) {
 
 function megaHistoryForSearch(sourceHistory, registry) {
   const h = sourceHistory || {};
-  const blocked = /m25[_ -]?skill|validated[_ -]?skill|m25-repro|seeded[_ -]?oracle|recipe_v\d/i;
-  const safe = (value) => !blocked.test(JSON.stringify(value || ''));
   const searchRegistry = megaRegistryForSearch(registry)
     .filter((c) => c.source === 'search' || c.source === 'integrated');
   return {
     ...h,
     // Global insights are free-form and have no reliable source label. Rebuild the search board from
-    // search-owned candidate records instead of trying to redact recipe prose by keywords.
+    // candidate records that belong to the common lifecycle.
     insights: searchRegistry.flatMap((c) =>
       [c.next_blocker, c.notes].filter((text) => String(text || '').trim())),
     rounds: (Array.isArray(h.rounds) ? h.rounds : []).map((round) => {
       const directions = (Array.isArray(round.directions) ? round.directions : [])
-        .filter((d) => String(d && d.candidate_source || '') !== 'validated_skill' && safe(d));
+        .filter((d) => ['search', 'integrated'].includes(String(d && d.candidate_source || '')));
       const directionIds = new Set(directions.map((d) => String(d && d.id || '')));
       const results = (Array.isArray(round.results) ? round.results : [])
-        .filter((r) => directionIds.has(String(r && r.id || '')) && safe(r));
+        .filter((r) => directionIds.has(String(r && r.id || '')));
       return { ...round, directions, results };
     }).filter((round) => round.directions.length),
     ledger: searchRegistry.map((c) => ({
@@ -3267,17 +3179,9 @@ function megaHistoryForSearch(sourceHistory, registry) {
 function megaCandidateHardPass(c) {
   const n = normalizeMegaCandidate(c);
   const targetReadout = pairedGuardReadout(n.paired_readings, '8192_uniform');
-  const activeRecipeRevision = typeof MEGA_RECIPE_REVISION === 'undefined'
-    ? n.recipe_revision : MEGA_RECIPE_REVISION;
-  const activeRecipeSteps = typeof MEGA_RECIPE_STEPS === 'undefined'
-    ? n.completed_steps : MEGA_RECIPE_STEPS;
-  const recipePass = n.source !== 'validated_skill' ||
-    (n.recipe_revision === activeRecipeRevision && n.recipe_complete === true &&
-      n.next_step === '' &&
-      JSON.stringify(n.completed_steps) === JSON.stringify(activeRecipeSteps));
-  const structuralPass = typeof REQUIRE_M25_STRUCTURAL_VERIFY === 'undefined' ||
-    !REQUIRE_M25_STRUCTURAL_VERIFY || n.structural_verified;
-  return recipePass && structuralPass &&
+  const structuralPass = typeof REQUIRE_EXPERT_SKILL_CONTRACT === 'undefined' ||
+    !REQUIRE_EXPERT_SKILL_CONTRACT || n.structural_verified;
+  return structuralPass &&
     n.claim_complete && n.correctness_pass && n.activation_pass && n.head_pass &&
     n.launch_pass && n.liveness_pass && n.graph_pass && n.guards_pass &&
     n.artifact_distinct && n.id_valid && n.source_valid && n.source_id_valid &&
@@ -3416,41 +3320,6 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       if (String(r.source || '') !== registered.source) fail.push('source mismatch');
       if (String(r.tree || '') !== registered.tree) fail.push('tree mismatch');
       if (String(r.head || '') !== registered.head) fail.push('head mismatch');
-      if (registered.source === 'validated_skill') {
-        if (String(r.recipe_revision || '') !== registered.recipe_revision ||
-            r.recipe_complete !== true || registered.recipe_complete !== true) {
-          fail.push('recipe revision/completion mismatch');
-        }
-        if (String(r.next_step || '') !== '' ||
-            JSON.stringify(Array.isArray(r.completed_steps) ? r.completed_steps : []) !==
-              JSON.stringify(registered.completed_steps)) {
-          fail.push('recipe checkpoint mismatch');
-        }
-        if (JSON.stringify(normalizeMegaActivation(r.activation)) !==
-            JSON.stringify(normalizeMegaActivation(registered.activation))) {
-          fail.push('recipe activation mismatch');
-        }
-        const touched = Array.isArray(r.touched_files) ? r.touched_files.map(String) : [];
-        const allowedRecipeFiles = typeof MEGA_RECIPE_SOURCE_FILES === 'undefined'
-          ? touched : MEGA_RECIPE_SOURCE_FILES;
-        if (!touched.length ||
-            touched.some((path) => !allowedRecipeFiles.includes(path))) {
-          fail.push('recipe source boundary');
-        }
-        const requiredCases = typeof MEGA_RECIPE_ACCURACY_CASES === 'undefined'
-          ? [] : MEGA_RECIPE_ACCURACY_CASES;
-        const accuracyRows = Array.isArray(r.accuracy_results) ? r.accuracy_results : [];
-        for (const name of requiredCases) {
-          const accuracy = accuracyRows.find((a) =>
-            String(a.metric || '') === String(o.accuracyMetric || 'relL2') &&
-            new RegExp(`^${name}(?:_|$)`).test(String(a.guard || '')));
-          if (!accuracy || !(Number(accuracy.value) >= 0) ||
-              !(Number(accuracy.value) < Number(o.accuracyThreshold || 0.10)) ||
-              !/graph/i.test(String(accuracy.method || ''))) {
-            fail.push(`direct graph accuracy ${name}`);
-          }
-        }
-      }
     }
     if (!(Number(r.score) > 1.0)) fail.push('score <= 1.0');
     if (!String(r.correctness || '').toLowerCase().startsWith('pass')) fail.push('correctness');
@@ -3497,22 +3366,16 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     if (r.guards_pass !== true) fail.push('guard verdict');
     const worldSize = Number(o.worldSize || 8);
     const marker = String(r.path_marker || '');
-    if (registered && registered.source === 'validated_skill') {
-      if (marker !== `MEGA==${worldSize}` ||
-          Number(r.path_marker_count) !== worldSize) fail.push('path marker');
-    } else if (!marker || /SCATTERED|BASELINE/i.test(marker) ||
+    if (!marker || /SCATTERED|BASELINE/i.test(marker) ||
         Number(r.path_marker_count) !== worldSize) {
       fail.push('candidate path marker');
     }
     const realizedLaunches = Number(r.launches);
     const targetLaunches = Number(o.launchTarget || 2);
     const baselineLaunches = Number(o.baselineLaunches || 4);
-    const launchPass = registered && registered.source === 'validated_skill'
-      ? realizedLaunches === targetLaunches
-      : (Number.isInteger(realizedLaunches) && realizedLaunches >= targetLaunches &&
-         realizedLaunches < baselineLaunches);
-    if (!launchPass) fail.push(registered && registered.source === 'validated_skill'
-      ? 'launch target' : 'no measured partial/full fusion');
+    const launchPass = Number.isInteger(realizedLaunches) &&
+      realizedLaunches >= targetLaunches && realizedLaunches < baselineLaunches;
+    if (!launchPass) fail.push('no measured partial/full fusion');
     if (String(r.graph_safe || '').toLowerCase() !== 'pass') fail.push('graph safety');
     const hb = String(r.artifact_hash_base || ''), hc = String(r.artifact_hash_candidate || '');
     if (String(r.artifact_distinct || '').toLowerCase() !== 'yes' || !hb || !hc || hb === hc) {
@@ -3595,16 +3458,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     })
     .sort((a, b) => b.score - a.score);
   if (passedRows.length) {
-    let expected = passedRows[0];
-    const stable = passedRows.find((entry) => {
-      const registered = list.find((c) => c.id === String(entry.row.candidate_id || ''));
-      return registered && registered.source === 'validated_skill';
-    });
-    const noise = Math.max(0, Number(o.tieNoisePct || 0)) / 100;
-    if (stable && expected.row.candidate_id !== stable.row.candidate_id &&
-        (expected.score - stable.score) / stable.score <= noise) {
-      expected = stable;
-    }
+    const expected = passedRows[0];
     if (String(s.selected_candidate_id || '') !== String(expected.row.candidate_id || '')) {
       reasons.push('selection is not the fastest fully passing finalist under the tie policy');
     }
@@ -3657,20 +3511,7 @@ function megaCandidateFromVerification(meta, ver, opts) {
     targetReadout.sign_p <= 0.05 &&
     Number.isFinite(nullArm) &&
     (Number(targetReadout.score) - 1) * 100 > Math.abs(nullArm);
-  const verificationRecipeSteps = typeof MEGA_RECIPE_STEPS === 'undefined'
-    ? (meta && meta.completed_steps) || [] : MEGA_RECIPE_STEPS;
-  const recipeEvidencePass = !meta || meta.source !== 'validated_skill' ||
-    (v.recipe_complete === true &&
-      String(v.recipe_revision || '') === String(meta.recipe_revision || '') &&
-      JSON.stringify(Array.isArray(v.recipe_steps_verified) ? v.recipe_steps_verified : []) ===
-        JSON.stringify(verificationRecipeSteps) &&
-      JSON.stringify(normalizeMegaActivation(v.activation)) ===
-        JSON.stringify(normalizeMegaActivation(meta.activation)));
   const verificationStatusPass = String(v.status || '').toLowerCase() === 'verified';
-  const touchedFiles = Array.isArray(v.touched_files) ? v.touched_files.map(String) : [];
-  const recipeTouchedFilesPass = !meta || meta.source !== 'validated_skill' ||
-    (touchedFiles.length > 0 &&
-      touchedFiles.every((path) => MEGA_RECIPE_SOURCE_FILES.includes(path)));
   const record = normalizeMegaCandidate({
     ...(meta || {}),
     claim_complete: v.claim_complete === true,
@@ -3683,9 +3524,10 @@ function megaCandidateFromVerification(meta, ver, opts) {
     reps: Number(v.reps || targetReadout.count),
     artifact_hash_base: v.artifact_hash_base || '',
     artifact_hash_candidate: v.artifact_hash_candidate || '',
-    correctness_pass: verificationStatusPass && recipeTouchedFilesPass &&
+    launches,
+    correctness_pass: verificationStatusPass &&
       accuracyPass && String(v.correctness || '').toLowerCase().startsWith('pass'),
-    activation_pass: verificationStatusPass && recipeTouchedFilesPass && recipeEvidencePass &&
+    activation_pass: verificationStatusPass &&
       String(v.activation_confirmed || '').toLowerCase() === 'yes' &&
       String(v.activation_on_hardware || '').toLowerCase() === 'yes',
     head_pass: !!String(meta && meta.head || '') &&
@@ -3697,7 +3539,7 @@ function megaCandidateFromVerification(meta, ver, opts) {
     artifact_distinct: String(v.artifact_distinct || '').toLowerCase() === 'yes' ||
       (!!v.artifact_hash_base && !!v.artifact_hash_candidate &&
        v.artifact_hash_base !== v.artifact_hash_candidate),
-    measurement_pass: verificationStatusPass && recipeTouchedFilesPass && measurementPass,
+    measurement_pass: verificationStatusPass && measurementPass,
     runtime_verified: verificationStatusPass && accuracyPass &&
       String(v.activation_on_hardware || '').toLowerCase() === 'yes' &&
       launchPass && livenessPass,
@@ -5669,10 +5511,10 @@ async function persistMegaCandidateState(currentRound, finalizing) {
           ...(MEGA_PRODUCTION ? { timeout_ms: 600000, max_retries: 1 } : {}) });
       if (!echoOk(retry)) verify = await readState(' recheck');
       if (!echoOk(retry) && !echoOk(verify)) {
-        // A recipe checkpoint that exists only in process memory is not resumable. Stop before another
+        // A candidate checkpoint that exists only in process memory is not resumable. Stop before another
         // writer/round can advance from stale state; the lane git commit remains intact for recovery.
         log(`MEGA STATE PERSIST FAILED r${currentRound}: STATE.json did not advance to seq=${sequence} ` +
-          `after retry. The invocation must stop; continuing would lose structured recipe progress.`);
+          `after retry. The invocation must stop; continuing would lose structured candidate progress.`);
         return false;
       }
     }
@@ -5729,7 +5571,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
   const plan = await agentT(
     roleAgent('mega_search_lead', 'plan_round',
-      'Choose one whole-kernel candidate direction. M2.5 artifact and skill lanes are independent and must not block this search.', {
+      'Choose one whole-kernel candidate direction. Expert knowledge guides the common candidate lifecycle; it never creates a reserved lane.', {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
         CUMULATIVE_SPEEDUP: cumulative, BASELINE_GEOMEAN_MS,
@@ -5740,7 +5582,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         MEGA_PROFILE, CANDIDATE_TIMEOUT_S: MEGA_CANDIDATE_TIMEOUT_S,
         ...(MEGA_STRUCTURAL_ONLY ? {
           STRUCTURAL_ONLY: '1',
-          STRUCTURAL_TARGET: 'complete two-launch M2.5 source; 92/92 + plan_consistent',
+          STRUCTURAL_TARGET: 'complete the matched Expert Skill contract and MegaPlanIR target',
         } : {}),
         DEFAULT_BASE_CANDIDATE: (selectMegaSearchParent(megaCandidateRegistry) || {}).id ||
           'frozen_baseline',
@@ -5785,7 +5627,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       candidate_id: `search_whole_r${currentRound}`,
       candidate_source: 'search',
       base_candidate_id: 'frozen_baseline',
-      title: 'autonomous runnable MegaMoE fusion candidate',
+      title: 'autonomous runnable Mega-kernel candidate',
       specialty: 'distributed',
       step_role: 'terminal',
       focus_files: [],
@@ -5877,12 +5719,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     return { stop: true, reason: `invalid Mega candidate source '${String(source)}'; Expert Skills ` +
       'must use the common search/integrated lifecycle' };
   }
-  const isRecipeLane = false; // retained below only to keep legacy state fields parse-compatible
   const existing = megaCandidateById(candidateId);
-  const recipeSnapshot = isRecipeLane ? megaRecipeSnapshot(existing) : null;
-  const recipeReadyForVerify = !!(isRecipeLane && recipeSnapshot &&
-    recipeSnapshot.recipe_revision === MEGA_RECIPE_REVISION &&
-    recipeSnapshot.recipe_complete === true && recipeSnapshot.head);
   // Charge modeled orchestration overhead for this turn (calibration recovery + pool sampling +
   // planning agents all consumed real wall time above).
   megaAdvanceMs(MEGA_PREP_MODEL_MS);
@@ -5894,10 +5731,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         `final-validation reserve; no new candidate attempt was started`,
     };
   }
-  const requestedTurnS = isRecipeLane
-    ? (recipeReadyForVerify ? 0 : MEGA_SKILL_AUTHOR_TIMEOUT_S) +
-      MEGA_SCORE_TIMEOUT_S + Math.ceil(MEGA_PREP_MODEL_MS / 1000)
-    : MEGA_CANDIDATE_TIMEOUT_S;
+  const requestedTurnS = MEGA_CANDIDATE_TIMEOUT_S;
   const turnDeadlineMs = MEGA_PRODUCTION
     ? Math.min(turnStartedMs + requestedTurnS * 1000, dispatchDeadlineMs)
     : turnStartedMs + requestedTurnS * 1000;
@@ -5912,76 +5746,28 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         `Engineer was started`,
     };
   }
-  const engineerBudgetS = isRecipeLane
-    ? (recipeReadyForVerify ? 0 :
-      Math.max(600, Math.min(MEGA_SKILL_AUTHOR_TIMEOUT_S, Math.floor(availableAfterPrepS - 60))))
-    : (MEGA_PRODUCTION
-      ? Math.max(240, Math.min(
-        Math.floor(turnBudgetS * 0.60),
-        Math.floor(availableAfterPrepS - 360)))
-      : MEGA_CANDIDATE_TIMEOUT_S);
+  const engineerBudgetS = MEGA_PRODUCTION
+    ? Math.max(240, Math.min(
+      Math.floor(turnBudgetS * 0.60),
+      Math.floor(availableAfterPrepS - 360)))
+    : MEGA_CANDIDATE_TIMEOUT_S;
   const commandBudgetS = Math.max(180, engineerBudgetS - 60);
 
   const baseCandidateId = (existing && existing.base_id) || d.base_candidate_id || 'frozen_baseline';
   const attempts = (existing ? existing.attempts : 0) + 1;
-  const recipeAttempts = isRecipeLane
-    ? ((recipeSnapshot && recipeSnapshot.recipe_revision === MEGA_RECIPE_REVISION
-      ? recipeSnapshot.recipe_attempts : 0) + (recipeReadyForVerify ? 0 : 1)) : 0;
-  const attemptId = `${candidateId}:r${currentRound}:` +
-    `${recipeReadyForVerify ? `v${attempts}` : `a${isRecipeLane ? recipeAttempts : attempts}`}`;
+  const attemptId = `${candidateId}:r${currentRound}:a${attempts}`;
   const tree = d.tree || megaLaneTree(candidateId);
   const laneManifest = tree.replace(/\/tree$/, '') + '/lane.json';
   const laneLock = tree.replace(/\/tree$/, '') + '/author.lock';
   const baseTree = megaBaseTree(baseCandidateId, source);
   const baseHead = megaBaseHead(baseCandidateId, source);
   const outDir = `${EVAL_DIR}/round_${currentRound}/candidate_${candidateId}`;
-  const priorForAgent = isRecipeLane ? {
-    candidate_id: candidateId,
-    candidate_source: source,
-    tree,
-    head: recipeSnapshot && recipeSnapshot.head || '',
-    status: recipeSnapshot && recipeSnapshot.status || 'authoring',
-    recipe_revision: recipeSnapshot && recipeSnapshot.recipe_revision || MEGA_RECIPE_REVISION,
-    recipe_attempts: recipeSnapshot && recipeSnapshot.recipe_attempts || 0,
-    recipe_complete: recipeSnapshot && recipeSnapshot.recipe_complete || false,
-    completed_steps: recipeSnapshot && recipeSnapshot.completed_steps || [],
-    next_step: recipeSnapshot && recipeSnapshot.next_step || 'host_wiring',
-    activation: MEGA_RECIPE_ACTIVATION,
-    changed_files: recipeSnapshot && recipeSnapshot.changed_files || [],
-  } : (existing || null);
+  const priorForAgent = existing || null;
   let eng = null;
   let laneWriterTimedOut = false;
-
-  if (recipeReadyForVerify) {
-    // The complete source is already committed. Re-enter independent score Verify directly; do not
-    // spend another author lease or invite an agent to rewrite a complete recipe.
-    eng = {
-      candidate_id: candidateId,
-      candidate_source: source,
-      base_candidate_id: baseCandidateId,
-      candidate_status: 'runnable',
-      claim_complete: true,
-      attempt_id: attemptId,
-      recipe_revision: MEGA_RECIPE_REVISION,
-      recipe_attempts: recipeSnapshot.recipe_attempts,
-      recipe_complete: true,
-      completed_steps: recipeSnapshot.completed_steps,
-      next_step: '',
-      tree,
-      head: recipeSnapshot.head,
-      patch_file: recipeSnapshot.patch,
-      changed_files: recipeSnapshot.changed_files,
-      activation: MEGA_RECIPE_ACTIVATION,
-      topology: recipeSnapshot.topology,
-      topology_sig: existing && existing.topology_sig || `recipe:${MEGA_RECIPE_REVISION}`,
-      provenance: `validated_skill:${MEGA_SKILL_ID}@${MEGA_RECIPE_REVISION}`,
-      correctness: 'pending independent re-verification',
-      notes: 'recipe source already complete; authoring bypassed for score-only retry',
-    };
-  } else {
-    const role = 'engineer';
-    const roleFile = 'engineer.md';
-    eng = await agentT(
+  const role = 'engineer';
+  const roleFile = 'engineer.md';
+  eng = await agentT(
       roleAgent(role, 'optimize',
         `Advance candidate lane ${candidateId}; never edit or replace another candidate lane.`, {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
@@ -5995,26 +5781,25 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
           ...(MEGA_STRUCTURAL_ONLY ? {
             STRUCTURAL_ONLY: '1',
-            STRUCTURAL_TARGET: 'complete two-launch M2.5 source; no GPU commands',
+            STRUCTURAL_TARGET: 'complete the Expert Skill target encoded by MegaPlanIR; no GPU commands',
           } : {}),
           SKILL_DIR: WORKFLOW_DIR,
-          KERNEL_KNOWLEDGE_DIR: source === 'validated_skill' ? KERNEL_KNOWLEDGE_DIR : '',
+          KERNEL_KNOWLEDGE_DIR: '',
+          ...(USE_EXPERT_SKILLS ? {
+            EXPERT_SKILL_ID,
+            EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+          } : {}),
           codebase_context: `${EVAL_DIR}/codebase_context.md`,
           profiling_summary: profileSummary ? profileSummary.summary_path : '',
           baseline_per_case: BASELINE_PER_CASE,
           TASK_GRAPH: analysis && analysis.task_graph || {},
           RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
-          INSIGHTS: isRecipeLane ? [] :
-            megaHistoryForSearch(history, megaCandidateRegistry).insights,
+          INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
-          ...(isRecipeLane ? {
-            RECIPE_FILE: MEGA_RECIPE_FILE,
-            RECIPE_REVISION: MEGA_RECIPE_REVISION,
-            RECIPE_BASELINE_COMMIT: MEGA_RECIPE_BASELINE_COMMIT,
-            RECIPE_SOURCE_FILES: MEGA_RECIPE_SOURCE_FILES,
-            RECIPE_ACTIVATION: MEGA_RECIPE_ACTIVATION,
-          } : {}),
         }) +
       `\n\nBefore any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
@@ -6025,44 +5810,29 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         : `Copy ${baseTree} into it with a tar pipe excluding .git/build/__pycache__/.torch_ext/*.so/*.o. `) +
       `then initialize a fresh git repository and commit "candidate base ${baseCandidateId}". ` +
       `Before any long-running command, atomically write ${laneManifest} with candidate_id/source/` +
-      `base_candidate_id/tree/attempt_id${isRecipeLane ? '/recipe_revision/completed_steps' : ''} so a ` +
+      `base_candidate_id/tree/attempt_id so a ` +
       `timed-out first attempt is discoverable on resume. ` +
       `If it exists, continue from its HEAD; never recreate it. Read ${WORKFLOW_DIR}/roles/${roleFile}. ` +
       `Commit WIP to THIS lane after every real advance. Write ${outDir}/candidate_result.json ` +
       `atomically only after its evidence files are final. Return candidate_id/source/base, tree, head, ` +
       `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
       `lane root), correctness, absolute_score, per_case, topology_sig, next_blocker and notes. ` +
-      (isRecipeLane
-        ? `Also return recipe_revision, recipe_attempts, recipe_complete, completed_steps, next_step, ` +
-          `changed_files, topology, and the supplied activation unchanged. Do not perform paired ` +
-          `performance scoring before recipe_complete. `
-        : '') +
       `This Engineer gets ` +
       `${engineerBudgetS}s and every GPU command is bounded by ${commandBudgetS}s. A timeout or ` +
       `force-emit returns claim_complete:false and status authoring; it is not score 0.`,
       { phase: 'Optimize', label: `mega:${source}:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
         timeout_ms: engineerBudgetS * 1000, timeout_marker: true, max_retries: 1 });
 
-    if (eng && eng.__agent_timed_out) {
-      if (isRecipeLane) {
-        // Promise.race cannot cancel the underlying agent. Never dispatch another writer into this
-        // recipe lane after the guard fires: the timed-out agent may still own LANE_LOCK and source.
-        megaUnsafeTimeout = eng;
-        laneWriterTimedOut = true;
-        log(`Mega round ${currentRound}: recipe author ${eng.label || candidateId} exceeded its ` +
-          `deadline. Stopping this workflow invocation so no second writer can touch ${tree}; committed ` +
-          `checkpoints remain in the versioned lane.`);
-      } else {
-        megaUnsafeTimeout = eng;
-        laneWriterTimedOut = true;
-        log(`Mega round ${currentRound}: search author ${eng.label || candidateId} exceeded its ` +
-          `deadline. Stopping this workflow invocation because the underlying agent cannot be ` +
-          `cancelled and may still hold ${laneLock}.`);
-      }
-      eng = null;
-    }
-    if (!laneWriterTimedOut && (!eng || eng.claim_complete !== true)) {
-      const recovered = await agentT(
+  if (eng && eng.__agent_timed_out) {
+    megaUnsafeTimeout = eng;
+    laneWriterTimedOut = true;
+    log(`Mega round ${currentRound}: candidate author ${eng.label || candidateId} exceeded its ` +
+      `deadline. Stopping this workflow invocation because the underlying agent cannot be ` +
+      `cancelled and may still hold ${laneLock}.`);
+    eng = null;
+  }
+  if (!laneWriterTimedOut && (!eng || eng.claim_complete !== true)) {
+    const recovered = await agentT(
         roleAgent('engineer', 'recover',
           `RECOVER ONLY candidate ${candidateId}. Read ${outDir}/candidate_result.json and completed ` +
           `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
@@ -6074,8 +5844,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           }),
         { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
           ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
-      if (recovered && recovered.claim_complete === true) eng = recovered;
-    }
+    if (recovered && recovered.claim_complete === true) eng = recovered;
   }
   // The Engineer (and any recovery) consumed up to its configured budget of real wall time;
   // charge it so the verify budget below and the loop dispatch deadline shrink deterministically.
@@ -6083,41 +5852,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
     ? eng.changed_files.map(String) : [];
-  const priorChangedFiles = (recipeSnapshot && recipeSnapshot.changed_files) || [];
-  const effectiveChangedFiles = reportedChangedFiles.length
-    ? reportedChangedFiles : priorChangedFiles;
-  const reportedSourceViolation = isRecipeLane && reportedChangedFiles.length > 0 &&
-    !reportedChangedFiles.every((path) => MEGA_RECIPE_SOURCE_FILES.includes(path));
-  const recipeSourceReportPass = !isRecipeLane ||
-    (effectiveChangedFiles.length > 0 &&
-      effectiveChangedFiles.every((path) => MEGA_RECIPE_SOURCE_FILES.includes(path)) &&
-      !reportedSourceViolation);
-  const completedSteps = isRecipeLane
-    ? mergeMegaRecipeSteps(
-      (recipeSnapshot && recipeSnapshot.completed_steps) || [],
-      Array.isArray(eng && eng.completed_steps) ? eng.completed_steps : [],
-    )
-    : [];
-  const recipeStepsComplete = completedSteps.length === MEGA_RECIPE_STEPS.length;
-  const requestedRecipeComplete = eng
-    ? eng.recipe_complete === true
-    : Boolean(recipeSnapshot && recipeSnapshot.recipe_complete);
-  const requestedNextStep = eng
-    ? String(eng.next_step || '')
-    : String(recipeSnapshot && recipeSnapshot.next_step || '');
-  const requestedRecipeRevision = eng
-    ? String(eng.recipe_revision || '')
-    : String(recipeSnapshot && recipeSnapshot.recipe_revision || '');
-  const recipeComplete = !!(isRecipeLane &&
-    requestedRecipeRevision === MEGA_RECIPE_REVISION &&
-    requestedRecipeComplete && requestedNextStep === '' &&
-    recipeStepsComplete && recipeSourceReportPass);
   // Engineer completion only opens independent Verify. It cannot self-promote a lane to runnable;
   // otherwise an instrumentation-only or unverified launch shape becomes continuation priority.
   const preVerifyStatus = 'authoring';
-  const candidateActivation = isRecipeLane
-    ? MEGA_RECIPE_ACTIVATION
-    : normalizeMegaActivation((eng && eng.activation) || (existing && existing.activation));
+  const candidateActivation = normalizeMegaActivation(
+    (eng && eng.activation) || (existing && existing.activation)
+  );
   let meta = normalizeMegaCandidate({
     id: candidateId, source, base_id: baseCandidateId, tree,
     status: preVerifyStatus,
@@ -6126,12 +5866,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     patch: (eng && eng.patch_file) || (existing && existing.patch) || '',
     topology_sig: (eng && eng.topology_sig) || (existing && existing.topology_sig) || '',
     topology: (eng && eng.topology) || d.target_topology ||
-      (recipeSnapshot && recipeSnapshot.topology) ||
       (existing && existing.topology) || {},
     activation: candidateActivation,
-    provenance: isRecipeLane
-      ? `validated_skill:${MEGA_SKILL_ID}@${MEGA_RECIPE_REVISION}`
-      : ((eng && eng.provenance) || (existing && existing.provenance) || source),
+    provenance: (eng && eng.provenance) || (existing && existing.provenance) || source,
     // Engineer completion only enables independent Verify. It never inherits or creates verified
     // score/correctness evidence for this HEAD.
     claim_complete: false,
@@ -6143,15 +5880,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     attempt_id: (eng && eng.attempt_id) || attemptId,
     evidence_manifest: '',
     attempts,
-    recipe_revision: isRecipeLane ? MEGA_RECIPE_REVISION : '',
-    recipe_attempts: isRecipeLane ? recipeAttempts : 0,
-    recipe_complete: recipeComplete,
-    completed_steps: completedSteps,
-    next_step: isRecipeLane
-      ? (reportedSourceViolation ? 'source_boundary'
-        : (recipeComplete ? '' : (MEGA_RECIPE_STEPS[completedSteps.length] || 'recipe_complete')))
-      : '',
-    changed_files: !reportedSourceViolation ? effectiveChangedFiles : priorChangedFiles,
+    changed_files: reportedChangedFiles,
     next_blocker: (eng && eng.next_blocker) || '',
     notes: (eng && eng.notes) || '',
   });
@@ -6168,34 +5897,36 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   let ver = null;
   let verifierTimedOut = false;
   const turnRemainingS = turnBudgetS - (megaNowMs() - turnStartedMs) / 1000;
-  let verifyBudgetS = isRecipeLane
-    ? Math.max(0, Math.min(MEGA_SCORE_TIMEOUT_S, Math.floor(turnRemainingS - 60),
+  let verifyBudgetS = MEGA_PRODUCTION
+    ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
       Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60)))
-    : (MEGA_PRODUCTION
-      ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
-        Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60)))
-      : MEGA_CANDIDATE_TIMEOUT_S);
+    : MEGA_CANDIDATE_TIMEOUT_S;
   const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
   let structural = null;
-  const shouldStructuralVerify = REQUIRE_M25_STRUCTURAL_VERIFY &&
+  const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
     eng && eng.claim_complete === true && expectedHead;
   if (shouldStructuralVerify) {
     structural = await agentT(
       roleAgent('verify_engineer', 'verify_structure',
         'GPU-FREE independent post-authoring structure verification. Seal the candidate before ' +
-        'reading the oracle; never edit candidate source and never run a GPU command.', {
+        'reading an optional reference; never edit candidate source and never run a GPU command.', {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
           CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
           FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-          STRUCTURAL_ORACLE_PATH: M25_STRUCTURAL_ORACLE_PATH,
-          STRUCTURAL_CONTRACT_TOOL: M25_STRUCTURAL_CONTRACT_TOOL,
+          EXPERT_SKILL_ID,
+          EXPERT_SKILL_REVISION,
+          EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+          EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+          EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+          EXPERT_SKILL_REFERENCE_PATH,
+          EXPERT_SKILL_CONTRACT_TOOL,
           STRUCTURAL_VERIFY_DIR: `${outDir}/structure`,
-          ORACLE_WAS_HIDDEN: '1',
+          REFERENCE_WAS_HIDDEN: EXPERT_SKILL_REFERENCE_PATH ? '1' : 'n/a',
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
           SKILL_DIR: WORKFLOW_DIR,
         }),
       { phase: 'Verify', label: `mega:structure:${candidateId}`,
-        schema: M25_STRUCTURAL_VERIFY_SCHEMA,
+        schema: EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA,
         timeout_ms: 300000, max_retries: 1 });
     const structuralPass = !!(structural && structural.claim_complete === true &&
       structural.capability_eligible === true &&
@@ -6220,9 +5951,19 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
     ));
   }
+  const skillTargetLaunches = Number(
+    analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target_launches
+  );
+  const candidateTargetLaunches = Number(
+    d && d.target_topology && d.target_topology.launches
+  );
+  const candidateClaimsSkillTarget = Number.isFinite(skillTargetLaunches) &&
+    Number.isFinite(candidateTargetLaunches) &&
+    candidateTargetLaunches === skillTargetLaunches;
+  const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
+    (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
-    (!isRecipeLane || recipeComplete) &&
-    (!REQUIRE_M25_STRUCTURAL_VERIFY || meta.structural_verified) &&
+    (!contractBlocksRuntime || meta.structural_verified) &&
     !MEGA_STRUCTURAL_ONLY &&
     (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
     ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || ''));
@@ -6239,16 +5980,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
           BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           VERIFY_TIER: 'score',
-          MODIFIABLE_FILES: isRecipeLane ? MEGA_RECIPE_SOURCE_FILES : 'WHOLE_CANDIDATE_TREE',
+          MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
           SPECIALTY: 'distributed',
-          TARGET_SHAPE: isRecipeLane
-            ? {
-              launches: 2,
-              fused_stages: ['dispatch', 'gemm1', 'gemm2', 'p2p', 'combine'],
-              combine_mode: 'queue',
-              g2_waves: 8,
-            }
-            : megaShapeFromTopology(d.target_topology),
+          TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
           REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
           REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
@@ -6258,34 +5992,27 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
           RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
           REQUIRE_RESOURCE_VERIFY: '1',
-          ...(!isRecipeLane ? { SEARCH_ACCEPTS_PARTIAL_FUSION: '1' } : {}),
-          ...(isRecipeLane ? {
-            RECIPE_FILE: MEGA_RECIPE_FILE,
-            RECIPE_REVISION: MEGA_RECIPE_REVISION,
-            RECIPE_COMPLETE: true,
-            RECIPE_SOURCE_FILES: MEGA_RECIPE_SOURCE_FILES,
-            RECIPE_ACCURACY_CASES: MEGA_RECIPE_ACCURACY_CASES,
-            DIRECT_GRAPH_ACCURACY: '1',
-            GRAPH_CONTRACT_TOOL: MEGA_GRAPH_CONTRACT_TOOL,
-            GRAPH_CONTRACT_REPLAYS: 30,
-            ACTIVATION: JSON.stringify(MEGA_RECIPE_ACTIVATION),
-          } : {
-            ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
-          }),
+          SEARCH_ACCEPTS_PARTIAL_FUSION: '1',
+          ...(USE_EXPERT_SKILLS ? {
+            EXPERT_SKILL_ID,
+            EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+            EXPERT_SKILL_ACCURACY_CASES,
+            EXPERT_SKILL_SOURCE_FILES,
+          } : {}),
+          GRAPH_CONTRACT_TOOL: MEGA_GRAPH_CONTRACT_TOOL,
+          GRAPH_CONTRACT_REPLAYS: 30,
+          ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
         }),
       { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: VERIFY_SCHEMA,
         timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
     if (ver && ver.__agent_timed_out) {
-      if (isRecipeLane) {
-        megaUnsafeTimeout = ver;
-        verifierTimedOut = true;
-        log(`Mega round ${currentRound}: recipe score verification for ${candidateId} exceeded its ` +
-          `independent deadline. Stopping this invocation so its still-running EP8 work cannot overlap ` +
-          `another candidate.`);
-      } else {
-        log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} hit its production ` +
-          `timeout; discarding the incomplete verification and continuing (lane stays authoring WIP).`);
-      }
+      megaUnsafeTimeout = ver;
+      verifierTimedOut = true;
+      log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} exceeded its ` +
+        `deadline. Stopping this invocation so its still-running EP8 work cannot overlap another candidate.`);
       ver = null;
     }
     if (!verifierTimedOut && (!ver || ver.claim_complete !== true)) {
@@ -6318,42 +6045,17 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       targetGuards: TARGET_GUARDS, regressionGuards: [],
       launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
       accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
-      requiredAccuracyCases: isRecipeLane ? MEGA_RECIPE_ACCURACY_CASES : [],
+      requiredAccuracyCases: [],
       requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
-      allowPartialFusion: !isRecipeLane,
+      allowPartialFusion: true,
     });
     record.attempts = attempts;
     record.tree = tree;
-    const recipePassedCommonGate = source === 'validated_skill' &&
-      record.status === 'scored' &&
-      Number(record.absolute_score) > 1.0;
-    if (source === 'validated_skill' && !recipePassedCommonGate) {
-      // Independent Verify outranks the author's completion claim. Reopen the recipe at the
-      // independently verified prefix so the next turn can fix source instead of repeatedly timing
-      // the same bad HEAD. Reset the per-revision author budget for this repair cycle.
-      const verifiedPrefix = mergeMegaRecipeSteps([], ver.recipe_steps_verified);
-      record.recipe_complete = false;
-      record.completed_steps = verifiedPrefix.length === MEGA_RECIPE_STEPS.length
-        ? verifiedPrefix.slice(0, -1) : verifiedPrefix;
-      record.next_step = MEGA_RECIPE_STEPS[record.completed_steps.length] || 'recipe_complete';
-      record.recipe_attempts = 0;
-      record.status = 'authoring';
-      record.next_blocker = `independent Verify did not establish ${MEGA_RECIPE_REVISION} in the ` +
-        `common above-baseline contract: status=${String(ver.status || 'unknown')}, ` +
-        `score=${Number.isFinite(Number(record.absolute_score))
-          ? Number(record.absolute_score).toFixed(4) : 'missing'}. Re-audit checkpoint ` +
-        `${record.next_step}; do not remeasure the same HEAD.`;
-    } else if (source === 'validated_skill' &&
-        Number(record.absolute_score) < MEGA_M25_RECORDED_LOW) {
-      record.notes = `${record.notes || ''} Recipe passed the common shipping gate but measured ` +
-        `${Number(record.absolute_score).toFixed(4)}x, below the recorded M2.5 target band ` +
-        `${MEGA_M25_RECORDED_LOW.toFixed(4)}..${MEGA_M25_RECORDED_HIGH.toFixed(4)}; ` +
-        `report as target miss, not authoring failure.`.trim();
-    } else if (record.status === 'scored' && record.absolute_score <= 1.0) {
+    if (record.status === 'scored' && record.absolute_score <= 1.0) {
       record.status = 'runnable';
       record.next_blocker = record.next_blocker ||
         `candidate is correct but ${record.absolute_score.toFixed(4)}x does not beat frozen ` +
-        `MegaMoE V2 baseline; keep optimizing this lane, never promote it to a finalist`;
+        `baseline; keep optimizing this lane, never promote it to a finalist`;
     }
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, record);
   }
@@ -6361,7 +6063,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     await persistMegaCandidateState(currentRound);
     return {
       stop: true,
-      reason: `recipe score verification timeout for ${candidateId}; invocation stopped before any ` +
+      reason: `candidate score verification timeout for ${candidateId}; invocation stopped before any ` +
         `other EP8 work was dispatched`,
     };
   }
@@ -6381,7 +6083,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       id: selected.id, source: selected.source, geomean: selected.absolute_score,
       per_case: selected.per_case, patch: selected.patch, tree: selected.tree,
       topology_sig: selected.topology_sig, provenance: selected.provenance,
-      recipe_revision: selected.recipe_revision, activation: selected.activation,
+      activation: selected.activation,
     };
   }
 
@@ -6468,12 +6170,26 @@ while (dispatched < BUDGET &&
     const searchAttempts = megaCandidateRegistry
       .filter((c) => c.source === 'search' || c.source === 'integrated')
       .reduce((sum, c) => sum + Number(c.attempts || 0), 0);
+    const expertTargetLaunches = Number(
+      analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target_launches
+    );
+    const expertTargetConfigured = USE_EXPERT_SKILLS &&
+      Number.isFinite(EXPERT_SKILL_RECORDED_LOW) &&
+      Number.isFinite(expertTargetLaunches);
+    const expertTargetReached = !expertTargetConfigured || (
+      turn.selected &&
+      Number(turn.selected.absolute_score) >= Number(EXPERT_SKILL_RECORDED_LOW) &&
+      Number(turn.selected.launches) === expertTargetLaunches
+    );
     if (MEGA_STOP_ON_DELIVERABLE && turn.selected &&
         Number(turn.selected.absolute_score) > 1.0 &&
+        expertTargetReached &&
         searchAttempts >= MEGA_MIN_SEARCH_ATTEMPTS) {
       stopReason = `production early-stop after ${round} round(s): candidate ${turn.selected.id} ` +
         `has calibrated ${Number(turn.selected.absolute_score).toFixed(4)}x speedup over frozen ` +
-        `MegaMoE V2 and ${searchAttempts} search attempt(s) have run; reserve the remaining ` +
+        `baseline${expertTargetConfigured ? `, reached Expert Skill target ` +
+          `${Number(EXPERT_SKILL_RECORDED_LOW).toFixed(4)}x at ${expertTargetLaunches} launches` : ''}, ` +
+        `and ${searchAttempts} search attempt(s) have run; reserve the remaining ` +
         `${BUDGET - dispatched} direction(s) for finalist validation instead of exhaustive search.`;
       break;
     }
@@ -7827,10 +7543,7 @@ if (MODE === 'mega') {
     : provisional.eligible;
   const ranked = orderedEligible.slice(0,
     MEGA_PRODUCTION ? MEGA_FINAL_FALLBACK_K : MEGA_FINAL_TOP_K);
-  const stableSkill = provisional.eligible.find((c) => c.source === 'validated_skill');
-  const finalistMap = new Map(ranked.map((c) => [c.id, c]));
-  if (!MEGA_PRODUCTION && stableSkill) finalistMap.set(stableSkill.id, stableSkill);
-  const finalistOrder = [...finalistMap.values()];
+  const finalistOrder = ranked;
   const runFinalistBatch = async (batch, label) => {
     if (!batch.length || !megaMeasurementCalibration.ready) return null;
     const batchStartedMs = megaNowMs();
@@ -7857,17 +7570,25 @@ if (MODE === 'mega') {
           CANDIDATES: batch, TOP_K: batch.length,
           MEGA_PROFILE,
           TIE_NOISE_PCT: MEGA_TIE_NOISE_PCT,
-          M25_RECORDED_SCORE: MEGA_M25_RECORDED_SCORE,
-          M25_RECORDED_BAND: [MEGA_M25_RECORDED_LOW, MEGA_M25_RECORDED_HIGH],
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
           LAUNCH_TARGET, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
           ACCURACY_METRIC, ACCURACY_THRESHOLD,
           REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
           REQUIRE_GRAPH_CAPTURE: '1',
-          DIRECT_GRAPH_ACCURACY: batch.some((c) => c.source === 'validated_skill') ? '1' : '0',
-          RECIPE_FILE: MEGA_RECIPE_FILE,
-          RECIPE_ACCURACY_CASES: MEGA_RECIPE_ACCURACY_CASES,
-          RECIPE_SOURCE_FILES: MEGA_RECIPE_SOURCE_FILES,
+          DIRECT_GRAPH_ACCURACY: USE_EXPERT_SKILLS ? '1' : '0',
+          ...(USE_EXPERT_SKILLS ? {
+            EXPERT_SKILL_ID,
+            EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+            EXPERT_SKILL_TARGET_SCORE: EXPERT_SKILL_RECORDED_SCORE,
+            EXPERT_SKILL_TARGET_BAND: [
+              EXPERT_SKILL_RECORDED_LOW, EXPERT_SKILL_RECORDED_HIGH,
+            ],
+            EXPERT_SKILL_ACCURACY_CASES,
+            EXPERT_SKILL_SOURCE_FILES,
+          } : {}),
           GRAPH_CONTRACT_TOOL: MEGA_GRAPH_CONTRACT_TOOL,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
@@ -7952,20 +7673,6 @@ if (MODE === 'mega') {
         megaSelection = attempt;
         break;
       }
-      if (finalistOrder[i].source === 'validated_skill') {
-        const failedRecipe = megaCandidateById(finalistOrder[i].id);
-        if (failedRecipe) {
-          failedRecipe.status = 'authoring';
-          failedRecipe.recipe_complete = false;
-          failedRecipe.completed_steps = Array.isArray(failedRecipe.completed_steps)
-            ? failedRecipe.completed_steps.filter((step) => step !== 'recipe_complete') : [];
-          failedRecipe.next_step = 'recipe_complete';
-          failedRecipe.recipe_attempts = 0;
-          failedRecipe.next_blocker = `finalist contract failed: ${verdict.reasons.join('; ')}. ` +
-            `Re-audit ${MEGA_RECIPE_REVISION} source before remeasurement.`;
-          megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, failedRecipe);
-        }
-      }
       log(`MEGA production finalist ${finalistOrder[i].id} failed: ${verdict.reasons.join('; ')}. ` +
         `${i + 1 < finalistOrder.length ? 'Trying the next scored fallback.' : 'No fallback remains.'}`);
     }
@@ -8032,12 +7739,10 @@ if (MODE === 'mega') {
       patch: megaSelection.selected_patch || '',
       provenance: selectedRecord ? selectedRecord.provenance : megaSelection.selected_source,
       topology_sig: selectedRecord ? selectedRecord.topology_sig : '',
-      recipe_revision: selectedRecord ? selectedRecord.recipe_revision : '',
       activation: selectedRecord ? selectedRecord.activation : {},
       per_case: selectedRecord.per_case,
     };
-    log(`MEGA FINALIST SELECTED: ${finalWinner.id}[${finalWinner.source}] ${cumulative.toFixed(4)}x` +
-      `${megaSelection.tie_kept_skill ? ' (tie within noise: validated-skill candidate retained)' : ''}.`);
+    log(`MEGA FINALIST SELECTED: ${finalWinner.id}[${finalWinner.source}] ${cumulative.toFixed(4)}x.`);
   } else {
     const why = !megaMeasurementCalibration.ready
       ? 'measurement calibration is incomplete'
@@ -8280,23 +7985,10 @@ if (MODE === 'mega') {
   if (!mega_deliverable && finalWinner) {
     const rejectedFinal = megaCandidateById(finalWinner.id);
     if (rejectedFinal) {
-      if (rejectedFinal.source === 'validated_skill') {
-        // Finalist evidence (small-shape guards, long replay, identity) outranks score-tier recipe
-        // completion. Reopen authoring instead of leaving a scored HEAD in an endless final retry.
-        rejectedFinal.status = 'authoring';
-        rejectedFinal.recipe_complete = false;
-        rejectedFinal.completed_steps = Array.isArray(rejectedFinal.completed_steps)
-          ? rejectedFinal.completed_steps.filter((step) => step !== 'recipe_complete') : [];
-        rejectedFinal.next_step = 'recipe_complete';
-        rejectedFinal.recipe_attempts = 0;
-      } else {
-        rejectedFinal.status = 'runnable';
-      }
+      rejectedFinal.status = 'runnable';
       rejectedFinal.next_blocker =
         `independent final validation failed (${finalValidationStatus}); re-establish materialization, ` +
-        `correctness and full guard evidence before finalist selection` +
-        `${rejectedFinal.source === 'validated_skill'
-          ? `; re-audit ${MEGA_RECIPE_REVISION} source before remeasurement` : ''}`;
+        `correctness and full guard evidence before finalist selection`;
       rejectedFinal.notes = `${rejectedFinal.notes || ''} FINAL VALIDATION: ${mega_note}`.trim();
       megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, rejectedFinal);
     }

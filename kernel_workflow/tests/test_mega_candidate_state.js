@@ -50,9 +50,10 @@ ok(/MEGA STATE PERSIST FAILED/.test(src) &&
    /candidate state for round \$\{currentRound\} could not be persisted/.test(src),
   'a round cannot advance without a confirmed monotonic state write');
 ok(/working_snapshot: \{/.test(src) &&
-   /recipe_revision: next\.recipe_revision/.test(src) &&
-   /completed_steps: next\.completed_steps/.test(src),
-  'unverified recipe progress is persisted as a structured working snapshot');
+   /activation: next\.activation/.test(src) &&
+   /topology: next\.topology/.test(src) &&
+   /changed_files: next\.changed_files/.test(src),
+  'unverified candidate progress is persisted as a structured working snapshot');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

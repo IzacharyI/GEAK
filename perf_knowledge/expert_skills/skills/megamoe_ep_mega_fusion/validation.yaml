@@ -1,0 +1,36 @@
+schema_version: expert-skill-validation-v1
+skill_id: megamoe_ep_mega_fusion
+revision: m25-v2
+status: validated
+last_verified: "2026-09-04"
+gpu: gfx950/MI355X
+model: MegaMoE_v2
+measured:
+  isolated: 1.0448
+  e2e_pct: 4.48
+  parity: pass
+artifact: recorded_measurement_only
+
+harness: kernel_workflow
+efficacy:
+  model_path: ""
+  gpu: gfx950/MI355X
+  shapes:
+    framework: MegaMoE_v2
+    parallel: EP8
+    precision: a8w4
+    tokens_per_rank: [512, 8192]
+    routes: [uniform, rank-mixed-skew]
+  expect_min: auto
+
+do_no_harm:
+  noise_band_pct: 1.45
+  boundary_checks:
+    - name: activation_required
+      assert: every candidate leg reports path=MEGA on all eight ranks
+    - name: direct_accuracy
+      assert: relL2 is below 0.10 for 128, 512, and 8192 tokens
+    - name: replay_stress
+      assert: arrival-jittered graph replay passes before finalist promotion
+    - name: frozen_denominator
+      assert: paired rank-max performance is measured against frozen SCATTERED MegaMoE V2

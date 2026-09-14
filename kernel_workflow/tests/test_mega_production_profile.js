@@ -25,17 +25,22 @@ ok(args.mega_time_budget_s === 28800 && args.mega_final_reserve_s === 7200 &&
 ok(args.mega_candidate_timeout_s === 3600 && args.mega_final_timeout_s === 7200,
   'candidate and finalist calls have separate bounded timeouts');
 ok(args.use_expert_skills === 'true' &&
-   args.mega_skill_author_timeout_s == null && args.mega_score_timeout_s == null &&
+   args.expert_skill_id === 'megamoe_ep_mega_fusion' &&
+   args.expert_skill_playbook.endsWith('/playbook.md') &&
+   args.expert_skill_contract.endsWith('/contract.yaml') &&
+   args.expert_skill_validation.endsWith('/validation.yaml') &&
    args.mega_skill_candidate_id == null && args.mega_search_enabled == null,
-  'Expert Skills are knowledge for the common lifecycle, not special lane/scheduler configuration');
+  'Expert Skills use playbook/contract/validation in the common lifecycle');
 ok(6 * args.mega_candidate_timeout_s <=
    args.mega_time_budget_s - args.mega_final_reserve_s,
   'modeled dispatch window can reach all six common candidate turns');
 
 console.log('\n# valid output triggers early convergence');
 ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
+   /expertTargetReached/.test(src) &&
+   /EXPERT_SKILL_RECORDED_LOW/.test(src) &&
    /searchAttempts >= MEGA_MIN_SEARCH_ATTEMPTS/.test(src),
-  'a calibrated above-baseline candidate stops search after independent alternatives ran');
+  'Skill-on search stops early only after reaching its full-fusion target');
 ok(/dispatch deadline reached/.test(src) && /MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S/.test(src),
   'the workflow preserves final-validation time instead of spending the full wall budget on search');
 

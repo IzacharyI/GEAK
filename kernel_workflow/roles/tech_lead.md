@@ -222,25 +222,25 @@ for three waves while every round re-planned from the profile.
    was never proposed at all. Six directions, and the top of the ladder was never reached. Rungs
    are how the next phase knows what it still owes.
 
-6b. **WHOLE-FUSION-FIRST when a validated full-fusion recipe is in scope.** If your inputs carry a
+6b. **WHOLE-FUSION-FIRST when a validated full-fusion playbook is in scope.** If your inputs carry a
    `validated`/`human_validated` full-fusion expert skill for THIS operator (e.g.
-   `megamoe_ep_persistent_fusion`, a distilled production recipe with a measured floor) AND the
+   `megamoe_ep_persistent_fusion`, a distilled production playbook with a measured floor) AND the
    acceptance shape is a single fused kernel (`LAUNCH_TARGET` ≤ 2 with `REQUIRE_OVERLAP`), then the
    ladder's FIRST terminal rung MUST be the **complete fused kernel authored as one unit** following
-   that recipe end-to-end — correctness and CUDA-graph safety FIRST (the recipe's double-buffer /
+   that playbook end-to-end — correctness and CUDA-graph safety FIRST (the playbook's double-buffer /
    epoch-parity step is not optional; it is what makes the terminal rung graph-safe on replay N), the
    floor reproduced SECOND, further speed rungs stacked ON TOP of the working fused kernel THIRD. Do
    **NOT** decompose the fusion into isolated single-edge terminal rungs (a lone producer readiness
    edge, a lone stage merge) and measure each alone as if its sign were the fusion's sign. A validated
-   recipe of this kind ships with the finding that an isolated producer edge prices in the full
+   playbook of this kind ships with the finding that an isolated producer edge prices in the full
    publish/wait cost with **no consumer overlap present to hide it**, so it reads catastrophically
    negative — a misleading NON-result that has closed the highest-payoff axis of a whole campaign on a
    coin-flip. Under this directive a single-edge change is admissible ONLY as a `mandatory_arms`
    diagnostic / control UNDER the whole-fusion terminal rung (to attribute cost once the fused kernel
    exists), never as a standalone terminal rung whose negative reading is allowed to close the chain.
    The incremental ladder (bounding readout → readiness edge → stage merge → fusion) remains the right
-   shape ONLY when you are deriving the fusion from scratch with no validated recipe; a validated
-   recipe converts it into a build order for one rung, not four gated rungs.
+   shape ONLY when you are deriving the fusion from scratch with no validated playbook; a validated
+   playbook converts it into a build order for one rung, not four gated rungs.
 
    **Staging that one terminal rung when a first-draft whole-megakernel cannot be de-risked before
    the shared lease.** "One rung" governs where the credit-bearing SIGN is read (win/no-win is
@@ -249,14 +249,14 @@ for three waves while every round re-planned from the profile.
    cross-device barrier / system fences bound at trace/codegen time) and its dominant first-draft
    failure is a HANG that holds the whole collective lease, authoring it blind as a single round's
    terminal rung does not reach the card — three such rounds trip the no-hardware activation cap with
-   nothing measured. Then stage the SAME recipe-ordered build into `enabling` sub-rungs (§ step_role),
+   nothing measured. Then stage the SAME playbook-ordered build into `enabling` sub-rungs (§ step_role),
    each of which MUST activate `path=MEGA` on hardware and pass a bounded functional-liveness screen,
    each `expected_speedup`=no-win, judged on FUNCTION, NONE permitted to close the chain: (i) combine
-   folded in behind a **barrier-gated** phase + the recipe's device epoch/parity double-buffer
+   folded in behind a **barrier-gated** phase + the playbook's device epoch/parity double-buffer
    (correctness + CUDA-graph safety FIRST — deterministic, no per-token race); (ii) CU-role partition
    of GEMM1/GEMM2 into the one launch via the arrival ticket; (iii) the TERMINAL rung — convert the
    barrier to the per-token wait+acquire-fence concurrent-combine queue where the overlap and the
-   floor live, and read win/no-win HERE. This is the recipe's own "correctness-and-graph-safety
+   floor live, and read win/no-win HERE. This is the playbook's own "correctness-and-graph-safety
    first, floor second, speed third" order made bankable one lease at a time; it is NOT the forbidden
    isolated-single-edge decomposition above, because every sub-rung is an enabling step of the ONE
    whole-fusion terminal rung (not an independent terminal rung), no sub-rung's reading closes the
@@ -269,9 +269,8 @@ for three waves while every round re-planned from the profile.
    two-launch terminal have the same machine state.
 
 6c. **Mega search planning is isolated.** In `mode=mega`, this role does not plan candidate
-   turns. The orchestrator dispatches `mega_search_lead.md`, which receives search-only state and no
-   validated reproduction recipe. Keep operator-specific reproduction details out of this shared
-   role.
+   turns. The orchestrator dispatches `mega_search_lead.md`, which receives lane state plus any
+   explicitly enabled matched Expert Skill. Keep operator-specific details out of this shared role.
 
 Return JSON:
 ```json
@@ -459,7 +458,7 @@ next rung.
 Plus **`CHAIN_DEBT`** and **`CHAIN_BASELINE`**, present only when a fusion chain is open (see
 "Multi-step fusions" below).
 In `mode=mega`, candidate planning is handled by `mega_search_lead.md`; this
-shared role receives no candidate portfolio or validated recipe.
+shared role receives no candidate portfolio or matched Expert Skill playbook.
 Strict runs also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `LAUNCH_TARGET`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`, and

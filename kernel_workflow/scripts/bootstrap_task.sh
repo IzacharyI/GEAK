@@ -188,10 +188,10 @@ with open(sys.argv[1]) as f:
 print("1" if str(v).lower() == "true" else "0")
 PY
 )"
-RECIPE_BASELINE_COMMIT="$(python3 - "$TASK_DIR/launch_args.json" <<'PY'
+EXPERT_SKILL_BASELINE_COMMIT="$(python3 - "$TASK_DIR/launch_args.json" <<'PY'
 import json, sys
 with open(sys.argv[1]) as f:
-    print(str(json.load(f).get("mega_recipe_baseline_commit", "")).strip())
+    print(str(json.load(f).get("expert_skill_baseline_commit", "")).strip())
 PY
 )"
 if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
@@ -202,14 +202,14 @@ if [ -e "$OUT" ] && [ -n "$(ls -A "$OUT" 2>/dev/null)" ]; then
 fi
 
 BASELINE="$(cd "$BASELINE" && pwd)"
-if [ -n "$RECIPE_BASELINE_COMMIT" ]; then
+if [ -n "$EXPERT_SKILL_BASELINE_COMMIT" ]; then
   [ "$(git -C "$BASELINE" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ] ||
-    die "recipe task requires --baseline to be a git checkout/worktree at $RECIPE_BASELINE_COMMIT" 1
+    die "Expert Skill task requires --baseline to be a git checkout/worktree at $EXPERT_SKILL_BASELINE_COMMIT" 1
   baseline_head="$(git -C "$BASELINE" rev-parse HEAD 2>/dev/null || true)"
-  [ "$baseline_head" = "$RECIPE_BASELINE_COMMIT" ] ||
-    die "recipe baseline HEAD $baseline_head does not match required $RECIPE_BASELINE_COMMIT" 1
+  [ "$baseline_head" = "$EXPERT_SKILL_BASELINE_COMMIT" ] ||
+    die "Expert Skill baseline HEAD $baseline_head does not match required $EXPERT_SKILL_BASELINE_COMMIT" 1
   [ -z "$(git -C "$BASELINE" status --porcelain --untracked-files=all)" ] ||
-    die "recipe baseline $BASELINE is dirty; use a clean detached checkout at $RECIPE_BASELINE_COMMIT" 1
+    die "Expert Skill baseline $BASELINE is dirty; use a clean detached checkout at $EXPERT_SKILL_BASELINE_COMMIT" 1
 fi
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
 PARENT="$(dirname "$OUT")"
@@ -251,8 +251,8 @@ echo "assembling '$TASK' into $OUT"
 # The workspace IS the aiter that gets imported (every command sets PYTHONPATH="$PWD"), so it has to
 # be a real copy, not a symlink or a worktree of the baseline — an engineer editing it must not be
 # able to reach back and mutate the denominator.
-if [ -n "$RECIPE_BASELINE_COMMIT" ]; then
-  git -C "$BASELINE" archive "$RECIPE_BASELINE_COMMIT" | tar -C "$OUT" -xf -
+if [ -n "$EXPERT_SKILL_BASELINE_COMMIT" ]; then
+  git -C "$BASELINE" archive "$EXPERT_SKILL_BASELINE_COMMIT" | tar -C "$OUT" -xf -
 else
   tar -C "$BASELINE" -cf - --exclude=.git . | tar -C "$OUT" -xf -
 fi

@@ -43,9 +43,9 @@ state, sibling worktrees, handoff files, or external prior implementations.
    create, or gate on a special reproduction/validated-skill candidate.
 5. Emit `mega_plan_ir`: typed regions, queues, events/counters, direct runtime
    ABI, source-shape constraints, variant constraints, and resource lifetimes.
-   With a matched Expert Skill, include its reference revision and normalized
-   validated constants/constraints. Do not include an absolute recipe/oracle
-   path or copied source.
+   With a matched Expert Skill, include its skill revision and normalized
+   validated constants/constraints. Do not include an absolute
+   playbook/reference path or copied source.
 6. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
    `EVAL_DIR`. The typed plan is the machine-readable authority; prose explains
    it but never replaces it.
@@ -78,7 +78,7 @@ Return the ordinary analysis schema:
   "resource_timeline": {},
   "mega_plan_ir": {
     "plan_version": "mega-plan-v1",
-    "reference_revision": "matched revision or null",
+    "expert_skill_revision": "matched revision or null",
     "target_launches": 2,
     "regions": [{"id": "region", "role": "producer|consumer"}],
     "queues": [{"id": "queue", "claim_unit": "tile", "owner": "CTA"}],
@@ -89,7 +89,7 @@ Return the ordinary analysis schema:
     "abi": {
       "direct_fused_args": true,
       "stage2_pointer_count": 12,
-      "combine_pointer_count": 6,
+      "combine_pointer_count": 7,
       "optional_quant_pointer_count": 0,
       "argument_order": ["s2_*", "c_*"],
       "disabled_placeholders": true

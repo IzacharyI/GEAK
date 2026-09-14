@@ -68,12 +68,12 @@ continued wave build on the cumulative best instead of restarting. Handle it as 
   `mega_workspace_from_original:true` and `mega_candidate_state_checked:true` (also when no prior
   state exists). Candidate lanes resume from their own
   `STATE_DIR/candidates/<id>/tree` paths and must never be collapsed into best.
-  Also scan `STATE_DIR/candidates/*/lane.json`. A validated-skill manifest carries
-  `recipe_revision`, `recipe_attempts`, `recipe_complete`, `completed_steps`, `next_step`,
+  Also scan `STATE_DIR/candidates/*/lane.json`. A lane manifest carries
+  `candidate_id`, `candidate_source`, `base_candidate_id`, `attempt_id`,
   `activation`, `changed_files`, and the committed `head`. If a valid manifest/tree exists but its id
   is absent from `STATE.json:candidate_registry` (for example, its first agent timed out before the
   registry writer), add an `authoring` record with those fields. If the id exists but the manifest
-  names a newer committed attempt/head for the same recipe, preserve the verified registry snapshot
+  names a newer committed attempt/head, preserve the verified registry snapshot
   and update its `working_head` plus `working_snapshot` from the manifest. Never infer correctness,
   a score, or finalist status from a lane manifest.
 - **When `MODE!=mega`, if `STATE_DIR` is set AND `$STATE_DIR/best/` exists and is non-empty** (a prior wave's cumulative-best
@@ -235,9 +235,11 @@ Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU
 `TARGET_GUARDS`, `REGRESSION_GUARDS`, `LAUNCH_TARGET`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS_BY_GUARD`, `TIE_NOISE_PCT`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, `DIRECT_GRAPH_ACCURACY`,
-`RECIPE_FILE`, `RECIPE_ACCURACY_CASES`, `RECIPE_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
+optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_PLAYBOOK`,
+`EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
+`EXPERT_SKILL_ACCURACY_CASES`, `EXPERT_SKILL_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
 `GRAPH_CONTRACT_TOOL` and `GRAPH_CONTRACT_REPLAYS` provide the executable direct-graph and
-arrival-jitter contract for validated recipe finalists.
+arrival-jitter contract.
 
 This is the final portfolio arbitration, not another optimization round:
 
@@ -251,8 +253,7 @@ batch may contain all finalists for one exhaustive comparison.
 2. On one EP8 lease, independently run every finalist with the same command/environment. Interleave
    candidate arms with the frozen scattered baseline on `8192_uniform`, use rank-max `mega_e2e`, and
    run the three regression guards. Recheck relL2, candidate-path activation on every rank,
-   graph safety and required liveness. A `validated_skill` finalist requires `path=MEGA` and exactly
-   `LAUNCH_TARGET` launches. A `search` finalist may be a complete partial fusion: require a measured
+   graph safety and required liveness. Every finalist may be a complete partial fusion: require a measured
    launch reduction satisfying `LAUNCH_TARGET <= launches_cand < launches_base`; do not reject a
    faster three-launch candidate merely because the project target is two. When requested, also require controlled non-zero overlap,
    launch-change attribution on a named target guard (absolute to the frozen baseline) and distinct
@@ -267,29 +268,23 @@ batch may contain all finalists for one exhaustive comparison.
      markers. A frozen public baseline that predates marker support expects zero markers; bind it by
      its exact source revision and explicit `FUSE_ALL=0` command rather than inventing a
      `SCATTERED` marker.
-   - A `validated_skill` row must carry `recipe_complete=true`, empty `next_step`, and the same
-     `recipe_revision`, ordered `completed_steps`, and activation as the supplied registry entry.
-     Echo those fields in the evidence row.
-   - For a validated recipe, diff the candidate root commit against the exact candidate HEAD and
-     require every changed path to be in `RECIPE_SOURCE_FILES`. Tests, benchmarks, scripts, logs,
+   - When `EXPERT_SKILL_SOURCE_FILES` is provided, diff the candidate root commit against the exact
+     candidate HEAD and require every changed path to be in that list. Tests, benchmarks, scripts, logs,
      dumps, and evidence inside the source tree reject the finalist.
-   - For a `validated_skill` candidate when `DIRECT_GRAPH_ACCURACY=1`, emit one numeric
-     `accuracy_results` row for every `RECIPE_ACCURACY_CASES` entry by comparing graph-captured
+   - When `DIRECT_GRAPH_ACCURACY=1`, emit one numeric
+     `accuracy_results` row for every `EXPERT_SKILL_ACCURACY_CASES` entry by comparing graph-captured
      candidate output directly with the task's numeric reference. Drain-vs-floor or any other
      transitive equivalence is not correctness evidence. Run `GRAPH_CONTRACT_TOOL` in the detached
-     candidate environment with `--accuracy-cases <RECIPE_ACCURACY_CASES>`,
-     `--liveness-cases <RECIPE_ACCURACY_CASES>`, both production routes, and
-     `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON. This recipe-only
-     requirement does not change search finalist validation.
-3. A source label (`validated_skill`, `search`, `integrated`) never relaxes a
+     candidate environment with `--accuracy-cases <EXPERT_SKILL_ACCURACY_CASES>`,
+     `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, both production routes, and
+     `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON.
+3. A source label (`search` or `integrated`) never relaxes a
    quality gate. Exclude any incomplete or incorrect arm, and exclude every candidate whose absolute
    `8192_uniform` speedup is `<=1.0` versus frozen MegaMoE V2. Slow candidates remain WIP; they are
    never final output.
-4. Select the highest absolute speedup versus the frozen baseline. If the fastest search candidate
-   and a clean `validated_skill` candidate differ by at most `TIE_NOISE_PCT`, keep the skill
-   candidate as the stable implementation; the data does not establish that the challenger is faster.
-   `M25_RECORDED_SCORE`/`M25_RECORDED_BAND` are report-only targets. Never run or fetch a hand-written
-   M2.5 tree to resolve them.
+4. Select the highest absolute speedup versus the frozen baseline.
+   `EXPERT_SKILL_TARGET_SCORE`/`EXPERT_SKILL_TARGET_BAND` are report-only targets. Never run or fetch
+   an external reference tree to resolve them.
 5. Materialize the selected tree into the fresh `SELECTED_WORKSPACE`. Start it as a copy of
    `BASELINE_TREE`, initialize/commit that baseline, mirror the selected source into it while
    excluding `.git`, build outputs and caches, commit the selected source, and write a cumulative
@@ -301,10 +296,9 @@ batch may contain all finalists for one exhaustive comparison.
    row, selected workspace and patch is complete. A timeout/force-emit returns
    `claim_complete:false` and selects nothing.
 
-Return the `MEGA_SELECTION_SCHEMA` fields exactly, including every candidate's rejection reason,
-the selected tree/patch, and whether a tie retained the validated-skill candidate. Every candidate
-row must carry the exact registry `tree` and `head`, plus `graph_safe`, `artifact_distinct`,
-`recipe_revision`, `recipe_complete`, `completed_steps`, `next_step`, and the exact `activation` manifest,
+Return the `MEGA_SELECTION_SCHEMA` fields exactly, including every candidate's rejection reason and
+the selected tree/patch. Every candidate row must carry the exact registry `tree` and `head`, plus
+`graph_safe`, `artifact_distinct`, and the exact `activation` manifest,
 `status:"verified"` and the exact root-to-HEAD `touched_files`,
 `overlap_measured`, `overlap_fraction`, `overlap_cu_fraction`,
 `attribution_complete`, `accuracy_metric`, `accuracy_value`, `liveness_replays`, and its full

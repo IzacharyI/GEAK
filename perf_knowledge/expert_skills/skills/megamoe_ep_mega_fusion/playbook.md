@@ -1,6 +1,6 @@
 ---
-reference_id: megamoe_m25_tile_pipeline
-reference_revision: m25-repro-v2
+playbook_id: megamoe_m25_tile_pipeline
+revision: m25-v2
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true
@@ -9,7 +9,7 @@ source: validated_knowledge
 oracle_role: post_authoring_comparison_only
 ---
 
-# MegaMoE M2.5 independent implementation contract v2
+# MegaMoE M2.5 persistent-fusion playbook
 
 This file is the independent implementation contract distilled from one
 validated tiled/instruction-pipelined design produced from the frozen public
@@ -57,7 +57,7 @@ AITER_MEGAMOE_FUSE_ALL=1
 With that switch set, the complete M2.5 topology is selected whenever
 `stage1.num_waves % 4 == 0`. `AITER_MEGAMOE_FUSE_COMBINE` may remain as a
 diagnostic opt-out, but its default is `"1"`. Quant fusion is not part of this
-recipe and remains off.
+playbook and remains off.
 
 For a scored BF16 M2.5 arm, require all ranks to resolve:
 
@@ -113,7 +113,7 @@ Neither file may be required merely because it differs in a later oracle tree.
 Do not edit tests or benchmarks and do not commit scripts, logs, caches, dumps,
 or evidence to the candidate tree. Store all such artifacts in `OUTPUT_DIR`.
 Do not read or diff an external M2.5 source tree. The implementation must be
-authored from this recipe and the frozen baseline.
+authored from this playbook and the frozen baseline.
 
 ## 3. Fixed 8192-uniform configuration
 
@@ -757,7 +757,7 @@ Route encoding and bounded-buffer invariants:
 - Preserve the validated nested-emitter and unified-loop lexical shape. A
   semantically similar module-level emitter, extended dispatch table, or
   separate post-GEMM1 drain is not compiler-equivalent on this FlyDSL revision.
-- Preserve `gemm2_compute_v2` arithmetic; the recipe changes scheduling and
+- Preserve `gemm2_compute_v2` arithmetic; the playbook changes scheduling and
   publication, not GEMM math.
 - Every barrier is block-uniform. A carried continuation path must be
   block-uniform before it bypasses the claim broadcast.
@@ -845,7 +845,8 @@ After the authoring turn ends, a separate read-only verifier may compare the
 candidate with the pinned oracle:
 
 ```text
-python kernel_workflow/tools/m25_structural_contract.py \
+python kernel_workflow/tools/expert_skill_contract.py \
+  --contract perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion/contract.yaml \
   --baseline <frozen-baseline> \
   --reference <read-only-M2.5-oracle> \
   --candidate <independently-authored-tree> \
@@ -864,8 +865,8 @@ checker. It sets `reference_copy_detected=true` and
 `capability_eligible=false`; copied source is not evidence that Mega authored
 the structure. A valid independent pass must be structurally compatible while
 remaining source-distinct. Before revealing the oracle, seal the authored tree
-digest in the manifest with `sealed_before_oracle_comparison=true` and
-`oracle_exposed_during_authoring=false`. This remains an orchestration
+digest in the manifest with `sealed_before_reference_comparison=true` and
+`reference_exposed_during_authoring=false`. This remains an orchestration
 attestation (`provenance_status=attested_unverified`), not cryptographic proof
 of what the author could access.
 

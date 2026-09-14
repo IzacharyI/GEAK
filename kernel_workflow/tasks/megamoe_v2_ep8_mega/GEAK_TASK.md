@@ -90,7 +90,7 @@ same Analyze → Plan → Author → Verify lifecycle and persists its own HEAD.
    Analyze/Plan/Author roles. It should make M2.5-class structure and performance reproducible, but
    creates no special candidate source, lane, role, scheduler, or acceptance gate.
 2. With `use_expert_skills=false`, the lifecycle is byte-identical except that no M2.5 skill or
-   recipe is visible. The agents derive candidates from frozen source, the tile task graph, generic
+   playbook is visible. The agents derive candidates from frozen source, the tile task graph, generic
    knowledge, and their own measurements.
 3. A candidate is a tiled/instruction-pipelined megakernel, not merely a wrapper that reduces launch
    count. Full fusion and profitable partial fusion are both admissible when the external operator
@@ -184,7 +184,7 @@ This task's launch template sets `capability_eval=false` and `strict_autonomy=fa
 public AITER tree is the optimization **starting point and the denominator**, not an answer to fence
 off — read it freely. All candidates use the common Mega planner and Engineer.
 With Expert Skills enabled they may consult the matched M2.5 knowledge; with the flag disabled no
-M2.5 skill/recipe content is injected.
+M2.5 skill/playbook content is injected.
 
 The recorded M2.5 result (`1.0448x`, observed `1.0403..1.0477`) is a target only. The hand-authored
 implementation is not an oracle arm and not an input. Never read, run, copy, diff, import, or use as
@@ -245,7 +245,7 @@ the target benchmark must all appear and have `relL2 < 0.10`. For the fused term
 candidate path on the 8192 case and require the candidate path marker; a correctness pass obtained
 through SCATTERED fallback is activation failure, not fusion correctness.
 
-Validated-recipe score/finalist verification additionally runs
+Expert-Skill-enabled score/finalist verification additionally runs
 `SKILL_DIR/tools/mega_graph_contract.py` under EP8. It directly compares
 graph-captured candidate output against the numeric reference for 128/512/8192
 and mutates routing inputs between graph replays for uniform and

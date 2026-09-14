@@ -1,7 +1,7 @@
-# expert_skills — human-authored, e2e-validated optimization recipes
+# expert_skills — human-authored, e2e-validated optimization playbooks
 
 > **Contract (read this first).** An expert skill is an **advisory prior**, not a mandate. It packages a
-> human expert's *proven, reusable optimization recipe* (the regulated steps + knobs + pitfalls) for a
+> human expert's *proven, reusable optimization playbook* (the regulated steps + knobs + pitfalls) for a
 > specific `operator × scenario`. A skill that has passed validation carries a high prior and a
 > reproducible procedure — but it **never overrides on-box measurement**. The consuming workflow
 > (`e2e_workflow` / `kernel_workflow`) treats a matched skill as a *candidate to reproduce first*, then
@@ -9,13 +9,13 @@
 > measurement wins and the skill is flagged `stale` for re-review.
 >
 > This is the same discipline as the sibling `perf_knowledge/` base — *seed/locate candidates faster,
-> never reduce a result below its measured baseline* — just with stronger, validated, opinionated recipes.
+> never reduce a result below its measured baseline* — just with stronger, validated, opinionated playbooks.
 
 ## Why this exists
 
 `perf_knowledge/` holds *facts* (APIs, knobs, which backends exist). The `e2e_workflow/knowledge/`
 ledgers hold the *agent's own rolling experience*. Neither captures a **human expert's end-to-end
-recipe** — e.g. "port the MLA decode core from TileLang to Triton on gfx942", or "the FlyDSL fp8 a8w8
+playbook** — e.g. "port the MLA decode core from TileLang to Triton on gfx942", or "the FlyDSL fp8 a8w8
 blockscale down-proj playbook that won +67% e2e". `expert_skills/` is that third tier: contributed,
 indexed, and **validated to actually move e2e (or an isolated kernel) without regressing the baseline**.
 
@@ -26,15 +26,25 @@ expert_skills/
 ├── README.md                  # this file (the contract)
 ├── index.yaml                 # machine-queryable selector + validation status (AUTO-MAINTAINED)
 ├── skills/<id>/               # one SUBDIRECTORY per skill
-│   ├── skill.md               #   the main recipe (frontmatter selector + body) — REQUIRED
-│   └── ...                    #   optional extra files: reference kernels, configs, validation manifest
-├── _template/                 # SKILL_TEMPLATE.md + validation_manifest.yaml
+│   ├── skill.md               #   selector + concise expert entry point — REQUIRED
+│   ├── playbook.md            #   optional detailed implementation guide
+│   ├── contract.yaml          #   optional declarative source/PlanIR preflight
+│   └── validation.yaml        #   measured status and validation boundaries
+├── _template/                 # skill, optional contract, and validation templates
 └── _contribute/               # the "add a skill to GEAK" skill: scaffold / validate / make_pr / SKILL.md
 ```
 
-Each skill lives in its own directory `skills/<id>/` so a skill that needs more than prose — a reference
-kernel, tuned config JSONs, a custom validation manifest — can carry those files alongside its
-`skill.md`. The selector (`index.yaml`) always points at `skills/<id>/skill.md`.
+Each skill lives in its own directory `skills/<id>/`. `skill.md` is the selector and concise expert
+entry point; `playbook.md` holds optional detailed guidance, `contract.yaml` is consumed by the generic
+static verifier, and `validation.yaml` records measured status. The selector (`index.yaml`) always
+points at `skills/<id>/skill.md`.
+
+`contract.yaml` is data, not operator-specific verifier code. The shared
+`kernel_workflow/tools/expert_skill_contract.py` supports AST-normalized regex
+rules, call-keyword identity, forbidden host mutations, runtime-value
+consumption, PlanIR assertions, provenance seals and optional reference-copy
+calibration. If a new invariant cannot be expressed safely, extend this shared
+vocabulary and test it before adding a custom checker.
 
 ## How a skill is selected by the workflows
 
@@ -48,7 +58,7 @@ match.operator == bottleneck.operator
 AND gen ∈ match.gens
 AND model_arch_class ∈ match.arch_class   (or match.arch_class contains '*')
 AND (migration skills) from_backend/to_backend fit the live path
-AND validation.status == validated        (stale/draft/failed are NOT auto-applied)
+AND index.validation_status == validated  (sourced from validation.yaml or legacy inline metadata)
 ```
 
 There is **no ranking** here (same as `capability_index.yaml`). Every match enters the candidate set;
@@ -76,7 +86,8 @@ See [`_contribute/SKILL.md`](_contribute/SKILL.md). Short version:
 
 ```
 python _contribute/scaffold.py --id <slug> --operator <op> --scope <kernel|e2e>   # make skeleton + register
-$EDITOR skills/<slug>/skill.md                                                           # fill Procedure/Mechanism/Do-no-harm
+$EDITOR skills/<slug>/skill.md                                                           # fill selector/summary
+# optionally add playbook.md and contract.yaml; validation.yaml is scaffolded automatically
 bash   _contribute/make_pr.sh <slug>                                               # validate (by scope) → set status → open PR
 ```
 

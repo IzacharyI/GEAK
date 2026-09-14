@@ -28,11 +28,11 @@ const makeBlock = (enabled) => new Function(`
     'tech_lead','author_engineer','engineer','deep_engineer','mega_search_lead'
   ]);
   const EXPERT_SKILLS_DIR = '/skills';
+  const EXPERT_SKILL_ID = 'megamoe_ep_mega_fusion';
+  const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
+  const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/playbook.md';
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
-  const MEGA_SKILL_ID = 'megamoe_ep_mega_fusion';
-  const MEGA_RECIPE_FILE = '/skills/skills/megamoe_ep_mega_fusion/recipe_v1.md';
-  const MEGA_RECIPE_REVISION = 'm25-repro-v2';
   const CAPABILITY_EVAL = false;
   ${functionText}
   return expertSkillsBlock;
@@ -41,8 +41,8 @@ const makeBlock = (enabled) => new Function(`
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
 ok(enabled('mega_search_lead').includes('skill.md') &&
-   enabled('mega_search_lead').includes('recipe_v1.md'),
-  'the common Mega planner receives the matched skill/reference when enabled');
+   enabled('mega_search_lead').includes('playbook.md'),
+  'the common Mega planner receives the matched skill/playbook when enabled');
 ok(enabled('engineer').includes('NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE'),
   'the common Engineer receives the same matched normative knowledge');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
@@ -71,7 +71,7 @@ ok(/fully fuse[\s\S]*or fuse only a profitable subset/.test(searchLead) &&
 ok(/complete runnable operator/.test(searchLead) &&
    /external operator is complete, correctness passes/.test(engineer),
   'partial fusion means a complete operator, not half-implemented source');
-ok(/allowPartialFusion: !isRecipeLane/.test(src) &&
+ok(/allowPartialFusion: true/.test(src) &&
    /launches >= targetLaunches && launches < baseLaunches/.test(src),
   'search scoring accepts a measured launch reduction while full fusion remains the target');
 ok(/let analysis = await agentT\(/.test(src) &&
@@ -105,9 +105,16 @@ ok(/verify_structure/.test(src) &&
    /runtime_verified/.test(src) &&
    /score_complete/.test(src),
   'checkpoint, structural, runtime and scored completion are distinct');
-ok(/STRUCTURAL_ORACLE_PATH: M25_STRUCTURAL_ORACLE_PATH/.test(src) &&
-   !/Advance candidate lane \$\{candidateId\}[\s\S]{0,2500}STRUCTURAL_ORACLE_PATH/.test(src),
-  'the M2.5 oracle is passed only to post-authoring Verify, never Author');
+ok(/EXPERT_SKILL_REFERENCE_PATH,/.test(src) &&
+   !/Advance candidate lane \$\{candidateId\}[\s\S]{0,2500}EXPERT_SKILL_REFERENCE_PATH/.test(src),
+  'an optional reference is passed only to post-authoring Verify, never Author');
+ok(/EXPERT_SKILL_CONTRACT_TOOL/.test(src) &&
+   !/M25_STRUCTURAL|MEGA_RECIPE|m25_structural_contract|recipe_v1/.test(src),
+  'the core workflow exposes a generic Expert Skill contract interface');
+ok(/candidateClaimsSkillTarget/.test(src) &&
+   /contractBlocksRuntime/.test(src) &&
+   /REQUIRE_EXPERT_SKILL_CONTRACT/.test(src),
+  'a full Skill target is preflight-gated while partial fallbacks remain measurable');
 ok(/const MEGA_STRUCTURAL_ONLY = MODE === 'mega'/.test(src) &&
    /STRUCTURAL_ONLY: '1'/.test(src) &&
    /!MEGA_STRUCTURAL_ONLY/.test(src) &&

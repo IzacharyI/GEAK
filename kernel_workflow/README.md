@@ -100,16 +100,19 @@ sub-mode or dedicated skill lane. Full and partial fusion candidates may
 compete when they are complete runnable operators and beat the frozen
 baseline. Packaged knowledge, roles and tools remain repository-relative.
 
-When GPUs are unavailable, `tools/m25_structural_contract.py --require
-independent` can compare an already-authored candidate with a read-only M2.5
-oracle. The author must not see the oracle. This tier verifies source structure
-only; exact oracle identity is rejected as capability evidence, and
-correctness/liveness/performance remain unverified.
+When GPUs are unavailable, `tools/expert_skill_contract.py` evaluates a
+skill-local declarative `contract.yaml` against an already-authored candidate
+and its MegaPlanIR. The generic checker contains no M2.5 rules; operator-specific
+pointer, queue, counter, geometry and source-shape constraints live beside the
+matched Skill. An optional read-only reference may calibrate copy detection, but
+is never passed to Planner or Engineer. This tier verifies source structure
+only; correctness/liveness/performance remain unverified.
 
-For workflow-integrated post-authoring checks, pass
-`m25_structural_oracle_path` (the read-only verifier-only oracle). Mega seals
-and checks each source checkpoint before runtime Verify; the oracle path is
-never passed to Planner or Engineer.
+For workflow-integrated checks, set `verify_expert_skill_contract=true` and
+provide `expert_skill_id` plus the Skill's playbook/contract/validation paths.
+`require_expert_skill_contract=true` makes it mandatory for every candidate;
+otherwise a candidate claiming the Skill's complete launch target must pass,
+while complete partial-fusion fallbacks may still enter runtime Verify.
 
 ### Validating a change to the workflow itself
 `scripts/replay_runs.js` re-decides finished runs with today's decision logic, on no GPU:

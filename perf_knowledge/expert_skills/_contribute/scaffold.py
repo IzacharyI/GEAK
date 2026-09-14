@@ -9,16 +9,17 @@ Usage:
   # regenerate index.yaml from every skills/*.md frontmatter (no new skill)
   python _contribute/scaffold.py --reindex
 
-The index is AUTO-GENERATED from each skill file's frontmatter, so contributors only ever edit one
-markdown file; the selector stays consistent and merge-conflict-free.
+The index is AUTO-GENERATED from each skill's frontmatter plus validation file,
+so the selector stays consistent and merge-conflict-free.
 """
-import argparse, os, re, sys
+import argparse, os, re, shutil, sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # .../expert_skills
 SKILLS_DIR = os.path.join(ROOT, "skills")
 TEMPLATE = os.path.join(ROOT, "_template", "SKILL_TEMPLATE.md")
+VALIDATION_TEMPLATE = os.path.join(ROOT, "_template", "validation.yaml")
 INDEX = os.path.join(ROOT, "index.yaml")
 CAP_INDEX = os.path.normpath(os.path.join(ROOT, "..", "index", "capability_index.yaml"))
 
@@ -42,6 +43,17 @@ def known_operators():
     return {c["operator"] for c in (data.get("candidates") or []) if "operator" in c}
 
 
+def validation_status(skill_path, fm):
+    relative = str(fm.get("validation_file") or "").strip()
+    if relative:
+        path = os.path.join(os.path.dirname(skill_path), relative)
+        if os.path.isfile(path):
+            data = yaml.safe_load(open(path)) or {}
+            return data.get("status", "draft")
+        return "draft"
+    return (fm.get("validation") or {}).get("status", "draft")
+
+
 def reindex():
     ops = known_operators()
     entries = []
@@ -59,9 +71,19 @@ def reindex():
             "id": fm["id"],
             "file": f"skills/{sub}/skill.md",
             "scope": fm.get("scope", "kernel"),
+            "revision": fm.get("revision", ""),
+            "playbook_file": (
+                f"skills/{sub}/{fm['playbook_file']}" if fm.get("playbook_file") else ""
+            ),
+            "contract_file": (
+                f"skills/{sub}/{fm['contract_file']}" if fm.get("contract_file") else ""
+            ),
+            "validation_file": (
+                f"skills/{sub}/{fm['validation_file']}" if fm.get("validation_file") else ""
+            ),
             "match": fm.get("match", {}),
             "expects": fm.get("expects", {}),
-            "validation_status": (fm.get("validation") or {}).get("status", "draft"),
+            "validation_status": validation_status(skill_md, fm),
         })
     header = (
         "# index.yaml — expert_skills selector (AUTO-MAINTAINED by _contribute/scaffold.py + "
@@ -69,7 +91,8 @@ def reindex():
         "# Regenerate with:  python _contribute/scaffold.py --reindex\n"
         "# NOT a ranking. Filter by (operator, gen, arch_class, [from->to], status==validated) -> MEASURE.\n"
         "# Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).\n\n"
-        "schema: {id, file, scope, match, expects, validation_status}\n\n"
+        "schema: {id, file, scope, revision, playbook_file, contract_file, "
+        "validation_file, match, expects, validation_status}\n\n"
     )
     with open(INDEX, "w") as f:
         f.write(header)
@@ -100,12 +123,21 @@ def create(args):
     if args.arch:    fm["match"]["arch_class"] = args.arch.split(",")
     if args.from_backend: fm["match"]["from_backend"] = args.from_backend
     if args.to_backend:   fm["match"]["to_backend"] = args.to_backend
-    fm.setdefault("validation", {})["status"] = "draft"
+    fm.pop("validation", None)
+    fm["validation_file"] = "validation.yaml"
     with open(dest, "w") as f:
         f.write("---\n")
         f.write(yaml.safe_dump(fm, sort_keys=False, allow_unicode=True, width=100))
         f.write("---\n")
         f.write(body)
+    validation_path = os.path.join(skill_dir, "validation.yaml")
+    shutil.copyfile(VALIDATION_TEMPLATE, validation_path)
+    validation = yaml.safe_load(open(validation_path)) or {}
+    validation["skill_id"] = args.id
+    validation["revision"] = fm.get("revision", "v1")
+    validation["status"] = "draft"
+    with open(validation_path, "w") as f:
+        yaml.safe_dump(validation, f, sort_keys=False, allow_unicode=True, width=100)
     print(f"created {os.path.relpath(dest, ROOT)} (status: draft)")
     print("Next: fill in When-to-use / Mechanism / Procedure / Do-no-harm, then run "
           "_contribute/make_pr.sh " + args.id)
