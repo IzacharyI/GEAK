@@ -33,7 +33,7 @@ ok(/if \(!batch\.length \|\| !megaMeasurementCalibration\.ready\) return null/.t
 
 console.log('\n# verification is tiered');
 const verifyRole = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'verify_engineer.md'), 'utf8');
-ok(/`score`:[\s\S]*8192_uniform[\s\S]*short liveness/.test(verifyRole),
+ok(/`score`:[\s\S]*supplied target guard[\s\S]*short liveness/.test(verifyRole),
   'score tier is the cheap target-only admission measurement');
 ok(/`finalist`:[\s\S]*all target\/regression guards[\s\S]*overlap\/attribution/.test(verifyRole),
   'expensive full evidence is reserved for finalists');

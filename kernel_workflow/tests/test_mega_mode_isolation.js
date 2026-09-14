@@ -31,6 +31,7 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_ID = 'megamoe_ep_mega_fusion';
   const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
   const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/playbook.md';
+  const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/contract.yaml';
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
   const CAPABILITY_EVAL = false;
@@ -41,8 +42,9 @@ const makeBlock = (enabled) => new Function(`
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
 ok(enabled('mega_search_lead').includes('skill.md') &&
-   enabled('mega_search_lead').includes('playbook.md'),
-  'the common Mega planner receives the matched skill/playbook when enabled');
+   enabled('mega_search_lead').includes('playbook.md') &&
+   enabled('mega_search_lead').includes('contract.yaml'),
+  'the common Mega planner receives the matched skill/playbook/contract when enabled');
 ok(enabled('engineer').includes('NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE'),
   'the common Engineer receives the same matched normative knowledge');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
@@ -65,8 +67,8 @@ ok(/MEGA unified mode: Expert Skills are/.test(src),
 console.log('\n# autonomous candidates remain measurable and flexible');
 ok(/search plan rejected diagnostic-only direction/.test(src),
   'diagnostic-only work cannot consume a candidate turn');
-ok(/fully fuse[\s\S]*or fuse only a profitable subset/.test(searchLead) &&
-   /partial-fusion\/enabling topology is valid/.test(searchLead),
+ok(/Full and profitable partial[\s\S]*fusion are both legal/.test(searchLead) &&
+   /partial terminal[\s\S]*complete runnable operator/.test(searchLead),
   'full and partial fusion may both become runnable performance candidates');
 ok(/complete runnable operator/.test(searchLead) &&
    /external operator is complete, correctness passes/.test(engineer),
@@ -81,18 +83,29 @@ ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*'candidate_directions'[\s\S]*'task_grap
    /schema: MODE === 'mega' \? MEGA_ANALYZE_SCHEMA : ANALYZE_SCHEMA/.test(src),
   'Mega Analyze cannot return roadmap prose while omitting its structured pipeline artifacts');
 ok(/'task_graph', 'resource_timeline', 'mega_plan_ir'/.test(src) &&
-   /required mega_plan_ir missing/.test(src),
+   /required mega_plan_ir invalid/.test(src),
   'Mega Analyze requires a lowerable typed plan, not only a roadmap');
-ok(/resource_contract: \{/.test(src) &&
-   /schedule_contract: \{/.test(src) &&
-   /group_segment_bytes/.test(src) &&
-   /carried_scalars/.test(src) &&
-   /stage2_pointer_count/.test(src),
-  'MegaPlanIR strongly types resource, schedule and ABI constraints');
-ok(/TASK_GRAPH: JSON\.stringify\(analysis\.task_graph\)/.test(src) &&
-   /RESOURCE_TIMELINE: JSON\.stringify\(analysis\.resource_timeline\)/.test(src) &&
-   /MEGA_PLAN_IR: JSON\.stringify\(analysis\.mega_plan_ir\)/.test(src),
-  'the dedicated Mega planner receives graph, resource and typed-plan artifacts');
+ok(/plan_version/.test(src) &&
+   /work_domains/.test(src) &&
+   /buffers/.test(src) &&
+   /counters/.test(src) &&
+   /local_memory/.test(src) &&
+   /primary_loop/.test(src) &&
+   /compiler_constraints/.test(src) &&
+   /evidence_requirements/.test(src),
+  'MegaPlanIR v2 strongly types operator-neutral dataflow, resources and evidence');
+ok(!/stage2_pointer_count|combine_pointer_count|g2_chunk|combine_third_queue/.test(src) &&
+   !/MegaMoE|GEMM1|GEMM2|g2_chunk/.test(searchLead) &&
+   !/MegaMoE|8192_uniform|AITER_MEGAMOE|SCATTERED|g2_/.test(src),
+  'operator-specific identifiers are Skill data, not workflow or planner schema');
+ok(/contract_failures/.test(src) &&
+   /correctness.*abi.*lifecycle.*resource\/compiler.*schedule.*performance/s.test(searchLead),
+  'Planner receives categorized verifier failures instead of prose-only blockers');
+ok(/TASK_GRAPH: analysis\.task_graph/.test(src) &&
+   /RESOURCE_TIMELINE: analysis\.resource_timeline/.test(src) &&
+   /MEGA_PLAN_IR: analysis\.mega_plan_ir/.test(src) &&
+   !/MEGA_PLAN_IR: JSON\.stringify/.test(src),
+  'the planner receives complete graph/resource/PlanIR objects without truncation');
 ok(!/MEGA_TOPOLOGY_LEVERS/.test(src) &&
    /target_topology: targetTopology/.test(src),
   'target_topology is no longer deleted by an experimental kill switch');

@@ -45,18 +45,40 @@ const MEGA_COMPLETE = {
   task_graph: { nodes: [{ id: 'g1' }], edges: [{ from: 'g1', to: 'g2' }] },
   resource_timeline: { pipes: [{ stage: 'g1', pipe: 'mfma', utilization_pct: null }] },
   mega_plan_ir: {
-    regions: [{ id: 'g1' }], queues: [{ id: 'q1' }], events: [{ id: 'e1' }],
-    source_shape_constraints: ['one unified loop'],
-    resource_contract: {
-      arch: 'gfx950', wave_size: 64, threads_per_workgroup: 512, num_waves: 8,
-      lds: { group_segment_bytes: 160400, limit_bytes: 163840 },
+    plan_version: 'mega-plan-v2',
+    target: {
+      launch_count: 1, required_regions: ['producer', 'consumer'],
+      required_queues: ['work'],
     },
-    schedule_contract: {
-      unified_gemm_loop: true,
-      carried_scalars: ['consumer_active', 'g2_pend', 'g2_next'],
-      work_shards: 4, num_dispatch_cu: 96, combine_third_queue: true,
+    work_domains: [{ id: 'items' }],
+    regions: [
+      { id: 'producer', work_domain: 'items' },
+      { id: 'consumer', work_domain: 'items' },
+    ],
+    buffers: [{
+      id: 'payload', producers: ['producer'], consumers: ['consumer'],
+    }],
+    counters: [{
+      id: 'ready', producers: ['producer'], consumers: ['consumer'],
+    }],
+    queues: [{ id: 'work', work_domain: 'items' }],
+    events: [{
+      id: 'ready_event', producer: 'producer', consumer: 'consumer', counter: 'ready',
+    }],
+    resources: {
+      arch: 'test-arch',
+      workgroup: { wave_size: 64, thread_count: 256 },
+      local_memory: { total_bytes: 1024, limit_bytes: 2048 },
     },
-    abi: { direct_fused_args: true, argument_order: ['s2', 'combine'] },
+    schedule: {
+      primary_loop: {
+        kind: 'unified', carried_state: ['active'], queue_priority: ['work'],
+      },
+    },
+    abi: { entry_point: 'kernel', arguments: [{ id: 'payload' }] },
+    compiler_constraints: [{ id: 'shape' }],
+    evidence_requirements: { accuracy: 'required' },
+    known_unknowns: [],
   },
 };
 
@@ -91,6 +113,11 @@ console.log('\n# the wave-15 shape');
     'a Mega analysis without a lowerable typed plan is repaired before Benchmark');
   ok(analyzeResumeDegenerate(false, MEGA_COMPLETE, true, true).retry === false,
     'a complete graph/resource/typed-plan contract proceeds without another Analyze');
+  const dangling = JSON.parse(JSON.stringify(MEGA_COMPLETE));
+  dangling.mega_plan_ir.events[0].counter = 'missing_counter';
+  const invalid = analyzeResumeDegenerate(false, dangling, true, true);
+  ok(invalid.retry === true && /unknown counter/.test(invalid.reason),
+    'relationally invalid PlanIR is rejected even when every collection is populated');
 }
 
 console.log('\n# it must not fire anywhere else');

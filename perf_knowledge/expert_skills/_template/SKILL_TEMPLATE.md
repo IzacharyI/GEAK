@@ -8,6 +8,7 @@ revision: v1
 playbook_file: ""        # optional detailed implementation guide in this skill directory
 contract_file: ""        # optional declarative source/PlanIR preflight
 validation_file: validation.yaml
+runtime_validation_file: ""  # optional operator-specific runtime verifier
 # ---- selector: the workflow matches these against the live bottleneck ----
 match:
   operator: REPLACE                 # MUST exist in ../index/capability_index.yaml (validated by scaffold)

@@ -43,7 +43,7 @@ console.log('\n# the final gate is common and expensive only once');
 ok(/A source label[\s\S]*never relaxes a[\s\S]*quality gate/.test(director) &&
    /speedup is `<=1\.0`/.test(director),
   'Director applies one source-blind correctness and above-baseline gate');
-ok(/run the three regression guards/.test(director) &&
+ok(/run every supplied regression guard/.test(director) &&
    /required liveness/.test(director),
   'finalists pay the complete guard and liveness contract');
 ok(/isolated:\s*1\.0448/.test(validation) &&

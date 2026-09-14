@@ -137,7 +137,7 @@ overlap: {
   fraction: 0.0,                        // overlap_fraction, wall-clock, ≥2 distinct roles
   cu_fraction: 0.0,                     // CU-weighted
   method: "in-kernel s_memrealtime per-workgroup phase log | rocprofv3 kernel trace | ...",
-  scattered_reading: 0.0,               // the negative control. REQUIRED to believe the rest.
+  base_reading: 0.0,                    // the negative control. REQUIRED to believe the rest.
   forced_reading: 0.0,                  // the positive control, and what was constructed
   clock_skew_ns: 0,                     // trap 1
   meter_overhead_pct: 0.0,              // trap 2

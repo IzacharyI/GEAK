@@ -35,7 +35,7 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 
 In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
 can be optimized later, but it is never a final result. Finalists require absolute speedup greater
-than 1.0 versus frozen MegaMoE V2. `claim_complete` describes this turn's
+than 1.0 versus the frozen baseline. `claim_complete` describes this turn's
 artifact, not terminal candidate quality: after a coherent source checkpoint,
 commit, manifest and `candidate_result.json` are final, set it true with
 `candidate_status:"authoring"` and correctness/performance `pending`. Set it
@@ -170,7 +170,7 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
 8. **mode=mega (mega-gated) — advance only your candidate lane.** `CANDIDATE_TREE` is an independent
    lineage, not a shared floor. Continue its HEAD, keep its complete two-launch target coherent, and
    never modify another registry candidate. Slow correct work remains runnable WIP; it may continue
-   but cannot become final output until absolute speedup is greater than 1.0 versus frozen MegaMoE V2.
+   but cannot become final output until absolute speedup is greater than 1.0 versus the frozen baseline.
    A diagnostic, no-payload arm, profile, or overlap meter is temporary evidence, not a search
    candidate: do not return an instrumentation-only patch/result. The same turn must author or
    improve selectable runnable source and run a real candidate-vs-frozen target measurement.
@@ -184,7 +184,7 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    When fusing serialized compute stages, preserve dependency order per CTA
    without recreating it grid-wide: an empty local shard lets that CTA move to
    ready downstream work while other CTAs may remain upstream. Do not insert a
-   global stage drain/barrier or a permanent GEMM1/GEMM2 CU split merely
+   global stage drain/barrier or a permanent upstream/downstream CU split merely
    because both stages use MFMA; read `distributed_fusion.md` Lever 1b.
    If the prompt includes a detailed advisory Expert Skill reference, treat its
    validated mechanism as a prior rather than repeatedly redesigning unused

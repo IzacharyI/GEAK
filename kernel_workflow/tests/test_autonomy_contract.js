@@ -140,7 +140,7 @@ const GOOD = {
   },
   overlap: {
     measured: 'yes', fraction: 0.20, cu_fraction: 0.16,
-    scattered_reading: 0.0, forced_reading: 0.95,
+    base_reading: 0.0, forced_reading: 0.95,
   },
   attribution: {
     changed_us: 4500, replaced_sum_us: 4600,

@@ -45,126 +45,140 @@ forbidden_markers:
 plan:
   required: true
   assertions:
+    - id: plan_ir_v2
+      path: plan_version
+      op: eq
+      value: mega-plan-v2
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
       value: mega-ep-fusion-v1
     - id: target_two_launches
-      path: target_launches
+      path: target.launch_count
       op: eq
       value: 2
+    - id: work_domains_declared
+      path: work_domains
+      op: nonempty
+    - id: buffers_declared
+      path: buffers
+      op: nonempty
+    - id: counters_declared
+      path: counters
+      op: nonempty
     - id: gfx950_arch
-      path: resource_contract.arch
+      path: resources.arch
       op: eq
       value: gfx950
     - id: wave64
-      path: resource_contract.wave_size
+      path: resources.workgroup.wave_size
       op: eq
       value: 64
     - id: native_wave_count
-      path: resource_contract.num_waves
+      path: resources.workgroup.wave_count
       op: in
       value: [4, 8]
     - id: threads_match_waves
-      left: {path: resource_contract.threads_per_workgroup}
+      left: {path: resources.workgroup.thread_count}
       op: eq
       right:
         op: multiply
         args:
-          - {path: resource_contract.wave_size}
-          - {path: resource_contract.num_waves}
+          - {path: resources.workgroup.wave_size}
+          - {path: resources.workgroup.wave_count}
     - id: aliased_lds_arithmetic
-      left: {path: resource_contract.lds.group_segment_bytes}
+      left: {path: resources.local_memory.total_bytes}
       op: eq
       right:
         op: add
         args:
           - op: max
             args:
-              - {path: resource_contract.lds.stage1_pool_bytes}
+              - {path: resources.parameters.stage1_pool_bytes}
               - op: multiply
                 args:
-                  - {path: resource_contract.lds.stage2_slab_bytes}
-                  - {path: resource_contract.lds.halves}
-          - {path: resource_contract.lds.additive_bytes}
+                  - {path: resources.parameters.stage2_slab_bytes}
+                  - {path: resources.parameters.role_halves}
+          - {path: resources.parameters.additive_bytes}
     - id: lds_within_limit
-      left: {path: resource_contract.lds.group_segment_bytes}
+      left: {path: resources.local_memory.total_bytes}
       op: lte
-      right: {path: resource_contract.lds.limit_bytes}
+      right: {path: resources.local_memory.limit_bytes}
     - id: lds_alias_by_max
-      path: resource_contract.lds.aliasing
+      path: resources.local_memory.allocation_rule
       op: eq
       value: max
     - id: scratch_unverified_or_zero
-      path: resource_contract.registers.scratch_bytes_max
+      path: resources.registers.scratch_bytes_max
       op: in
       value: [null, 0]
     - id: resident_workgroup
-      path: resource_contract.residency.min_workgroups_per_cu
+      path: resources.occupancy.min_workgroups_per_cu
       op: gte
       value: 1
-    - id: unified_gemm_loop
-      path: schedule_contract.unified_gemm_loop
+    - id: unified_primary_loop
+      path: schedule.primary_loop.kind
       op: eq
-      value: true
+      value: unified
     - id: minimal_loop_carry
-      path: schedule_contract.carried_scalars
+      path: schedule.primary_loop.carried_state
       op: eq
       value: [consumer_active, g2_pend, g2_next]
     - id: combine_third_queue
-      path: schedule_contract.combine_third_queue
+      path: schedule.parameters.combine_third_queue
       op: eq
       value: true
     - id: large_chunk
-      path: schedule_contract.g2_chunk_large
+      path: schedule.parameters.g2_chunk_large
       op: eq
       value: 16
     - id: small_chunk
-      path: schedule_contract.g2_chunk_small
+      path: schedule.parameters.g2_chunk_small
       op: eq
       value: 1
     - id: preemption_keeps_producer_cohort
-      path: schedule_contract.preemption_interval
+      path: schedule.parameters.preemption_interval
       op: gte
       value: 2
     - id: skew_numerator_positive
-      path: schedule_contract.skew_num
+      path: schedule.parameters.skew_num
       op: gt
       value: 0
     - id: skew_denominator_positive
-      path: schedule_contract.skew_den
+      path: schedule.parameters.skew_den
       op: gt
       value: 0
     - id: supported_work_shards
-      path: schedule_contract.work_shards
+      path: schedule.parameters.work_shards
       op: in
       value: [1, 2, 4, 8]
     - id: direct_fused_abi
-      path: abi.direct_fused_args
+      path: abi.parameters.direct_fused_args
       op: eq
       value: true
     - id: stage2_pointer_count
-      path: abi.stage2_pointer_count
+      path: abi.parameters.stage2_pointer_count
       op: eq
       value: 12
     - id: combine_pointer_count
-      path: abi.combine_pointer_count
+      path: abi.parameters.combine_pointer_count
       op: eq
       value: 7
     - id: optional_quant_pointer_count
-      path: abi.optional_quant_pointer_count
+      path: abi.parameters.optional_quant_pointer_count
       op: in
       value: [0, 2]
     - id: disabled_abi_placeholders
-      path: abi.disabled_placeholders
+      path: abi.parameters.disabled_placeholders
       op: eq
       value: true
     - id: ordered_abi
-      path: abi.argument_order
+      path: abi.arguments
       op: nonempty
 
 checks:
   - id: host_full_fusion_path
+    category: schedule
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._run_joint
@@ -175,6 +189,7 @@ checks:
       - 'return out_tok'
 
   - id: host_variant_controls_are_live
+    category: schedule
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._run_joint
@@ -184,6 +199,7 @@ checks:
       - 'if fuse_comb'
 
   - id: fixed_slot_group_done_capacity
+    category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._allocate_dispatch_workspace
@@ -192,6 +208,7 @@ checks:
       - '(?:_group_done_slots\(self\.world_size\)|torch\.zeros\(self\.world_size)'
 
   - id: no_private_token_ready_shadow
+    category: abi
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     match: none
@@ -199,6 +216,7 @@ checks:
       - '_s1_c_tok_ready\s*=\s*torch\.zeros'
 
   - id: host_ready_pointer_identity
+    category: abi
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._fused_all_kwargs
@@ -211,6 +229,7 @@ checks:
       - '_fx_fused_comb_mtile_ctr'
 
   - id: no_host_counter_reset_on_hot_path
+    category: lifecycle
     kind: forbid_methods
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._run_fused_stage1
@@ -218,6 +237,7 @@ checks:
     receivers: ['ctr', 'ready', 'epoch']
 
   - id: selected_stage2_geometry
+    category: resource
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._fused_all_kwargs
@@ -227,6 +247,7 @@ checks:
       - '_g2_active_block_m\s*=\s*stage2\.block_m'
 
   - id: direct_fused_kernel_abi
+    category: abi
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1
@@ -239,6 +260,7 @@ checks:
       - 'c_mtile_ctr'
 
   - id: nested_stage2_emitter
+    category: compiler
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
     scope: make_stage2_body_emitter
@@ -249,6 +271,7 @@ checks:
       - 'publish_tok_ready'
 
   - id: every_a_lds_load_forwards_nw
+    category: compiler
     kind: call_keywords
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
     scope: make_stage2_body_emitter
@@ -258,6 +281,7 @@ checks:
       NW: '.+'
 
   - id: unified_gemm_queue
+    category: schedule
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -269,6 +293,7 @@ checks:
       - 'atomic_add_system'
 
   - id: sharded_g2_heads
+    category: performance
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -279,6 +304,7 @@ checks:
       - 'work_shard\s*\+\s*local\s*\*\s*fx\.Int32\(WORK_SHARDS\)'
 
   - id: expert_skew_preemption
+    category: schedule
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -290,6 +316,7 @@ checks:
       - 'and _g2_skewed'
 
   - id: chunk_last_dependency
+    category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -299,6 +326,7 @@ checks:
       - '_g2_tile_of\(_cl\)'
 
   - id: g1_write_through_publication
+    category: correctness
     kind: call_keywords
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -307,6 +335,7 @@ checks:
       out_cache_modifier: '_G1_OUT_WT'
 
   - id: no_per_tile_system_flush
+    category: performance
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -315,6 +344,7 @@ checks:
       - 'fence_system_release\(\)[\s\S]{0,220}atomic_add_system\([\s\S]{0,120}(?:g2_ctr|_g2_comp)'
 
   - id: device_generation_and_token_padding
+    category: lifecycle
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -325,6 +355,7 @@ checks:
       - '_c_t\s*>=\s*i32_cur_tok'
 
   - id: combine_transport_and_work_domain
+    category: correctness
     kind: call_keywords
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -337,6 +368,7 @@ checks:
       tok_ready_epoch: 'c_epoch'
 
   - id: adaptive_combine_partition
+    category: performance
     kind: regex
     file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
     scope: make_combine_reduce_emitter
@@ -348,6 +380,7 @@ checks:
       - 'hdim_per_warp'
 
   - id: monotone_token_ready_wait
+    category: lifecycle
     kind: regex
     file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
     scope: make_combine_reduce_emitter
@@ -357,6 +390,7 @@ checks:
       - 'int32_wait_until_greater_than'
 
   - id: stage2_tile_close_publication
+    category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
     scope: make_stage2_body_emitter
@@ -367,6 +401,7 @@ checks:
       - 'arg_p2p_tok_ready'
 
   - id: aliased_lds_pool
+    category: resource
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1
@@ -375,6 +410,7 @@ checks:
       - 'S2\[[''"]slab[''"]\]'
 
   - id: active_capacity_arguments_are_consumed
+    category: abi
     kind: parameter_loads
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel

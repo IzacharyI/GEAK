@@ -41,9 +41,10 @@ const ok = (value, message) => {
 const complete = (id, score) => ({
   id, source: 'search', status: 'scored', tree: `/state/${id}`, head: `${id}-head`,
   claim_complete: true, attempt_id: `${id}:1`, evidence_manifest: `${id}.json`,
+  target_guard: 'target_case',
   absolute_score: score, per_case: [{ name: '8192_uniform', speedup: score }],
   paired_readings: Array.from({ length: 5 }, (_, i) => ({
-    guard: '8192_uniform', base: 4.6 + i * 0.001,
+    guard: 'target_case', base: 4.6 + i * 0.001,
     cand: (4.6 + i * 0.001) / score,
   })),
   null_arm_pct: 0.1, reps: 5,

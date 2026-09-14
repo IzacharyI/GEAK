@@ -207,6 +207,8 @@ const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
 if (!['optimize', 'author', 'mega'].includes(MODE)) {
   throw new Error(`args.mode must be 'optimize', 'author' or 'mega', got '${MODE}'`);
 }
+const MEGA_DEFAULT_SPECIALTY = String(A.mega_default_specialty ||
+  (GPU_RESOURCE.gpusPerJob > 1 ? 'distributed' : 'compute'));
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
 // Mega is a portfolio of independent WORKFLOW-AUTHORED whole-kernel candidates, not a reproduction
@@ -254,7 +256,10 @@ const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
 // graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
 // This turns on an OPTIONAL capture+replay smoke in the verify step so that failure is caught at the cheap
 // isolated stage. Unset (standalone single-kernel runs / non-graph ops) => byte-identical to before.
-const REQUIRE_GRAPH_CAPTURE = !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
+const REQUIRE_GRAPH_CAPTURE = A.require_graph_capture != null
+  ? String(A.require_graph_capture) === 'true'
+  : !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
+const DIRECT_GRAPH_ACCURACY = String(A.direct_graph_accuracy || 'false') === 'true';
 // WORKLOAD ALIGNMENT (optional). When the caller supplies the real-workload shape/dtype case
 // distribution, the benchmark harness benchmarks EXACTLY those (shape, dtype) cases, weights each
 // by its total time contribution in the workload (weight = count * baseline_latency), and the
@@ -277,6 +282,9 @@ const argList = (value) => (Array.isArray(value) ? value : String(value || '').s
 // promoted as the current best while the requested uniform guard executed the baseline path.
 const TARGET_GUARDS = argList(A.target_guards);
 const REGRESSION_GUARDS = argList(A.regression_guards);
+const BIMODAL_GUARDS = argList(A.bimodal_guards);
+const BASELINE_ACTIVATION = A.baseline_activation &&
+  typeof A.baseline_activation === 'object' ? A.baseline_activation : {};
 // `operator_e2e` is the only generally comparable metric across a launch-structure change. Per-stage
 // timers collected in separate graphs/rank reductions are diagnostics; summing them is not a fused
 // kernel time. `changed_kernel` remains available for tasks that provide a genuinely comparable
@@ -328,9 +336,9 @@ const REQUIRE_EXPERT_SKILL_CONTRACT = CHECK_EXPERT_SKILL_CONTRACT &&
 if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
   throw new Error('mega_structural_only requires an enabled Expert Skill contract');
 }
-const MEGA_GRAPH_CONTRACT_TOOL = String(A.mega_graph_contract_tool ||
-  `${WORKFLOW_DIR}/tools/mega_graph_contract.py`);
+const GRAPH_CONTRACT_TOOL = String(A.graph_contract_tool || '');
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
+const BENCH_HARNESS = String(A.benchmark_harness || '');
 const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
 const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
   A.expert_skill_accuracy_cases || [],
@@ -387,7 +395,7 @@ const REQUIRE_ARTIFACT_DISTINCT = String(
 // ON-HARDWARE ACTIVATION. Opt-in (default OFF, so a wave that does not ask for it is byte-identical to
 // before). When set, a switched / perf-bearing candidate may be committed or counted as an enabling
 // step ONLY if its patched path was EXECUTED ON THE DEVICE this round — not merely compile-screened.
-// This closes the exact hole that let a fused MegaMoE arm bank for 8 rounds behind a default-OFF flag,
+// This closes the exact hole that let a fused arm bank for many rounds behind a default-OFF flag,
 // green on py_compile + a static ISA-distinctness hash, whose ON path crashed at JIT-trace time the
 // first time it was ever run on hardware. `artifact_distinct: 'yes'` is satisfiable from a COMPILE_ONLY
 // build (see roles/gfx950_lowering.md's lease-free method); it proves two binaries differ, NOT that the
@@ -538,7 +546,7 @@ const MEGA_RESUME_STATE = MODE === 'mega' && !!STATE_DIR &&
 // phase. Default OFF = byte-identical; inert without a STATE_DIR to persist across waves. When ON it
 // REUSES a prior wave's front-matter measurements (positive-control calibration + profile replays) —
 // the ~40min on-card cost of the front matter — GATED on a validity key. It NEVER touches the scoring
-// denominator: the per-candidate paired A/B re-pins the scattered baseline fresh every turn (see the
+// denominator: the per-candidate paired A/B re-pins the frozen baseline fresh every turn (see the
 // "Benchmark is NEVER incremental" note below and pairedGuardReadout), so cached front-matter numbers
 // are advisory context + the instrument-validity gate ONLY, never the number a speedup is divided by.
 const MEGA_FAST_TEST = MODE === 'mega' && !!STATE_DIR &&
@@ -687,8 +695,14 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   structural_report: { type: 'string' },
   structural_contract_revision: { type: 'string' },
   structural_contract_sha256: { type: 'string' },
+  contract_failures: { type: 'array', items: obj({
+    id: { type: 'string' }, category: { type: 'string' },
+    severity: { type: 'string' },
+    messages: { type: 'array', items: { type: 'string' } },
+  }, ['id', 'category', 'severity', 'messages']) },
   attempt_id: { type: 'string' },
   evidence_manifest: { type: 'string' },
+  target_guard: { type: 'string' },
   correctness: { type: 'string' },
   build: { type: 'boolean' },
   tree: { type: 'string' },
@@ -732,6 +746,11 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   provenance_status: { type: 'string' },
   contract_revision: { type: 'string' },
   contract_sha256: { type: 'string' },
+  contract_failures: { type: 'array', items: obj({
+    id: { type: 'string' }, category: { type: 'string' },
+    severity: { type: 'string' },
+    messages: { type: 'array', items: { type: 'string' } },
+  }, ['id', 'category', 'severity', 'messages']) },
   plan_consistent: { type: 'boolean' },
   semantic_features_passed: { type: 'number' },
   semantic_features_total: { type: 'number' },
@@ -744,50 +763,47 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   'candidate_id', 'candidate_head', 'claim_complete', 'structural_compatible',
   'independent_structure_pass', 'capability_eligible', 'hardware_verified',
   'accuracy_verified', 'performance_verified', 'plan_consistent',
+  'contract_revision', 'contract_sha256', 'contract_failures',
 ]);
 
-// Mismatch #2 fix (Stage-3 foundation). A structured, MULTI-LEVER description of a WHOLE fused-kernel
-// topology. The inherited optimize loop can only express a single on/off A/B switch (ENG_SCHEMA.activation);
-// a fused megakernel candidate is a vector — launch count, which stages are co-resident, whether combine is
-// folded as a third ticketed queue, the GEMM2 wave/reclaim count, and the SITE1/SITE2/combine concurrency
-// knobs the bench already exposes (bench_mega_moe_v2.py --stage1-*/--stage2-*/--combine-*). Every Mega
-// direction carries `target_topology`; consumed by megaShapeFromTopology() into verify TARGET_SHAPE.
+// A structured, operator-neutral description of a whole-kernel topology. Operator-specific region,
+// queue and capability names are values supplied by Analyze/Skill data, never fields in this schema.
 const MEGA_TOPOLOGY_SCHEMA = obj({
-  launches: { type: 'number' },
-  fused_stages: { type: 'array', items: { type: 'string' } },
-  combine_mode: { type: 'string', enum: ['queue', 'separate'] },
-  g2_waves: { type: 'number' },
+  launch_count: { type: 'number' },
+  included_regions: { type: 'array', items: { type: 'string' } },
+  included_queues: { type: 'array', items: { type: 'string' } },
+  capabilities: { type: 'array', items: { type: 'string' } },
   require_overlap: { type: 'boolean' },
-  site1: obj({ work_shards: { type: 'number' }, dispatch_cu: { type: 'number' } }),
-  site2: obj({ persist_cu: { type: 'number' }, skew_cu: { type: 'number' } }),
-  combine_knobs: obj({ block_num: { type: 'number' }, warp_num: { type: 'number' } }),
+  parameters: { type: 'object', additionalProperties: true },
   notes: { type: 'string' },
 });
 
-// Convert a multi-lever MEGA_TOPOLOGY_SCHEMA descriptor into the verify TARGET_SHAPE. The fallback is
-// retained only for parsing historical state; new Mega plans are required to carry a descriptor.
-function megaShapeFromTopology(topo) {
-  const legacy = {
-    launches: LAUNCH_TARGET,
-    stages_fused: ['dispatch', 'gemm1', 'gemm2', 'combine'],
-    require_overlap: false,
-  };
-  if (!topo || typeof topo !== 'object') return legacy;
-  const shape = {
-    launches: Number.isFinite(Number(topo.launches)) ? Number(topo.launches) : legacy.launches,
-    stages_fused: Array.isArray(topo.fused_stages) && topo.fused_stages.length
-      ? topo.fused_stages.map(String) : legacy.stages_fused,
-    require_overlap: topo.require_overlap === true ? true : legacy.require_overlap,
-  };
-  if (topo.combine_mode) shape.combine_mode = String(topo.combine_mode);
-  if (topo.g2_waves != null && Number.isFinite(Number(topo.g2_waves))) shape.g2_waves = Number(topo.g2_waves);
-  if (topo.site1 && typeof topo.site1 === 'object') shape.site1 = topo.site1;
-  if (topo.site2 && typeof topo.site2 === 'object') shape.site2 = topo.site2;
-  if (topo.combine_knobs && typeof topo.combine_knobs === 'object') shape.combine_knobs = topo.combine_knobs;
-  return shape;
+// <<REPLAY:mega_topology_contract>>
+function topologyLaunchCount(topo) {
+  if (!topo || typeof topo !== 'object') return NaN;
+  const value = topo.launch_count != null ? topo.launch_count : topo.launches;
+  return Number(value);
 }
 
-// <<REPLAY:mega_topology_contract>>
+// Convert the operator-neutral descriptor into Verify's historical TARGET_SHAPE vocabulary.
+function megaShapeFromTopology(topo) {
+  if (!topo || typeof topo !== 'object') {
+    return { launches: LAUNCH_TARGET, stages_fused: [], require_overlap: false };
+  }
+  return {
+    launches: Number.isFinite(topologyLaunchCount(topo))
+      ? topologyLaunchCount(topo) : LAUNCH_TARGET,
+    stages_fused: Array.isArray(topo.included_regions)
+      ? topo.included_regions.map(String)
+      : (Array.isArray(topo.fused_stages) ? topo.fused_stages.map(String) : []),
+    queues: Array.isArray(topo.included_queues) ? topo.included_queues.map(String) : [],
+    capabilities: Array.isArray(topo.capabilities) ? topo.capabilities.map(String) : [],
+    require_overlap: topo.require_overlap === true,
+    parameters: topo.parameters && typeof topo.parameters === 'object'
+      ? { ...topo.parameters } : {},
+  };
+}
+
 function megaTopologyVerdict(direction, planIr) {
   const topo = direction && direction.target_topology;
   if (!topo || typeof topo !== 'object') {
@@ -797,38 +813,39 @@ function megaTopologyVerdict(direction, planIr) {
     return { pass: false, reason:
       'planner omitted target_topology; orchestrator inferred a compatibility fallback' };
   }
-  const launches = Number(topo.launches);
-  const stages = Array.isArray(topo.fused_stages) ? topo.fused_stages.filter(Boolean) : [];
-  if (!Number.isFinite(launches) || launches < 1 || !stages.length) {
+  const launches = topologyLaunchCount(topo);
+  const regions = Array.isArray(topo.included_regions)
+    ? topo.included_regions.filter(Boolean)
+    : (Array.isArray(topo.fused_stages) ? topo.fused_stages.filter(Boolean) : []);
+  if (!Number.isFinite(launches) || launches < 1 || !regions.length) {
     return { pass: false, reason:
-      `target_topology must declare finite launches and non-empty fused_stages; got ` +
+      `target_topology must declare finite launch_count and non-empty included_regions; got ` +
       `${JSON.stringify(topo)}` };
   }
   const terminal = String(direction.step_role || 'terminal') === 'terminal';
-  const planned = Number(planIr && planIr.target_launches);
+  const planned = Number(planIr && planIr.target && planIr.target.launch_count);
   if (terminal && Number.isFinite(planned) && launches !== planned &&
       !String(direction.rung_deviation || '').trim()) {
     return { pass: false, reason:
-      `terminal topology declares ${launches} launches but mega_plan_ir targets ${planned}; ` +
+      `terminal topology declares ${launches} launches but mega_plan_ir target is ${planned}; ` +
       'declare rung_deviation for an intentional partial-fusion terminal' };
   }
-  const resources = planIr && planIr.resource_contract || {};
-  const schedule = planIr && planIr.schedule_contract || {};
-  if (topo.g2_waves != null && Number(topo.g2_waves) !== Number(resources.num_waves)) {
-    return { pass: false, reason:
-      `target_topology g2_waves=${topo.g2_waves} disagrees with ` +
-      `mega_plan_ir.resource_contract.num_waves=${resources.num_waves}` };
-  }
-  if (topo.site1 && topo.site1.work_shards != null &&
-      Number(topo.site1.work_shards) !== Number(schedule.work_shards)) {
-    return { pass: false, reason:
-      `target_topology work_shards=${topo.site1.work_shards} disagrees with ` +
-      `mega_plan_ir.schedule_contract.work_shards=${schedule.work_shards}` };
-  }
-  if (terminal && launches === planned && planned === 2 &&
-      String(topo.combine_mode || '') !== 'queue') {
-    return { pass: false, reason:
-      'two-launch terminal topology must declare combine_mode=queue' };
+  const target = planIr && planIr.target || {};
+  const requireAll = (declared, required, label) => {
+    const have = new Set(Array.isArray(declared) ? declared.map(String) : []);
+    const missing = (Array.isArray(required) ? required : [])
+      .map(String).filter((value) => !have.has(value));
+    return missing.length ? `${label} missing ${missing.join(',')}` : '';
+  };
+  if (terminal && launches === planned) {
+    const regionError = requireAll(regions, target.required_regions, 'included_regions');
+    if (regionError) return { pass: false, reason: regionError };
+    const queueError = requireAll(
+      topo.included_queues, target.required_queues, 'included_queues');
+    if (queueError) return { pass: false, reason: queueError };
+    const capabilityError = requireAll(
+      topo.capabilities, target.required_capabilities, 'capabilities');
+    if (capabilityError) return { pass: false, reason: capabilityError };
   }
   return { pass: true, reason: '' };
 }
@@ -1022,111 +1039,148 @@ const ANALYZE_SCHEMA = obj({
     properties: {
       plan_version: { type: 'string' },
       expert_skill_revision: { type: ['string', 'null'] },
-      target_launches: { type: 'number' },
+      target: obj({
+        launch_count: { type: 'number' },
+        required_regions: { type: 'array', items: { type: 'string' } },
+        required_queues: { type: 'array', items: { type: 'string' } },
+        required_capabilities: { type: 'array', items: { type: 'string' } },
+      }, ['launch_count', 'required_regions', 'required_queues']),
+      work_domains: { type: 'array', items: obj({
+        id: { type: 'string' }, unit: { type: 'string' },
+        extent: { type: 'string' }, index_type: { type: 'string' },
+      }, ['id', 'unit', 'extent', 'index_type']) },
       regions: { type: 'array', items: obj({
         id: { type: 'string' }, role: { type: 'string' },
-      }, ['id', 'role']) },
+        work_domain: { type: 'string' }, engine: { type: 'string' },
+      }, ['id', 'role', 'work_domain']) },
+      buffers: { type: 'array', items: {
+        type: 'object', additionalProperties: true,
+        properties: {
+          id: { type: 'string' }, role: { type: 'string' },
+          element_type: { type: 'string' }, capacity: { type: 'string' },
+          address_space: { type: 'string' }, format: { type: 'string' },
+          producers: { type: 'array', items: { type: 'string' } },
+          consumers: { type: 'array', items: { type: 'string' } },
+          lifetime: { type: 'string' }, alias_group: { type: 'string' },
+        },
+        required: ['id', 'role', 'element_type', 'capacity', 'address_space'],
+      } },
+      counters: { type: 'array', items: {
+        type: 'object', additionalProperties: true,
+        properties: {
+          id: { type: 'string' }, element_type: { type: 'string' },
+          capacity: { type: 'string' }, scope: { type: 'string' },
+          lifecycle: { type: 'string' }, reset_owner: { type: 'string' },
+          generation: { type: 'string' },
+          producers: { type: 'array', items: { type: 'string' } },
+          consumers: { type: 'array', items: { type: 'string' } },
+          publish: { type: 'string' }, wait: { type: 'string' },
+        },
+        required: [
+          'id', 'element_type', 'capacity', 'scope', 'lifecycle',
+          'producers', 'consumers',
+        ],
+      } },
       queues: { type: 'array', items: obj({
-        id: { type: 'string' }, claim_unit: { type: 'string' },
-        owner: { type: 'string' },
-      }, ['id', 'claim_unit']) },
+        id: { type: 'string' }, work_domain: { type: 'string' },
+        claim_unit: { type: 'string' }, owner: { type: 'string' },
+        shards: { type: 'number' }, stride_bytes: { type: 'number' },
+        chunk_policy: { type: 'string' }, ready_when: { type: 'string' },
+        priority: { type: 'number' },
+      }, ['id', 'work_domain', 'claim_unit', 'owner']) },
       events: { type: 'array', items: obj({
         id: { type: 'string' }, producer: { type: 'string' },
         consumer: { type: 'string' }, scope: { type: 'string' },
-        publish: { type: 'string' }, wait: { type: 'string' },
+        counter: { type: 'string' }, publish: { type: 'string' },
+        wait: { type: 'string' },
       }, ['id', 'producer', 'consumer', 'scope']) },
       abi: {
         type: 'object',
         additionalProperties: true,
         properties: {
-          direct_fused_args: { type: 'boolean' },
-          stage2_pointer_count: { type: 'number' },
-          combine_pointer_count: { type: 'number' },
-          optional_quant_pointer_count: { type: 'number' },
-          argument_order: { type: 'array', items: { type: 'string' } },
-          disabled_placeholders: { type: 'boolean' },
+          entry_point: { type: 'string' },
+          arguments: { type: 'array', items: {
+            type: 'object', additionalProperties: true,
+            properties: {
+              id: { type: 'string' }, type: { type: 'string' },
+              role: { type: 'string' }, source: { type: 'string' },
+              consumers: { type: 'array', items: { type: 'string' } },
+              optional: { type: 'boolean' },
+            },
+            required: ['id', 'type', 'role'],
+          } },
+          parameters: { type: 'object', additionalProperties: true },
         },
-        required: [
-          'direct_fused_args', 'stage2_pointer_count', 'combine_pointer_count',
-          'optional_quant_pointer_count', 'argument_order', 'disabled_placeholders',
-        ],
+        required: ['entry_point', 'arguments'],
       },
-      resource_contract: {
+      resources: {
         type: 'object',
         additionalProperties: true,
         properties: {
           arch: { type: 'string' },
-          wave_size: { type: 'number' },
-          threads_per_workgroup: { type: 'number' },
-          num_waves: { type: 'number' },
-          lds: obj({
-            stage1_pool_bytes: { type: 'number' },
-            stage2_slab_bytes: { type: 'number' },
-            additive_bytes: { type: 'number' },
-            group_segment_bytes: { type: 'number' },
+          workgroup: obj({
+            wave_size: { type: 'number' }, wave_count: { type: 'number' },
+            thread_count: { type: 'number' },
+          }, ['wave_size', 'wave_count', 'thread_count']),
+          local_memory: obj({
+            total_bytes: { type: 'number' },
             limit_bytes: { type: 'number' },
-            aliasing: { type: 'string', enum: ['max', 'additive'] },
-            halves: { type: 'number' },
-          }, [
-            'stage1_pool_bytes', 'stage2_slab_bytes', 'additive_bytes',
-            'group_segment_bytes', 'limit_bytes', 'aliasing', 'halves',
-          ]),
+            allocation_rule: { type: 'string' },
+            allocations: { type: 'array', items: {
+              type: 'object', additionalProperties: true,
+            } },
+          }, ['total_bytes', 'limit_bytes', 'allocation_rule', 'allocations']),
           registers: obj({
             vgpr_max: { type: ['number', 'null'] },
             sgpr_max: { type: ['number', 'null'] },
             scratch_bytes_max: { type: ['number', 'null'] },
             source: { type: 'string' },
           }, ['vgpr_max', 'sgpr_max', 'scratch_bytes_max', 'source']),
-          residency: obj({
-            num_cu: { type: 'number' },
+          occupancy: obj({
+            compute_units: { type: 'number' },
             grid_blocks: { type: 'number' },
             min_workgroups_per_cu: { type: 'number' },
             requires_full_grid_residency: { type: 'boolean' },
           }, [
-            'num_cu', 'grid_blocks', 'min_workgroups_per_cu',
+            'compute_units', 'grid_blocks', 'min_workgroups_per_cu',
             'requires_full_grid_residency',
           ]),
           engines: { type: 'array', items: obj({
             region: { type: 'string' }, pipe: { type: 'string' },
           }, ['region', 'pipe']) },
+          parameters: { type: 'object', additionalProperties: true },
         },
         required: [
-          'arch', 'wave_size', 'threads_per_workgroup', 'num_waves',
-          'lds', 'registers', 'residency', 'engines',
+          'arch', 'workgroup', 'local_memory', 'registers', 'occupancy', 'engines',
         ],
       },
-      schedule_contract: {
+      schedule: {
         type: 'object',
         additionalProperties: true,
         properties: {
-          unified_gemm_loop: { type: 'boolean' },
-          carried_scalars: { type: 'array', items: { type: 'string' } },
-          queue_priority: { type: 'array', items: { type: 'string' } },
-          g2_chunk_large: { type: 'number' },
-          g2_chunk_small: { type: 'number' },
-          preemption_interval: { type: 'number' },
-          skew_num: { type: 'number' },
-          skew_den: { type: 'number' },
-          work_shards: { type: 'number' },
-          num_dispatch_cu: { type: 'number' },
-          combine_third_queue: { type: 'boolean' },
+          primary_loop: obj({
+            kind: { type: 'string' },
+            carried_state: { type: 'array', items: { type: 'string' } },
+            queue_priority: { type: 'array', items: { type: 'string' } },
+            progress_invariants: { type: 'array', items: { type: 'string' } },
+          }, ['kind', 'carried_state', 'queue_priority', 'progress_invariants']),
+          policies: { type: 'object', additionalProperties: true },
+          parameters: { type: 'object', additionalProperties: true },
         },
-        required: [
-          'unified_gemm_loop', 'carried_scalars', 'queue_priority',
-          'g2_chunk_large', 'g2_chunk_small', 'preemption_interval',
-          'skew_num', 'skew_den', 'work_shards', 'num_dispatch_cu',
-          'combine_third_queue',
-        ],
+        required: ['primary_loop', 'policies'],
       },
-      source_shape_constraints: { type: 'array', items: { type: 'string' } },
-      variant_constraints: { type: 'array', items: { type: 'string' } },
-      resource_lifetimes: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      compiler_constraints: { type: 'array', items: {
+        type: 'object', additionalProperties: true,
+        properties: { id: { type: 'string' }, rule: { type: 'string' } },
+        required: ['id', 'rule'],
+      } },
+      evidence_requirements: { type: 'object', additionalProperties: true },
       known_unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
     required: [
-      'plan_version', 'target_launches', 'regions', 'queues', 'events', 'abi',
-      'resource_contract', 'schedule_contract',
-      'source_shape_constraints', 'variant_constraints', 'resource_lifetimes', 'known_unknowns',
+      'plan_version', 'target', 'work_domains', 'regions', 'buffers', 'counters',
+      'queues', 'events', 'abi', 'resources', 'schedule',
+      'compiler_constraints', 'evidence_requirements', 'known_unknowns',
     ],
   },
 }, ['kernel_type', 'roadmap_summary']);
@@ -1201,41 +1255,25 @@ const PROFILE_SCHEMA = obj({
   summary_path: { type: 'string' }, shift_note: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
 
-// Mega-native analysis schema. A SUPERSET of the PROFILE_SCHEMA fields consumed downstream
-// (`bottleneck`, `dispatch_count`, `top_opportunities`, `summary_path`) so the same `profileSummary`
-// slot feeds the planner (planMegaCandidateTurn) and the mega engineer unchanged — PLUS the
-// fused-kernel signals the bench emits NATIVELY that a generic rocprof roofline cannot read
-// correctly. WHY this exists: under co-resident fusion the stage1 and stage2 timers both RISE while
-// rank-max e2e falls (combine folded into the megakernel, barrier deleted). A roofline that reads
-// "both stages got slower = regression" is exactly backwards — GEAK_TASK.md:323-337 and the bench's
-// own combine-wait docstring warn against it. So the mega analysis classifies from rank-MAX e2e +
-// XGMI amplification + fused combine-wait p95, never from summed per-stage timers, and reports
-// `fusion_note` (what to overlap/fuse next) in place of the roofline's per-stage-regression call.
+// Operator-neutral native analysis for whole-kernel fusion. Operator-specific component names,
+// transport counters and wait metrics are map/array values supplied by the caller's harness.
 const MEGA_ANALYSIS_SCHEMA = obj({
-  bottleneck: { type: 'string' },        // classified from rank-max e2e + XGMI + combine-wait, NOT summed per-stage
+  bottleneck: { type: 'string' },
   top_opportunities: { type: 'array', items: { type: 'string' } },
-  dispatch_count: { type: 'number' },    // launches per rank (2 = fully fused: quant + one persistent megakernel)
+  dispatch_count: { type: 'number' },
   device: { type: 'string' },
-  // path=MEGA proof: the kernel prints `[megamoe] path=MEGA|SCATTERED` once per rank (mega_moe_v2.py).
-  // Both/all ranks must read MEGA or the numbers are from the wrong (scattered) path.
-  path_marker: { type: 'string', enum: ['MEGA', 'SCATTERED', 'MIXED', 'unknown'] },
+  path_marker: { type: 'string' },
   path_marker_count: { type: 'number' }, world_size: { type: 'number' },
-  // Rank-MAX (the straggler) is the promotion metric — NOT rank-mean. From the bench [RESULT] line
-  // and --json-output ranks[].timing_ms.
   rank_max_ms: { type: 'number' },
-  stage1_rank_max_ms: { type: 'number' }, stage2_combine_rank_max_ms: { type: 'number' },
-  speedup_pct: { type: ['number', 'null'] },      // vs the Mori-EP denominator; null/NaN under --mega-only
+  component_timings: { type: 'array', items: {
+    type: 'object', additionalProperties: true,
+  } },
+  speedup_pct: { type: ['number', 'null'] },
   perf_guard_floor: { type: ['number', 'null'] }, perf_guard_pass: { type: 'boolean' },
-  // XGMI firmware-counter bytes / logical-useful bytes (--xgmi-output derived amplification). >1 means
-  // the fabric moved more than the payload — a real traffic/overlap lever the roofline never sees.
-  xgmi_amplification: { type: ['number', 'null'] },
-  // Fused per-token arrival wait inside the combine queue in us (--combine-wait-output +
-  // AITER_MEGAMOE_COMBINE_WAIT_STATS=1). Empty/0 when the stat is off OR when the barrier was deleted
-  // by fusion — do NOT read 0 as an overlap win (see the bench docstring).
-  combine_wait_p95_us: { type: ['number', 'null'] },
-  combine_wait_total_p95_us: { type: ['number', 'null'] },
+  transport_metrics: { type: 'object', additionalProperties: true },
+  wait_metrics: { type: 'object', additionalProperties: true },
   per_rank_straggler: { type: 'array', items: { type: 'object', additionalProperties: true } },
-  fusion_note: { type: 'string' },       // fusion-aware "what to overlap/fuse next" (replaces roofline per-stage call)
+  fusion_note: { type: 'string' },
   summary_path: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
 
@@ -1338,10 +1376,8 @@ const PLAN_SCHEMA = obj({
         required: ['launches'],
         additionalProperties: true,
       },
-      // OPTIONAL multi-lever topology descriptor for a WHOLE fused-kernel candidate (mismatch #2 fix).
-      // Superset of target_shape: adds combine-as-queue, GEMM2 waves, and SITE1/SITE2/combine concurrency
-      // knobs. When present it drives the verify TARGET_SHAPE via megaShapeFromTopology(); when absent
-      // (today's default) verify uses the legacy hardcoded shape unchanged.
+      // Operator-neutral multi-lever descriptor for a whole-kernel candidate.
+      // Skill-specific region/queue/capability names remain data values.
       target_topology: MEGA_TOPOLOGY_SCHEMA,
       candidate_id: { type: 'string' },
       candidate_source: { type: 'string' },
@@ -1422,12 +1458,9 @@ const VERIFY_SCHEMA = obj({
     threshold: { type: 'number', exclusiveMinimum: 0 },
     guard: { type: 'string' }, method: { type: 'string' },
   }, ['metric', 'value', 'threshold', 'guard']) },
-  // LAUNCH SHAPE. Acceptance criterion 1 is "fully fused, TWO launches": one megakernel per EP rank
-  // plus the one separate pre-dispatch quant launch. Nothing in the workflow counted launches, so a
-  // candidate that fused dispatch+gemm1 but still launched combine separately (three launches) was
-  // indistinguishable from a real two-launch fusion. `launches_base`/`launches_cand` are the kernel
-  // launch counts per EP rank for one operator call, read PAIRED in the same collection; `target` is
-  // the acceptance shape (2 for this campaign). `how_counted` is the evidence -- a trace record
+  // LAUNCH SHAPE. `launches_base`/`launches_cand` are the launch counts per execution domain for one
+  // operator call, read PAIRED in the same collection; `target` is caller-owned. `how_counted` is
+  // the evidence -- a trace record
   // count, a launch-marker tally -- because a claimed count with no method is a guess. Absent fields
   // do not crash a run; they leave criterion 1 UNJUDGED for that candidate, which the report says.
   launch_shape: obj({
@@ -1443,12 +1476,11 @@ const VERIFY_SCHEMA = obj({
   // "win" that sat inside a 1.45% per-case spread.
   reps: { type: 'number' }, null_arm_pct: { type: 'number' },
   // The RAW interleaved readings behind `reps`, one row per pair, tagged with the guard/route each
-  // was taken on. Declared so the driver can classify the bimodal 512 guards ARM-BLIND and condition
+  // was taken on. Declared so the driver can classify caller-declared bimodal guards ARM-BLIND and condition
   // on the state instead of averaging over two discrete ones -- the doctrine in benchmark_engineer.md
   // that until now lived only as prose because nothing carried the raw pairs to the code that applies
-  // it (modeSplit/pairedModeAware). It also lets the driver check the number came from a TARGET route
-  // and not a skew rail: on this campaign the metric is the uniform route's own time, and a win read
-  // off `512_rank-mixed-skew` is out of scope. `base`/`cand` are the paired rank-max timings (ms) for
+  // it (modeSplit/pairedModeAware). It also lets the driver check the number came from a TARGET guard
+  // rather than a regression-only guard. `base`/`cand` are the paired timings for
   // one A,B pair. Absent leaves the aggregate `verified_geomean` in charge exactly as before.
   paired_readings: { type: 'array', items: obj({
     guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
@@ -1505,11 +1537,11 @@ const VERIFY_SCHEMA = obj({
     fraction: { type: 'number' },        // wall-clock, >=2 distinct roles active
     cu_fraction: { type: 'number' },     // CU-weighted; wall-clock alone is manufacturable
     method: { type: 'string' },
-    // The meter's own controls. `scattered_reading` is the negative control — the unfused path,
+    // The meter's own controls. `base_reading` is the negative control — the unfused path,
     // whose true overlap is known to be zero. A meter that reads high there is broken and voids
     // everything after it. `forced_reading` is the positive control, because a meter that reads 0
     // on both is dead, not conservative, and the two are indistinguishable without it.
-    scattered_reading: { type: 'number' },
+    base_reading: { type: 'number' },
     forced_reading: { type: 'number' },
     clock_skew_ns: { type: 'number' },   // s_memrealtime coherence across XCDs — assumed at your peril
     meter_overhead_pct: { type: 'number' },
@@ -1591,8 +1623,8 @@ const MEMORY_SCHEMA = obj({
     first_round: { type: 'number' }, last_round: { type: 'number' },
   }, ['id', 'verdict']) },
   // DURABLE FACTS ABOUT THE HARDWARE AND TOOLCHAIN, as opposed to insights about this kernel.
-  // The two are different and the workflow had a home for only one of them. An insight ("the 512
-  // guard is bimodal") is about the operator under study and dies with the wave that found it, which
+  // The two are different and the workflow had a home for only one of them. An insight ("this guard
+  // is bimodal") is about the operator under study and dies with the wave that found it, which
   // is correct. A lowering ("the workgroup barrier does not drain vmcnt on this target", "the
   // profiler reports VGPR in units of two") is true of every kernel that will ever be built on this
   // box, and dying with the wave means the next wave pays a lease to rediscover it. That has already
@@ -1651,12 +1683,13 @@ const MEGA_SELECTION_SCHEMA = obj({
     }, []),
     correctness: { type: 'string' }, guards_pass: { type: 'boolean' },
     path_marker: { type: 'string' }, path_marker_count: { type: 'number' },
-    launches: { type: 'number' },
+    world_size: { type: 'number' },
+    launches: { type: 'number' }, launches_base: { type: 'number' },
     graph_safe: { type: 'string' }, artifact_distinct: { type: 'string' },
     artifact_hash_base: { type: 'string' }, artifact_hash_candidate: { type: 'string' },
     overlap_measured: { type: 'string' }, overlap_fraction: { type: 'number' },
     overlap_cu_fraction: { type: 'number' },
-    overlap_scattered_reading: { type: 'number' }, overlap_forced_reading: { type: 'number' },
+    overlap_base_reading: { type: 'number' }, overlap_forced_reading: { type: 'number' },
     attribution_complete: { type: 'boolean' },
     attribution: obj({
       changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
@@ -1811,6 +1844,8 @@ function expertSkillsBlock(role) {
     return `\n\n## MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE\n` +
       `Read ${EXPERT_SKILL_DIR}/skill.md` +
       (EXPERT_SKILL_PLAYBOOK_FILE ? ` and its detailed playbook ${EXPERT_SKILL_PLAYBOOK_FILE}` : '') +
+      (EXPERT_SKILL_CONTRACT_FILE
+        ? ` and its machine-readable contract ${EXPERT_SKILL_CONTRACT_FILE}` : '') +
       `. Use them as validated design knowledge while still performing the ordinary ` +
       `tile-task-graph analysis, candidate planning, source authoring, and measurement loop. They do not ` +
       `create a reproduction lane or special candidate source, and they do not override current ` +
@@ -2217,6 +2252,105 @@ if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
 //
 // Deliberately narrow: only when INCREMENTAL was on, only on an empty ladder (a resume with no
 // ladder is a contradiction in terms -- the ladder IS what is being resumed), and only once.
+function megaPlanIRVerdict(plan) {
+  const errors = [];
+  if (!plan || typeof plan !== 'object') return { pass: false, errors: ['plan missing'] };
+  if (plan.plan_version !== 'mega-plan-v2') errors.push('plan_version must be mega-plan-v2');
+  const collections = [
+    'work_domains', 'regions', 'buffers', 'counters', 'queues', 'events',
+    'compiler_constraints', 'known_unknowns',
+  ];
+  const mayBeEmpty = new Set(['counters', 'known_unknowns']);
+  for (const name of collections) {
+    if (!Array.isArray(plan[name]) || (!mayBeEmpty.has(name) && !plan[name].length)) {
+      errors.push(`${name} must be a ${mayBeEmpty.has(name) ? '' : 'non-empty '}array`);
+    }
+  }
+  const ids = (values) => new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value && value.id || '')).filter(Boolean));
+  const domains = ids(plan.work_domains);
+  const regions = ids(plan.regions);
+  const counters = ids(plan.counters);
+  const queues = ids(plan.queues);
+  const requireUnique = (values, label) => {
+    const present = (Array.isArray(values) ? values : [])
+      .map((value) => String(value && value.id || '')).filter(Boolean);
+    if (present.length !== new Set(present).size) errors.push(`${label} ids must be unique`);
+  };
+  for (const name of ['work_domains', 'regions', 'buffers', 'counters', 'queues', 'events']) {
+    requireUnique(plan[name], name);
+  }
+  for (const region of Array.isArray(plan.regions) ? plan.regions : []) {
+    if (!domains.has(String(region.work_domain || ''))) {
+      errors.push(`region ${region.id || '?'} references unknown work_domain`);
+    }
+  }
+  const checkEndpoints = (item, label) => {
+    for (const producer of Array.isArray(item.producers) ? item.producers : []) {
+      if (!regions.has(String(producer))) errors.push(`${label} has unknown producer ${producer}`);
+    }
+    for (const consumer of Array.isArray(item.consumers) ? item.consumers : []) {
+      if (!regions.has(String(consumer))) errors.push(`${label} has unknown consumer ${consumer}`);
+    }
+  };
+  for (const buffer of Array.isArray(plan.buffers) ? plan.buffers : []) {
+    checkEndpoints(buffer, `buffer ${buffer.id || '?'}`);
+  }
+  for (const counter of Array.isArray(plan.counters) ? plan.counters : []) {
+    checkEndpoints(counter, `counter ${counter.id || '?'}`);
+  }
+  for (const queue of Array.isArray(plan.queues) ? plan.queues : []) {
+    if (!domains.has(String(queue.work_domain || ''))) {
+      errors.push(`queue ${queue.id || '?'} references unknown work_domain`);
+    }
+  }
+  for (const event of Array.isArray(plan.events) ? plan.events : []) {
+    if (!regions.has(String(event.producer || ''))) {
+      errors.push(`event ${event.id || '?'} has unknown producer`);
+    }
+    if (!regions.has(String(event.consumer || ''))) {
+      errors.push(`event ${event.id || '?'} has unknown consumer`);
+    }
+    if (event.counter && !counters.has(String(event.counter))) {
+      errors.push(`event ${event.id || '?'} references unknown counter`);
+    }
+  }
+  const target = plan.target || {};
+  if (!(Number(target.launch_count) > 0)) errors.push('target.launch_count must be positive');
+  const requireKnown = (values, known, label) => {
+    for (const value of Array.isArray(values) ? values : []) {
+      if (!known.has(String(value))) errors.push(`target ${label} has unknown id ${value}`);
+    }
+  };
+  requireKnown(target.required_regions, regions, 'required_regions');
+  requireKnown(target.required_queues, queues, 'required_queues');
+  const resources = plan.resources || {};
+  const workgroup = resources.workgroup || {};
+  const localMemory = resources.local_memory || {};
+  if (!String(resources.arch || '')) errors.push('resources.arch missing');
+  if (!(Number(workgroup.wave_size) > 0) || !(Number(workgroup.thread_count) > 0)) {
+    errors.push('resources.workgroup is incomplete');
+  }
+  if (!Number.isFinite(Number(localMemory.total_bytes)) ||
+      Number(localMemory.total_bytes) < 0 ||
+      Number(localMemory.total_bytes) > Number(localMemory.limit_bytes)) {
+    errors.push('resources.local_memory is invalid');
+  }
+  const primaryLoop = plan.schedule && plan.schedule.primary_loop || {};
+  if (!String(primaryLoop.kind || '')) errors.push('schedule.primary_loop.kind missing');
+  for (const queue of Array.isArray(primaryLoop.queue_priority) ? primaryLoop.queue_priority : []) {
+    if (!queues.has(String(queue))) errors.push(`primary loop references unknown queue ${queue}`);
+  }
+  if (!(plan.abi && String(plan.abi.entry_point || '') &&
+      Array.isArray(plan.abi.arguments) && plan.abi.arguments.length)) {
+    errors.push('abi entry_point/arguments missing');
+  }
+  if (!(plan.evidence_requirements && Object.keys(plan.evidence_requirements).length)) {
+    errors.push('evidence_requirements must be non-empty');
+  }
+  return { pass: errors.length === 0, errors };
+}
+
 function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, requireMegaPlan = false) {
   const rungs = (ver && Array.isArray(ver.candidate_directions) ? ver.candidate_directions : [])
     .filter((c) => c && (c.id || c.title));
@@ -2225,29 +2359,8 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
        ver.task_graph.nodes.length) ||
      !(ver && ver.resource_timeline && Array.isArray(ver.resource_timeline.pipes)));
   const plan = ver && ver.mega_plan_ir;
-  const resource = plan && plan.resource_contract;
-  const lds = resource && resource.lds;
-  const schedule = plan && plan.schedule_contract;
-  const abi = plan && plan.abi;
-  const megaPlanMissing = !!requireMegaPlan &&
-    !(plan && Array.isArray(plan.regions) && plan.regions.length &&
-      Array.isArray(plan.queues) && plan.queues.length &&
-      Array.isArray(plan.events) && plan.events.length &&
-      Array.isArray(plan.source_shape_constraints) &&
-      plan.source_shape_constraints.length &&
-      resource && String(resource.arch || '') &&
-      Number(resource.wave_size) > 0 &&
-      Number(resource.threads_per_workgroup) > 0 &&
-      Number(resource.num_waves) > 0 &&
-      lds && Number(lds.group_segment_bytes) > 0 &&
-      Number(lds.limit_bytes) >= Number(lds.group_segment_bytes) &&
-      schedule && schedule.unified_gemm_loop === true &&
-      Array.isArray(schedule.carried_scalars) && schedule.carried_scalars.length &&
-      Number(schedule.work_shards) > 0 &&
-      Number(schedule.num_dispatch_cu) > 0 &&
-      schedule.combine_third_queue === true &&
-      abi && abi.direct_fused_args === true &&
-      Array.isArray(abi.argument_order) && abi.argument_order.length);
+  const planVerdict = megaPlanIRVerdict(plan);
+  const megaPlanMissing = !!requireMegaPlan && !planVerdict.pass;
   if (rungs.length && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
   if (!incremental && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
   return { retry: true, reason:
@@ -2256,7 +2369,9 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
     `${!rungs.length && graphMissing ? ' and ' : ''}` +
     `${graphMissing ? 'required task_graph/resource_timeline missing' : ''}` +
     `${(graphMissing || !rungs.length) && megaPlanMissing ? ' and ' : ''}` +
-    `${megaPlanMissing ? 'required mega_plan_ir missing' : ''}. ` +
+    `${megaPlanMissing
+      ? `required mega_plan_ir invalid (${planVerdict.errors.slice(0, 4).join('; ')})`
+      : ''}. ` +
     'Re-running one full frozen-source analysis before Benchmark.' };
 }
 // <</REPLAY:analyze_resume_fallback>>
@@ -2372,7 +2487,7 @@ function taskGraphGate(tg) {
       // operator the critical path is short precisely because the binding floor is arithmetic, not
       // ordering, and no amount of overlap deletes arithmetic. The 2026-08-23 run made this concrete --
       // it reported cp=130µs against e2e=4580.8µs and then had to spend a prose note correcting the
-      // implication, because ~97% of that gap was ~6.5 TFLOP of GEMM per rank. A gate that has to be
+      // implication, because almost all of that gap was arithmetic work per rank. A gate that has to be
       // talked out of its own headline number is miscalibrated; say what the quantity IS and let the
       // graph's bubble set carry the claim about what is actually recoverable.
       ? `critical_path=${cp.toFixed(1)}µs vs e2e=${e2e.toFixed(1)}µs ` +
@@ -2412,9 +2527,9 @@ function taskGraphGate(tg) {
   // the edge. Every other operand the consumer needs -- the second weight matrix, its scales, the
   // descriptors, the index arrays -- has no node, therefore no edge, therefore can never surface as
   // an opportunity. That is a blind spot of the representation, not of the analyst: a real graph on
-  // this operator listed six nodes and five edges, correctly found both fusable edges, and never
-  // mentioned that GEMM2's weights depend on nothing at all and could be pulled into L2 during
-  // GEMM1 -- with both stages measured at ~30% HBM, the one lever the table most obviously funds.
+  // one operator correctly found its fusable edges and never mentioned that a downstream region's
+  // read-only operands could be prefetched while the upstream region ran — a lever its resource
+  // table clearly funded.
   //
   // Asking per edge rather than per node keeps it cheap: the answer is a list of names, it is static
   // (a read of the consumer's signature), and an empty list is a legitimate answer that means
@@ -3003,6 +3118,15 @@ function normalizeMegaActivation(raw) {
     switches,
   };
 }
+function normalizeContractFailures(raw) {
+  return (Array.isArray(raw) ? raw : []).map((failure) => ({
+    id: String(failure && failure.id || ''),
+    category: String(failure && failure.category || 'semantic'),
+    severity: String(failure && failure.severity || 'required'),
+    messages: Array.isArray(failure && failure.messages)
+      ? failure.messages.map(String) : [],
+  })).filter((failure) => failure.id);
+}
 function normalizeMegaWorkingSnapshot(raw) {
   const w = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   return {
@@ -3013,6 +3137,7 @@ function normalizeMegaWorkingSnapshot(raw) {
     topology: w.topology && typeof w.topology === 'object' && !Array.isArray(w.topology)
       ? { ...w.topology } : {},
     changed_files: Array.isArray(w.changed_files) ? w.changed_files.map(String) : [],
+    contract_failures: normalizeContractFailures(w.contract_failures),
   };
 }
 function normalizeMegaCandidate(raw) {
@@ -3054,9 +3179,11 @@ function normalizeMegaCandidate(raw) {
     structural_report: String(c.structural_report || ''),
     structural_contract_revision: String(c.structural_contract_revision || ''),
     structural_contract_sha256: String(c.structural_contract_sha256 || ''),
+    contract_failures: normalizeContractFailures(c.contract_failures),
     attempt_id: String(c.attempt_id || ''),
     changed_files: Array.isArray(c.changed_files) ? c.changed_files.map(String) : [],
     evidence_manifest: String(c.evidence_manifest || ''),
+    target_guard: String(c.target_guard || ''),
     final_tree: String(c.final_tree || ''),
     final_head: String(c.final_head || ''),
     final_attempt_id: String(c.final_attempt_id || ''),
@@ -3107,6 +3234,7 @@ function upsertMegaCandidate(registry, incoming) {
         activation: next.activation,
         topology: next.topology,
         changed_files: next.changed_files,
+        contract_failures: next.contract_failures,
       },
       next_blocker: next.next_blocker || prev.next_blocker,
       notes: next.notes || prev.notes,
@@ -3143,7 +3271,10 @@ function megaRegistryForSearch(registry) {
       structural_report: c.structural_report,
       structural_contract_revision: c.structural_contract_revision,
       structural_contract_sha256: c.structural_contract_sha256,
+      contract_failures: c.working_snapshot.contract_failures.length
+        ? c.working_snapshot.contract_failures : c.contract_failures,
       absolute_score: c.absolute_score,
+      target_guard: c.target_guard,
       per_case: c.per_case,
       topology_sig: c.topology_sig,
       next_blocker: c.next_blocker,
@@ -3186,7 +3317,14 @@ function megaHistoryForSearch(sourceHistory, registry) {
 
 function megaCandidateHardPass(c) {
   const n = normalizeMegaCandidate(c);
-  const targetReadout = pairedGuardReadout(n.paired_readings, '8192_uniform');
+  const configuredTarget = typeof TARGET_GUARDS === 'undefined'
+    ? '' : String(TARGET_GUARDS[0] || '');
+  const targetGuard = n.target_guard || configuredTarget;
+  const targetReadout = targetGuard
+    ? pairedGuardReadout(
+      n.paired_readings, targetGuard,
+      typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS)
+    : { count: 0, score: null, sign_p: 1 };
   const structuralPass = typeof REQUIRE_EXPERT_SKILL_CONTRACT === 'undefined' ||
     !REQUIRE_EXPERT_SKILL_CONTRACT || n.structural_verified;
   return structuralPass &&
@@ -3247,13 +3385,14 @@ function megaCalibrationClaimPass(pc, configured) {
     nul.length >= requiredNullPairs && Number.isFinite(nullWorst) && Math.abs(got) >= 3 * nullWorst;
 }
 
-function pairedGuardReadout(rows, guard) {
+function pairedGuardReadout(rows, guard, bimodalGuards = []) {
   const rawPairs = (Array.isArray(rows) ? rows : []).filter((r) =>
     String(r.guard || '') === String(guard) &&
     Number(r.base) > 0 && Number(r.cand) > 0);
   let pairs = rawPairs;
   let bimodal = false, split = null;
-  if (/^512(?:_|$)/.test(String(guard)) && rawPairs.length >= 8) {
+  if ((Array.isArray(bimodalGuards) ? bimodalGuards : [])
+      .map(String).includes(String(guard)) && rawPairs.length >= 8) {
     const values = rawPairs.flatMap((r, index) => [
       { value: Number(r.base), arm: 'base', index },
       { value: Number(r.cand), arm: 'cand', index },
@@ -3336,7 +3475,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     const pairs = Array.isArray(r.paired_readings) ? r.paired_readings : [];
     const nullArm = r.null_arm_pct == null ? null : Number(r.null_arm_pct);
     for (const guard of o.targetGuards || []) {
-      const readout = pairedGuardReadout(pairs, guard);
+      const readout = pairedGuardReadout(pairs, guard, BIMODAL_GUARDS);
       const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
       if (readout.raw_count < needed || readout.count < Math.min(5, needed) ||
           !(Number(readout.score) > 1.0) ||
@@ -3350,7 +3489,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
             Number(o.scoreTolerance || 0.002)) fail.push(`target guard ${guard}`);
     }
     for (const guard of o.regressionGuards || []) {
-      const readout = pairedGuardReadout(pairs, guard);
+      const readout = pairedGuardReadout(pairs, guard, BIMODAL_GUARDS);
       const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
       if (readout.raw_count < needed || readout.count < Math.min(5, needed) ||
           !(Number(readout.score) >= 1.0)) {
@@ -3362,7 +3501,8 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
             Number(o.scoreTolerance || 0.002)) fail.push(`regression guard ${guard}`);
     }
     const targetScores = (o.targetGuards || []).map((guard) =>
-      pairedGuardReadout(pairs, guard).score).filter((v) => Number.isFinite(Number(v)));
+      pairedGuardReadout(pairs, guard, BIMODAL_GUARDS).score)
+      .filter((v) => Number.isFinite(Number(v)));
     const recomputedScore = targetScores.length === (o.targetGuards || []).length
       ? Math.exp(targetScores.reduce((sum, value) => sum + Math.log(Number(value)), 0) /
         targetScores.length) : null;
@@ -3372,15 +3512,15 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     }
     if (!Number.isFinite(nullArm)) fail.push('null arm');
     if (r.guards_pass !== true) fail.push('guard verdict');
-    const worldSize = Number(o.worldSize || 8);
+    const worldSize = Number(o.worldSize || r.world_size);
     const marker = String(r.path_marker || '');
-    if (!marker || /SCATTERED|BASELINE/i.test(marker) ||
+    if (!marker || !Number.isInteger(worldSize) || worldSize < 1 ||
         Number(r.path_marker_count) !== worldSize) {
       fail.push('candidate path marker');
     }
     const realizedLaunches = Number(r.launches);
     const targetLaunches = Number(o.launchTarget || 2);
-    const baselineLaunches = Number(o.baselineLaunches || 4);
+    const baselineLaunches = Number(r.launches_base || o.baselineLaunches);
     const launchPass = Number.isInteger(realizedLaunches) &&
       realizedLaunches >= targetLaunches && realizedLaunches < baselineLaunches;
     if (!launchPass) fail.push('no measured partial/full fusion');
@@ -3408,8 +3548,8 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       if (String(r.overlap_measured || '').toLowerCase() !== 'yes' ||
           !(Number(r.overlap_fraction) > 0) ||
           !(Number(r.overlap_cu_fraction) > 0) ||
-          r.overlap_scattered_reading == null || r.overlap_forced_reading == null ||
-          Math.abs(Number(r.overlap_scattered_reading)) > 0.05 ||
+          r.overlap_base_reading == null || r.overlap_forced_reading == null ||
+          Math.abs(Number(r.overlap_base_reading)) > 0.05 ||
           !(Number(r.overlap_forced_reading) > 0.10)) fail.push('controlled overlap');
     }
     if (o.requireAttribution) {
@@ -3457,7 +3597,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     .filter((r) => rowFailures(r).length === 0)
     .map((row) => {
       const scores = (o.targetGuards || []).map((guard) =>
-        pairedGuardReadout(row.paired_readings, guard).score);
+        pairedGuardReadout(row.paired_readings, guard, BIMODAL_GUARDS).score);
       return {
         row,
         score: Math.exp(scores.reduce((sum, value) => sum + Math.log(Number(value)), 0) /
@@ -3494,13 +3634,12 @@ function megaCandidateFromVerification(meta, ver, opts) {
     !o.accuracyMetric || String(a.metric) === String(o.accuracyMetric));
   const requiredAccuracyCases = Array.isArray(o.requiredAccuracyCases)
     ? o.requiredAccuracyCases.map(String) : [];
-  const accuracyCase = (guard) => {
-    const match = String(guard || '').match(/^(128|512|8192)(?:_|$)/);
-    return match ? match[1] : String(guard || '');
-  };
   const requiredAccuracy = requiredAccuracyCases.length
     ? requiredAccuracyCases.map((name) =>
-      metricAccuracy.find((a) => accuracyCase(a.guard) === name)).filter(Boolean)
+      metricAccuracy.find((a) => {
+        const guard = String(a.guard || '');
+        return guard === name || guard.startsWith(`${name}_`);
+      })).filter(Boolean)
     : metricAccuracy.filter((a) =>
       !(o.targetGuards || []).length || (o.targetGuards || []).includes(String(a.guard)));
   const accuracyPass = requiredAccuracy.length > 0 &&
@@ -3510,7 +3649,9 @@ function megaCandidateFromVerification(meta, ver, opts) {
   const livenessPass = String(v.liveness || '').toLowerCase() === 'pass';
   const guards = guardContract(v, o.targetGuards || [], o.regressionGuards || [], score);
   const targetGuard = (o.targetGuards || [])[0];
-  const targetReadout = pairedGuardReadout(v.paired_readings, targetGuard);
+  const targetReadout = pairedGuardReadout(
+    v.paired_readings, targetGuard,
+    typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS);
   const nullArm = v.null_arm_pct == null ? null : Number(v.null_arm_pct);
   const measurementPass = !!targetGuard &&
     targetReadout.count >= Number(o.requiredPairs || 1) &&
@@ -3525,6 +3666,7 @@ function megaCandidateFromVerification(meta, ver, opts) {
     claim_complete: v.claim_complete === true,
     attempt_id: v.attempt_id || (meta && meta.attempt_id),
     evidence_manifest: v.evidence_manifest || '',
+    target_guard: targetGuard,
     absolute_score: score,
     per_case: v.per_case || [],
     paired_readings: v.paired_readings || [],
@@ -4144,7 +4286,7 @@ async function fastTestCacheLoad(kind /* 'bench' | 'profile' */) {
       `cached artifacts ONLY if the stored key matches the key you recompute from disk now.`, {
         CACHE_DIR: FAST_TEST_CACHE_DIR, CACHE_KIND: kind, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR,
         FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-        BENCH_HARNESS: `${CANONICAL}/op_tests/multigpu_tests/bench_mega_moe_v2.py`,
+        BENCH_HARNESS,
         FAST_TEST_KEY_TOOL: FAST_TEST_KEY_TOOL, CONTROL_JSON: JSON.stringify(POSITIVE_CONTROL),
         GUARDS_JSON: JSON.stringify([...TARGET_GUARDS, ...REGRESSION_GUARDS]),
         TARGET_GUARDS, REGRESSION_GUARDS,
@@ -4170,7 +4312,7 @@ async function fastTestCachePublish() {
       'nothing.', {
         CACHE_DIR: FAST_TEST_CACHE_DIR, EVAL_DIR, MEGA_ANALYSIS_DIR: `${EVAL_DIR}/mega_analysis`,
         SKILL_DIR: WORKFLOW_DIR, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-        BENCH_HARNESS: `${CANONICAL}/op_tests/multigpu_tests/bench_mega_moe_v2.py`,
+        BENCH_HARNESS,
         FAST_TEST_KEY_TOOL: FAST_TEST_KEY_TOOL, CONTROL_JSON: JSON.stringify(POSITIVE_CONTROL),
         GUARDS_JSON: JSON.stringify([...TARGET_GUARDS, ...REGRESSION_GUARDS]),
         TARGET_GUARDS, REGRESSION_GUARDS,
@@ -4205,8 +4347,8 @@ const bench = benchCache ? benchCache.bench : await agentT(
       // correctness alone consumed ~66 of the 70 min; the positive control had only just STARTED its
       // cold JIT of the spin-dosed variant when the window expired, so it never produced a control
       // pair and the whole wave died with validation_status:agent_timeout. The positive control is a
-      // one-time cold JIT (>=8 null + >=5 control pairs = >=26 torchrun runs on 8192_uniform, each
-      // re-initializing a ~60 GiB MORI symmetric heap ~60s, plus a distinct-ISA rebuild of the dosed
+      // one-time cold JIT (many null/control legs on the target guard, each potentially
+      // re-initializing a large communication heap, plus a distinct-ISA rebuild of the dosed
       // variant), so it needs genuine headroom AFTER the baseline pre-work, not merely a few minutes.
       // This phase runs before the candidate loop and does NOT draw from MEGA_CLOCK_MS (which bounds
       // the loop's turn count), so a longer real wall here does not reduce the number of candidate
@@ -4397,12 +4539,9 @@ if (POSITIVE_CONTROL) {
   // single draw from the tail of a distribution it is not competing with, and a large, perfectly
   // clean effect fails.
   //
-  // Measured on 2026-08-23: the 512_rank-mixed-skew guard, same tree against itself, 10 pairs. Nine
-  // pairs inside 3pp, one at 9.02pp. A candidate measured over the same 10 interleaved reps read
-  // +17.34% median, 10/10 pairs positive, range +14.30..+18.65 -- and 17.34/9.02 = 1.9x, a FAIL.
-  // Yet the two arms' raw readings did not overlap at all (base 0.8364..0.8832 ms, candidate
-  // 0.7014..0.7537 ms). The one slow-state excursion that did land, landed on the candidate arm and
-  // made the effect look SMALLER. There is no reading of that data in which the effect is drift.
+  // A prior run showed one outlying null pair from a reproducible slow state while all candidate
+  // pairs were direction-consistent and the raw arm ranges did not overlap. The outlier made the
+  // real effect look smaller, yet the old worst-null multiplier rejected it.
   //
   // So add a second, distribution-free way to be resolved: the effect pairs and the null pairs, by
   // magnitude, do not overlap. Under the null hypothesis that all n+m pairs are draws from one
@@ -4550,17 +4689,16 @@ phase('Profile');
 let profileSummary;
 const profileCache = MODE === 'mega' ? null : await fastTestCacheLoad('profile');
 if (MODE === 'mega') {
-  // The frozen input is deliberately SCATTERED and its public bench exposes only stdout rank
-  // mean/max plus --profile-dir. Fused-only JSON/XGMI/combine-wait flags do not exist yet and
-  // path=MEGA is impossible before a candidate is authored. Use the already measured baseline
-  // table as search context; candidate score/finalist verification owns fused analysis later.
+  // Before a candidate exists, use only the caller's measured baseline table and declared launch
+  // shape. Candidate-only overlap/path metrics are established by score/finalist verification.
   const targetBaseline = BASELINE_PER_CASE.find((row) =>
     TARGET_GUARDS.includes(String(row && row.name || ''))) || BASELINE_PER_CASE[0] || {};
   profileSummary = {
     bottleneck: 'unknown',
     profiler_used: 'benchmark-only',
-    device: 'task-declared EP8 accelerator',
-    dispatch_count: 4,
+    device: String(A.device_description || 'task-declared accelerator'),
+    dispatch_count: Number(A.baseline_launch_count ||
+      targetBaseline.launch_count || targetBaseline.dispatch_count || 0),
     key_metrics: {},
     top_kernels: [],
     top_opportunities: [
@@ -4568,7 +4706,7 @@ if (MODE === 'mega') {
       'do not infer fused overlap before a fused candidate exists',
     ],
     rank_max_ms: Number(targetBaseline.latency_ms || targetBaseline.baseline_ms || 0),
-    path_marker: 'SCATTERED',
+    path_marker: '',
     summary_path: '',
     shift_note: 'pre-candidate baseline only',
   };
@@ -4854,25 +4992,25 @@ function shelfEligible(shelf, absorbedByRound, k) {
 //
 // It NEVER fails a candidate. A real latency win with an unmeasured overlap claim is a good result
 // with a named hole; downgrading it to a failure would teach the loop to stop reporting the hole.
-const OVERLAP_SCATTERED_MAX = 0.05;  // the unfused path's true overlap is 0; 5% is instrument slop.
+const OVERLAP_BASE_MAX = 0.05;  // the unfused base path should read zero; 5% is instrument slop.
 function overlapVerdict(ver, opts) {
   const o = (ver && ver.overlap) || {};
   const won = Number((opts && opts.geomean) || 0) > 1.0;
   const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
-  const frac = num(o.fraction), scat = num(o.scattered_reading), forced = num(o.forced_reading);
+  const frac = num(o.fraction), base = num(o.base_reading), forced = num(o.forced_reading);
   const m = o.measured === 'yes' || o.measured === 'no' ? o.measured : 'unknown';
 
   // The negative control first, because it invalidates everything downstream. A meter that finds
-  // overlap on the four-launch path is measuring its own artefacts.
-  if (m !== 'unknown' && scat != null && scat > OVERLAP_SCATTERED_MAX) {
+  // overlap on the unfused base path is measuring its own artefacts.
+  if (m !== 'unknown' && base != null && base > OVERLAP_BASE_MAX) {
     return { state: 'meter_broken', caveat:
-      `The overlap meter reads ${(scat * 100).toFixed(1)}% on the SCATTERED path, whose true overlap ` +
-      `is zero by construction (four launches, disjoint intervals). The meter is measuring its own ` +
+      `The overlap meter reads ${(base * 100).toFixed(1)}% on the unfused base path, whose true overlap ` +
+      `is zero by construction (separate launches, disjoint intervals). The meter is measuring its own ` +
       `artefacts, so its ${frac != null ? `${(frac * 100).toFixed(1)}% ` : ''}reading on the fused ` +
       `path carries no information. Overlap is UNMEASURED for this candidate.` };
   }
   // A meter that has never read a known non-zero is indistinguishable from a dead one.
-  if (m !== 'unknown' && scat == null) {
+  if (m !== 'unknown' && base == null) {
     return { state: 'meter_unvalidated', caveat:
       `Overlap was reported as "${m}" but the meter's negative control is missing: nobody ran it ` +
       `against the unfused path, where the answer is known to be zero. An uncontrolled meter reading ` +
@@ -4989,18 +5127,13 @@ function attributionVerdict(ver, opts) {
 // <</REPLAY:attribution_gate>>
 
 // <<REPLAY:launch_gate>>
-// IS THE FUSION ACTUALLY FUSED? See acceptance criterion 1: "fully fused, TWO launches" — one
-// megakernel per EP rank plus the one separate pre-dispatch quant launch. This is the criterion the
-// whole campaign exists to reach, and until now nothing in the workflow could see it: a candidate
-// that fused dispatch+gemm1 but still launched combine on its own ran three launches and read
-// exactly like a real two-launch fusion, because no field counted launches.
-//
+// IS THE FUSION ACTUALLY FUSED? The caller owns the target launch count and required regions.
 // Like the overlap gate and unlike the attribution gate, this NEVER rejects. A candidate can be a
-// correct, faster kernel and not yet be at the two-launch shape — that is a partial rung, not a
+// correct, faster kernel and not yet be at the target shape — that is a partial rung, not a
 // wrong result, and failing it would teach the loop to stop reporting how many launches it is at.
 // What it does is make the count a stated number that travels into the round log and the report, and
 // tell the ladder whether the TERMINAL fusion shape has actually been reached (`shape_met`), so a
-// wave cannot report "fusion rung closed" on a candidate that is still three launches.
+// wave cannot report "fusion rung closed" on a candidate that is still above target.
 //
 // Three-valued on the same principle as overlap.measured: `unjudged` (no count reported) is a HOLE,
 // not a pass. Collapsing it into "met" is exactly how an unfused candidate would read as accepted.
@@ -5008,20 +5141,21 @@ function launchVerdict(ver, target, expectedStages) {
   const ls = (ver && ver.launch_shape) || {};
   const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
   const cand = num(ls.launches_cand), base = num(ls.launches_base);
-  // The orchestrator/ladder owns the target. A verifier reports what ran; it cannot move the goal
-  // from 2 to 3 and make the same observation pass.
-  const tgt = num(target) != null ? num(target) : (num(ls.target) != null ? num(ls.target) : 2);
+  // The orchestrator/ladder owns the target. A verifier reports what ran; it cannot move the goal.
+  const tgt = num(target) != null ? num(target) : num(ls.target);
   const stages = Array.isArray(ls.stages_fused) ? ls.stages_fused.map(String) : [];
   const expected = Array.isArray(expectedStages) ? expectedStages.map(String) : [];
   const missingStages = expected.filter((s) => !stages.includes(s));
   const proofMissing = ls.per_rank !== true || !String(ls.how_counted || '').trim() ||
     missingStages.length > 0;
+  if (tgt == null || !Number.isInteger(tgt) || tgt <= 0) {
+    return { state: 'unjudged', shape_met: false, caveat:
+      'Launch target is missing or invalid; the caller must supply a positive integer.' };
+  }
   if (cand == null || !Number.isInteger(cand) || cand <= 0) {
     return { state: 'unjudged', shape_met: false, caveat:
-      `Launch count NOT reported, so acceptance criterion 1 (two launches) is UNJUDGED for this ` +
-      `candidate. A fusion that collapsed dispatch+gemm1 but still launches combine separately is ` +
-      `three launches and reads identical to a real two-launch fusion here. Report ` +
-      `launch_shape.launches_cand (per EP rank, one operator call) with how_counted.` };
+      `Launch count NOT reported, so the caller's target (${tgt}) is UNJUDGED. Report ` +
+      `launch_shape.launches_cand for one operator call with how_counted.` };
   }
   if (expected.length && proofMissing) {
     return { state: 'unjudged', shape_met: false, caveat:
@@ -5033,29 +5167,24 @@ function launchVerdict(ver, target, expectedStages) {
       ? `Launch count ${base} -> ${cand} (target ${tgt}); the two-launch fused shape is reached.` : '' };
   }
   return { state: 'above_target', shape_met: false, caveat:
-    `Launch count is ${cand}${base != null ? ` (from ${base})` : ''}, target ${tgt}. The stages are ` +
-    `not all fused yet -- this is a partial rung, not a wrong result, but the TERMINAL two-launch ` +
+    `Launch count is ${cand}${base != null ? ` (from ${base})` : ''}, target ${tgt}. The regions are ` +
+    `not all fused yet -- this is a partial rung, not a wrong result, but the terminal launch ` +
     `shape has NOT been reached and the fusion rung must not be reported as closed on it.` };
 }
 // <</REPLAY:launch_gate>>
 
 // <<REPLAY:bimodal_split>>
-// THE 512 GUARDS ARE NOT NOISY, THEY ARE BIMODAL — and the escape hatch the doctrine prescribes for
-// them does not work on them.
+// SOME GUARDS ARE BIMODAL RATHER THAN NOISY — and simple deep-sampling does not resolve them.
 //
-// Measured on this box, unmodified tree against itself, 10 runs per guard: `8192_uniform` unimodal,
-// worst pair 1.09%; `512_uniform` worst pair 6.21%; `512_rank-mixed-skew` worst pair 9.30% with 2 of
-// 10 runs sitting ~7-8% above an otherwise tight cluster. Those high runs reproduce to four digits,
-// which drift does not do. So the guard occupies one of two discrete states per run, and the excess
-// (~0.07-0.10 ms, 9-13% of a 512-token iteration) is additive.
+// A prior operator showed two discrete, reproducible latency states under byte-identical work.
+// Treating that as ordinary drift hid effects smaller than the slow-state jump.
 //
 // The standing rule is "deep sample, judge by SEPARATION" — two arms whose raw readings do not
 // overlap at all are separated in a way no tail draw can undo (10-vs-10, p=1.1e-5 under the null).
 // That rule is right, and on a bimodal guard it is UNREACHABLE: both arms draw slow runs, the ranges
 // interleave, and separation never happens however deep you sample. The escape hatch is unavailable
 // on precisely the two guards it was written for, which is why they have been demoted to "regression
-// guards only" for several waves while the effect being hunted (5-6% by Analyze's own envelope) sits
-// underneath a 9.30% worst pair.
+// guards only while the effect being hunted sat underneath the slow-state jump.
 //
 // The way out is not more runs, it is conditioning on the state. Classify each reading, then compare
 // like with like, and report the state occupancy separately instead of averaging over it.
@@ -5318,13 +5447,13 @@ function autonomyAcceptanceVerdict(direction, ver, opts) {
     const ov = overlapVerdict(ver, { geomean: gc.score });
     const frac = Number(ver && ver.overlap && ver.overlap.fraction);
     const cuFrac = Number(ver && ver.overlap && ver.overlap.cu_fraction);
-    const scattered = Number(ver && ver.overlap && ver.overlap.scattered_reading);
+    const baseControl = Number(ver && ver.overlap && ver.overlap.base_reading);
     const forced = Number(ver && ver.overlap && ver.overlap.forced_reading);
     if (ver && ver.overlap && ver.overlap.measured !== 'yes') {
       reasons.push('controlled overlap evidence measured=yes is required');
-    } else if (!Number.isFinite(scattered) || scattered > 0.05 ||
+    } else if (!Number.isFinite(baseControl) || baseControl > 0.05 ||
                !Number.isFinite(forced) || forced <= 0.05) {
-      reasons.push('overlap meter requires passing scattered and forced-concurrency controls');
+      reasons.push('overlap meter requires passing base and forced-concurrency controls');
     } else if (!['measured', 'contention'].includes(ov.state)) {
       reasons.push(ov.caveat || `overlap meter state is ${ov.state}`);
     } else if (!(frac > 0.05) || !(cuFrac > 0.05)) {
@@ -5415,6 +5544,15 @@ if (setup.resumed && setup.prior_state) {
           structural_report: '',
           structural_contract_revision: '',
           structural_contract_sha256: '',
+          contract_failures: [{
+            id: 'contract_revision_changed',
+            category: 'plan',
+            severity: 'required',
+            messages: [
+              `structural evidence revision ${n.structural_contract_revision || 'unversioned'} ` +
+              `does not match ${EXPERT_SKILL_REVISION}`,
+            ],
+          }],
           next_blocker: `re-run Expert Skill contract ${EXPERT_SKILL_REVISION} on exact HEAD ` +
             `${n.head || n.working_head || '(missing)'} before device verification`,
         } : {}),
@@ -5614,11 +5752,11 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         LADDER_DISPATCHED: [...dispatchedRungs], LADDER_COMPLETED: [...LADDER_MEASURED],
         OPEN_RUNGS: openRungs(LADDER, rungTally),
         ...(analysis && analysis.task_graph
-          ? { TASK_GRAPH: JSON.stringify(analysis.task_graph).slice(0, 6000) } : {}),
+          ? { TASK_GRAPH: analysis.task_graph } : {}),
         ...(analysis && analysis.resource_timeline
-          ? { RESOURCE_TIMELINE: JSON.stringify(analysis.resource_timeline).slice(0, 5000) } : {}),
+          ? { RESOURCE_TIMELINE: analysis.resource_timeline } : {}),
         ...(analysis && analysis.mega_plan_ir
-          ? { MEGA_PLAN_IR: JSON.stringify(analysis.mega_plan_ir).slice(0, 8000) } : {}),
+          ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
         ...(CHAIN_DEBT.length ? {
           CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, currentRound, LADDER_MEASURED).open,
           CHAIN_BASELINE,
@@ -5634,11 +5772,32 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     const wip = megaCandidateRegistry.find((c) =>
       c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));
     if (!wip) return null;
+    const target = analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target || {};
+    const wipLaunches = topologyLaunchCount(wip.topology);
+    const reachesTarget = Number.isFinite(wipLaunches) &&
+      wipLaunches === Number(target.launch_count);
+    const normalizedTopology = {
+      launch_count: wipLaunches,
+      included_regions: Array.isArray(wip.topology.included_regions)
+        ? wip.topology.included_regions
+        : (Array.isArray(wip.topology.fused_stages) ? wip.topology.fused_stages : []),
+      included_queues: Array.isArray(wip.topology.included_queues)
+        ? wip.topology.included_queues : (reachesTarget ? target.required_queues || [] : []),
+      capabilities: Array.isArray(wip.topology.capabilities)
+        ? wip.topology.capabilities
+        : (reachesTarget ? target.required_capabilities || [] : []),
+      parameters: wip.topology.parameters || {},
+      require_overlap: wip.topology.require_overlap === true,
+    };
     return {
       id: `r${currentRound}_continue_${wip.id}`, candidate_id: wip.id,
       candidate_source: wip.source, base_candidate_id: wip.base_id,
-      title: `continue candidate ${wip.id}`, specialty: 'distributed',
-      tree: wip.tree, prompt: wip.next_blocker || 'Continue the first unresolved measured blocker.',
+      title: `continue candidate ${wip.id}`, specialty: MEGA_DEFAULT_SPECIALTY,
+      tree: wip.tree, target_topology: normalizedTopology,
+      contract_failures: wip.contract_failures,
+      prompt: wip.contract_failures.length
+        ? `Resolve required contract failures: ${JSON.stringify(wip.contract_failures)}`
+        : (wip.next_blocker || 'Continue the first unresolved measured blocker.'),
     };
   }
   let raw = plan.directions[0];
@@ -5652,7 +5811,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       candidate_source: 'search',
       base_candidate_id: 'frozen_baseline',
       title: 'autonomous runnable Mega-kernel candidate',
-      specialty: 'distributed',
+      specialty: MEGA_DEFAULT_SPECIALTY,
       step_role: 'terminal',
       focus_files: [],
       prompt: 'Author a complete runnable operator candidate from the frozen source/task graph. Full ' +
@@ -5678,12 +5837,15 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const targetShape = raw.target_shape || {};
   const planIr = analysis && analysis.mega_plan_ir || {};
   const targetTopology = raw.target_topology || {
-    launches: Number.isFinite(Number(targetShape.launches))
+    launch_count: Number.isFinite(Number(targetShape.launches))
       ? Number(targetShape.launches)
-      : Number(planIr.target_launches || LAUNCH_TARGET),
-    fused_stages: Array.isArray(targetShape.stages_fused)
+      : Number(planIr.target && planIr.target.launch_count || LAUNCH_TARGET),
+    included_regions: Array.isArray(targetShape.stages_fused)
       ? targetShape.stages_fused.map(String)
       : (Array.isArray(planIr.regions) ? planIr.regions.map((r) => String(r.id || '')).filter(Boolean) : []),
+    included_queues: Array.isArray(planIr.queues)
+      ? planIr.queues.map((queue) => String(queue.id || '')).filter(Boolean) : [],
+    capabilities: [],
     require_overlap: targetShape.require_overlap === true || REQUIRE_OVERLAP,
   };
   return {
@@ -5799,7 +5961,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_TREE: tree, OUTPUT_DIR: outDir, ATTEMPT_ID: attemptId,
           LANE_MANIFEST: laneManifest, LANE_LOCK: laneLock,
           CANDIDATE_TIMEOUT_S: commandBudgetS,
-          SPECIALTY: d.specialty || 'distributed', DIRECTION: d,
+          SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
           KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
           GPU_ID: GPU_RESOURCE.specForIndex(0), GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
@@ -5965,6 +6127,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         ? String(structural && structural.contract_revision || EXPERT_SKILL_REVISION) : '',
       structural_contract_sha256: structuralPass
         ? String(structural && structural.contract_sha256 || '') : '',
+      contract_failures: structuralPass
+        ? [] : normalizeContractFailures(structural && structural.contract_failures),
       next_blocker: structuralPass
         ? meta.next_blocker
         : (structural && structural.next_blocker) ||
@@ -5980,7 +6144,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     ));
   }
   const skillTargetLaunches = Number(
-    analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target_launches
+    analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target &&
+      analysis.mega_plan_ir.target.launch_count
   );
   const candidateTargetLaunches = Number(
     d && d.target_topology && d.target_topology.launches
@@ -6009,12 +6174,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           VERIFY_TIER: 'score',
           MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
-          SPECIALTY: 'distributed',
+          SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
           TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
           REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
           REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
-          REQUIRE_GRAPH_CAPTURE: '1',
+          REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
           REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
           ACCURACY_METRIC, ACCURACY_THRESHOLD,
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
@@ -6030,7 +6195,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL: MEGA_GRAPH_CONTRACT_TOOL,
+          GRAPH_CONTRACT_TOOL,
           GRAPH_CONTRACT_REPLAYS: 30,
           ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
         }),
@@ -6199,7 +6364,8 @@ while (dispatched < BUDGET &&
       .filter((c) => c.source === 'search' || c.source === 'integrated')
       .reduce((sum, c) => sum + Number(c.attempts || 0), 0);
     const expertTargetLaunches = Number(
-      analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target_launches
+      analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target &&
+        analysis.mega_plan_ir.target.launch_count
     );
     const expertTargetConfigured = USE_EXPERT_SKILLS &&
       Number.isFinite(EXPERT_SKILL_RECORDED_LOW) &&
@@ -6305,7 +6471,7 @@ while (dispatched < BUDGET &&
         idx: 0,
         id: `r${round}_close_${force.rungId}`,
         title: c.title || `close fusion rung ${force.rungId}`,
-        specialty: 'distributed',
+        specialty: MEGA_DEFAULT_SPECIALTY,
         focus_files: Array.isArray(c.focus_files) ? c.focus_files : [],
         expected_speedup: Number(c.expected_speedup) || undefined,
         roadmap_rung: force.rungId,
@@ -6506,18 +6672,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.`,
     // RECOVER AN ENGINEER'S CLAIM FROM DISK BEFORE DROPPING IT.
     //
     // The Benchmark phase has done this since wave 1 (see the RECOVERY block above); the Optimize
-    // phase did not, and on 2026-08-23 that asymmetry cost a wave its only result. Three rounds
-    // produced the SAME physical win -- payload_chunk_rows gated at the 512 bucket, +20.6% rank-max,
-    // 3/3 pairs, rel-L2 0.0 against the default, i.e. bit-identical (the ratio-to-null it was first
-    // reported at, ~10x, came from a 5-pair null that missed that guard's bimodal tail; deeper
-    // sampling the next day put the worst null pair at 9.30pp, so the ratio is the open question --
-    // the point here is that the win was never SCORED, which is a different failure entirely) --
-    // and it was scored ZERO all three times, never for a measurement failure and always at the claim
-    // boundary. The decisive one: the engineer wrote a complete worker_result.json to disk at 08:05
-    // (populated per_case, speedup_geomean 1.0594, a best_patch.diff that `git apply --check` accepts)
-    // and then KEPT MEASURING until 08:12, so the round closed with no StructuredOutput and `eng` was
-    // null. The result existed, on disk, in the right shape, at the right path, and the harness stepped
-    // over it.
+    // phase did not, and that asymmetry once discarded the only measured win in several rounds.
+    // The engineer had written a complete worker_result and applicable patch, then kept measuring
+    // until the agent boundary returned no StructuredOutput. The result existed on disk in the right
+    // shape and the harness stepped over it.
     //
     // Telling engineers "emit the claim last" is the right instruction and it is now in the role file,
     // but an instruction is not a mechanism: the failure mode is an agent running out of time, and an
@@ -7599,11 +7757,13 @@ if (MODE === 'mega') {
           MEGA_PROFILE,
           TIE_NOISE_PCT: MEGA_TIE_NOISE_PCT,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-          LAUNCH_TARGET, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+          LAUNCH_TARGET, BASELINE_LAUNCH_COUNT: optionalNumber(A.baseline_launch_count),
+          BIMODAL_GUARDS, BASELINE_ACTIVATION,
+          REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
           ACCURACY_METRIC, ACCURACY_THRESHOLD,
           REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
-          REQUIRE_GRAPH_CAPTURE: '1',
-          DIRECT_GRAPH_ACCURACY: USE_EXPERT_SKILLS ? '1' : '0',
+          REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
+          DIRECT_GRAPH_ACCURACY: DIRECT_GRAPH_ACCURACY ? '1' : '0',
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
@@ -7617,7 +7777,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL: MEGA_GRAPH_CONTRACT_TOOL,
+          GRAPH_CONTRACT_TOOL,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
         }),
@@ -7660,7 +7820,7 @@ if (MODE === 'mega') {
       const verdict = megaFinalSelectionVerdict(attempt, batch, {
         selectedWorkspace: `${EVAL_DIR}/mega_selected`,
         launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
-        baselineLaunches: Number(A.mega_baseline_launches || 4),
+        baselineLaunches: optionalNumber(A.baseline_launch_count),
         targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
         requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
         requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
@@ -7714,7 +7874,7 @@ if (MODE === 'mega') {
     selectionVerdict = megaFinalSelectionVerdict(megaSelection, finalists, {
       selectedWorkspace: `${EVAL_DIR}/mega_selected`,
       launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
-      baselineLaunches: Number(A.mega_baseline_launches || 4),
+      baselineLaunches: optionalNumber(A.baseline_launch_count),
       targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
       requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
       requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
@@ -7728,7 +7888,8 @@ if (MODE === 'mega') {
     FINAL_WORKSPACE = megaSelection.selected_tree;
     const selectedRecord = selectionVerdict.source;
     const finalRow = selectionVerdict.row;
-    const finalTargetReadout = pairedGuardReadout(finalRow.paired_readings, TARGET_GUARDS[0]);
+    const finalTargetReadout = pairedGuardReadout(
+      finalRow.paired_readings, TARGET_GUARDS[0], BIMODAL_GUARDS);
     selectedRecord.status = 'finalist';
     selectedRecord.absolute_score = Number(finalTargetReadout.score);
     selectedRecord.per_case = Array.isArray(finalRow.per_case) ? finalRow.per_case : [];
@@ -8007,7 +8168,7 @@ if (MODE === 'mega') {
     finalPrimary > 1.0 && !scopedGuardFailure);
   mega_note = mega_deliverable
     ? `mega: selected ${finalWinner.id}[${finalWinner.source}] at ${finalPrimary.toFixed(3)}x vs ` +
-      `the frozen scattered baseline; all finalist gates passed.`
+      `the frozen baseline; all finalist gates passed.`
     : `mega: no fully verified finalist cleared the common correctness/guard/performance contract; ` +
       `workflow-authored candidate WIP remains recorded, but no result is presented as shipped.`;
   if (!mega_deliverable && finalWinner) {

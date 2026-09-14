@@ -139,9 +139,8 @@ for three waves while every round re-planned from the profile.
      at 90%, because guard order alone decides which half of the table exists. Instruct engineers to
      make one pass over **all** guards at low pairs, write a complete claim, then add pairs in a
      second pass that merges into the same JSON — so every kill point leaves a usable claim.
-     Observed: two consecutive rounds each measured a real +5% win on half the guards and scored
-     1.000x, one landing the 8192 pair and one the 512 pair, from a plan that was 135% of its window
-     before the first run started.
+     Observed: consecutive rounds each measured a real win on disjoint halves of the guard set and
+     scored 1.000x because the original plan exceeded its lease window before the first run started.
    - **A claim is only integrable if it is COMPLETE.** An engineer that emits no `claimed` number, or
      emits `claim_complete:false`, cannot be verified and therefore cannot win — no matter how good
      the numbers in its log are. Tell engineers this in `strategy`: a partial claim is worth less
@@ -223,8 +222,8 @@ for three waves while every round re-planned from the profile.
    are how the next phase knows what it still owes.
 
 6b. **WHOLE-FUSION-FIRST when a validated full-fusion playbook is in scope.** If your inputs carry a
-   `validated`/`human_validated` full-fusion expert skill for THIS operator (e.g.
-   `megamoe_ep_mega_fusion`, a distilled production playbook with a measured floor) AND the
+   `validated`/`human_validated` full-fusion Expert Skill for this operator (a
+   distilled production playbook with a measured floor) AND the
    acceptance shape is a single fused kernel (`LAUNCH_TARGET` ≤ 2 with `REQUIRE_OVERLAP`), then the
    ladder's FIRST terminal rung MUST be the **complete fused kernel authored as one unit** following
    that playbook end-to-end — correctness and CUDA-graph safety FIRST (the playbook's double-buffer /
@@ -250,13 +249,12 @@ for three waves while every round re-planned from the profile.
    failure is a HANG that holds the whole collective lease, authoring it blind as a single round's
    terminal rung does not reach the card — three such rounds trip the no-hardware activation cap with
    nothing measured. Then stage the SAME playbook-ordered build into `enabling` sub-rungs (§ step_role),
-   each of which MUST activate `path=MEGA` on hardware and pass a bounded functional-liveness screen,
-   each `expected_speedup`=no-win, judged on FUNCTION, NONE permitted to close the chain: (i) combine
-   folded in behind a **barrier-gated** phase + the playbook's device epoch/parity double-buffer
-   (correctness + CUDA-graph safety FIRST — deterministic, no per-token race); (ii) CU-role partition
-   of GEMM1/GEMM2 into the one launch via the arrival ticket; (iii) the TERMINAL rung — convert the
-   barrier to the per-token wait+acquire-fence concurrent-combine queue where the overlap and the
-   floor live, and read win/no-win HERE. This is the playbook's own "correctness-and-graph-safety
+   each of which MUST activate its declared candidate path on hardware and pass a bounded
+   functional-liveness screen, each `expected_speedup`=no-win, judged on FUNCTION, NONE permitted to
+   close the chain: (i) establish replay-safe generation and a deterministic barrier-gated path;
+   (ii) place producer/consumer regions in one resident launch; (iii) the TERMINAL rung — replace
+   the coarse barrier with the validated item-level event protocol and read win/no-win HERE.
+   This is the playbook's own "correctness-and-graph-safety
    first, floor second, speed third" order made bankable one lease at a time; it is NOT the forbidden
    isolated-single-edge decomposition above, because every sub-rung is an enabling step of the ONE
    whole-fusion terminal rung (not an independent terminal rung), no sub-rung's reading closes the
@@ -293,13 +291,14 @@ Return JSON:
      "step_role": "terminal|enabling", "enables": "<terminal rung when enabling>",
      "cost_budget_pct": 3.0,
      "target_shape": {"launches": 2,
-       "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
+       "stages_fused": ["region_a", "region_b"],
        "require_overlap": true},
-     "target_topology": {"launches": 2,
-       "fused_stages": ["dispatch", "gemm1", "gemm2", "combine"],
-       "combine_mode": "queue", "g2_waves": 8,
-       "site2": {"persist_cu": 0, "skew_cu": 0},
-       "notes": "OPTIONAL multi-lever topology; include only levers this direction changes, omit for a pure continue"}}
+     "target_topology": {"launch_count": 2,
+       "included_regions": ["region_a", "region_b"],
+       "included_queues": ["queue_a"],
+       "capabilities": ["item_level_overlap"],
+       "parameters": {},
+       "notes": "operator-neutral topology; Skill-specific names and values are data"}}
   ],
   "kk_operator": "<taxonomy operator id or null>",
   "kk_language": "<triton|hip|ck|asm|flydsl|tilelang or null>",
@@ -376,15 +375,12 @@ Four things about this artifact that decide whether it is worth anything:
   graph outranks a complete invented one**, and if the honest version is mostly unknowns, that is
   the analysis result — return it and say what measurement would settle each one.
 - **On every edge with a `fan_in`, say what the consumer loads that the producer does not send.**
-  The nodes are output tiles, so the graph only ever describes the operand travelling along the
-  edge. Everything else the consumer needs — the second weight matrix, its scales, the descriptors,
-  the index arrays — has no node, therefore no edge, therefore cannot be ranked, and the lever it
-  represents is invisible no matter how careful the rest of the graph is. Those operands depend on
-  nothing, so they can be loaded while the producer is still running, which is a different and
-  usually cheaper move than making the dependent operand arrive earlier. This has already cost a
-  wave: a graph on this operator found both fusable edges correctly and never mentioned that GEMM2's
-  weights depend on nothing at all and both stages measured ~30% HBM. Answering is one static read
-  of the consumer's signature, and `[]` is a real answer.
+  The graph describes only the operand travelling along the edge. Dependency-free read-only
+  operands, scales, descriptors and indices otherwise have no node and cannot be ranked. They may
+  be prefetched while the producer runs, which is different and often cheaper than accelerating the
+  dependent operand. A prior graph found every fusable edge but missed this prefetch opportunity
+  despite clear resource headroom. Answering is one static read of the consumer signature, and `[]`
+  is a real answer.
 
 **`resource_timeline` is required whenever `task_graph` is, and it is the half that decides whether
 any edge in the graph is worth touching.** Read `SKILL_DIR/knowledge/pipe_occupancy.md` before you
@@ -751,10 +747,10 @@ Rules:
      regardless of which team dir or round number it landed in. If it holds off-lease authoring for
      the same edge, BUILD ON THAT DIFF and aim the lease at the localized bug. For a hang on an
      **intra-rank** readiness edge (GEMM1→GEMM2), do not infer memory scope from the logical rank
-     boundary alone. The current `megamoe_ep_mega_fusion` playbook pins publication at
-     **system scope** because the relaxed MORI waiter may execute on another XCD: write-through stores,
-     `s_waitcnt(0)`, a block barrier, then `atomic_add_system`, without a separate per-tile system
-     flush. A
+     boundary alone. Follow the matched Skill's declared scope and the actual
+     producer/consumer placement; when a relaxed waiter may execute in another
+     coherence domain, the contract may require system-visible publication rather
+     than a logically local scope. A
      hang whose `path=MEGA` marker is non-monotonic across cuts is a `wait_until` **target that is never
      reachable** (crash_bisection: the producer publishes a tile index / expected count the consumer's
      wait does not match), so the move is the skill's own probe method — print `ready1[item]`, the

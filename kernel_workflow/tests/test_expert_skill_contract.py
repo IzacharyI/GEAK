@@ -35,7 +35,7 @@ def _contract():
         "plan": {
             "required": True,
             "assertions": [
-                {"id": "target", "path": "target_launches", "op": "eq", "value": 2},
+                {"id": "target", "path": "target.launch_count", "op": "eq", "value": 2},
                 {
                     "id": "threads",
                     "left": {"path": "resource.threads"},
@@ -71,7 +71,7 @@ def _root(tmp_path: Path, name: str, source: str) -> Path:
 
 def _plan():
     return {
-        "target_launches": 2,
+        "target": {"launch_count": 2},
         "resource": {"threads": 512, "wave": 64, "waves": 8},
     }
 
@@ -106,6 +106,73 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
     assert any(item["id"] == "host_ready_pointer_identity" for item in contract["checks"])
     assert any(item["id"] == "combine_transport_and_work_domain" for item in contract["checks"])
+
+
+def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "contract.yaml"
+    )
+    contract = MODULE.load_contract(path)
+    plan = {
+        "plan_version": "mega-plan-v2",
+        "expert_skill_revision": "mega-ep-fusion-v1",
+        "target": {"launch_count": 2},
+        "work_domains": [{"id": "tokens"}],
+        "buffers": [{"id": "payload"}],
+        "counters": [{"id": "ready"}],
+        "resources": {
+            "arch": "gfx950",
+            "workgroup": {
+                "wave_size": 64, "wave_count": 8, "thread_count": 512,
+            },
+            "local_memory": {
+                "total_bytes": 160400,
+                "limit_bytes": 163840,
+                "allocation_rule": "max",
+            },
+            "registers": {"scratch_bytes_max": None},
+            "occupancy": {"min_workgroups_per_cu": 1},
+            "parameters": {
+                "stage1_pool_bytes": 131072,
+                "stage2_slab_bytes": 131728,
+                "role_halves": 1,
+                "additive_bytes": 28672,
+            },
+        },
+        "schedule": {
+            "primary_loop": {
+                "kind": "unified",
+                "carried_state": ["consumer_active", "g2_pend", "g2_next"],
+            },
+            "parameters": {
+                "combine_third_queue": True,
+                "g2_chunk_large": 16,
+                "g2_chunk_small": 1,
+                "preemption_interval": 6,
+                "skew_num": 5,
+                "skew_den": 4,
+                "work_shards": 4,
+            },
+        },
+        "abi": {
+            "arguments": [{"id": "payload"}],
+            "parameters": {
+                "direct_fused_args": True,
+                "stage2_pointer_count": 12,
+                "combine_pointer_count": 7,
+                "optional_quant_pointer_count": 0,
+                "disabled_placeholders": True,
+            },
+        },
+    }
+    valid, errors, _ = MODULE.validate_plan(contract, plan)
+    assert valid
+    assert not errors
 
 
 def test_generic_engine_contains_no_operator_specific_contract():
@@ -215,6 +282,7 @@ def test_call_keyword_identity_rejects_payload_pointer_as_ready_pointer(tmp_path
     contract["checks"] = [
         {
             "id": "ready_identity",
+            "category": "abi",
             "kind": "call_keywords",
             "file": "src/a.py",
             "scope": "wire",
@@ -238,6 +306,7 @@ def test_call_keyword_identity_rejects_payload_pointer_as_ready_pointer(tmp_path
         _manifest(contract, candidate), _plan(),
     )
     assert not result["checks"]["ready_identity"]["pass"]
+    assert result["contract_failures"][0]["category"] == "abi"
     assert "peer_ready" in result["next_blocker"]
 
 

@@ -53,10 +53,11 @@ console.log('\n# the two-launch shape is met when the count reaches the target')
   ok(v1.shape_met === true, 'below target also counts as met — the target is a ceiling, not an equality');
 }
 
-console.log('\n# the target falls back sensibly');
+console.log('\n# the caller owns the target');
 {
   const v = launchVerdict({ launch_shape: { launches_cand: 2 } }, undefined);
-  ok(v.state === 'met', 'with no target reported and none passed, the default of 2 is used (this campaign\'s shape)');
+  ok(v.state === 'unjudged',
+    'with no target reported and none passed, launch shape remains unjudged');
   const v3 = launchVerdict({ launch_shape: { launches_cand: 3, target: 2 } }, 5);
   ok(v3.state === 'met',
      'an explicit orchestrator target wins over the verifier field; the verifier reports evidence, not policy');

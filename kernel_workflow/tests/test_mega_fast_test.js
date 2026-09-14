@@ -81,7 +81,9 @@ for (const name of [
   'CACHE_DIR', 'CACHE_KIND', 'FROZEN_KERNEL_PATH', 'BENCH_HARNESS',
   'MEGA_ANALYSIS_DIR', 'FAST_TEST_KEY_TOOL', 'CONTROL_JSON', 'GUARDS_JSON',
 ]) {
-  ok(bench.includes('`' + name + '`') && src.includes(name + ':'),
+  const threaded = src.includes(name + ':') ||
+    new RegExp(`\\b${name}\\s*,`).test(src);
+  ok(bench.includes('`' + name + '`') && threaded,
      `${name} is declared in benchmark_engineer.md Inputs and passed by a helper`);
 }
 ok(/roleAgent\('benchmark_engineer', 'fast_test_load'[\s\S]{0,600}SKILL_DIR: WORKFLOW_DIR/.test(src) &&

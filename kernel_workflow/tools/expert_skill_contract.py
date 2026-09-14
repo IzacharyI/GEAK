@@ -392,6 +392,7 @@ def evaluate_checks(
     for rule in contract.get("checks") or []:
         check_id = str(rule["id"])
         severity = str(rule.get("severity") or "required")
+        category = str(rule.get("category") or "semantic")
         kind = str(rule.get("kind") or "regex")
         evaluator = evaluators.get(kind)
         if evaluator is None:
@@ -400,6 +401,7 @@ def evaluate_checks(
             )
         else:
             results[check_id] = evaluator(rule, trees, severity)
+        results[check_id]["category"] = category
     return results
 
 
@@ -756,6 +758,22 @@ def evaluate(
         if result["severity"] == "required" and not result["pass"]
         for failure in result["failures"]
     ]
+    contract_failures = [
+        {
+            "id": check_id,
+            "category": result.get("category", "semantic"),
+            "severity": result["severity"],
+            "messages": list(result["failures"]),
+        }
+        for check_id, result in check_results.items()
+        if result["severity"] == "required" and not result["pass"]
+    ]
+    contract_failures.extend({
+        "id": error.split(":", 1)[0],
+        "category": "plan",
+        "severity": "required",
+        "messages": [error],
+    } for error in plan_errors)
     next_blocker = "; ".join((failed_details + plan_errors)[:8])
 
     return {
@@ -789,6 +807,7 @@ def evaluate(
         "semantic_features_total": units_total,
         "semantic_feature_ratio": units_passed / units_total if units_total else 0.0,
         "checks": check_results,
+        "contract_failures": contract_failures,
         "failed_required_checks": required_check_failures,
         "forbidden_markers_present": forbidden_present,
         "baseline_tree_digest": tree_digest(base_files) if base_files else "",

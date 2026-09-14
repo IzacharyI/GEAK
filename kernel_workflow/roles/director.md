@@ -234,9 +234,10 @@ All state fields are pass-through JSON — do not reformat or summarise them.)
 ## PHASE=select_mega
 
 Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU_ID`,
-`TARGET_GUARDS`, `REGRESSION_GUARDS`, `LAUNCH_TARGET`, `REQUIRED_REPLAYS`,
+`TARGET_GUARDS`, `REGRESSION_GUARDS`, `LAUNCH_TARGET`, `BASELINE_LAUNCH_COUNT`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS_BY_GUARD`, `TIE_NOISE_PCT`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, `DIRECT_GRAPH_ACCURACY`,
+`BIMODAL_GUARDS`, `BASELINE_ACTIVATION`,
 optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_PLAYBOOK`,
 `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
 `EXPERT_SKILL_ACCURACY_CASES`, `EXPERT_SKILL_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
@@ -252,24 +253,25 @@ batch may contain all finalists for one exhaustive comparison.
 1. Never edit a candidate tree. Verify its declared `head` exists. Benchmark a detached temporary
    copy checked out at that exact head, not whatever newer WIP currently occupies the lane. Drop a
    candidate whose tree/head is missing.
-2. On one EP8 lease, independently run every finalist with the same command/environment. Interleave
-   candidate arms with the frozen scattered baseline on `8192_uniform`, use rank-max `mega_e2e`, and
-   run the three regression guards. Recheck relL2, candidate-path activation on every rank,
+2. On one collective lease, independently run every finalist with the same command/environment. Interleave
+   candidate arms with the frozen baseline on each supplied target/regression guard, use the supplied
+   promotion metric, and run every supplied regression guard. Recheck the supplied accuracy metric,
+   candidate-path activation on every rank,
    graph safety and required liveness. Every finalist may be a complete partial fusion: require a measured
-   launch reduction satisfying `LAUNCH_TARGET <= launches_cand < launches_base`; do not reject a
-   faster three-launch candidate merely because the project target is two. When requested, also require controlled non-zero overlap,
+   launch reduction satisfying `LAUNCH_TARGET <= launches_cand < launches_base`; record both
+   `launches` and `launches_base` in its evidence row. Do not reject a
+   faster partial candidate merely because it has not reached the launch target. When requested, also require controlled non-zero overlap,
    launch-change attribution on a named target guard (absolute to the frozen baseline) and distinct
    JIT/cache/ISA hashes.
-   For 512 guards, start with the configured production pair count. Pool base/candidate readings
-   arm-blind; if both arms populate two states separated by at least 3%, extend that same candidate
+   For every entry in `BIMODAL_GUARDS`, start with the configured pair count. Pool base/candidate
+   readings arm-blind; if both arms populate two states separated by at least 3%, extend that candidate
    to 16 raw pairs and compute the guard from pairs where both arms are in the fast state. Do not
    mistake a large arm-to-arm effect (clusters containing only one arm) for bimodality.
    - Every registry candidate carries its activation manifest. Export that exact manifest for its
-     candidate arm and force `AITER_MEGAMOE_FUSE_ALL=0` for the frozen baseline arm. Never infer
-     switches from source comments or a prior run. Candidate arms require eight `MEGA` path
-     markers. A frozen public baseline that predates marker support expects zero markers; bind it by
-     its exact source revision and explicit `FUSE_ALL=0` command rather than inventing a
-     `SCATTERED` marker.
+     candidate arm and use the caller-supplied `BASELINE_ACTIVATION`/COMMANDMENT for the frozen arm.
+     Never infer switches or marker values from source comments or a prior run. Require the declared
+     candidate marker once per rank; a baseline without marker support is bound by its source identity
+     and explicit baseline command.
    - When `EXPERT_SKILL_SOURCE_FILES` is provided, diff the candidate root commit against the exact
      candidate HEAD and require every changed path to be in that list. Tests, benchmarks, scripts, logs,
      dumps, and evidence inside the source tree reject the finalist.
@@ -278,11 +280,11 @@ batch may contain all finalists for one exhaustive comparison.
      candidate output directly with the task's numeric reference. Drain-vs-floor or any other
      transitive equivalence is not correctness evidence. Run `GRAPH_CONTRACT_TOOL` in the detached
      candidate environment with `--accuracy-cases <EXPERT_SKILL_ACCURACY_CASES>`,
-     `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, both production routes, and
+     `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, caller-supplied routes, and
      `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON.
 3. A source label (`search` or `integrated`) never relaxes a
    quality gate. Exclude any incomplete or incorrect arm, and exclude every candidate whose absolute
-   `8192_uniform` speedup is `<=1.0` versus frozen MegaMoE V2. Slow candidates remain WIP; they are
+   target-guard speedup is `<=1.0` versus the frozen baseline. Slow candidates remain WIP; they are
    never final output.
 4. Select the highest absolute speedup versus the frozen baseline.
    `EXPERT_SKILL_TARGET_SCORE`/`EXPERT_SKILL_TARGET_BAND` are report-only targets. Never run or fetch
@@ -301,7 +303,8 @@ batch may contain all finalists for one exhaustive comparison.
 Return the `MEGA_SELECTION_SCHEMA` fields exactly, including every candidate's rejection reason and
 the selected tree/patch. Every candidate row must carry the exact registry `tree` and `head`, plus
 `graph_safe`, `artifact_distinct`, and the exact `activation` manifest,
-`status:"verified"` and the exact root-to-HEAD `touched_files`,
+`status:"verified"`, `world_size`, `launches`, `launches_base`, and the exact
+root-to-HEAD `touched_files`,
 `overlap_measured`, `overlap_fraction`, `overlap_cu_fraction`,
 `attribution_complete`, `accuracy_metric`, `accuracy_value`, `liveness_replays`, and its full
 `per_case` guard table, raw `paired_readings`, null arm, artifact hashes, overlap controls,
@@ -404,7 +407,7 @@ run all steps below as before.
    = `exp(mean(log(speedups)))` and arithmetic mean.
    **PRIMARY metric — recompute the self-weight with the SAME audited function the unittest uses, on YOUR
    measured latencies. Do NOT hand-roll `Σ weight_i / Σ (weight_i/speedup_i)` from `BASELINE_TIMING`'s
-   static `weight`/`count` (GEMM cases carry `count:None`, and the profile `weight` is a distrusted prior
+   static `weight`/`count` (some kernel cases carry `count:None`, and the profile `weight` is a distrusted prior
    — a hand-rolled number silently arbitrates on the wrong weights).** Build `per_case` and call it:
    ```python
    import harness_lib as h, json

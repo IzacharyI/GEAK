@@ -18,37 +18,63 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
-ok(!verdict({}, { target_launches: 2 }).pass,
+const plan = {
+  target: {
+    launch_count: 2,
+    required_regions: ['producer', 'consumer'],
+    required_queues: ['upstream', 'downstream'],
+    required_capabilities: ['item_overlap'],
+  },
+};
+
+ok(!verdict({}, plan).pass,
   'a Mega direction cannot omit target_topology');
 ok(!verdict({
   topology_inferred: true,
-  target_topology: { launches: 2, fused_stages: ['gemm1', 'gemm2', 'combine'] },
-}, { target_launches: 2 }).pass,
+  target_topology: {
+    launch_count: 2,
+    included_regions: ['producer', 'consumer'],
+  },
+}, plan).pass,
 'a compatibility fallback does not satisfy a strict planner contract');
 ok(verdict({
   step_role: 'terminal',
   target_topology: {
-    launches: 2,
-    fused_stages: ['dispatch', 'gemm1', 'gemm2', 'p2p', 'combine'],
-    combine_mode: 'queue',
+    launch_count: 2,
+    included_regions: ['producer', 'consumer'],
+    included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'],
   },
-}, {
-  target_launches: 2,
-  resource_contract: { num_waves: 8 },
-  schedule_contract: { work_shards: 4 },
-}).pass,
-'the terminal topology matching MegaPlanIR passes');
+}, plan).pass,
+'an operator-neutral terminal topology matching MegaPlanIR passes');
 ok(!verdict({
   step_role: 'terminal',
-  target_topology: { launches: 3, fused_stages: ['gemm1', 'gemm2'] },
-}, { target_launches: 2 }).pass,
+  target_topology: {
+    launch_count: 2,
+    included_regions: ['producer'],
+    included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'],
+  },
+}, plan).pass,
+'a terminal cannot omit a required region');
+ok(!verdict({
+  step_role: 'terminal',
+  target_topology: {
+    launch_count: 3,
+    included_regions: ['producer', 'consumer'],
+  },
+}, plan).pass,
 'an undeclared partial terminal cannot silently replace the full target');
 ok(verdict({
   step_role: 'terminal',
   rung_deviation: 'measured partial fusion is intentionally evaluated first',
-  target_topology: { launches: 3, fused_stages: ['gemm1', 'gemm2'] },
-}, { target_launches: 2 }).pass,
+  target_topology: {
+    launch_count: 3,
+    included_regions: ['producer', 'consumer'],
+  },
+}, plan).pass,
 'an explicit partial-terminal deviation remains legal');
 
-console.log(failures ? `\nFAILED: ${failures}` : '\nPASS: Mega topology is a typed plan contract.');
+console.log(failures ? `\nFAILED: ${failures}` :
+  '\nPASS: Mega topology is an operator-neutral typed plan contract.');
 process.exit(failures ? 1 : 0);

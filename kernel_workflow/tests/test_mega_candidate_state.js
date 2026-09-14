@@ -59,8 +59,11 @@ ok(/working_snapshot: \{/.test(src) &&
    /changed_files: next\.changed_files/.test(src),
   'unverified candidate progress is persisted as a structured working snapshot');
 ok(/structural_contract_revision: structuralPass/.test(src) &&
-   /structural_contract_sha256: structuralPass/.test(src),
+   /structural_contract_sha256: structuralPass/.test(src) &&
+   /contract_failures: structuralPass/.test(src),
   'new structural evidence is bound to the exact contract revision and digest');
+ok(/contract_failures: c\.working_snapshot\.contract_failures/.test(src),
+  'structured contract failures reach the planner through the candidate registry');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

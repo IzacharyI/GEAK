@@ -45,7 +45,7 @@ const LOST = { geomean: 0.99 };
 // A fully controlled, believable measurement: meter reads ~0 on the unfused path and high on
 // deliberately constructed concurrency.
 const good = (extra) => ({ overlap: { measured: 'yes', fraction: 0.42, cu_fraction: 0.31,
-  scattered_reading: 0.004, forced_reading: 0.88, ...extra } });
+  base_reading: 0.004, forced_reading: 0.88, ...extra } });
 
 console.log('\n# an absent measurement never reads as a passed one');
 {
@@ -71,7 +71,7 @@ console.log('\n# an absent measurement never reads as a passed one');
 
 console.log('\n# the meter has to have read a known value before anyone believes it');
 {
-  const v = overlapVerdict({ overlap: { measured: 'yes', fraction: 0.42, scattered_reading: 0.37,
+  const v = overlapVerdict({ overlap: { measured: 'yes', fraction: 0.42, base_reading: 0.37,
                                         forced_reading: 0.9 } }, WON);
   ok(v.state === 'meter_broken',
      'a meter that finds 37% overlap on the SCATTERED path, whose true overlap is zero by ' +
@@ -84,11 +84,11 @@ console.log('\n# the meter has to have read a known value before anyone believes
        === 'meter_unvalidated',
      'a fraction with no negative control is an untested instrument — the same rule the workflow ' +
      'applies to a benchmark with no positive control');
-  ok(overlapVerdict({ overlap: { measured: 'no', fraction: 0.0, scattered_reading: 0.002 } }, WON).state
+  ok(overlapVerdict({ overlap: { measured: 'no', fraction: 0.0, base_reading: 0.002 } }, WON).state
        === 'meter_unvalidated',
      'a meter reporting NO overlap that has never read a known non-zero is indistinguishable from a ' +
      'dead one, so the negative finding is unconfirmed');
-  ok(overlapVerdict({ overlap: { measured: 'yes', fraction: 0.42, scattered_reading: 0.05,
+  ok(overlapVerdict({ overlap: { measured: 'yes', fraction: 0.42, base_reading: 0.05,
                                  forced_reading: 0.9 } }, WON).state !== 'meter_broken',
      'slop right at the threshold is tolerated — the control is a sanity check, not a precision claim');
 }
@@ -101,7 +101,7 @@ console.log('\n# a controlled meter is allowed to deliver a clean result');
      'is what makes the caveats elsewhere mean something');
 }
 {
-  const v = overlapVerdict({ overlap: { measured: 'no', fraction: 0.0, scattered_reading: 0.003,
+  const v = overlapVerdict({ overlap: { measured: 'no', fraction: 0.0, base_reading: 0.003,
                                         forced_reading: 0.85 } }, LOST);
   ok(v.state === 'measured_none' && /not a missing measurement/.test(v.caveat),
      '"the meter ran and there is no overlap on this edge" is a RESULT about the edge and must not ' +
@@ -127,7 +127,7 @@ console.log('\n# the number and the latency have to agree, and disagreement is a
 console.log('\n# the gate never fails a candidate');
 {
   const states = [overlapVerdict({}, WON), overlapVerdict(good(), LOST),
-                  overlapVerdict(good({ scattered_reading: 0.9 }), WON)];
+                  overlapVerdict(good({ base_reading: 0.9 }), WON)];
   ok(states.every((s) => s.state && !/^(fail|reject)/.test(s.state)),
      'every outcome is a caveat, never a rejection — downgrading a real win with a named hole would ' +
      'teach the loop to stop naming the hole');

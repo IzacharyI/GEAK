@@ -81,6 +81,10 @@ def reindex():
             "validation_file": (
                 f"skills/{sub}/{fm['validation_file']}" if fm.get("validation_file") else ""
             ),
+            "runtime_validation_file": (
+                f"skills/{sub}/{fm['runtime_validation_file']}"
+                if fm.get("runtime_validation_file") else ""
+            ),
             "match": fm.get("match", {}),
             "expects": fm.get("expects", {}),
             "validation_status": validation_status(skill_md, fm),
@@ -92,7 +96,7 @@ def reindex():
         "# NOT a ranking. Filter by (operator, gen, arch_class, [from->to], status==validated) -> MEASURE.\n"
         "# Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).\n\n"
         "schema: {id, file, scope, revision, playbook_file, contract_file, "
-        "validation_file, match, expects, validation_status}\n\n"
+        "validation_file, runtime_validation_file, match, expects, validation_status}\n\n"
     )
     with open(INDEX, "w") as f:
         f.write(header)

@@ -29,6 +29,7 @@ expert_skills/
 │   ├── skill.md               #   selector + concise expert entry point — REQUIRED
 │   ├── playbook.md            #   optional detailed implementation guide
 │   ├── contract.yaml          #   optional declarative source/PlanIR preflight
+│   ├── graph_validation.py    #   optional operator-specific runtime validator
 │   └── validation.yaml        #   measured status and validation boundaries
 ├── _template/                 # skill, optional contract, and validation templates
 └── _contribute/               # the "add a skill to GEAK" skill: scaffold / validate / make_pr / SKILL.md
@@ -36,7 +37,8 @@ expert_skills/
 
 Each skill lives in its own directory `skills/<id>/`. `skill.md` is the selector and concise expert
 entry point; `playbook.md` holds optional detailed guidance, `contract.yaml` is consumed by the generic
-static verifier, and `validation.yaml` records measured status. The selector (`index.yaml`) always
+static verifier, an optional runtime validator performs operator-specific device checks, and
+`validation.yaml` records measured status. The selector (`index.yaml`) always
 points at `skills/<id>/skill.md`.
 
 `contract.yaml` is data, not operator-specific verifier code. The shared

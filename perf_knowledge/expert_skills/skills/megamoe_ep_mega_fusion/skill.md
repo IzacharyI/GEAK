@@ -7,6 +7,7 @@ revision: mega-ep-fusion-v1
 playbook_file: playbook.md
 contract_file: contract.yaml
 validation_file: validation.yaml
+runtime_validation_file: graph_validation.py
 constraint_profile: semantic_and_compiler_shape
 authors:
   - GEAK Team

@@ -84,7 +84,10 @@ def static_check(skill_path, fm, body):
             errs.append(f"missing body section: ## {sec}")
         elif not _section_filled(body, sec):
             errs.append(f"body section '## {sec}' is empty / placeholder only")
-    for key in ("playbook_file", "contract_file", "validation_file"):
+    for key in (
+        "playbook_file", "contract_file", "validation_file",
+        "runtime_validation_file",
+    ):
         if not fm.get(key):
             continue
         try:
@@ -167,7 +170,10 @@ def emit_plan(skill_id, fm, args):
         print("# EFFICACY (kernel_workflow, isolated A/B vs the immutable oracle):")
         print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
         extras = [f"expert_skill_id={skill_id}"]
-        for key in ("playbook_file", "contract_file", "validation_file"):
+        for key in (
+            "playbook_file", "contract_file", "validation_file",
+            "runtime_validation_file",
+        ):
             if fm.get(key):
                 arg = key.replace("_file", "")
                 extras.append(

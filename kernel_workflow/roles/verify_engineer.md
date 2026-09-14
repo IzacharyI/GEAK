@@ -46,7 +46,9 @@ Return the structural schema: candidate id/head, `claim_complete`, report path,
 `structural_compatible`, `independent_structure_pass`,
 `capability_eligible`, copy flags, provenance status, feature counts and an
 actionable `next_blocker`, plus the tool's exact `contract_revision` and
-`contract_sha256`. Return `plan_consistent:true` only when the tool
+`contract_sha256`. Copy every failed required check into structured
+`contract_failures:[{id,category,severity,messages}]`; prose may summarize but
+must not replace this list. Return `plan_consistent:true` only when the tool
 reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,
 `accuracy_verified:false`, and `performance_verified:false`; this phase proves
 source structure only.
@@ -103,7 +105,7 @@ source structure only.
 
 When `VERIFY_TIER` is present:
 
-- `score`: run the target `8192_uniform` paired A/B, artifact/path/launch checks, relL2 and the supplied
+- `score`: run the supplied target guard paired A/B, artifact/path/launch checks, accuracy and the supplied
   short liveness count (normally 30). This makes the whole candidate rankable. Do not spend the three
   regression guards, overlap meter or 256-replay terminal contract here.
 - `finalist`: run all target/regression guards, arrival-jittered `REQUIRED_REPLAYS`,
@@ -346,7 +348,7 @@ denominator.
    reportable finding), `"unknown"` (you could not measure). Guessing a plausible `fraction` to avoid
    writing `unknown` is the exact failure this block exists to prevent.
 
-   Two readings decide whether anyone may believe the third: `scattered_reading`, the meter run
+   Two readings decide whether anyone may believe the third: `base_reading`, the meter run
    against the unfused four-launch path where the true answer is known to be ~0 — **above ~0.05 there
    and the meter is broken and every number after it is void** — and `forced_reading`, the meter run
    against deliberately constructed concurrency, because a meter that reads 0 on both is dead, not
@@ -394,11 +396,11 @@ transcribe completed bytes; it may never fill a missing measurement.
   "candidate_head": "<EXPECTED_HEAD>",
   "activation": {
     "mode": "switch",
-    "switch_name": "AITER_MEGAMOE_FUSE_ALL",
+    "switch_name": "CANDIDATE_FEATURE_FLAG",
     "switch_value": "1",
-    "path_marker": "path=MEGA",
-    "marker_how": "one on-device path=MEGA marker per EP8 rank",
-    "switches": [{"switch_name": "AITER_MEGAMOE_FUSE_ALL", "switch_value": "1"}]
+    "path_marker": "candidate-path marker",
+    "marker_how": "one on-device marker per rank",
+    "switches": [{"switch_name": "CANDIDATE_FEATURE_FLAG", "switch_value": "1"}]
   },
   "status": "verified|correctness_failed|apply_failed|regression|harness_modified|plagiarized|inactive",
   "correctness": "pass|fail",
@@ -411,14 +413,14 @@ transcribe completed bytes; it may never fill a missing measurement.
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
   "replay_count": 1000,
   "replay_results": [
-    {"guard": "8192_uniform", "count": 1000, "status": "pass", "graph_safe": "pass"}
+    {"guard": "target_case", "count": 1000, "status": "pass", "graph_safe": "pass"}
   ],
   "arms_run": ["exact mandatory arm names independently completed"],
   "reps": 5,
   "null_arm_pct": 0.0,
   "paired_readings": [
-    {"guard": "8192_uniform", "base": 5.42, "cand": 5.19},
-    {"guard": "8192_uniform", "base": 5.44, "cand": 5.21}
+    {"guard": "target_case", "base": 5.42, "cand": 5.19},
+    {"guard": "target_case", "base": 5.44, "cand": 5.21}
   ],
   "activation_confirmed": "yes|no|unknown",
   "activation_evidence": "the command you ran and the marker output it printed",
@@ -427,30 +429,30 @@ transcribe completed bytes; it may never fill a missing measurement.
   "artifact_distinct": "yes|no|n/a|unknown  — n/a for a non-JIT candidate; unknown if you could not run the proof",
   "artifact_hash_base": "the base arm's cache key / name-normalised ISA hash / resolved binary path",
   "artifact_hash_candidate": "the same quantity for the candidate arm",
-  "touched_files": ["aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py", "..."],
+  "touched_files": ["src/operator/kernel.py", "..."],
   "accuracy": {
     "metric": "relL2", "value": 0.0, "threshold": 0.10,
-    "guard": "8192_uniform", "method": "relative L2 of candidate vs reference output on the target route"
+    "guard": "target_case", "method": "configured accuracy metric against the target reference"
   },
   "accuracy_results": [
     {"metric": "relL2", "value": 0.0, "threshold": 0.10,
-     "guard": "8192_uniform", "method": "candidate vs frozen reference"}
+     "guard": "target_case", "method": "candidate vs frozen reference"}
   ],
   "launch_shape": {
     "launches_base": 0, "launches_cand": 0, "per_rank": true, "target": 2,
-    "stages_fused": ["dispatch", "gemm1", "gemm2", "combine"],
+    "stages_fused": ["region_a", "region_b"],
     "how_counted": "rocprofv3 kernel-dispatch trace record count per EP rank for one operator call | launch-marker tally"
   },
   "overlap": {
     "measured": "yes|no|unknown",
     "fraction": 0.0, "cu_fraction": 0.0,
     "method": "in-kernel s_memrealtime per-workgroup phase log | rocprofv3 kernel trace | ...",
-    "scattered_reading": 0.0, "forced_reading": 0.0,
+    "base_reading": 0.0, "forced_reading": 0.0,
     "clock_skew_ns": 0, "meter_overhead_pct": 0.0,
     "note": "what could not be measured and why"
   },
   "attribution": {
-    "changed_us": 0.0, "replaced_sum_us": 0.0, "guard": "8192_uniform",
+    "changed_us": 0.0, "replaced_sum_us": 0.0, "guard": "target_case",
     "residual_ms_base": 0.0, "residual_ms_cand": 0.0,
     "method": "same-timeline and same-rank collection",
     "absolute_to_frozen": true,
@@ -461,7 +463,7 @@ transcribe completed bytes; it may never fill a missing measurement.
 ```
 
 **`paired_readings` are the RAW interleaved timings behind your number, one row per A,B pair, tagged
-with the route.** The driver classifies the bimodal 512 guards arm-blind and conditions on the state
+with the guard.** The driver classifies caller-declared bimodal guards arm-blind and conditions on the state
 from these rows, and it checks the win came from a TARGET route (the uniform route on this campaign),
 not a skew rail. Report `base`/`cand` as the paired rank-max ms for each pair on each guard you ran.
 Omitting them leaves your aggregate `verified_geomean` in charge unchanged, but then the driver cannot
@@ -475,36 +477,27 @@ sitting on top of a relL2 of 0.4 is refused. Omit it only when there is genuinel
 to compare against; a run that never reports it falls back to the `correctness` string unchanged.
 
 **`launch_shape` carries the realized fusion shape.** Count the kernel
-launches per EP rank for ONE operator call, both arms, in the same collection: `launches_base` for
-the tree you started from, `launches_cand` for the candidate. The project target is 2 — the fused megakernel
-plus the one separate pre-dispatch quant launch. A candidate that fused dispatch+gemm1 but still
-launches combine on its own is **three** launches and must report
-`launches_cand:3`, not omit the field. With `SEARCH_ACCEPTS_PARTIAL_FUSION=1`,
-that three-launch shape may score if it is correct and faster than frozen;
+launches per rank for one operator call, both arms, in the same collection:
+`launches_base` for the tree you started from and `launches_cand` for the
+candidate. Compare against the supplied `LAUNCH_TARGET`. With
+`SEARCH_ACCEPTS_PARTIAL_FUSION=1`, a measured launch reduction that remains
+above the target may score if it is a complete operator and faster than frozen;
 without the flag it must equal the target.
 Omitting the count leaves fusion unjudged. `how_counted` is the evidence — a
 trace record count or launch-marker tally — because a count with no method is
 a guess.
 
-**`TARGET_SHAPE` may be a MULTI-LEVER topology, not just a launch count.** Besides `launches`,
-`stages_fused` and `require_overlap`, it can carry `combine_mode` (`queue` = combine folded as a third
-ticketed queue), `g2_waves` (the GEMM2 reclaim wave scheme), and the concurrency knobs
-`site1{work_shards,dispatch_cu}` / `site2{persist_cu,skew_cu}` / `combine_knobs{block_num,warp_num}`.
-When these levers are present, hold the candidate to the WHOLE topology it claimed, not only the launch
-count: confirm `stages_fused` are actually co-resident, that `combine_mode:queue` really runs combine as
-a ticketed queue (not a fourth launch), and — through the bench's own instrumentation, never a per-stage
-roofline — that the claimed `site1/site2/combine` knobs are the ones the kernel took. Reflect what you
-found in `launch_shape.stages_fused` and `notes`; a candidate whose realized topology does not match the
-levers it claimed is not a clean pass even if `launches_cand` hits the target. Absent levers are simply
-inherited from the base shape and need no separate check.
+**`TARGET_SHAPE` may be a multi-lever topology, not just a launch count.** Besides
+`launches`, mapped `stages_fused` and `require_overlap`, it can carry
+operator-provided `queues`, `capabilities` and `parameters`. Hold the candidate
+to every declared value using trace/source/runtime evidence appropriate to the
+operator. A candidate whose realized regions, queues or parameters differ from
+its declaration is not a clean pass even when its launch count matches.
 
-A fused-megakernel concurrency lever (SITE-3 fine-ready, SITE-4 useful8, …) is gated behind a DEFAULT-OFF
-env flag, so it only runs when that flag is exported. The candidate declares it in `ACTIVATION` as
-`mode:"switch"` — honor step 4d exactly: export `switch_name=switch_value` for the CANDIDATE arm ONLY and
-leave the base arm serial. If you skip the switch, the cand arm runs the serial floor and you will
-(correctly, but uselessly) score the lever as no-change — so a candidate claiming `combine_mode:queue` or
-a `site*` lever with a switch declared MUST have that switch set in its arm, and you confirm via the
-bench's own instrumentation (never a per-stage roofline) that the concurrent path actually ran.
+If any capability is gated behind a default-off switch, honor `ACTIVATION`:
+export it for the candidate arm only, leave the base arm unchanged, and prove
+the claimed path actually executed. A skipped switch is a void experiment, not
+a negative result.
 Be skeptical and exact. Your number becomes the official round result.
 
 Write `evidence_manifest.json` only after every referenced log is closed, then atomically rename the

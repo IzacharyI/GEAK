@@ -151,8 +151,8 @@ ok(/Same engine, static split/.test(partition) &&
    /does \*\*not\*\* disprove a\s+phase-staggered CTA pipeline/i.test(partition),
    'resource-partition same-engine math is scoped to static roles');
 const megaLead = read('roles', 'mega_search_lead.md');
-ok(/Reject the third only with dependency or same-timeline evidence/.test(megaLead),
-   'Mega search planning cannot dismiss CTA-local overlap from MFMA labels alone');
+ok(/without assuming that sharing a\s+compute engine makes overlap impossible/i.test(megaLead),
+  'Mega search planning cannot dismiss local overlap from engine labels alone');
 
 // Anti-patterns must stay measured, not folkloric: each carries a number so a future round can
 // tell "we tried it and it cost X" apart from "someone thought this was a bad idea".

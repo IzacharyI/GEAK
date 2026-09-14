@@ -75,6 +75,12 @@ sub-mode or dedicated skill lane. Full and partial fusion candidates may
 compete when they are complete runnable operators and beat the frozen
 baseline. Packaged knowledge, roles and tools remain repository-relative.
 
+MegaPlanIR v2 is operator-neutral: work domains, regions, buffers, counters,
+queues, events, ABI arguments, resources, scheduling, compiler constraints and
+evidence requirements. Skill-specific names and tuning values appear only as
+data. Static failures return structured `contract_failures` that persist in the
+candidate registry and are consumed by the next planning turn.
+
 When GPUs are unavailable, `tools/expert_skill_contract.py` evaluates a
 skill-local declarative `contract.yaml` against an already-authored candidate
 and its MegaPlanIR. The generic checker contains no operator-specific rules; Skill-local

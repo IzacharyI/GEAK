@@ -3,9 +3,7 @@
 from pathlib import Path
 
 
-TOOL = (
-    Path(__file__).resolve().parents[1] / "tools" / "mega_graph_contract.py"
-)
+TOOL = Path(__file__).resolve().parent / "graph_validation.py"
 SRC = TOOL.read_text()
 
 
