@@ -11,7 +11,9 @@ Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK`, `SKILL_DIR`,
 `REQUIRE_TASK_GRAPH`, `CAPABILITY_EVAL`, `STRICT_AUTONOMY`,
 `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRED_REPLAYS`,
-`REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
+`REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, and, when a matched Skill
+provides one, `EXPERT_SKILL_PLANNER_EXTENSION` plus
+`EXPERT_SKILL_REVISION`.
 
 Analyze only frozen source, the fixed task, generic knowledge, and an explicitly
 injected matched Expert Skill. Never read candidate state, sibling worktrees,
@@ -34,7 +36,14 @@ run handoffs, or an external implementation/reference tree.
    lowering authority; prose never replaces it. A matched Skill may populate
    operator-specific IDs and `parameters`, but no operator name is built into
    the schema.
-7. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
+7. When `EXPERT_SKILL_PLANNER_EXTENSION` is present, read it as YAML and
+   require `schema_version=expert-skill-planner-extension-v1`, matching
+   `revision`, and `plan_version=mega-plan-v2`. Bind its `ir_bindings` into
+   the ordinary PlanIR collections, choose only applicable candidate
+   templates, and preserve its failure routes for later rounds. Never copy
+   an extension-only field into the core schema: put domain-specific values
+   under the relevant `parameters` object.
+8. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
    `EVAL_DIR`. `analysis.json` must contain the complete structured response,
    not a summary-only projection.
 
@@ -177,15 +186,18 @@ Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,
 `CURRENT_BEST_PER_CASE`, `HISTORY`, `MEGA_CANDIDATE_REGISTRY`,
 `MEASUREMENT_CALIBRATION`, `ROADMAP_LADDER`, `OPEN_RUNGS`, `TASK_GRAPH`,
 `RESOURCE_TIMELINE`, `MEGA_PLAN_IR`, guards, score configuration, and optional
-`STRUCTURAL_ONLY`.
+`STRUCTURAL_ONLY`. A Skill-enabled run may additionally provide
+`EXPERT_SKILL_PLANNER_EXTENSION` and `EXPERT_SKILL_REVISION`.
 
 Plan exactly one complete candidate direction:
 
 1. Continue recoverable WIP before opening a duplicate lane.
 2. Consume `contract_failures` structurally. Order categories:
    `correctness` → `abi` → `lifecycle` → `resource/compiler` →
-   `schedule` → `performance`. Required failures are blockers; do not replace
-   them with prose guesses.
+   `schedule` → `performance`. Required failures are blockers. If a matching
+   `failure_routes` entry exists in the Planner Extension, use its
+   `repair_intent`, checkpoint, focus files and proof requirement; do not
+   replace the structured route with a prose guess.
 3. Derive implementation from the task graph and MegaPlanIR. A matched Skill is
    a validated prior, not a special lane.
 4. Preserve the operator-neutral `target_topology` fields. A partial terminal

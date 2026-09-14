@@ -28,6 +28,7 @@ expert_skills/
 ├── skills/<id>/               # one SUBDIRECTORY per skill
 │   ├── skill.md               #   selector + concise expert entry point — REQUIRED
 │   ├── playbook.md            #   optional detailed implementation guide
+│   ├── planner_extension.yaml #   optional mode=mega PlanIR bindings and repair routes
 │   ├── contract.yaml          #   optional declarative source/PlanIR preflight
 │   ├── graph_validation.py    #   optional operator-specific runtime validator
 │   └── validation.yaml        #   measured status and validation boundaries
@@ -36,10 +37,20 @@ expert_skills/
 ```
 
 Each skill lives in its own directory `skills/<id>/`. `skill.md` is the selector and concise expert
-entry point; `playbook.md` holds optional detailed guidance, `contract.yaml` is consumed by the generic
-static verifier, an optional runtime validator performs operator-specific device checks, and
-`validation.yaml` records measured status. The selector (`index.yaml`) always
+entry point; `playbook.md` holds optional detailed guidance,
+`planner_extension.yaml` turns operator-specific planning knowledge into
+machine-readable MegaPlanIR v2 bindings/candidate templates/failure routes,
+`contract.yaml` is consumed by the generic static verifier, an optional runtime
+validator performs operator-specific device checks, and `validation.yaml`
+records measured status. The selector (`index.yaml`) always
 points at `skills/<id>/skill.md`.
+
+The Planner Extension is data consumed only when the matched Skill is enabled.
+The generic Mega Planner validates its envelope, binds its IDs into the normal
+`work_domains/regions/buffers/counters/queues/events/ABI/resources/schedule`
+collections, and stores domain-only values under PlanIR `parameters`. It must
+not contain machine paths, run/candidate identity, reference source addresses,
+or new core schema fields. Skill OFF does not load it.
 
 `contract.yaml` is data, not operator-specific verifier code. The shared
 `kernel_workflow/tools/expert_skill_contract.py` supports AST-normalized regex

@@ -5,6 +5,7 @@ kind: expert_skill
 mode: mega
 revision: mega-ep-fusion-v1
 playbook_file: playbook.md
+planner_extension_file: planner_extension.yaml
 contract_file: contract.yaml
 validation_file: validation.yaml
 runtime_validation_file: graph_validation.py
@@ -136,6 +137,8 @@ speed gates as a skill-disabled candidate.
 ## Sources
 
 - `playbook.md`: detailed validated implementation guide.
+- `planner_extension.yaml`: machine-readable MegaPlanIR bindings, candidate
+  checkpoints, and contract-failure repair routes.
 - `contract.yaml`: machine-readable source and MegaPlanIR preflight.
 - `validation.yaml`: measured status and validation boundaries.
 - Frozen baseline identity is supplied and verified by the workflow; no

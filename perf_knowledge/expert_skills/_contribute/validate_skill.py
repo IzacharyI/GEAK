@@ -62,6 +62,195 @@ def load_validation(skill_path, fm):
     return path, data if isinstance(data, dict) else {}
 
 
+def planner_extension_errors(skill_path, fm):
+    """Validate the generic envelope without interpreting operator-specific values."""
+    relative = str(fm.get("planner_extension_file") or "").strip()
+    if not relative:
+        return []
+    try:
+        path = _skill_file(skill_path, fm, "planner_extension_file")
+    except ValueError as exc:
+        return [str(exc)]
+    if not path or not os.path.isfile(path):
+        return [f"planner_extension_file does not exist: {relative!r}"]
+    try:
+        extension = yaml.safe_load(open(path)) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return [f"cannot parse planner_extension_file: {exc}"]
+    if not isinstance(extension, dict):
+        return ["planner_extension_file must contain a YAML object"]
+
+    errs = []
+    if extension.get("schema_version") != "expert-skill-planner-extension-v1":
+        errs.append(
+            "planner_extension_file must use schema_version "
+            "expert-skill-planner-extension-v1"
+        )
+    if extension.get("skill_id") != fm.get("id"):
+        errs.append("planner_extension_file skill_id must match skill.md id")
+    if str(extension.get("revision") or "") != str(fm.get("revision") or ""):
+        errs.append("planner_extension_file revision must match skill.md revision")
+    if extension.get("plan_version") != "mega-plan-v2":
+        errs.append("planner_extension_file plan_version must be mega-plan-v2")
+
+    bindings = extension.get("ir_bindings")
+    allowed_bindings = {
+        "target", "work_domains", "regions", "buffers", "counters", "queues",
+        "events", "abi", "resources", "schedule", "compiler_constraints",
+        "evidence_requirements", "known_unknowns",
+    }
+    if not isinstance(bindings, dict) or not bindings:
+        errs.append("planner_extension_file ir_bindings must be a non-empty object")
+    elif set(bindings) - allowed_bindings:
+        errs.append(
+            "planner_extension_file has non-PlanIR ir_bindings: " +
+            ", ".join(sorted(set(bindings) - allowed_bindings))
+        )
+    binding_ids = {}
+    if isinstance(bindings, dict):
+        for collection in ("work_domains", "regions", "buffers", "counters", "queues", "events"):
+            values = bindings.get(collection) or []
+            if not isinstance(values, list):
+                errs.append(f"planner ir_bindings.{collection} must be a list")
+                continue
+            present = [
+                str(item.get("id") or "") for item in values if isinstance(item, dict)
+            ]
+            if len(present) != len(values) or any(not item for item in present):
+                errs.append(f"every planner ir_bindings.{collection} entry needs an id")
+            elif len(present) != len(set(present)):
+                errs.append(f"planner ir_bindings.{collection} ids must be unique")
+            binding_ids[collection] = set(present)
+        target = bindings.get("target") or {}
+        if isinstance(target, dict):
+            for field, collection in (
+                ("required_regions", "regions"),
+                ("required_queues", "queues"),
+            ):
+                values = target.get(field) or []
+                unknown = set(map(str, values)) - binding_ids.get(collection, set())
+                if unknown:
+                    errs.append(
+                        f"planner ir_bindings.target names unknown {field}: " +
+                        ", ".join(sorted(unknown))
+                    )
+
+    templates = extension.get("candidate_templates")
+    if not isinstance(templates, list) or not templates:
+        errs.append("planner_extension_file candidate_templates must be a non-empty list")
+    else:
+        ids = [str(item.get("id") or "") for item in templates if isinstance(item, dict)]
+        if len(ids) != len(templates) or any(not item for item in ids):
+            errs.append("every planner candidate template needs an id")
+        elif len(ids) != len(set(ids)):
+            errs.append("planner candidate template ids must be unique")
+        for item in templates:
+            if not isinstance(item, dict):
+                continue
+            topology = item.get("target_topology")
+            if not isinstance(topology, dict) or not (
+                isinstance(topology.get("launch_count"), int) and
+                not isinstance(topology.get("launch_count"), bool) and
+                topology["launch_count"] > 0
+            ):
+                errs.append(
+                    f"candidate template {item.get('id') or '?'} needs a positive "
+                    "target_topology.launch_count"
+                )
+                continue
+            for field, collection in (
+                ("included_regions", "regions"),
+                ("included_queues", "queues"),
+            ):
+                values = topology.get(field) or []
+                if not isinstance(values, list):
+                    errs.append(
+                        f"candidate template {item.get('id') or '?'} {field} must be a list"
+                    )
+                    continue
+                unknown = set(map(str, values)) - binding_ids.get(collection, set())
+                if unknown:
+                    errs.append(
+                        f"candidate template {item.get('id') or '?'} names unknown {field}: " +
+                        ", ".join(sorted(unknown))
+                    )
+
+    routes = extension.get("failure_routes")
+    if not isinstance(routes, list) or not routes:
+        errs.append("planner_extension_file failure_routes must be a non-empty list")
+    else:
+        route_ids = []
+        known_check_ids = set()
+        try:
+            contract_path = _skill_file(skill_path, fm, "contract_file")
+            contract = yaml.safe_load(open(contract_path)) if contract_path else {}
+            known_check_ids.update(
+                str(item.get("id")) for item in (contract.get("checks") or [])
+                if isinstance(item, dict) and item.get("id")
+            )
+            known_check_ids.update(
+                str(item.get("id"))
+                for item in ((contract.get("plan") or {}).get("assertions") or [])
+                if isinstance(item, dict) and item.get("id")
+            )
+        except (OSError, yaml.YAMLError, ValueError):
+            known_check_ids = set()
+        for route in routes:
+            if not isinstance(route, dict):
+                errs.append("every planner failure route must be an object")
+                continue
+            route_id = str(route.get("id") or "")
+            route_ids.append(route_id)
+            match = route.get("match")
+            if not route_id:
+                errs.append("every planner failure route needs an id")
+            if not isinstance(match, dict) or not (
+                match.get("check_ids") or match.get("categories")
+            ):
+                errs.append(f"failure route {route_id or '?'} needs check_ids or categories")
+            if not isinstance(route.get("repair_intent"), str) or not route["repair_intent"].strip():
+                errs.append(f"failure route {route_id or '?'} needs repair_intent")
+            check_ids = match.get("check_ids") if isinstance(match, dict) else []
+            categories = match.get("categories") if isinstance(match, dict) else []
+            if check_ids and not isinstance(check_ids, list):
+                errs.append(f"failure route {route_id or '?'} check_ids must be a list")
+                check_ids = []
+            if categories and not isinstance(categories, list):
+                errs.append(f"failure route {route_id or '?'} categories must be a list")
+            unknown = set(map(str, check_ids or [])) - known_check_ids
+            if known_check_ids and unknown:
+                errs.append(
+                    f"failure route {route_id or '?'} names unknown contract checks: " +
+                    ", ".join(sorted(unknown))
+                )
+        if all(route_ids) and len(route_ids) != len(set(route_ids)):
+            errs.append("planner failure route ids must be unique")
+
+    forbidden_keys = {
+        "baseline_path", "candidate_path", "oracle_path", "reference_path",
+        "run_id", "candidate_head",
+    }
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if str(key) in forbidden_keys:
+                    errs.append(
+                        f"planner_extension_file must not contain environment identity key {key}"
+                    )
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+        elif isinstance(value, str) and os.path.isabs(value):
+            errs.append(
+                "planner_extension_file must not contain absolute machine paths"
+            )
+
+    walk(extension)
+    return errs
+
+
 def static_check(skill_path, fm, body):
     errs = []
     for k in ("id", "scope", "match", "expects"):
@@ -85,7 +274,7 @@ def static_check(skill_path, fm, body):
         elif not _section_filled(body, sec):
             errs.append(f"body section '## {sec}' is empty / placeholder only")
     for key in (
-        "playbook_file", "contract_file", "validation_file",
+        "playbook_file", "planner_extension_file", "contract_file", "validation_file",
         "runtime_validation_file",
     ):
         if not fm.get(key):
@@ -131,6 +320,7 @@ def static_check(skill_path, fm, body):
                     errs.append("playbook_file revision must match skill.md revision")
         except (OSError, yaml.YAMLError) as exc:
             errs.append(f"cannot parse playbook_file: {exc}")
+    errs.extend(planner_extension_errors(skill_path, fm))
     try:
         validation_path, validation = load_validation(skill_path, fm)
     except ValueError as exc:
@@ -171,7 +361,7 @@ def emit_plan(skill_id, fm, args):
         print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
         extras = [f"expert_skill_id={skill_id}"]
         for key in (
-            "playbook_file", "contract_file", "validation_file",
+            "playbook_file", "planner_extension_file", "contract_file", "validation_file",
             "runtime_validation_file",
         ):
             if fm.get(key):

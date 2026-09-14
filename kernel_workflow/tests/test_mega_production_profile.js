@@ -26,6 +26,7 @@ ok(/A\.mega_candidate_timeout_s \|\|\s*\n\s*3600/.test(src) &&
   'candidate and finalist calls have separate bounded timeouts');
 ok(/A\.expert_skill_id/.test(src) &&
    /A\.expert_skill_playbook/.test(src) &&
+   /A\.expert_skill_planner_extension/.test(src) &&
    /A\.expert_skill_contract/.test(src) &&
    /A\.expert_skill_validation/.test(src),
   'Expert Skill configuration is supplied by the caller, not a packaged task');

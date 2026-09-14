@@ -31,6 +31,8 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_ID = 'megamoe_ep_mega_fusion';
   const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
   const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/playbook.md';
+  const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
+    '/skills/skills/megamoe_ep_mega_fusion/planner_extension.yaml';
   const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/contract.yaml';
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
@@ -43,8 +45,9 @@ console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
 ok(enabled('mega_search_lead').includes('skill.md') &&
    enabled('mega_search_lead').includes('playbook.md') &&
+   enabled('mega_search_lead').includes('planner_extension.yaml') &&
    enabled('mega_search_lead').includes('contract.yaml'),
-  'the common Mega planner receives the matched skill/playbook/contract when enabled');
+  'the common Mega planner receives the matched skill/playbook/extension/contract when enabled');
 ok(enabled('engineer').includes('NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE'),
   'the common Engineer receives the same matched normative knowledge');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
@@ -104,8 +107,9 @@ ok(/contract_failures/.test(src) &&
 ok(/TASK_GRAPH: analysis\.task_graph/.test(src) &&
    /RESOURCE_TIMELINE: analysis\.resource_timeline/.test(src) &&
    /MEGA_PLAN_IR: analysis\.mega_plan_ir/.test(src) &&
+   /EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE/.test(src) &&
    !/MEGA_PLAN_IR: JSON\.stringify/.test(src),
-  'the planner receives complete graph/resource/PlanIR objects without truncation');
+  'the planner receives complete graph/resource/PlanIR objects plus its Skill Extension');
 ok(!/MEGA_TOPOLOGY_LEVERS/.test(src) &&
    /target_topology: targetTopology/.test(src),
   'target_topology is no longer deleted by an experimental kill switch');

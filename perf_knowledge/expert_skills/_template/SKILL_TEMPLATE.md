@@ -6,6 +6,7 @@ authors: [REPLACE]
 scope: kernel            # kernel | e2e  — decides validation harness AND consuming layer
 revision: v1
 playbook_file: ""        # optional detailed implementation guide in this skill directory
+planner_extension_file: ""  # optional machine-readable Analyze/Plan bindings for mode=mega
 contract_file: ""        # optional declarative source/PlanIR preflight
 validation_file: validation.yaml
 runtime_validation_file: ""  # optional operator-specific runtime verifier

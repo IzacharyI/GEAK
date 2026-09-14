@@ -321,6 +321,8 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
 const EXPERT_SKILL_PLAYBOOK_FILE = String(A.expert_skill_playbook || '');
+const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
+  String(A.expert_skill_planner_extension || '');
 const EXPERT_SKILL_CONTRACT_FILE = String(A.expert_skill_contract || '');
 const EXPERT_SKILL_VALIDATION_FILE = String(A.expert_skill_validation || '');
 const EXPERT_SKILL_CONTRACT_TOOL = String(A.expert_skill_contract_tool ||
@@ -1844,6 +1846,8 @@ function expertSkillsBlock(role) {
     return `\n\n## MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE\n` +
       `Read ${EXPERT_SKILL_DIR}/skill.md` +
       (EXPERT_SKILL_PLAYBOOK_FILE ? ` and its detailed playbook ${EXPERT_SKILL_PLAYBOOK_FILE}` : '') +
+      (EXPERT_SKILL_PLANNER_EXTENSION_FILE
+        ? ` and its machine-readable Planner Extension ${EXPERT_SKILL_PLANNER_EXTENSION_FILE}` : '') +
       (EXPERT_SKILL_CONTRACT_FILE
         ? ` and its machine-readable contract ${EXPERT_SKILL_CONTRACT_FILE}` : '') +
       `. Use them as validated design knowledge while still performing the ordinary ` +
@@ -2197,6 +2201,10 @@ let analysis = await agentT(
     // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
+    ...(MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
+      EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+      EXPERT_SKILL_REVISION,
+    } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
     ...(STRICT_AUTONOMY ? {
       STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
@@ -2252,10 +2260,14 @@ if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
 //
 // Deliberately narrow: only when INCREMENTAL was on, only on an empty ladder (a resume with no
 // ladder is a contradiction in terms -- the ladder IS what is being resumed), and only once.
-function megaPlanIRVerdict(plan) {
+function megaPlanIRVerdict(plan, expectedSkillRevision = '') {
   const errors = [];
   if (!plan || typeof plan !== 'object') return { pass: false, errors: ['plan missing'] };
   if (plan.plan_version !== 'mega-plan-v2') errors.push('plan_version must be mega-plan-v2');
+  if (expectedSkillRevision &&
+      String(plan.expert_skill_revision || '') !== String(expectedSkillRevision)) {
+    errors.push(`expert_skill_revision must be ${expectedSkillRevision}`);
+  }
   const collections = [
     'work_domains', 'regions', 'buffers', 'counters', 'queues', 'events',
     'compiler_constraints', 'known_unknowns',
@@ -2351,7 +2363,9 @@ function megaPlanIRVerdict(plan) {
   return { pass: errors.length === 0, errors };
 }
 
-function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, requireMegaPlan = false) {
+function analyzeResumeDegenerate(
+  incremental, ver, requireCompleteGraph, requireMegaPlan = false, expectedSkillRevision = ''
+) {
   const rungs = (ver && Array.isArray(ver.candidate_directions) ? ver.candidate_directions : [])
     .filter((c) => c && (c.id || c.title));
   const graphMissing = !!requireCompleteGraph &&
@@ -2359,7 +2373,7 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
        ver.task_graph.nodes.length) ||
      !(ver && ver.resource_timeline && Array.isArray(ver.resource_timeline.pipes)));
   const plan = ver && ver.mega_plan_ir;
-  const planVerdict = megaPlanIRVerdict(plan);
+  const planVerdict = megaPlanIRVerdict(plan, expectedSkillRevision);
   const megaPlanMissing = !!requireMegaPlan && !planVerdict.pass;
   if (rungs.length && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
   if (!incremental && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
@@ -2378,7 +2392,9 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
 
 {
   const d = analyzeResumeDegenerate(
-    INCREMENTAL, analysis, MODE === 'mega' && !!A.require_task_graph, MODE === 'mega');
+    INCREMENTAL, analysis, MODE === 'mega' && !!A.require_task_graph, MODE === 'mega',
+    MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+      ? EXPERT_SKILL_REVISION : '');
   if (d.retry) {
     log(d.reason);
     // Identical to the call above except that RESUME_INPUT is absent — that omission IS the fix.
@@ -2389,6 +2405,10 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
         KERNEL_KNOWLEDGE_DIR: MODE === 'mega' ? '' : KERNEL_KNOWLEDGE_DIR,
         GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
         ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
+        ...(MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
+          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_REVISION,
+        } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
         ...(STRICT_AUTONOMY ? {
           STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
@@ -2414,7 +2434,9 @@ function analyzeResumeDegenerate(incremental, ver, requireCompleteGraph, require
     const got = (full && Array.isArray(full.candidate_directions) ? full.candidate_directions : [])
       .filter((c) => c && (c.id || c.title));
     const fullContract = analyzeResumeDegenerate(false, full,
-      MODE === 'mega' && !!A.require_task_graph, MODE === 'mega');
+      MODE === 'mega' && !!A.require_task_graph, MODE === 'mega',
+      MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+        ? EXPERT_SKILL_REVISION : '');
     if (got.length && !fullContract.retry) {
       log(`ANALYZE RE-RUN recovered a ladder of ${got.length} rung(s). Using the full analysis.`);
       analysis = full;
@@ -5757,6 +5779,10 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
           ? { RESOURCE_TIMELINE: analysis.resource_timeline } : {}),
         ...(analysis && analysis.mega_plan_ir
           ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
+        ...(USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
+          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_REVISION,
+        } : {}),
         ...(CHAIN_DEBT.length ? {
           CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, currentRound, LADDER_MEASURED).open,
           CHAIN_BASELINE,
@@ -5975,6 +6001,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+            EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
           } : {}),

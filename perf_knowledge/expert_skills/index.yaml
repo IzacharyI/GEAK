@@ -3,7 +3,7 @@
 # NOT a ranking. Filter by (operator, gen, arch_class, [from->to], status==validated) -> MEASURE.
 # Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).
 
-schema: {id, file, scope, revision, playbook_file, contract_file, validation_file, runtime_validation_file, match, expects, validation_status}
+schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, validation_file, runtime_validation_file, match, expects, validation_status}
 
 skills:
 - id: flydsl_fp8_gemm_playbook
@@ -11,6 +11,7 @@ skills:
   scope: e2e
   revision: ''
   playbook_file: ''
+  planner_extension_file: ''
   contract_file: ''
   validation_file: ''
   runtime_validation_file: ''
@@ -38,6 +39,7 @@ skills:
   scope: kernel
   revision: ''
   playbook_file: ''
+  planner_extension_file: ''
   contract_file: ''
   validation_file: ''
   runtime_validation_file: ''
@@ -68,6 +70,7 @@ skills:
   scope: kernel
   revision: mega-ep-fusion-v1
   playbook_file: skills/megamoe_ep_mega_fusion/playbook.md
+  planner_extension_file: skills/megamoe_ep_mega_fusion/planner_extension.yaml
   contract_file: skills/megamoe_ep_mega_fusion/contract.yaml
   validation_file: skills/megamoe_ep_mega_fusion/validation.yaml
   runtime_validation_file: skills/megamoe_ep_mega_fusion/graph_validation.py
@@ -104,6 +107,7 @@ skills:
   scope: kernel
   revision: ''
   playbook_file: ''
+  planner_extension_file: ''
   contract_file: ''
   validation_file: ''
   runtime_validation_file: ''

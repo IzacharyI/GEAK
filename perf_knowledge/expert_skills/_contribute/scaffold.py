@@ -75,6 +75,10 @@ def reindex():
             "playbook_file": (
                 f"skills/{sub}/{fm['playbook_file']}" if fm.get("playbook_file") else ""
             ),
+            "planner_extension_file": (
+                f"skills/{sub}/{fm['planner_extension_file']}"
+                if fm.get("planner_extension_file") else ""
+            ),
             "contract_file": (
                 f"skills/{sub}/{fm['contract_file']}" if fm.get("contract_file") else ""
             ),
@@ -95,7 +99,7 @@ def reindex():
         "# Regenerate with:  python _contribute/scaffold.py --reindex\n"
         "# NOT a ranking. Filter by (operator, gen, arch_class, [from->to], status==validated) -> MEASURE.\n"
         "# Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).\n\n"
-        "schema: {id, file, scope, revision, playbook_file, contract_file, "
+        "schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, "
         "validation_file, runtime_validation_file, match, expects, validation_status}\n\n"
     )
     with open(INDEX, "w") as f:

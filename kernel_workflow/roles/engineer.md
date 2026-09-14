@@ -28,7 +28,10 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   `BASE_HEAD`, `CANDIDATE_TREE`, `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
   `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`, `TASK_GRAPH`,
   `RESOURCE_TIMELINE`, and `MEGA_PLAN_IR`; optionally `STRUCTURAL_ONLY` and
-  `STRUCTURAL_TARGET`. Continue that persistent tree; never
+  `STRUCTURAL_TARGET`. A Skill-enabled Mega lane may also provide
+  `EXPERT_SKILL_PLANNER_EXTENSION`; use its selected candidate checkpoint and
+  failure route as machine-readable context, while `DIRECTION` and
+  `MEGA_PLAN_IR` remain the concrete contract. Continue that persistent tree; never
   recreate it or edit another lane. A matched Expert Skill may append normative
   semantic/compiler-shape constraints, but the lane remains ordinary
   `search`/`integrated`.

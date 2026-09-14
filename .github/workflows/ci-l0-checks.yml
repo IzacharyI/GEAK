@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pytest
+      - run: pip install pytest pyyaml
       # Stdlib-only tests (import run_e2e via importlib; no claude_agent_sdk / GPU).
       # Files are listed explicitly rather than discovered, so that adding a test
       # under examples/ (torch/triton + GPU) can never silently break this job.
@@ -65,7 +65,9 @@ jobs:
             kernel_workflow/tests/test_gpu_lease.py \
             kernel_workflow/tests/test_multi_rank_analysis.py \
             kernel_workflow/tests/test_moe_bottleneck_analysis.py \
-            kernel_workflow/tests/test_ab_retry.py
+            kernel_workflow/tests/test_ab_retry.py \
+            kernel_workflow/tests/test_expert_skill_contract.py \
+            kernel_workflow/tests/test_expert_skill_planner_extension.py
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

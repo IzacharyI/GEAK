@@ -46,6 +46,7 @@ const MEGA_COMPLETE = {
   resource_timeline: { pipes: [{ stage: 'g1', pipe: 'mfma', utilization_pct: null }] },
   mega_plan_ir: {
     plan_version: 'mega-plan-v2',
+    expert_skill_revision: 'skill-v1',
     target: {
       launch_count: 1, required_regions: ['producer', 'consumer'],
       required_queues: ['work'],
@@ -113,6 +114,13 @@ console.log('\n# the wave-15 shape');
     'a Mega analysis without a lowerable typed plan is repaired before Benchmark');
   ok(analyzeResumeDegenerate(false, MEGA_COMPLETE, true, true).retry === false,
     'a complete graph/resource/typed-plan contract proceeds without another Analyze');
+  ok(analyzeResumeDegenerate(false, MEGA_COMPLETE, true, true, 'skill-v1').retry === false,
+    'a PlanIR bound to the active Planner Extension revision proceeds');
+  const staleSkillPlan = JSON.parse(JSON.stringify(MEGA_COMPLETE));
+  staleSkillPlan.mega_plan_ir.expert_skill_revision = 'stale-skill';
+  const stale = analyzeResumeDegenerate(false, staleSkillPlan, true, true, 'skill-v1');
+  ok(stale.retry === true && /expert_skill_revision/.test(stale.reason),
+    'a PlanIR produced from a stale Planner Extension revision is rejected');
   const dangling = JSON.parse(JSON.stringify(MEGA_COMPLETE));
   dangling.mega_plan_ir.events[0].counter = 'missing_counter';
   const invalid = analyzeResumeDegenerate(false, dangling, true, true);
