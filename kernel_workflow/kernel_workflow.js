@@ -236,6 +236,10 @@ const MEGA_FINAL_RESERVE_S = Math.max(600, Math.min(MEGA_TIME_BUDGET_S / 2,
 const MEGA_CLOSEOUT_RESERVE_S = Math.max(300, Number(A.mega_closeout_reserve_s || 900));
 const EXPERT_SKILL_ID = String(A.expert_skill_id || '');
 const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || 'v1');
+const EXPERT_SKILL_BUNDLE_SHA256 = String(A.expert_skill_bundle_sha256 || '');
+const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 =
+  String(A.expert_skill_planner_extension_sha256 || '');
+const EXPERT_SKILL_CONTRACT_SHA256 = String(A.expert_skill_contract_sha256 || '');
 const optionalNumber = (value) => {
   const number = Number(value);
   return value == null || value === '' || !Number.isFinite(number) ? null : number;
@@ -318,6 +322,8 @@ const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
 const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
+const EXPERT_SKILL_BUNDLE_TOOL = String(A.expert_skill_bundle_tool ||
+  `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`);
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
 const EXPERT_SKILL_PLAYBOOK_FILE = String(A.expert_skill_playbook || '');
@@ -325,6 +331,20 @@ const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
   String(A.expert_skill_planner_extension || '');
 const EXPERT_SKILL_CONTRACT_FILE = String(A.expert_skill_contract || '');
 const EXPERT_SKILL_VALIDATION_FILE = String(A.expert_skill_validation || '');
+const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = USE_EXPERT_SKILLS &&
+  String(A.require_expert_skill_bundle_identity || 'false') === 'true';
+const validSha256 = (value) => /^[a-f0-9]{64}$/.test(String(value || ''));
+if (REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY &&
+    (!EXPERT_SKILL_ID || !EXPERT_SKILL_REVISION ||
+     !EXPERT_SKILL_PLANNER_EXTENSION_FILE || !EXPERT_SKILL_CONTRACT_FILE ||
+     !validSha256(EXPERT_SKILL_BUNDLE_SHA256) ||
+     !validSha256(EXPERT_SKILL_PLANNER_EXTENSION_SHA256) ||
+     !validSha256(EXPERT_SKILL_CONTRACT_SHA256))) {
+  throw new Error(
+    'require_expert_skill_bundle_identity needs skill id/revision, Planner Extension/contract ' +
+    'paths, and canonical bundle/extension/contract SHA-256 values'
+  );
+}
 const EXPERT_SKILL_CONTRACT_TOOL = String(A.expert_skill_contract_tool ||
   `${WORKFLOW_DIR}/tools/expert_skill_contract.py`);
 const EXPERT_SKILL_REFERENCE_PATH = String(A.expert_skill_reference_path || '').replace(/\/+$/, '');
@@ -695,6 +715,11 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   runtime_verified: { type: 'boolean' },
   score_complete: { type: 'boolean' },
   structural_report: { type: 'string' },
+  structural_skill_id: { type: 'string' },
+  structural_candidate_head: { type: 'string' },
+  structural_candidate_tree_digest: { type: 'string' },
+  structural_skill_bundle_sha256: { type: 'string' },
+  structural_planner_extension_sha256: { type: 'string' },
   structural_contract_revision: { type: 'string' },
   structural_contract_sha256: { type: 'string' },
   contract_failures: { type: 'array', items: obj({
@@ -738,6 +763,10 @@ const MEGA_CANDIDATE_SCHEMA = obj({
 const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   candidate_id: { type: 'string' },
   candidate_head: { type: 'string' },
+  candidate_tree_digest: { type: 'string' },
+  skill_id: { type: 'string' },
+  skill_bundle_sha256: { type: 'string' },
+  planner_extension_sha256: { type: 'string' },
   claim_complete: { type: 'boolean' },
   report_path: { type: 'string' },
   structural_compatible: { type: 'boolean' },
@@ -763,10 +792,47 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   notes: { type: 'string' },
 }, [
   'candidate_id', 'candidate_head', 'claim_complete', 'structural_compatible',
+  'candidate_tree_digest', 'skill_id', 'skill_bundle_sha256',
+  'planner_extension_sha256',
   'independent_structure_pass', 'capability_eligible', 'hardware_verified',
   'accuracy_verified', 'performance_verified', 'plan_consistent',
   'contract_revision', 'contract_sha256', 'contract_failures',
 ]);
+
+// <<REPLAY:structural_evidence_identity>>
+function structuralEvidenceIdentityVerdict(report, expected) {
+  const r = report || {};
+  const e = expected || {};
+  const reasons = [];
+  const requireEqual = (field, wanted, label = field) => {
+    if (String(r[field] || '') !== String(wanted || '')) {
+      reasons.push(`${label} mismatch: got ${String(r[field] || '(missing)')}, ` +
+        `expected ${String(wanted || '(missing)')}`);
+    }
+  };
+  requireEqual('candidate_id', e.candidateId, 'candidate id');
+  requireEqual('candidate_head', e.candidateHead, 'candidate HEAD');
+  requireEqual('skill_id', e.skillId, 'Skill id');
+  requireEqual('contract_revision', e.skillRevision, 'Skill revision');
+  if (e.contractSha256) {
+    requireEqual('contract_sha256', e.contractSha256, 'contract digest');
+  }
+  if (e.plannerExtensionSha256) {
+    requireEqual(
+      'planner_extension_sha256',
+      e.plannerExtensionSha256,
+      'Planner Extension digest'
+    );
+  }
+  if (e.skillBundleSha256) {
+    requireEqual('skill_bundle_sha256', e.skillBundleSha256, 'Skill bundle digest');
+  }
+  if (!String(r.candidate_tree_digest || '')) {
+    reasons.push('candidate tree digest missing');
+  }
+  return { pass: reasons.length === 0, reasons };
+}
+// <</REPLAY:structural_evidence_identity>>
 
 // A structured, operator-neutral description of a whole-kernel topology. Operator-specific region,
 // queue and capability names are values supplied by Analyze/Skill data, never fields in this schema.
@@ -785,6 +851,12 @@ function topologyLaunchCount(topo) {
   if (!topo || typeof topo !== 'object') return NaN;
   const value = topo.launch_count != null ? topo.launch_count : topo.launches;
   return Number(value);
+}
+
+function candidateClaimsPlanTarget(direction, planIr) {
+  const planned = Number(planIr && planIr.target && planIr.target.launch_count);
+  const declared = topologyLaunchCount(direction && direction.target_topology);
+  return Number.isFinite(planned) && Number.isFinite(declared) && declared === planned;
 }
 
 // Convert the operator-neutral descriptor into Verify's historical TARGET_SHAPE vocabulary.
@@ -1040,7 +1112,10 @@ const ANALYZE_SCHEMA = obj({
     additionalProperties: true,
     properties: {
       plan_version: { type: 'string' },
+      expert_skill_id: { type: ['string', 'null'] },
       expert_skill_revision: { type: ['string', 'null'] },
+      expert_skill_bundle_sha256: { type: ['string', 'null'] },
+      expert_skill_planner_extension_sha256: { type: ['string', 'null'] },
       target: obj({
         launch_count: { type: 'number' },
         required_regions: { type: 'array', items: { type: 'string' } },
@@ -1856,6 +1931,13 @@ function expertSkillsBlock(role) {
       `source constraints or measured results. When the skill match and baseline revision apply, its ` +
       `MUST/MUST NOT semantic and compiler-shape rules override generic knowledge and role improvisation. ` +
       `Candidate source remains search/integrated.` +
+      (role === 'mega_search_lead' && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
+        ? ` Before using the Skill, run python ${EXPERT_SKILL_BUNDLE_TOOL} ${EXPERT_SKILL_ID} ` +
+          `--emit-bundle and require bundle_sha256=${EXPERT_SKILL_BUNDLE_SHA256}, ` +
+          `planner_extension_sha256=${EXPERT_SKILL_PLANNER_EXTENSION_SHA256}, and ` +
+          `contract_sha256=${EXPERT_SKILL_CONTRACT_SHA256}. A mismatch is a RunContract failure, ` +
+          `not a reason to reinterpret stale knowledge.`
+        : '') +
       (role === 'engineer'
         ? ` The playbook is a known-working mechanism prior, not a request to repeatedly ` +
           `redesign its scaffolding. Time-box helper refactors to the first quarter of the turn; then wire ` +
@@ -2203,7 +2285,12 @@ let analysis = await agentT(
     ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
     ...(MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
       EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+      EXPERT_SKILL_ID,
       EXPERT_SKILL_REVISION,
+      EXPERT_SKILL_BUNDLE_TOOL,
+      EXPERT_SKILL_BUNDLE_SHA256,
+      EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+      EXPERT_SKILL_CONTRACT_SHA256,
     } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
     ...(STRICT_AUTONOMY ? {
@@ -2260,13 +2347,31 @@ if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
 //
 // Deliberately narrow: only when INCREMENTAL was on, only on an empty ladder (a resume with no
 // ladder is a contradiction in terms -- the ladder IS what is being resumed), and only once.
-function megaPlanIRVerdict(plan, expectedSkillRevision = '') {
+function megaPlanIRVerdict(
+  plan,
+  expectedSkillRevision = '',
+  expectedSkillId = '',
+  expectedPlannerExtensionSha256 = '',
+  expectedSkillBundleSha256 = ''
+) {
   const errors = [];
   if (!plan || typeof plan !== 'object') return { pass: false, errors: ['plan missing'] };
   if (plan.plan_version !== 'mega-plan-v2') errors.push('plan_version must be mega-plan-v2');
   if (expectedSkillRevision &&
       String(plan.expert_skill_revision || '') !== String(expectedSkillRevision)) {
     errors.push(`expert_skill_revision must be ${expectedSkillRevision}`);
+  }
+  if (expectedSkillId && String(plan.expert_skill_id || '') !== String(expectedSkillId)) {
+    errors.push(`expert_skill_id must be ${expectedSkillId}`);
+  }
+  if (expectedPlannerExtensionSha256 &&
+      String(plan.expert_skill_planner_extension_sha256 || '') !==
+        String(expectedPlannerExtensionSha256)) {
+    errors.push('expert_skill_planner_extension_sha256 does not match the RunContract');
+  }
+  if (expectedSkillBundleSha256 &&
+      String(plan.expert_skill_bundle_sha256 || '') !== String(expectedSkillBundleSha256)) {
+    errors.push('expert_skill_bundle_sha256 does not match the RunContract');
   }
   const collections = [
     'work_domains', 'regions', 'buffers', 'counters', 'queues', 'events',
@@ -2364,7 +2469,14 @@ function megaPlanIRVerdict(plan, expectedSkillRevision = '') {
 }
 
 function analyzeResumeDegenerate(
-  incremental, ver, requireCompleteGraph, requireMegaPlan = false, expectedSkillRevision = ''
+  incremental,
+  ver,
+  requireCompleteGraph,
+  requireMegaPlan = false,
+  expectedSkillRevision = '',
+  expectedSkillId = '',
+  expectedPlannerExtensionSha256 = '',
+  expectedSkillBundleSha256 = ''
 ) {
   const rungs = (ver && Array.isArray(ver.candidate_directions) ? ver.candidate_directions : [])
     .filter((c) => c && (c.id || c.title));
@@ -2373,7 +2485,13 @@ function analyzeResumeDegenerate(
        ver.task_graph.nodes.length) ||
      !(ver && ver.resource_timeline && Array.isArray(ver.resource_timeline.pipes)));
   const plan = ver && ver.mega_plan_ir;
-  const planVerdict = megaPlanIRVerdict(plan, expectedSkillRevision);
+  const planVerdict = megaPlanIRVerdict(
+    plan,
+    expectedSkillRevision,
+    expectedSkillId,
+    expectedPlannerExtensionSha256,
+    expectedSkillBundleSha256
+  );
   const megaPlanMissing = !!requireMegaPlan && !planVerdict.pass;
   if (rungs.length && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
   if (!incremental && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
@@ -2394,7 +2512,13 @@ function analyzeResumeDegenerate(
   const d = analyzeResumeDegenerate(
     INCREMENTAL, analysis, MODE === 'mega' && !!A.require_task_graph, MODE === 'mega',
     MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
-      ? EXPERT_SKILL_REVISION : '');
+      ? EXPERT_SKILL_REVISION : '',
+    MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+      ? EXPERT_SKILL_ID : '',
+    MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+      ? EXPERT_SKILL_PLANNER_EXTENSION_SHA256 : '',
+    MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+      ? EXPERT_SKILL_BUNDLE_SHA256 : '');
   if (d.retry) {
     log(d.reason);
     // Identical to the call above except that RESUME_INPUT is absent — that omission IS the fix.
@@ -2407,7 +2531,12 @@ function analyzeResumeDegenerate(
         ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
         ...(MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
           EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
+          EXPERT_SKILL_BUNDLE_TOOL,
+          EXPERT_SKILL_BUNDLE_SHA256,
+          EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+          EXPERT_SKILL_CONTRACT_SHA256,
         } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
         ...(STRICT_AUTONOMY ? {
@@ -2436,7 +2565,13 @@ function analyzeResumeDegenerate(
     const fullContract = analyzeResumeDegenerate(false, full,
       MODE === 'mega' && !!A.require_task_graph, MODE === 'mega',
       MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
-        ? EXPERT_SKILL_REVISION : '');
+        ? EXPERT_SKILL_REVISION : '',
+      MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+        ? EXPERT_SKILL_ID : '',
+      MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+        ? EXPERT_SKILL_PLANNER_EXTENSION_SHA256 : '',
+      MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
+        ? EXPERT_SKILL_BUNDLE_SHA256 : '');
     if (got.length && !fullContract.retry) {
       log(`ANALYZE RE-RUN recovered a ladder of ${got.length} rung(s). Using the full analysis.`);
       analysis = full;
@@ -3199,6 +3334,12 @@ function normalizeMegaCandidate(raw) {
     runtime_verified: c.runtime_verified === true,
     score_complete: c.score_complete === true,
     structural_report: String(c.structural_report || ''),
+    structural_skill_id: String(c.structural_skill_id || ''),
+    structural_candidate_head: String(c.structural_candidate_head || ''),
+    structural_candidate_tree_digest: String(c.structural_candidate_tree_digest || ''),
+    structural_skill_bundle_sha256: String(c.structural_skill_bundle_sha256 || ''),
+    structural_planner_extension_sha256:
+      String(c.structural_planner_extension_sha256 || ''),
     structural_contract_revision: String(c.structural_contract_revision || ''),
     structural_contract_sha256: String(c.structural_contract_sha256 || ''),
     contract_failures: normalizeContractFailures(c.contract_failures),
@@ -3291,6 +3432,11 @@ function megaRegistryForSearch(registry) {
       runtime_verified: c.runtime_verified,
       score_complete: c.score_complete,
       structural_report: c.structural_report,
+      structural_skill_id: c.structural_skill_id,
+      structural_candidate_head: c.structural_candidate_head,
+      structural_candidate_tree_digest: c.structural_candidate_tree_digest,
+      structural_skill_bundle_sha256: c.structural_skill_bundle_sha256,
+      structural_planner_extension_sha256: c.structural_planner_extension_sha256,
       structural_contract_revision: c.structural_contract_revision,
       structural_contract_sha256: c.structural_contract_sha256,
       contract_failures: c.working_snapshot.contract_failures.length
@@ -5551,32 +5697,59 @@ if (setup.resumed && setup.prior_state) {
         log(`MEGA candidate state rejected: id=${n.id || '(empty)'} source=${String(c && c.source || '')}.`);
         continue;
       }
-      const staleContract = CHECK_EXPERT_SKILL_CONTRACT &&
-        n.structural_verified &&
-        n.structural_contract_revision !== EXPERT_SKILL_REVISION;
+      const staleIdentityReasons = [];
+      if (CHECK_EXPERT_SKILL_CONTRACT && n.structural_verified) {
+        if (n.structural_skill_id !== EXPERT_SKILL_ID) {
+          staleIdentityReasons.push('Skill id changed or was not recorded');
+        }
+        if (n.structural_contract_revision !== EXPERT_SKILL_REVISION) {
+          staleIdentityReasons.push('Skill revision changed');
+        }
+        if (EXPERT_SKILL_CONTRACT_SHA256 &&
+            n.structural_contract_sha256 !== EXPERT_SKILL_CONTRACT_SHA256) {
+          staleIdentityReasons.push('contract digest changed');
+        }
+        if (EXPERT_SKILL_PLANNER_EXTENSION_SHA256 &&
+            n.structural_planner_extension_sha256 !==
+              EXPERT_SKILL_PLANNER_EXTENSION_SHA256) {
+          staleIdentityReasons.push('Planner Extension digest changed');
+        }
+        if (EXPERT_SKILL_BUNDLE_SHA256 &&
+            n.structural_skill_bundle_sha256 !== EXPERT_SKILL_BUNDLE_SHA256) {
+          staleIdentityReasons.push('Skill bundle digest changed');
+        }
+        if (!n.structural_candidate_head || n.structural_candidate_head !== n.head) {
+          staleIdentityReasons.push('candidate HEAD changed or was not recorded');
+        }
+        if (!n.structural_candidate_tree_digest) {
+          staleIdentityReasons.push('candidate tree digest was not recorded');
+        }
+      }
+      const staleContract = staleIdentityReasons.length > 0;
       if (staleContract) {
-        log(`MEGA candidate ${n.id}: invalidating structural evidence from ` +
-          `${n.structural_contract_revision || 'an unversioned contract'}; current Expert Skill ` +
-          `contract revision is ${EXPERT_SKILL_REVISION}.`);
+        log(`MEGA candidate ${n.id}: invalidating structural evidence identity: ` +
+          `${staleIdentityReasons.join('; ')}.`);
       }
       megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, {
         ...n,
         ...(staleContract ? {
           structural_verified: false,
           structural_report: '',
+          structural_skill_id: '',
+          structural_candidate_head: '',
+          structural_candidate_tree_digest: '',
+          structural_skill_bundle_sha256: '',
+          structural_planner_extension_sha256: '',
           structural_contract_revision: '',
           structural_contract_sha256: '',
           contract_failures: [{
-            id: 'contract_revision_changed',
+            id: 'structural_evidence_identity_changed',
             category: 'plan',
             severity: 'required',
-            messages: [
-              `structural evidence revision ${n.structural_contract_revision || 'unversioned'} ` +
-              `does not match ${EXPERT_SKILL_REVISION}`,
-            ],
+            messages: staleIdentityReasons,
           }],
-          next_blocker: `re-run Expert Skill contract ${EXPERT_SKILL_REVISION} on exact HEAD ` +
-            `${n.head || n.working_head || '(missing)'} before device verification`,
+          next_blocker: `re-run Expert Skill bundle ${EXPERT_SKILL_REVISION} contract on exact ` +
+            `HEAD ${n.head || n.working_head || '(missing)'} before device verification`,
         } : {}),
         // State may carry evidence and a head, never authority to redirect the lane outside its root.
         tree: megaLaneTree(n.id),
@@ -5781,7 +5954,12 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
           ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
         ...(USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
           EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
+          EXPERT_SKILL_BUNDLE_TOOL,
+          EXPERT_SKILL_BUNDLE_SHA256,
+          EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+          EXPERT_SKILL_CONTRACT_SHA256,
         } : {}),
         ...(CHAIN_DEBT.length ? {
           CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, currentRound, LADDER_MEASURED).open,
@@ -6002,6 +6180,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             EXPERT_SKILL_REVISION,
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
             EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+            EXPERT_SKILL_BUNDLE_SHA256,
+            EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+            EXPERT_SKILL_CONTRACT_SHA256,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
           } : {}),
@@ -6128,8 +6309,13 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
+          EXPERT_SKILL_BUNDLE_TOOL,
+          EXPERT_SKILL_BUNDLE_SHA256,
+          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
           EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
           EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+          EXPERT_SKILL_CONTRACT_SHA256,
           EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
           EXPERT_SKILL_REFERENCE_PATH,
           EXPERT_SKILL_CONTRACT_TOOL,
@@ -6141,25 +6327,58 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       { phase: 'Verify', label: `mega:structure:${candidateId}`,
         schema: EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA,
         timeout_ms: 300000, max_retries: 1 });
+    const structuralIdentity = structuralEvidenceIdentityVerdict(structural, {
+      candidateId,
+      candidateHead: expectedHead,
+      skillId: EXPERT_SKILL_ID,
+      skillRevision: EXPERT_SKILL_REVISION,
+      contractSha256: EXPERT_SKILL_CONTRACT_SHA256,
+      plannerExtensionSha256: EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+      skillBundleSha256: EXPERT_SKILL_BUNDLE_SHA256,
+    });
     const structuralPass = !!(structural && structural.claim_complete === true &&
       structural.capability_eligible === true &&
       structural.plan_consistent === true &&
       structural.reference_copy_detected !== true &&
-      structural.reference_copy_suspected !== true);
+      structural.reference_copy_suspected !== true &&
+      structuralIdentity.pass);
+    const structuralFailures = normalizeContractFailures(
+      structural && structural.contract_failures
+    );
+    if (!structuralIdentity.pass) {
+      structuralFailures.unshift({
+        id: 'structural_evidence_identity',
+        category: 'plan',
+        severity: 'required',
+        messages: structuralIdentity.reasons,
+      });
+    }
     meta = normalizeMegaCandidate({
       ...meta,
       structural_verified: structuralPass,
       structural_report: structural && structural.report_path || '',
+      structural_skill_id: structuralPass
+        ? String(structural && structural.skill_id || '') : '',
+      structural_candidate_head: structuralPass
+        ? String(structural && structural.candidate_head || '') : '',
+      structural_candidate_tree_digest: structuralPass
+        ? String(structural && structural.candidate_tree_digest || '') : '',
+      structural_skill_bundle_sha256: structuralPass
+        ? String(structural && structural.skill_bundle_sha256 || '') : '',
+      structural_planner_extension_sha256: structuralPass
+        ? String(structural && structural.planner_extension_sha256 || '') : '',
       structural_contract_revision: structuralPass
         ? String(structural && structural.contract_revision || EXPERT_SKILL_REVISION) : '',
       structural_contract_sha256: structuralPass
         ? String(structural && structural.contract_sha256 || '') : '',
       contract_failures: structuralPass
-        ? [] : normalizeContractFailures(structural && structural.contract_failures),
+        ? [] : structuralFailures,
       next_blocker: structuralPass
         ? meta.next_blocker
+        : (!structuralIdentity.pass
+          ? `structural evidence identity failed: ${structuralIdentity.reasons.join('; ')}`
         : (structural && structural.next_blocker) ||
-          'independent static structure contract did not pass',
+          'independent static structure contract did not pass'),
     });
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
   }
@@ -6170,16 +6389,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
     ));
   }
-  const skillTargetLaunches = Number(
-    analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target &&
-      analysis.mega_plan_ir.target.launch_count
-  );
-  const candidateTargetLaunches = Number(
-    d && d.target_topology && d.target_topology.launches
-  );
-  const candidateClaimsSkillTarget = Number.isFinite(skillTargetLaunches) &&
-    Number.isFinite(candidateTargetLaunches) &&
-    candidateTargetLaunches === skillTargetLaunches;
+  const candidateClaimsSkillTarget =
+    candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
   const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
     (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&

@@ -39,6 +39,7 @@ selection_policy:
   preferred_template: full_persistent_pipeline
   partial_template_is_fallback: true
   required_failure_order:
+    - plan
     - correctness
     - abi
     - lifecycle
@@ -515,6 +516,9 @@ failure_routes:
       check_ids:
         - plan_ir_v2
         - matched_skill_revision
+        - matched_skill_id
+        - skill_bundle_identity
+        - planner_extension_identity
         - target_two_launches
         - work_domains_declared
         - buffers_declared
@@ -593,7 +597,7 @@ failure_routes:
   - id: repair_dependency_publication
     match:
       check_ids:
-        - chunk_last_dependency
+        - chunk_all_dependencies
         - g1_write_through_publication
         - no_per_tile_system_flush
         - stage2_tile_close_publication

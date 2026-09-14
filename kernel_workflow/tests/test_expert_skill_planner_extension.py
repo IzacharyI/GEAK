@@ -1,7 +1,9 @@
 """Generic Expert Skill Planner Extension envelope tests."""
 
 import copy
+import hashlib
 import importlib.util
+import shutil
 from pathlib import Path
 
 import yaml
@@ -107,3 +109,27 @@ def test_generated_index_exposes_planner_extension():
         if item["id"] == "megamoe_ep_mega_fusion"
     )
     assert entry["planner_extension_file"].endswith("/planner_extension.yaml")
+
+
+def test_bundle_identity_is_path_independent_and_content_bound(tmp_path):
+    skill_path, metadata, _, _ = MODULE.load("megamoe_ep_mega_fusion")
+    original = MODULE.skill_bundle_identity(skill_path, metadata)
+    contract = yaml.safe_load((SKILL_DIR / "contract.yaml").read_text())
+    expected_contract_sha = hashlib.sha256(
+        yaml.safe_dump(contract, sort_keys=True).encode()
+    ).hexdigest()
+    assert original["contract_sha256"] == expected_contract_sha
+
+    copied = tmp_path / "skill"
+    shutil.copytree(SKILL_DIR, copied)
+    copied_identity = MODULE.skill_bundle_identity(copied / "skill.md", metadata)
+    assert copied_identity == original
+
+    extension_path = copied / "planner_extension.yaml"
+    extension = yaml.safe_load(extension_path.read_text())
+    extension["selection_policy"]["preferred_template"] = "measured_partial_fallback"
+    extension_path.write_text(yaml.safe_dump(extension, sort_keys=False))
+    changed = MODULE.skill_bundle_identity(copied / "skill.md", metadata)
+    assert changed["planner_extension_sha256"] != original["planner_extension_sha256"]
+    assert changed["bundle_sha256"] != original["bundle_sha256"]
+    assert changed["contract_sha256"] == original["contract_sha256"]

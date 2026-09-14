@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--liveness-cases", default="128,512,8192")
     parser.add_argument("--routes", default="uniform,rank-mixed-skew")
     parser.add_argument("--replays", type=int, default=256)
+    parser.add_argument("--numeric-checkpoint-interval", type=int, default=16)
     parser.add_argument("--rtol", type=float, default=0.10)
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--json-output", required=True)
@@ -70,6 +71,8 @@ def main() -> int:
         raise ValueError("accuracy/liveness cases and routes must be non-empty")
     if args.replays <= 0:
         raise ValueError("--replays must be positive")
+    if args.numeric_checkpoint_interval <= 0:
+        raise ValueError("--numeric-checkpoint-interval must be positive")
 
     rank, world, device = helper._setup_dist()
     if world != 8:
@@ -235,6 +238,7 @@ def main() -> int:
 
             if tokens in liveness_cases:
                 for route in routes:
+                    checkpoint_rel_l2: list[float] = []
                     for replay in range(args.replays):
                         _unused_x, new_weights, new_ids = make_route(
                             tokens, route, replay + 1, network, include_x=False
@@ -242,8 +246,31 @@ def main() -> int:
                         route_weights.copy_(new_weights)
                         ids.copy_(new_ids)
                         graph.replay()
-                        if (replay + 1) % 16 == 0:
+                        checkpoint = (
+                            (replay + 1) % args.numeric_checkpoint_interval == 0
+                            or replay + 1 == args.replays
+                        )
+                        if checkpoint:
                             torch.cuda.synchronize()
+                            reference = helper._reference(
+                                x,
+                                route_weights,
+                                ids,
+                                ref_weights,
+                                rank,
+                                world,
+                                network["model_dim"],
+                                network["inter_dim"],
+                                network["experts"],
+                                network["swiglu_limit"],
+                            )
+                            replay_rel_l2 = relative_l2(state["output"], reference)
+                            checkpoint_rel_l2.append(replay_rel_l2)
+                            if replay_rel_l2 >= args.rtol:
+                                raise AssertionError(
+                                    f"tokens={tokens} route={route} replay={replay + 1} "
+                                    f"relL2={replay_rel_l2:.6f}"
+                                )
                     torch.cuda.synchronize()
                     finite = bool(torch.isfinite(state["output"]).all().item())
                     finite_all = torch.tensor(
@@ -257,6 +284,9 @@ def main() -> int:
                         "graph_safe": "pass",
                         "arrival_jitter": True,
                         "routing_changes": args.replays,
+                        "numeric_checkpoints": len(checkpoint_rel_l2),
+                        "max_checkpoint_relL2": max(checkpoint_rel_l2),
+                        "threshold": args.rtol,
                     }
                     replay_rows.append(row)
                     write_result(False)

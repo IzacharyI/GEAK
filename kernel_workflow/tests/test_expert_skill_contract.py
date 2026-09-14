@@ -106,6 +106,12 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
     assert any(item["id"] == "host_ready_pointer_identity" for item in contract["checks"])
     assert any(item["id"] == "combine_transport_and_work_domain" for item in contract["checks"])
+    dependency = next(
+        item for item in contract["checks"]
+        if item["id"] == "chunk_all_dependencies"
+    )
+    assert any("_g2_run_unit" in pattern for pattern in dependency["patterns"])
+    assert all(item["id"] != "chunk_last_dependency" for item in contract["checks"])
 
 
 def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
@@ -120,7 +126,10 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     contract = MODULE.load_contract(path)
     plan = {
         "plan_version": "mega-plan-v2",
+        "expert_skill_id": "megamoe_ep_mega_fusion",
         "expert_skill_revision": "mega-ep-fusion-v1",
+        "expert_skill_bundle_sha256": "bundle",
+        "expert_skill_planner_extension_sha256": "planner",
         "target": {"launch_count": 2},
         "work_domains": [{"id": "tokens"}],
         "buffers": [{"id": "payload"}],

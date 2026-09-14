@@ -13,7 +13,9 @@ Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK`, `SKILL_DIR`,
 `LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, and, when a matched Skill
 provides one, `EXPERT_SKILL_PLANNER_EXTENSION` plus
-`EXPERT_SKILL_REVISION`.
+`EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_BUNDLE_TOOL`,
+`EXPERT_SKILL_BUNDLE_SHA256`, `EXPERT_SKILL_PLANNER_EXTENSION_SHA256`, and
+`EXPERT_SKILL_CONTRACT_SHA256`.
 
 Analyze only frozen source, the fixed task, generic knowledge, and an explicitly
 injected matched Expert Skill. Never read candidate state, sibling worktrees,
@@ -42,7 +44,11 @@ run handoffs, or an external implementation/reference tree.
    the ordinary PlanIR collections, choose only applicable candidate
    templates, and preserve its failure routes for later rounds. Never copy
    an extension-only field into the core schema: put domain-specific values
-   under the relevant `parameters` object.
+   under the relevant `parameters` object. Before use, run
+   `EXPERT_SKILL_BUNDLE_TOOL EXPERT_SKILL_ID --emit-bundle` and require all
+   three supplied SHA-256 identities to match. Emit the Skill id, revision,
+   bundle digest and Planner Extension digest in `mega_plan_ir`; a mismatch
+   is an incomplete Analyze contract.
 8. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
    `EVAL_DIR`. `analysis.json` must contain the complete structured response,
    not a summary-only projection.
@@ -80,7 +86,10 @@ Return the ordinary analysis schema with this lowerable IR shape:
   "resource_timeline": {},
   "mega_plan_ir": {
     "plan_version": "mega-plan-v2",
+    "expert_skill_id": "matched id or null",
     "expert_skill_revision": "matched revision or null",
+    "expert_skill_bundle_sha256": "matched bundle digest or null",
+    "expert_skill_planner_extension_sha256": "matched extension digest or null",
     "target": {
       "launch_count": 1,
       "required_regions": ["region_a", "region_b"],
@@ -187,13 +196,14 @@ Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,
 `MEASUREMENT_CALIBRATION`, `ROADMAP_LADDER`, `OPEN_RUNGS`, `TASK_GRAPH`,
 `RESOURCE_TIMELINE`, `MEGA_PLAN_IR`, guards, score configuration, and optional
 `STRUCTURAL_ONLY`. A Skill-enabled run may additionally provide
-`EXPERT_SKILL_PLANNER_EXTENSION` and `EXPERT_SKILL_REVISION`.
+`EXPERT_SKILL_PLANNER_EXTENSION`, Skill identity, and the bundle/component
+digests listed for Analyze.
 
 Plan exactly one complete candidate direction:
 
 1. Continue recoverable WIP before opening a duplicate lane.
 2. Consume `contract_failures` structurally. Order categories:
-   `correctness` → `abi` → `lifecycle` → `resource/compiler` →
+   `plan` → `correctness` → `abi` → `lifecycle` → `resource/compiler` →
    `schedule` → `performance`. Required failures are blockers. If a matching
    `failure_routes` entry exists in the Planner Extension, use its
    `repair_intent`, checkpoint, focus files and proof requirement; do not

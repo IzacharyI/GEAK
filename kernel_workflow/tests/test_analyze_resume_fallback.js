@@ -46,7 +46,10 @@ const MEGA_COMPLETE = {
   resource_timeline: { pipes: [{ stage: 'g1', pipe: 'mfma', utilization_pct: null }] },
   mega_plan_ir: {
     plan_version: 'mega-plan-v2',
+    expert_skill_id: 'skill',
     expert_skill_revision: 'skill-v1',
+    expert_skill_bundle_sha256: 'b'.repeat(64),
+    expert_skill_planner_extension_sha256: 'p'.repeat(64),
     target: {
       launch_count: 1, required_regions: ['producer', 'consumer'],
       required_queues: ['work'],
@@ -116,11 +119,23 @@ console.log('\n# the wave-15 shape');
     'a complete graph/resource/typed-plan contract proceeds without another Analyze');
   ok(analyzeResumeDegenerate(false, MEGA_COMPLETE, true, true, 'skill-v1').retry === false,
     'a PlanIR bound to the active Planner Extension revision proceeds');
+  ok(analyzeResumeDegenerate(
+    false, MEGA_COMPLETE, true, true, 'skill-v1', 'skill', 'p'.repeat(64), 'b'.repeat(64),
+  ).retry === false,
+  'a PlanIR bound to the complete Skill bundle identity proceeds');
   const staleSkillPlan = JSON.parse(JSON.stringify(MEGA_COMPLETE));
   staleSkillPlan.mega_plan_ir.expert_skill_revision = 'stale-skill';
   const stale = analyzeResumeDegenerate(false, staleSkillPlan, true, true, 'skill-v1');
   ok(stale.retry === true && /expert_skill_revision/.test(stale.reason),
     'a PlanIR produced from a stale Planner Extension revision is rejected');
+  const staleBundlePlan = JSON.parse(JSON.stringify(MEGA_COMPLETE));
+  staleBundlePlan.mega_plan_ir.expert_skill_bundle_sha256 = 'x'.repeat(64);
+  const staleBundle = analyzeResumeDegenerate(
+    false, staleBundlePlan, true, true,
+    'skill-v1', 'skill', 'p'.repeat(64), 'b'.repeat(64),
+  );
+  ok(staleBundle.retry === true && /bundle_sha256/.test(staleBundle.reason),
+    'same-revision Planner knowledge drift is rejected by bundle digest');
   const dangling = JSON.parse(JSON.stringify(MEGA_COMPLETE));
   dangling.mega_plan_ir.events[0].counter = 'missing_counter';
   const invalid = analyzeResumeDegenerate(false, dangling, true, true);

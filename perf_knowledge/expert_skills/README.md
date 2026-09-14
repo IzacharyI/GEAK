@@ -52,6 +52,13 @@ collections, and stores domain-only values under PlanIR `parameters`. It must
 not contain machine paths, run/candidate identity, reference source addresses,
 or new core schema fields. Skill OFF does not load it.
 
+For strict runs, generate a path-independent component identity with
+`python _contribute/validate_skill.py <id> --emit-bundle`. The RunContract
+supplies the returned bundle, Planner Extension and contract SHA-256 values;
+Analyze embeds the first two in MegaPlanIR, structural Verify binds all three
+to the exact candidate HEAD/tree digest, and resumed evidence is invalidated
+on any mismatch even when the human revision string was not bumped.
+
 `contract.yaml` is data, not operator-specific verifier code. The shared
 `kernel_workflow/tools/expert_skill_contract.py` supports AST-normalized regex
 rules, call-keyword identity, forbidden host mutations, runtime-value

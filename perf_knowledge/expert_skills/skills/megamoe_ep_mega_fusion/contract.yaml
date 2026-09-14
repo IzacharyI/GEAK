@@ -53,6 +53,16 @@ plan:
       path: expert_skill_revision
       op: eq
       value: mega-ep-fusion-v1
+    - id: matched_skill_id
+      path: expert_skill_id
+      op: eq
+      value: megamoe_ep_mega_fusion
+    - id: skill_bundle_identity
+      path: expert_skill_bundle_sha256
+      op: nonempty
+    - id: planner_extension_identity
+      path: expert_skill_planner_extension_sha256
+      op: nonempty
     - id: target_two_launches
       path: target.launch_count
       op: eq
@@ -315,15 +325,17 @@ checks:
       - 'num_valid\s*\*\s*fx\.Int32\(_g2_bal_num\)'
       - 'and _g2_skewed'
 
-  - id: chunk_last_dependency
+  - id: chunk_all_dependencies
     category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
     patterns:
-      - 'g2_chunk\s*-\s*fx\.Int32\(1\)'
-      - 'total_g2_pairs\s*-\s*fx\.Int32\(1\)'
-      - '_g2_tile_of\(_cl\)'
+      - 'def _g2_chunk_ready_all\(unit\)'
+      - 'def _g2_run_unit\(unit\):[\s\S]{0,320}_g2_chunk_ready_all\(unit\)'
+      - '_g2_chunk_ready_all\(unit\)[\s\S]{0,1600}emit_stage2_body'
+      - 'g2_next\s*=\s*did_g2\.select\(g2_next_c\s*\+\s*fx\.Int32\(1\)'
+      - 'g2_pend\s*=\s*did_g2\.select\(g2_pend_c\s*-\s*fx\.Int32\(1\)'
 
   - id: g1_write_through_publication
     category: correctness

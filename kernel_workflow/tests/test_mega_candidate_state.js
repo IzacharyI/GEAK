@@ -14,6 +14,34 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
+const identityBlock = src.match(
+  /\/\/ <<REPLAY:structural_evidence_identity>>([\s\S]*?)\/\/ <<\/REPLAY:structural_evidence_identity>>/,
+);
+if (!identityBlock) throw new Error('structuralEvidenceIdentityVerdict not found');
+// eslint-disable-next-line no-new-func
+const structuralIdentity = new Function(
+  `${identityBlock[1]}\nreturn structuralEvidenceIdentityVerdict;`,
+)();
+const EXPECTED_IDENTITY = {
+  candidateId: 'candidate',
+  candidateHead: 'abc123',
+  skillId: 'skill',
+  skillRevision: 'v1',
+  contractSha256: 'c'.repeat(64),
+  plannerExtensionSha256: 'p'.repeat(64),
+  skillBundleSha256: 'b'.repeat(64),
+};
+const VALID_REPORT = {
+  candidate_id: 'candidate',
+  candidate_head: 'abc123',
+  candidate_tree_digest: 't'.repeat(64),
+  skill_id: 'skill',
+  contract_revision: 'v1',
+  contract_sha256: 'c'.repeat(64),
+  planner_extension_sha256: 'p'.repeat(64),
+  skill_bundle_sha256: 'b'.repeat(64),
+};
+
 console.log('\n# candidate registry is a first-class resume artifact');
 ok(/candidate_registry: \{ type: 'array'/.test(src) &&
    /measurement_calibration: \{ type: 'object'/.test(src),
@@ -32,10 +60,24 @@ ok(/Calibration is intentionally NOT restored as authority/.test(src) &&
 ok(/megaStateSequenceBase = Math\.max\(0, Number\(ps\.state_sequence\)\)/.test(src) &&
    /megaStateSequenceBase \+ Number\(currentRound\) \* 10/.test(src),
   'state sequence advances from the prior wave instead of resetting with round 1');
-ok(/const staleContract = CHECK_EXPERT_SKILL_CONTRACT/.test(src) &&
+ok(/const staleContract = staleIdentityReasons\.length > 0/.test(src) &&
    /n\.structural_contract_revision !== EXPERT_SKILL_REVISION/.test(src) &&
+   /n\.structural_contract_sha256 !== EXPERT_SKILL_CONTRACT_SHA256/.test(src) &&
+   /n\.structural_planner_extension_sha256 !==/.test(src) &&
+   /n\.structural_skill_bundle_sha256 !== EXPERT_SKILL_BUNDLE_SHA256/.test(src) &&
+   /n\.structural_candidate_head !== n\.head/.test(src) &&
    /invalidating structural evidence/.test(src),
-  'a changed Skill contract invalidates old structural evidence without prompt prose');
+  'revision, content digests and candidate HEAD invalidate old structural evidence');
+ok(structuralIdentity(VALID_REPORT, EXPECTED_IDENTITY).pass,
+  'a structural result bound to the full evidence identity passes');
+ok(!structuralIdentity(
+  { ...VALID_REPORT, candidate_head: 'wrong' }, EXPECTED_IDENTITY,
+).pass,
+  'a verifier result for another candidate HEAD is rejected');
+ok(!structuralIdentity(
+  { ...VALID_REPORT, skill_bundle_sha256: 'x'.repeat(64) }, EXPECTED_IDENTITY,
+).pass,
+  'same-revision Skill content drift is rejected by bundle digest');
 
 console.log('\n# each lane owns persistent source state');
 ok(/STATE_DIR}\/candidates\/\$\{candidateId\}\/tree/.test(src),
@@ -60,8 +102,11 @@ ok(/working_snapshot: \{/.test(src) &&
   'unverified candidate progress is persisted as a structured working snapshot');
 ok(/structural_contract_revision: structuralPass/.test(src) &&
    /structural_contract_sha256: structuralPass/.test(src) &&
+   /structural_candidate_tree_digest: structuralPass/.test(src) &&
+   /structural_skill_bundle_sha256: structuralPass/.test(src) &&
+   /structural_planner_extension_sha256: structuralPass/.test(src) &&
    /contract_failures: structuralPass/.test(src),
-  'new structural evidence is bound to the exact contract revision and digest');
+  'new structural evidence stores exact candidate, bundle, Planner and contract identity');
 ok(/contract_failures: c\.working_snapshot\.contract_failures/.test(src),
   'structured contract failures reach the planner through the candidate registry');
 

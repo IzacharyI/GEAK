@@ -17,13 +17,19 @@ This is a GPU-free post-authoring gate.
 `CANDIDATE_ID`,
 `CANDIDATE_SOURCE`, `CANDIDATE_TREE`, `EXPECTED_HEAD`,
 `FROZEN_KERNEL_PATH`, `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`,
-`EXPERT_SKILL_PLAYBOOK`, `EXPERT_SKILL_CONTRACT`,
+`EXPERT_SKILL_BUNDLE_TOOL`, `EXPERT_SKILL_BUNDLE_SHA256`,
+`EXPERT_SKILL_PLANNER_EXTENSION`,
+`EXPERT_SKILL_PLANNER_EXTENSION_SHA256`, `EXPERT_SKILL_PLAYBOOK`,
+`EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_CONTRACT_SHA256`,
 `EXPERT_SKILL_VALIDATION`, optional `EXPERT_SKILL_REFERENCE_PATH`,
 `EXPERT_SKILL_CONTRACT_TOOL`, `STRUCTURAL_VERIFY_DIR`,
 `REFERENCE_WAS_HIDDEN`, `MEGA_PLAN_IR`, and `SKILL_DIR`.
 
 1. Do not run a GPU command, import the GPU runtime, or edit candidate source.
-2. Verify the lane is clean and its HEAD equals `EXPECTED_HEAD`.
+2. Verify the lane is clean and its HEAD equals `EXPECTED_HEAD`. Run
+   `EXPERT_SKILL_BUNDLE_TOOL EXPERT_SKILL_ID --emit-bundle`; require its Skill
+   id/revision, bundle digest, Planner Extension digest and contract digest to
+   equal the supplied RunContract before using any structural result.
 3. Before reading any optional reference file, run
    `EXPERT_SKILL_CONTRACT_TOOL --contract EXPERT_SKILL_CONTRACT
    --candidate CANDIDATE_TREE --digest-only`, then atomically write
@@ -46,7 +52,10 @@ Return the structural schema: candidate id/head, `claim_complete`, report path,
 `structural_compatible`, `independent_structure_pass`,
 `capability_eligible`, copy flags, provenance status, feature counts and an
 actionable `next_blocker`, plus the tool's exact `contract_revision` and
-`contract_sha256`. Copy every failed required check into structured
+`contract_sha256`. Also return `skill_id`, `skill_bundle_sha256`,
+`planner_extension_sha256`, and the contract tool's
+`candidate_tree_digest`; these are evidence identity, not descriptive notes.
+Copy every failed required check into structured
 `contract_failures:[{id,category,severity,messages}]`; prose may summarize but
 must not replace this list. Return `plan_consistent:true` only when the tool
 reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,

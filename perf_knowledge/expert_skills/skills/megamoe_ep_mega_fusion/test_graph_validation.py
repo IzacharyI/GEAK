@@ -25,6 +25,10 @@ def test_changes_routing_between_replays_and_records_jitter():
     assert "ids.copy_(new_ids)" in SRC
     assert '"arrival_jitter": True' in SRC
     assert '"routing_changes": args.replays' in SRC
+    assert "--numeric-checkpoint-interval" in SRC
+    assert "replay_rel_l2 = relative_l2(state[\"output\"], reference)" in SRC
+    assert '"numeric_checkpoints": len(checkpoint_rel_l2)' in SRC
+    assert '"max_checkpoint_relL2": max(checkpoint_rel_l2)' in SRC
 
 
 def test_writes_incremental_atomic_claim_before_cleanup():

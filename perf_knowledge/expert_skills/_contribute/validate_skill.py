@@ -10,6 +10,7 @@ harness (kernel_workflow for scope:kernel, e2e_workflow for scope:e2e) so number
 on-box. validate_skill.py has three modes:
 
   --static            schema + operator alignment + required sections + links. No GPU. (CI default.)
+  --emit-bundle       emit path-independent component digests for a strict RunContract.
   --emit-plan         print the exact Workflow invocation to measure this skill (by scope).
   --record ...        check supplied measured numbers against `expects`, then stamp the skill's
                       validation block (status: validated|failed) and reindex.
@@ -20,7 +21,7 @@ Examples:
   python _contribute/validate_skill.py flydsl_fp8_gemm_playbook --record \
       --artifact /path/eval_dir --e2e-pct 2.1 --parity pass --gpu gfx942/MI300X --model Qwen3.5-27B-FP8
 """
-import argparse, os, re, sys
+import argparse, hashlib, json, os, re, sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +61,50 @@ def load_validation(skill_path, fm):
         return path, {}
     data = yaml.safe_load(open(path)) or {}
     return path, data if isinstance(data, dict) else {}
+
+
+def _canonical_component_sha256(path):
+    if not path or not os.path.isfile(path):
+        return ""
+    if os.path.splitext(path)[1].lower() in (".yaml", ".yml"):
+        data = yaml.safe_load(open(path))
+        payload = yaml.safe_dump(data, sort_keys=True).encode()
+    else:
+        payload = open(path, "rb").read()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def skill_bundle_identity(skill_path, fm):
+    """Return a path-independent identity for every Skill knowledge component."""
+    components = {"skill": _canonical_component_sha256(skill_path)}
+    for key, label in (
+        ("playbook_file", "playbook"),
+        ("planner_extension_file", "planner_extension"),
+        ("contract_file", "contract"),
+        ("validation_file", "validation"),
+        ("runtime_validation_file", "runtime_validation"),
+    ):
+        try:
+            path = _skill_file(skill_path, fm, key)
+        except ValueError:
+            path = None
+        if path:
+            components[label] = _canonical_component_sha256(path)
+    manifest = {
+        "schema_version": "expert-skill-bundle-v1",
+        "skill_id": str(fm.get("id") or ""),
+        "revision": str(fm.get("revision") or ""),
+        "components": components,
+    }
+    canonical = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    return {
+        **manifest,
+        "bundle_sha256": hashlib.sha256(canonical).hexdigest(),
+        "planner_extension_sha256": components.get("planner_extension", ""),
+        "contract_sha256": components.get("contract", ""),
+    }
 
 
 def planner_extension_errors(skill_path, fm):
@@ -346,7 +391,8 @@ def _section_filled(body, sec):
     return len(content) > 0
 
 
-def emit_plan(skill_id, fm, args):
+def emit_plan(skill_path, skill_id, fm, args):
+    identity = skill_bundle_identity(skill_path, fm)
     scope = fm.get("scope")
     if scope == "e2e":
         model = args.model or "<MODEL_PATH>"
@@ -359,16 +405,32 @@ def emit_plan(skill_id, fm, args):
     else:
         print("# EFFICACY (kernel_workflow, isolated A/B vs the immutable oracle):")
         print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
-        extras = [f"expert_skill_id={skill_id}"]
+        extras = [
+            f"expert_skill_id={skill_id}",
+            f"expert_skill_revision={fm.get('revision') or ''}",
+            f"expert_skill_bundle_sha256={identity['bundle_sha256']}",
+        ]
         for key in (
             "playbook_file", "planner_extension_file", "contract_file", "validation_file",
             "runtime_validation_file",
         ):
             if fm.get(key):
-                arg = key.replace("_file", "")
+                arg = {
+                    "runtime_validation_file": "graph_contract_tool",
+                }.get(key, f"expert_skill_{key.replace('_file', '')}")
                 extras.append(
-                    f"expert_skill_{arg}={os.path.join(SKILLS_DIR, skill_id, str(fm[key]))}"
+                    f"{arg}={os.path.join(SKILLS_DIR, skill_id, str(fm[key]))}"
                 )
+        if identity["planner_extension_sha256"]:
+            extras.extend([
+                "require_expert_skill_bundle_identity=true",
+                "expert_skill_planner_extension_sha256=" +
+                identity["planner_extension_sha256"],
+            ])
+        if identity["contract_sha256"]:
+            extras.append(
+                "expert_skill_contract_sha256=" + identity["contract_sha256"]
+            )
         print(f"  kernel_path=<OP_TASK_DIR> workflow_dir={GEAK}/kernel_workflow "
               f"use_expert_skills=true {' '.join(extras)}")
         print(f"  target_language={(fm.get('match') or {}).get('to_backend') or 'triton'}")
@@ -435,6 +497,7 @@ def main():
     p.add_argument("skill_id")
     p.add_argument("--static", action="store_true")
     p.add_argument("--emit-plan", action="store_true")
+    p.add_argument("--emit-bundle", action="store_true")
     p.add_argument("--record", action="store_true")
     p.add_argument("--artifact", default=""); p.add_argument("--gpu", default="")
     p.add_argument("--model", default=""); p.add_argument("--date", default="")
@@ -444,8 +507,11 @@ def main():
     a = p.parse_args()
     path, fm, body, txt = load(a.skill_id)
 
+    if a.emit_bundle:
+        print(json.dumps(skill_bundle_identity(path, fm), sort_keys=True, indent=2))
+        return
     if a.emit_plan:
-        return emit_plan(a.skill_id, fm, a)
+        return emit_plan(path, a.skill_id, fm, a)
     if a.record:
         return record(path, fm, body, txt, a)
     # default / --static

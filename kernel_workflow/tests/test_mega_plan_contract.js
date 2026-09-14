@@ -10,7 +10,9 @@ const match = src.match(
 );
 if (!match) throw new Error('megaTopologyVerdict not found');
 // eslint-disable-next-line no-new-func
-const verdict = new Function(`${match[1]}\nreturn megaTopologyVerdict;`)();
+const { verdict, claimsTarget } = new Function(
+  `${match[1]}\nreturn { verdict: megaTopologyVerdict, claimsTarget: candidateClaimsPlanTarget };`,
+)();
 
 let failures = 0;
 const ok = (value, message) => {
@@ -26,6 +28,13 @@ const plan = {
     required_capabilities: ['item_overlap'],
   },
 };
+
+ok(claimsTarget({ target_topology: { launch_count: 2 } }, plan),
+  'v2 launch_count marks an exact full-target candidate');
+ok(claimsTarget({ target_topology: { launches: 2 } }, plan),
+  'the historical launches spelling remains a compatibility input');
+ok(!claimsTarget({ target_topology: { launch_count: 3 } }, plan),
+  'a partial target does not bypass the full-target structural contract');
 
 ok(!verdict({}, plan).pass,
   'a Mega direction cannot omit target_topology');

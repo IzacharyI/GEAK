@@ -34,6 +34,12 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
     '/skills/skills/megamoe_ep_mega_fusion/planner_extension.yaml';
   const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/contract.yaml';
+  const EXPERT_SKILL_REVISION = 'v1';
+  const EXPERT_SKILL_BUNDLE_TOOL = '/skills/_contribute/validate_skill.py';
+  const EXPERT_SKILL_BUNDLE_SHA256 = 'b'.repeat(64);
+  const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 = 'p'.repeat(64);
+  const EXPERT_SKILL_CONTRACT_SHA256 = 'c'.repeat(64);
+  const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = true;
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
   const CAPABILITY_EVAL = false;
