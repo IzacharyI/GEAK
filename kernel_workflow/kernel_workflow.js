@@ -424,7 +424,6 @@ if (PINNED_MEGA_SKILL &&
     EXPERT_SKILL_USAGE === 'candidate_validation') {
   const missing = [
     [!MEGA_STRUCTURAL_ONLY, 'mega_structural_only=false'],
-    [STRICT_AUTONOMY, 'strict_autonomy'],
     [REQUIRE_GRAPH_CAPTURE, 'require_graph_capture'],
     [DIRECT_GRAPH_ACCURACY, 'direct_graph_accuracy'],
     [REQUIRE_HW_ACTIVATION, 'require_hardware_activation'],

@@ -64,7 +64,7 @@ validation:
     status: measured
     subject:
       kind: source_reference
-      revision: 494c25a7e016b83ce4fd2bb2de148b602f7a5661
+      revision: m25-measured-reference-v1
       tree_sha256: 53cc0eca0c814e8344600dc2064b6b4ba57683286e51dd6453e015de44dfe7ec
       baseline_tree_sha256: 54a1711b081b17af7a9744113d707a32f68b90a5a0272f4bf6d03ab14b9fa6ef
     recorded_at: "2026-09-15"
@@ -89,7 +89,7 @@ validation:
     hardware_verified: false
     subject:
       skill_revision: mega-ep-fusion-v6
-      contract_sha256: 0af410093c146601f4b864ec9c49f1001bf9c9bdd622fd597083bdc0e289670a
+      contract_sha256: ceb77f405eca1c609941f84e1a32a92deca816e093ca168f34055cb82d7c5a2c
       planner_extension_sha256: 535f60ded23fff7bc1346bebc11c9b5d0935671b252e35d7fc2616415d65c8b3
       checker_sha256: c1d0c023e7444f70259c67a8c48a7dfb2e7baa9e6e929b6e754ebd69fb9bb2bc
     rules:
@@ -99,16 +99,15 @@ validation:
           to_experimental_rule: one_m_tile_owner_system_store
           reason: the reference atomic shape is not compiler-equivalent in the evolved candidate frame
         negative_observations:
-          - candidate_head: deea163c2a331d78874d4cde25270bde59634bb4
+          - evidence_id: g1-completion-rmw-tail-fault
             placement: unified_loop_tail
             result: all_rank_null_base_device_fault
-          - candidate_head: ab51d41348d4d169850d2e527a1ee81024d11ccc
+          - evidence_id: g1-completion-rmw-loop-head-fault
             placement: unified_loop_head
             result: all_rank_null_base_device_fault
         positive_repair:
           status: pending
-          candidate_head: 578db1423530cb1f4aecd99097a3e0e8fb639c94
-          candidate_tree_sha256: 58b80d7f627dec6b82f624dd85082b74e58f0b22554c1820ce45568e2bddb25e
+          candidate_evidence_id: owner-mtile-system-store-v1
           required:
             - exact_head_independent_structure
             - on_card_jit
@@ -1928,7 +1927,7 @@ pins:
   enforce: true
   baseline_tree_sha256: 54a1711b081b17af7a9744113d707a32f68b90a5a0272f4bf6d03ab14b9fa6ef
   reference_tree_sha256: 53cc0eca0c814e8344600dc2064b6b4ba57683286e51dd6453e015de44dfe7ec
-  reference_revision: 494c25a7e016b83ce4fd2bb2de148b602f7a5661
+  reference_revision: m25-measured-reference-v1
 
 provenance:
   require_manifest: true
