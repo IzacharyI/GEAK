@@ -66,10 +66,12 @@ tree. Repair required failures in this order:
 `plan → correctness → abi → lifecycle → resource/compiler → schedule →
 performance`. Commit a coherent source checkpoint and return
 `candidate_status:"authoring"` with the exact structured
-`contract_failures`; do not run `rocm-smi`, import a GPU runtime, acquire a
-lease, or execute correctness/benchmark commands. `claim_complete:true` is
-valid for that finalized static checkpoint and lets independent structural
-Verify populate the next round.
+`contract_failures`: preserve every failing contract check ID as its own entry
+with the tool's category/severity/messages; never collapse them into a summary
+ID or prose. Do not run `rocm-smi`, import a GPU runtime, acquire a lease, or
+execute correctness/benchmark commands. `claim_complete:true` is valid for
+that finalized static checkpoint and lets independent structural Verify
+populate the next round.
 
 When `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=0`, GPU work is authorized only for
 the exact `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`. A temporary compile-time
@@ -109,7 +111,9 @@ subdirectory.
 When `STRUCTURAL_ONLY=1`, do not acquire a GPU lease or run any GPU command.
 Complete the full target topology in source, run only AST/py_compile/static
 checks, commit and return a complete source checkpoint for independent
-structural Verify. Do not stop at a partial launch shape and do not claim
+structural Verify. GPU absence is not a reason to defer source authoring: for
+interlocked device changes, implement one coherent static checkpoint and leave
+runtime claims pending. Do not stop at a partial launch shape and do not claim
 runtime correctness, activation, liveness or performance.
 
 ## Load only the knowledge for your specialty (keeps context focused)

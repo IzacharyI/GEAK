@@ -109,6 +109,9 @@ ok(/structural_contract_revision: structuralPass/.test(src) &&
   'new structural evidence stores exact candidate, bundle, Planner and contract identity');
 ok(/contract_failures: c\.working_snapshot\.contract_failures/.test(src),
   'structured contract failures reach the planner through the candidate registry');
+ok(/contract_failures: normalizeContractFailures\(eng && eng\.contract_failures\)/.test(src) &&
+   /evidence_manifest: String\(eng && eng\.evidence_manifest/.test(src),
+  'incomplete Engineer feedback enters the registry instead of being dropped before persistence');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

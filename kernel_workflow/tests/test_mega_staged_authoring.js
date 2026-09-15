@@ -77,6 +77,10 @@ ok(/fail-closed GPU prohibition/.test(engineer) &&
    /temporary compile-time[\s\S]*earns no correctness\/performance credit/.test(engineer) &&
    /Once you apply a production fix[\s\S]*GPU authorization is revoked/.test(engineer),
   'Engineer may bisect reversibly but cannot use stale evidence after a production fix');
+ok(/preserve every failing contract check ID as its own entry/.test(engineer) &&
+   /never collapse them into a summary/.test(engineer) &&
+   /GPU absence is not a reason to defer source authoring/.test(engineer),
+  'structural-only authoring keeps exact failures and commits coherent GPU-free source progress');
 ok(/CANDIDATE_IMPORT_MODULES/.test(wf) &&
    /CANDIDATE_PYTHONPATH/.test(wf) &&
    /every module in \$\{JSON\.stringify\(CANDIDATE_IMPORT_MODULES\)\}/.test(wf),

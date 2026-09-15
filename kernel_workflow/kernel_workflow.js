@@ -761,7 +761,8 @@ const MEGA_CANDIDATE_SCHEMA = obj({
       items: obj({ switch_name: { type: 'string' }, switch_value: { type: 'string' } }, []),
     },
   }, []),
-}, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete']);
+}, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete',
+  'contract_failures']);
 
 const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   candidate_id: { type: 'string' },
@@ -6210,8 +6211,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       'must use the common search/integrated lifecycle' };
   }
   const existing = megaCandidateById(candidateId);
-  // Charge modeled orchestration overhead for this turn (calibration recovery + pool sampling +
-  // planning agents all consumed real wall time above).
   megaAdvanceMs(MEGA_PREP_MODEL_MS);
   const dispatchRemainingS = (dispatchDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && dispatchRemainingS < 600) {
@@ -6382,8 +6381,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
     ? eng.changed_files.map(String) : [];
-  // Engineer completion only opens independent Verify. It cannot self-promote a lane to runnable;
-  // otherwise an instrumentation-only or unverified launch shape becomes continuation priority.
   const preVerifyStatus = 'authoring';
   const candidateActivation = normalizeMegaActivation(
     (eng && eng.activation) || (existing && existing.activation)
@@ -6406,9 +6403,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     structural_verified: false,
     runtime_verified: false,
     score_complete: false,
-    structural_report: '',
+    structural_report: String(eng && eng.structural_report || ''),
+    contract_failures: normalizeContractFailures(eng && eng.contract_failures),
     attempt_id: (eng && eng.attempt_id) || attemptId,
-    evidence_manifest: '',
+    evidence_manifest: String(eng && eng.evidence_manifest || ''),
     attempts,
     changed_files: reportedChangedFiles,
     next_blocker: (eng && eng.next_blocker) || '',

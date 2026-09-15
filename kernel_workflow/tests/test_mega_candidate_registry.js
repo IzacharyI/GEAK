@@ -29,6 +29,7 @@ const api = new Function(`
     validMegaCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
     megaCandidateHardPass, selectMegaCandidate, selectMegaSearchParent,
     megaCalibrationClaimPass, pairedGuardReadout, megaCandidateFromVerification,
+    megaRegistryForSearch,
   };
 `)();
 
@@ -82,11 +83,17 @@ console.log('\n# WIP cannot overwrite verified evidence');
   registry = api.upsertMegaCandidate(registry, {
     id: 'guided', source: 'search', status: 'authoring', claim_complete: false,
     head: 'new-head', tree: '/state/guided', attempt_id: 'guided:2',
+    contract_failures: [{
+      id: 'counter_layout', category: 'correctness', severity: 'required',
+      messages: ['counter head exceeds capacity'],
+    }],
   });
   ok(registry[0].absolute_score === 1.0448 && registry[0].head === 'guided-head',
     'an incomplete turn preserves the last verified score/head');
   ok(registry[0].working_head === 'new-head',
     'new authoring progress is retained separately');
+  ok(api.megaRegistryForSearch(registry)[0].contract_failures[0].id === 'counter_layout',
+    'an incomplete authoring result preserves exact structured failures for the next Planner');
 }
 {
   const structural = {
