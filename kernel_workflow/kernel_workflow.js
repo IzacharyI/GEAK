@@ -1407,11 +1407,15 @@ const FAST_TEST_LOAD_SCHEMA = obj({
   cache_present: { type: 'boolean' },   // any cache artifact found at all
   key_valid: { type: 'boolean' },       // cache present AND its stored key matches the current key
   commandment_materialized: { type: 'boolean' },
+  commandment_current_identity: { type: 'boolean' },
   current_key: { type: 'string' }, cached_key: { type: 'string' },
   note: { type: 'string' },
   bench: { type: 'object', additionalProperties: true },     // reconstructed BENCH_SCHEMA payload (CACHE_KIND=bench)
   analysis: { type: 'object', additionalProperties: true },  // reconstructed MEGA_ANALYSIS payload (CACHE_KIND=profile)
-}, ['cache_present', 'key_valid', 'commandment_materialized']);
+}, [
+  'cache_present', 'key_valid', 'commandment_materialized',
+  'commandment_current_identity',
+]);
 
 // Fast-test cache PUBLISH result (mega only). The publish agent copies THIS wave's freshly-measured
 // artifacts (baseline_timing.json, setup_ab_control*.json, COMMANDMENT.md, mega_analysis/*.json) into
@@ -4566,6 +4570,7 @@ async function fastTestCacheLoad(kind /* 'bench' | 'profile' */) {
       timeout_ms: 300000, max_retries: 1 });
   const commandmentReady = kind !== 'bench' ||
     (res && res.commandment_materialized === true &&
+     res.commandment_current_identity === true &&
      String(res.bench && res.bench.commandment_path || '') === COMMANDMENT);
   if (!res || res.key_valid !== true || !commandmentReady) {
     log(`Fast-test cache MISS (${kind}): ` +

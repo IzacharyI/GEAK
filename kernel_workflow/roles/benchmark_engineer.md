@@ -583,7 +583,8 @@ comment fields, or a remembered prior digest are pipeline failures.
 
 Steps:
 1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`,
-   `key_valid:false`, `commandment_materialized:false`, done.
+   `key_valid:false`, `commandment_materialized:false`,
+   `commandment_current_identity:false`, done.
 2. Read the cached key. Recompute `current_key` from disk NOW. Set `key_valid` iff they are EXACTLY
    equal. A mismatch is not an error — it means the base/instrument/spec moved and the wave must
    re-measure; say which component differs in `note`.
@@ -596,16 +597,21 @@ Steps:
      `EVAL_DIR/COMMANDMENT.md`, verify the two byte hashes match, and set
      `commandment_materialized:true`. Set the returned
      `bench.commandment_path` to that current path. Never return a path to
-     `CACHE_DIR` or an older run. If materialization or hash verification
-     fails, set `commandment_materialized:false` and `key_valid:false`.
+     `CACHE_DIR` or an older run. Also set `commandment_current_identity:true`
+     only when the copied contents name this exact `EVAL_DIR`, contain no
+     different `geak_runs` EVAL_DIR, and contain no fixed candidate HEAD/path
+     from an older run (candidate locations in a reusable contract must remain
+     placeholders resolved by Verify). If any identity or hash check fails, set
+     both commandment booleans false and `key_valid:false`.
    - `profile`: read `CACHE_DIR/mega_analysis/*.json` (rank_records / xgmi / combine_wait) and rebuild
      the `mega_analysis` return shape into the `analysis` field (`bottleneck`, `top_opportunities`,
      `dispatch_count`, `path_marker`, `rank_max_ms`, `xgmi_amplification`, `combine_wait_p95_us`, …).
-     Set `commandment_materialized:false`; it is not applicable to this cache kind.
+     Set both commandment booleans false; they are not applicable to this cache kind.
    A reconstructed payload that is missing required fields is a cache MISS — set `key_valid:false` and
    say so, never fabricate a number.
 
 Return JSON: `{ "cache_present": bool, "key_valid": bool, "commandment_materialized": bool,
+"commandment_current_identity": bool,
 "current_key": "…", "cached_key": "…",
 "note": "…", "bench": { …PHASE=setup shape… }, "analysis": { …mega_analysis shape… } }`. Fill only
 the field matching `CACHE_KIND`; leave the other `{}`.
