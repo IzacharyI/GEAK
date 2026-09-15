@@ -52,8 +52,8 @@ ok(/normative: true/.test(playbook) &&
 ok(/schema_version: expert-skill-contract-v1/.test(contract) &&
    /host_ready_pointer_identity/.test(contract) &&
    /combine_transport_and_work_domain/.test(contract) &&
-   /g1_completion_publish_outside_hot_loop/.test(contract) &&
-   /kind: callee_outside_loop/.test(contract),
+   /g1_completion_publish_outside_hot_tail/.test(contract) &&
+   /kind: publication_placement/.test(contract),
   'the generic checker receives declarative Skill invariants');
 ok(/schema_version: expert-skill-validation-v1/.test(validation) &&
    /status: validated/.test(validation),
@@ -84,7 +84,9 @@ ok(/preserve every failing contract check ID as its own entry/.test(engineer) &&
    /GPU absence is not a reason to defer source authoring/.test(engineer),
   'structural-only authoring keeps exact failures and commits coherent GPU-free source progress');
 ok(/postAuthoringVerify/.test(wf) &&
-   /expectedHead !== String\(existing\.head/.test(wf) &&
+   /priorLaneHead/.test(wf) &&
+   /structuralPassThisTurn/.test(wf) &&
+   /meta\.structural_candidate_head === expectedHead/.test(wf) &&
    /postAuthoringVerify \|\|/.test(wf),
   'a new structurally verified authoring HEAD reaches independent on-card Verify in the same turn');
 ok(/required_changed_files_missing/.test(verifier) &&

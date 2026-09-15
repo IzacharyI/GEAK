@@ -53,6 +53,7 @@ function balanced(s, i) {
 }
 const passedByRole = new Map();   // role -> Set(all keys across its phases)
 const passedByPhase = new Map();  // "role:phase" -> Set(keys)
+let megaRuntimeVerifyKeys = new Set();
 const KEY_RE = /(?<=[\n{,])\s*([A-Z][A-Z0-9_]{2,})\s*(?=[:,\n}])/g;
 // Conditional input bundles are spread in as `...RESUME_INPUT` / `...KB_INPUTS`, so their keys are
 // not textually inside the call. Resolve each spread identifier to its `const NAME = ... {...}`
@@ -131,6 +132,12 @@ ok([...passedByPhase.values()].every((s) => s.has('SKILL_DIR')),
 ok(passedByPhase.get('verify_engineer:verify').has('BASELINE_PER_CASE')
    && passedByPhase.get('verify_engineer:verify').has('PATCH'),
    'and consecutive shorthand keys are both seen (the lookahead does its job)');
+{
+  const at = src.indexOf('Independently verify and score this whole-tree mega candidate');
+  const start = src.lastIndexOf("roleAgent('verify_engineer', 'verify'", at);
+  const seg = src.slice(start, at + 2600);
+  megaRuntimeVerifyKeys = new Set([...seg.matchAll(KEY_RE)].map((match) => match[1]));
+}
 
 // --- names a role file may declare without the harness passing them ----------------------------
 const EXEMPT = new Map(Object.entries({
@@ -188,6 +195,11 @@ console.log('\n# 2. the three artifacts that were produced and never consumed');
      'plan_round gets the pipe table it will be priced against');
   ok(passedByPhase.get('verify_engineer:verify').has('MODIFIABLE_FILES'),
      'verify gets the file whitelist its step 5 rejects patches against');
+  ok(megaRuntimeVerifyKeys.has('CANDIDATE_IMPORT_MODULES') &&
+     megaRuntimeVerifyKeys.has('EXPECTED_STRUCTURAL_TREE_DIGEST') &&
+     megaRuntimeVerifyKeys.has('EXPERT_SKILL_CONTRACT_TOOL') &&
+     megaRuntimeVerifyKeys.has('LANE_LOCK'),
+     'Mega runtime verify receives import, tree-digest, contract, and lane-lock identity inputs');
   ok(passedByPhase.get('tech_lead:update_memory').has('ROADMAP_LADDER'),
      'update_memory gets the ladder — it writes the memory the NEXT wave reads');
 }

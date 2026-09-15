@@ -123,7 +123,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert "unified_loop_starts_with_lds_hazard_barrier" in checks
     assert "token_ready_payload_loads_are_system_scope" in checks
     assert "standalone_combine_reaches_shared_reduce_helper" in checks
-    assert "g1_completion_publish_outside_hot_loop" in checks
+    assert "g1_completion_publish_outside_hot_tail" in checks
     assert "fuse_combine_controls_token_publication" in checks
     assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
     assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
@@ -213,6 +213,10 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
             "primary_loop": {
                 "kind": "unified",
                 "carried_state": ["consumer_active", "g2_pend", "g2_next"],
+            },
+            "policies": {
+                "completion_publication_granularity": "per_m_tile",
+                "completion_publication_frame": "outside_hot_gemm1_tail",
             },
             "parameters": {
                 "combine_third_queue": True,
@@ -321,51 +325,91 @@ def test_regex_sequence_rejects_correct_names_in_wrong_order():
     assert result["publish_order"]["pass"]
 
 
-def test_callee_outside_loop_rejects_rmw_helper_in_hot_loop():
+def test_publication_placement_rejects_rmw_after_hot_loop_compute():
     contract = _contract()
     contract["checks"] = [{
         "id": "publish_frame",
-        "kind": "callee_outside_loop",
+        "kind": "publication_placement",
         "file": "src/a.py",
         "scope": "kernel",
-        "callee": "_publish",
-        "contains_call": r"atomic_add_system",
-        "alternative_call": r"store_i32_system",
         "loop_test": "consumer_active",
+        "compute_call": "_compute",
+        "address": "ready_addr",
+        "rmw_calls": ["atomic_add_system", "atomic_add_agent"],
+        "store_calls": ["store_i32_system"],
     }]
     unsafe = ast.parse(
-        "def kernel(consumer_active, addr):\n"
+        "def kernel(consumer_active, ready_addr):\n"
         "    def _publish():\n"
-        "        ops.atomic_add_system(addr, 1)\n"
+        "        ops.atomic_add_system(ready_addr, 1)\n"
         "    while consumer_active:\n"
-        "        work()\n"
+        "        _compute()\n"
         "        _publish()\n"
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": unsafe})
     assert not result["publish_frame"]["pass"]
-    assert "inside hot loop" in result["publish_frame"]["failures"][0]
+    assert any(
+        "after hot-loop compute" in failure
+        for failure in result["publish_frame"]["failures"]
+    )
 
     flushed = ast.parse(
-        "def kernel(consumer_active, addr):\n"
+        "def kernel(consumer_active, ready_addr):\n"
         "    def _publish():\n"
-        "        ops.atomic_add_system(addr, 1)\n"
+        "        ops.atomic_add_system(ready_addr, 1)\n"
         "    while consumer_active:\n"
-        "        work()\n"
+        "        _compute()\n"
         "    _publish()\n"
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": flushed})
     assert result["publish_frame"]["pass"]
 
     owned = ast.parse(
-        "def kernel(consumer_active, addr):\n"
+        "def kernel(consumer_active, ready_addr):\n"
         "    def _publish():\n"
-        "        ops.store_i32_system(addr, 0, 1)\n"
+        "        ops.store_i32_system(ready_addr, 0, 1)\n"
         "    while consumer_active:\n"
-        "        work()\n"
+        "        _compute()\n"
         "        _publish()\n"
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": owned})
     assert result["publish_frame"]["pass"]
+
+    loop_head = ast.parse(
+        "def kernel(consumer_active, ready_addr):\n"
+        "    def _publish():\n"
+        "        ops.atomic_add_system(ready_addr, 1)\n"
+        "    while consumer_active:\n"
+        "        _publish()\n"
+        "        _compute()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": loop_head})
+    assert result["publish_frame"]["pass"]
+
+    wrapped = ast.parse(
+        "def kernel(consumer_active, ready_addr):\n"
+        "    def _raw_publish():\n"
+        "        ops.atomic_add_agent(ready_addr, 1)\n"
+        "    def renamed_wrapper():\n"
+        "        _raw_publish()\n"
+        "    while consumer_active:\n"
+        "        _compute()\n"
+        "        renamed_wrapper()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": wrapped})
+    assert not result["publish_frame"]["pass"]
+
+    dead_only = ast.parse(
+        "def kernel(consumer_active, ready_addr):\n"
+        "    def _publish():\n"
+        "        ops.store_i32_system(ready_addr, 0, 1)\n"
+        "    if False:\n"
+        "        _publish()\n"
+        "    while consumer_active:\n"
+        "        _compute()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": dead_only})
+    assert not result["publish_frame"]["pass"]
 
 
 def test_reference_self_is_calibration_only_and_never_hardware_evidence(tmp_path):

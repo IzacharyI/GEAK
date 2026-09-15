@@ -127,8 +127,10 @@ console.log('\n# WIP cannot overwrite verified evidence');
       messages: ['old verifier prose'],
     }],
   };
-  ok(api.megaRegistryForSearch([stalePersisted])[0].contract_failures.length === 0,
-    'Planner ignores stale failures when exact-head structural authority is current');
+  const conflicted = api.megaRegistryForSearch([stalePersisted])[0];
+  ok(!conflicted.structural_verified &&
+     conflicted.contract_failures[0].id === 'structural_state_conflict',
+    'legacy pass plus required failures fails closed until fresh structural verification');
   registry = api.upsertMegaCandidate([structural], {
     id: 'structural', source: 'search', status: 'authoring',
     tree: '/state/structural', head: 'sealed-head', claim_complete: false,

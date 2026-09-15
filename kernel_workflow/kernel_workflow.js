@@ -17,41 +17,23 @@ export const meta = {
 };
 
 // ---------------------------------------------------------------------------
-// Args + defaults. (The script cannot touch the filesystem or read its own
-// path; agents do all FS work, and every path is supplied/derived from args —
-// nothing about the install location is hard-coded.)
+// Args/defaults; agents perform filesystem work through caller-supplied paths.
 // ---------------------------------------------------------------------------
 const A = args || {};
-// Resume-safe monotonic clock. The Workflow runtime forbids Date.now()/new Date()
-// (they would break deterministic resume: cached agent() calls replay instantly, so a
-// live wall-clock read would diverge between the original run and the resume). Instead we
-// model elapsed wall time deterministically: every real second of this workflow's wall time
-// passes inside an agentT() await, and each agent is bounded by a CONFIGURED timeout that
-// agentT enforces with setTimeout (which IS allowed — it only fires on live execution and
-// is skipped on resume). So we accrue the configured per-turn budgets into MEGA_CLOCK_MS at
-// the same choke points where real time is spent. This reproduces the real-time squeeze
-// (verify shrinks after the engineer; the loop reserves a final-validation window; the
-// closeout skips when the budget is spent) as a pure function of round count + config, which
-// replays identically. WORKFLOW_STARTED_MS is a fixed epoch origin (0), not a live read.
+// Resume-safe modeled time: never read a live clock in replayable workflow code.
 const WORKFLOW_STARTED_MS = 0;
 let MEGA_CLOCK_MS = 0;
-// Modeled per-turn planning/sampling/calibration cost, charged once at each turn start so the
-// dispatch deadline accounts for orchestration overhead, not just the engineer+verify budgets.
 const MEGA_PREP_MODEL_MS = 90 * 1000;
 function megaNowMs() { return WORKFLOW_STARTED_MS + MEGA_CLOCK_MS; }
 function megaAdvanceMs(ms) { MEGA_CLOCK_MS += Math.max(0, Number(ms) || 0); }
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
-// WORKFLOW_DIR = the directory that holds this script + roles/ + knowledge/ + scripts/.
-// A JS workflow script can't read its own path, so the caller passes it (it is just the
-// dirname of the scriptPath used to launch the workflow).
+// Caller-supplied directory holding roles, knowledge, tools and scripts.
 const WORKFLOW_DIR = String(A.workflow_dir || '').replace(/\/+$/, '');
 if (!WORKFLOW_DIR) {
   throw new Error('args.workflow_dir is required: absolute path to the directory containing ' +
     'kernel_workflow.js, roles/, knowledge/, scripts/ (i.e. the dirname of this script).');
 }
-// EXP_ROOT = where timestamped run dirs are written. Default: a sibling "exp/" next to the
-// kernel_workflow dir (…/<parent>/kernel_workflow -> …/<parent>/exp). Override with args.exp_root.
 const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/exp')).replace(/\/+$/, '');
 
 const KERNEL_PATH_ORIG = A.kernel_path;
@@ -78,14 +60,7 @@ const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
 const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
   ? A.positive_control : null;
 const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
-// Per-card free-VRAM floor, in GiB, below which the pool counts as OCCUPIED and the round is planned
-// GPU-less. 0 (the default) disables the sample entirely, so nothing changes for runs that do not set
-// it. This is a FLOOR and not a window: on a shared box the correct threshold is well above what one
-// launch needs at t=0, because an arm that starts with just enough dies when the tenant regrows.
 const GPU_MIN_FREE_GIB = Number(A.gpu_min_free_gib || 0);
-// Minimum verified geomean improvement over the cumulative best for a round winner to be COMMITTED
-// into the canonical workspace (default 2%). Kept as a knob rather than a hard-coded constant so the
-// gate is tunable per run (e.g. raise it on a noisy box, lower it to bank small compounding wins).
 const MIN_IMPROVE = (() => {
   const v = parseFloat(A.min_improve != null ? A.min_improve : 0.02);
   return Number.isFinite(v) && v >= 0 ? v : 0.02;
@@ -730,6 +705,10 @@ const MEGA_CANDIDATE_SCHEMA = obj({
     severity: { type: 'string' },
     messages: { type: 'array', items: { type: 'string' } },
   }, ['id', 'category', 'severity', 'messages']) },
+  failed_required_checks: { type: 'array', items: { type: 'string' } },
+  plan_consistency_errors: { type: 'array', items: { type: 'string' } },
+  input_errors: { type: 'array', items: { type: 'string' } },
+  provenance_attestation_valid: { type: 'boolean' },
   attempt_id: { type: 'string' },
   evidence_manifest: { type: 'string' },
   target_guard: { type: 'string' },
@@ -801,6 +780,8 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
   'independent_structure_pass', 'capability_eligible', 'hardware_verified',
   'accuracy_verified', 'performance_verified', 'plan_consistent',
   'contract_revision', 'contract_sha256', 'contract_failures',
+  'failed_required_checks', 'plan_consistency_errors', 'input_errors',
+  'provenance_attestation_valid',
 ]);
 
 // <<REPLAY:structural_evidence_identity>>
@@ -3369,6 +3350,14 @@ function normalizeMegaCandidate(raw) {
     : (candidateStates.includes(c.status) ? c.status : 'authoring');
   const score = Number(c.absolute_score);
   const launches = Number(c.launches);
+  const rawContractFailures = normalizeContractFailures(c.contract_failures);
+  const structuralConflict = c.structural_verified === true &&
+    rawContractFailures.some((failure) => failure.severity === 'required');
+  const contractFailures = structuralConflict ? [{
+    id: 'structural_state_conflict', category: 'plan', severity: 'required',
+    messages: [`legacy structural pass conflicts with failures: ${
+      rawContractFailures.map((failure) => failure.id).join(', ')}`],
+  }] : rawContractFailures;
   return {
     id: String(c.id || ''),
     id_valid: idValid,
@@ -3390,7 +3379,7 @@ function normalizeMegaCandidate(raw) {
     provenance: String(c.provenance || source),
     claim_complete: c.claim_complete === true,
     checkpoint_complete: c.checkpoint_complete === true,
-    structural_verified: c.structural_verified === true,
+    structural_verified: c.structural_verified === true && !structuralConflict,
     runtime_verified: c.runtime_verified === true,
     score_complete: c.score_complete === true,
     structural_report: String(c.structural_report || ''),
@@ -3402,7 +3391,7 @@ function normalizeMegaCandidate(raw) {
       String(c.structural_planner_extension_sha256 || ''),
     structural_contract_revision: String(c.structural_contract_revision || ''),
     structural_contract_sha256: String(c.structural_contract_sha256 || ''),
-    contract_failures: normalizeContractFailures(c.contract_failures),
+    contract_failures: contractFailures,
     attempt_id: String(c.attempt_id || ''),
     changed_files: Array.isArray(c.changed_files) ? c.changed_files.map(String) : [],
     evidence_manifest: String(c.evidence_manifest || ''),
@@ -3445,7 +3434,6 @@ function upsertMegaCandidate(registry, incoming) {
     !!prev.structural_candidate_head &&
     next.head === prev.structural_candidate_head &&
     next.head === prev.head;
-  // Preserve exact-HEAD structural proof only for a runtime-only failure.
   const runtimeOnlyExactHeadFailure = sameStructuralHead &&
     !next.structural_verified && next.contract_failures.length === 0;
   if (runtimeOnlyExactHeadFailure) {
@@ -3498,8 +3486,6 @@ function upsertMegaCandidate(registry, incoming) {
 
 function megaRegistryForSearch(registry) {
   return (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate).map((c) => {
-    const currentStructuralAuthority = c.structural_verified &&
-      !!c.structural_candidate_head && c.structural_candidate_head === c.head;
     return {
       id: c.id,
       source: c.source,
@@ -3521,10 +3507,8 @@ function megaRegistryForSearch(registry) {
       structural_planner_extension_sha256: c.structural_planner_extension_sha256,
       structural_contract_revision: c.structural_contract_revision,
       structural_contract_sha256: c.structural_contract_sha256,
-      contract_failures: currentStructuralAuthority
-        ? []
-        : (c.working_snapshot.contract_failures.length
-          ? c.working_snapshot.contract_failures : c.contract_failures),
+      contract_failures: c.working_snapshot.contract_failures.length
+        ? c.working_snapshot.contract_failures : c.contract_failures,
       absolute_score: c.absolute_score,
       target_guard: c.target_guard,
       per_case: c.per_case,
@@ -6213,7 +6197,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const existing = megaCandidateById(candidateId);
   megaAdvanceMs(MEGA_PREP_MODEL_MS);
   const dispatchRemainingS = (dispatchDeadlineMs - megaNowMs()) / 1000;
-  if (MEGA_PRODUCTION && dispatchRemainingS < 600) {
+  if (MEGA_PRODUCTION && dispatchRemainingS < 900) {
     return {
       stop: true,
       reason: `only ${Math.max(0, Math.round(dispatchRemainingS))}s remain before the production ` +
@@ -6227,7 +6211,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const turnBudgetS = (turnDeadlineMs - turnStartedMs) / 1000;
   const prepElapsedS = (megaNowMs() - turnStartedMs) / 1000;
   const availableAfterPrepS = (turnDeadlineMs - megaNowMs()) / 1000;
-  if (MEGA_PRODUCTION && availableAfterPrepS < 600) {
+  if (MEGA_PRODUCTION && availableAfterPrepS < 900) {
     return {
       stop: true,
       reason: `candidate preparation consumed ${Math.round(prepElapsedS)}s; only ` +
@@ -6429,6 +6413,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     : MEGA_CANDIDATE_TIMEOUT_S;
   const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
   let structural = null;
+  let structuralPassThisTurn = false;
   const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
     eng && eng.claim_complete === true && expectedHead;
   if (shouldStructuralVerify) {
@@ -6453,6 +6438,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           EXPERT_SKILL_REFERENCE_PATH,
           EXPERT_SKILL_CONTRACT_TOOL,
           STRUCTURAL_VERIFY_DIR: `${outDir}/structure`,
+          LANE_LOCK: laneLock,
           REFERENCE_WAS_HIDDEN: EXPERT_SKILL_REFERENCE_PATH ? '1' : 'n/a',
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
           SKILL_DIR: WORKFLOW_DIR,
@@ -6469,15 +6455,26 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       plannerExtensionSha256: EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
       skillBundleSha256: EXPERT_SKILL_BUNDLE_SHA256,
     });
+    const requiredIds = (structural && structural.failed_required_checks || []).map(String);
+    const planErrors = (structural && structural.plan_consistency_errors || []).map(String);
+    const inputErrors = (structural && structural.input_errors || []).map(String);
+    const authoritativeIds = new Set([
+      ...requiredIds, ...planErrors.map((error) => error.split(':', 1)[0]),
+    ]);
+    const structuralFailures = normalizeContractFailures(
+      structural && structural.contract_failures
+    ).filter((failure) => authoritativeIds.has(failure.id));
     const structuralPass = !!(structural && structural.claim_complete === true &&
+      structural.structural_compatible === true &&
+      structural.independent_structure_pass === true &&
       structural.capability_eligible === true &&
       structural.plan_consistent === true &&
+      structural.provenance_attestation_valid === true &&
+      requiredIds.length === 0 && planErrors.length === 0 && inputErrors.length === 0 &&
       structural.reference_copy_detected !== true &&
       structural.reference_copy_suspected !== true &&
       structuralIdentity.pass);
-    const structuralFailures = normalizeContractFailures(
-      structural && structural.contract_failures
-    );
+    structuralPassThisTurn = structuralPass;
     if (!structuralIdentity.pass) {
       structuralFailures.unshift({
         id: 'structural_evidence_identity',
@@ -6515,6 +6512,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     });
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
   }
+  if (shouldStructuralVerify) megaAdvanceMs(300000);
   if (MEGA_PRODUCTION) {
     verifyBudgetS = Math.max(0, Math.min(
       verifyBudgetS,
@@ -6524,12 +6522,20 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   }
   const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
     (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
+  const priorLaneHead = existing
+    ? String(existing.working_head || existing.head || '') : '';
+  const sourceAdvancedThisTurn = existing
+    ? expectedHead !== priorLaneHead : reportedChangedFiles.length > 0;
   const postAuthoringVerify = !!(
     eng && String(eng.candidate_status || '') === 'authoring' &&
-    eng.build !== false && expectedHead &&
-    (!existing || expectedHead !== String(existing.head || '')) &&
-    candidateClaimsSkillTarget && meta.structural_verified
+    eng.claim_complete === true && eng.build !== false &&
+    sourceAdvancedThisTurn && candidateClaimsSkillTarget &&
+    structuralPassThisTurn && meta.checkpoint_complete &&
+    meta.structural_candidate_head === expectedHead &&
+    !!meta.structural_candidate_tree_digest
   );
+  const gpuWaitBudgetS = Math.max(30, Math.min(300, Math.floor(verifyBudgetS / 4)));
+  const gpuRunBudgetS = Math.max(60, verifyBudgetS - gpuWaitBudgetS - 60);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
     (!contractBlocksRuntime || meta.structural_verified) &&
     !MEGA_STRUCTURAL_ONLY &&
@@ -6542,6 +6548,13 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         'Independently verify and score this whole-tree mega candidate against the frozen baseline.', {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
           CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+          CANDIDATE_IMPORT_MODULES,
+          EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
+          EXPERT_SKILL_CONTRACT_TOOL,
+          EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+          LANE_LOCK: laneLock,
+          GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
+          GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
           BASE_CANDIDATE_ID: baseCandidateId,
           CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
           VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,

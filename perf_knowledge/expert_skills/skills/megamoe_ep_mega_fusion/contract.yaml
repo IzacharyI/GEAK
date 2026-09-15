@@ -137,6 +137,14 @@ plan:
       path: schedule.primary_loop.carried_state
       op: eq
       value: [consumer_active, g2_pend, g2_next]
+    - id: completion_publication_granularity
+      path: schedule.policies.completion_publication_granularity
+      op: eq
+      value: per_m_tile
+    - id: completion_publication_frame
+      path: schedule.policies.completion_publication_frame
+      op: eq
+      value: outside_hot_gemm1_tail
     - id: combine_third_queue
       path: schedule.parameters.combine_third_queue
       op: eq
@@ -453,15 +461,17 @@ checks:
     keywords:
       out_cache_modifier: '_G1_OUT_WT'
 
-  - id: g1_completion_publish_outside_hot_loop
+  - id: g1_completion_publish_outside_hot_tail
     category: compiler
-    kind: callee_outside_loop
+    kind: publication_placement
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
-    callee: '_g2_publish_tile_done'
-    contains_call: 'atomic_add_system'
-    alternative_call: 'store_i32_system'
     loop_test: 'consumer_active'
+    loop_contains: 'g2_pend'
+    compute_call: '_do_scheduled_tile'
+    address: '_g2_comp_addr'
+    rmw_calls: [atomic_add_system, atomic_add_agent]
+    store_calls: [store_i32_system]
 
   - id: no_per_tile_system_flush
     category: performance

@@ -206,7 +206,7 @@ ir_bindings:
       generation: launch_epoch
       producers: [first_compute]
       consumers: [second_compute_transport]
-      publish: waitcnt_then_block_barrier_then_atomic_add_system
+      publish: waitcnt_then_block_barrier_then_owner_system_store_or_out_of_frame_atomic_flush
       wait: greater_than(stage1_n_tiles - 1)
     - id: second_claim_heads
       element_type: i32
@@ -302,7 +302,7 @@ ir_bindings:
       consumer: second_compute_transport
       scope: system
       counter: first_tile_ready
-      publish: write_through_then_system_atomic
+      publish: write_through_then_owner_system_store_or_out_of_frame_atomic_flush
       wait: each_distinct_dependency
     - id: second_to_reduce_item_ready
       producer: second_compute_transport
@@ -410,6 +410,8 @@ ir_bindings:
       second_stage_continuation: carried_in_outer_loop_without_nested_dynamic_loop
       output_reduce_claim: one_agent_atomic_per_workgroup_then_wave_partition
       role_transition: dynamic_after_local_queue_drain
+      completion_publication_granularity: per_m_tile
+      completion_publication_frame: outside_hot_gemm1_tail
     parameters:
       combine_third_queue: true
       g2_chunk_large: 16
@@ -525,6 +527,8 @@ failure_routes:
         - work_domains_declared
         - buffers_declared
         - counters_declared
+        - completion_publication_granularity
+        - completion_publication_frame
     repair_intent: rebuild MegaPlanIR from this extension and current frozen-source evidence before authoring
     checkpoint: host_wiring
     focus_files: []
@@ -627,7 +631,7 @@ failure_routes:
       check_ids:
         - chunk_all_dependencies
         - g1_write_through_publication
-        - g1_completion_publish_outside_hot_loop
+        - g1_completion_publish_outside_hot_tail
         - no_per_tile_system_flush
         - stage2_tile_close_publication
         - combine_transport_and_work_domain

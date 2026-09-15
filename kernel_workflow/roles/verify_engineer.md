@@ -23,10 +23,12 @@ This is a GPU-free post-authoring gate.
 `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_CONTRACT_SHA256`,
 `EXPERT_SKILL_VALIDATION`, optional `EXPERT_SKILL_REFERENCE_PATH`,
 `EXPERT_SKILL_CONTRACT_TOOL`, `STRUCTURAL_VERIFY_DIR`,
-`REFERENCE_WAS_HIDDEN`, `MEGA_PLAN_IR`, and `SKILL_DIR`.
+`REFERENCE_WAS_HIDDEN`, `MEGA_PLAN_IR`, `LANE_LOCK`, and `SKILL_DIR`.
 
 1. Do not run a GPU command, import the GPU runtime, or edit candidate source.
-2. Verify the lane is clean and its HEAD equals `EXPECTED_HEAD`. Run
+2. Require a non-blocking probe of `LANE_LOCK` to succeed, then verify the lane
+   is clean and its HEAD equals `EXPECTED_HEAD`. A held author lock makes this
+   attempt incomplete; never inspect a live writer's tree. Run
    `EXPERT_SKILL_BUNDLE_TOOL EXPERT_SKILL_ID --emit-bundle`; require its Skill
    id/revision, bundle digest, Planner Extension digest and contract digest to
    equal the supplied RunContract before using any structural result.
@@ -72,6 +74,9 @@ re-evaluating them in prose. Return `plan_consistent:true` only when the tool
 reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,
 `accuracy_verified:false`, and `performance_verified:false`; this phase proves
 source structure only.
+Copy `failed_required_checks`, `plan_consistency_errors`, `input_errors`, and
+`provenance_attestation_valid` exactly; the orchestrator uses them to reject
+invented reference-parity failures.
 
 ## PHASE=verify
 
@@ -90,6 +95,10 @@ source structure only.
 - `VERIFY_TIMEOUT_S` (Mega score tier) is the remaining share of the current candidate turn. Every
   GPU command and the whole verification attempt must finish inside it; otherwise emit a partial
   claim and preserve the candidate for a later turn.
+- `EXPECTED_STRUCTURAL_TREE_DIGEST`, `EXPERT_SKILL_CONTRACT_TOOL`,
+  `EXPERT_SKILL_CONTRACT`, and `LANE_LOCK` (Mega) bind runtime evidence to the
+  accepted source snapshot. `GPU_WAIT_TIMEOUT_S` and `GPU_RUN_TIMEOUT_S` bound
+  the inner lease so it cannot outlive the outer verifier deadline.
 - `VERIFY_DIR` — your private scratch dir.
 - `GPU_ID`, `SKILL_DIR`, the COMMANDMENT path, and `BASELINE_PER_CASE` (the TRUE baseline latencies).
 - `SPECIALTY` (optional) — the direction's specialty. `distributed` activates the liveness gate
@@ -169,6 +178,11 @@ denominator.
    When `CANDIDATE_TREE` is present, record its source/head identity before copying and set
    `candidate_tree` and `candidate_head=EXPECTED_HEAD` in the result. A missing head or mismatched
    archive is `status:"apply_failed"`.
+   Require a non-blocking `LANE_LOCK` probe before archiving. Then run
+   `EXPERT_SKILL_CONTRACT_TOOL --contract EXPERT_SKILL_CONTRACT --candidate
+   "$WS" --digest-only` and require equality with
+   `EXPECTED_STRUCTURAL_TREE_DIGEST`; otherwise return
+   `STRUCTURAL_TREE_IDENTITY_VOID` before taking a lease.
    Before taking a lease, import every module listed by
    `CANDIDATE_IMPORT_MODULES` and require its resolved `__file__` to be under
    `$WS`. Repeat that probe inside the lease immediately before the candidate
@@ -176,7 +190,9 @@ denominator.
    `IMPORT_IDENTITY_VOID`: no correctness, runtime, or performance evidence may
    be returned from that command.
 2. Read `COMMANDMENT.md` for the exact correctness + full-benchmark commands + parse hint.
-3. Run the already lease-wrapped CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
+3. Export `GEAK_GPU_WAIT_TIMEOUT=GPU_WAIT_TIMEOUT_S` and
+   `GEAK_GPU_RUN_TIMEOUT=GPU_RUN_TIMEOUT_S`. Run the already lease-wrapped
+   CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
    never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.
    When `DIRECT_GRAPH_ACCURACY=1`, emit one `accuracy_results` row for every
    `EXPERT_SKILL_ACCURACY_CASES` entry by capturing/replaying the candidate path and comparing its output

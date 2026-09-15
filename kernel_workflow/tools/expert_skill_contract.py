@@ -493,19 +493,17 @@ def _check_parameter_loads(
     )
 
 
-def _check_callee_outside_loop(
+def _check_publication_placement(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
     severity: str,
 ) -> dict[str, Any]:
-    """Require a publication helper to be invoked outside a selected hot loop.
+    """Reject completion RMWs after compute in a selected hot loop.
 
-    This is deliberately relation-aware: a regex can find a safe helper
-    definition and an unrelated loop without proving where the helper is
-    called. An RMW-backed helper must be invoked outside the selected loop. A
-    declared non-RMW alternative (for example an owner-only system store) may
-    remain in the loop, but the helper must still contain publication and be
-    invoked.
+    Local helper calls are followed transitively so renaming or wrapping the
+    publication operation does not evade the placement relation. An owner-only
+    store may remain after compute; an RMW is legal only before the compute
+    anchor (for example a carried next-iteration flush) or after the hot loop.
     """
     name = str(rule.get("file") or "")
     scope = str(rule.get("scope") or "")
@@ -515,90 +513,133 @@ def _check_callee_outside_loop(
             False, 3, 0,
             [f"missing function scope: {name}:{scope}"], severity,
         )
-    callee_pattern = str(rule.get("callee") or "")
-    contains_call_pattern = str(rule.get("contains_call") or "")
-    alternative_call_pattern = str(rule.get("alternative_call") or "")
-    loop_test_pattern = str(rule.get("loop_test") or "")
-    if not callee_pattern or not contains_call_pattern or not loop_test_pattern:
+    active = ast.parse(_active_code(node))
+    node = active.body[0] if active.body else node
+    loop_test = str(rule.get("loop_test") or "")
+    loop_contains = str(rule.get("loop_contains") or "")
+    compute_call = str(rule.get("compute_call") or "")
+    address = str(rule.get("address") or "")
+    rmw_calls = [str(value) for value in rule.get("rmw_calls") or []]
+    store_calls = [str(value) for value in rule.get("store_calls") or []]
+    if not loop_test or not compute_call or not address or not rmw_calls:
         return _result(
             False, 3, 0,
-            ["callee_outside_loop requires callee, contains_call and loop_test"],
+            ["publication_placement requires loop_test, compute_call, address and rmw_calls"],
             severity,
         )
 
-    helpers = [
-        item for item in ast.walk(node)
+    helper_nodes = {
+        item.name: item for item in ast.walk(node)
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and re.fullmatch(callee_pattern, item.name)
-    ]
-    helper_present = bool(helpers)
-    helper_uses_rmw = any(
-        isinstance(item, ast.Call)
-        and re.fullmatch(contains_call_pattern, _call_name(item))
-        for helper in helpers
-        for item in ast.walk(helper)
-    )
-    helper_uses_alternative = bool(alternative_call_pattern) and any(
-        isinstance(item, ast.Call)
-        and re.fullmatch(alternative_call_pattern, _call_name(item))
-        for helper in helpers
-        for item in ast.walk(helper)
-    )
-    helper_publishes = helper_uses_rmw or helper_uses_alternative
+        and item is not node
+    }
 
-    inside_calls: list[int] = []
-    outside_calls: list[int] = []
+    def direct_kind(call: ast.Call) -> str:
+        text = ast.unparse(call)
+        if not re.search(address, text):
+            return ""
+        called = _call_name(call)
+        if any(re.fullmatch(pattern, called) for pattern in rmw_calls):
+            return "rmw"
+        if any(re.fullmatch(pattern, called) for pattern in store_calls):
+            return "store"
+        return ""
 
-    class InvocationVisitor(ast.NodeVisitor):
+    effects: dict[str, set[str]] = {}
+    for helper_name, helper in helper_nodes.items():
+        effects[helper_name] = {
+            kind for item in ast.walk(helper)
+            if isinstance(item, ast.Call) and (kind := direct_kind(item))
+        }
+    changed = True
+    while changed:
+        changed = False
+        for helper_name, helper in helper_nodes.items():
+            inherited = set().union(*(
+                effects.get(_call_name(item), set())
+                for item in ast.walk(helper) if isinstance(item, ast.Call)
+            ))
+            if not inherited.issubset(effects[helper_name]):
+                effects[helper_name].update(inherited)
+                changed = True
+
+    class ScopedCollector(ast.NodeVisitor):
         def __init__(self) -> None:
-            self.hot_loop_depth = 0
+            self.loops: list[ast.While] = []
+            self.calls: list[ast.Call] = []
 
         def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
             if item is node:
                 self.generic_visit(item)
-            # Nested helper bodies are declarations, not call sites in the
-            # enclosing loop. Their invocations are visited from the caller.
 
         visit_AsyncFunctionDef = visit_FunctionDef
 
         def visit_While(self, item: ast.While) -> None:
-            is_hot = bool(re.search(loop_test_pattern, ast.unparse(item.test)))
-            if is_hot:
-                self.hot_loop_depth += 1
-            for statement in item.body:
-                self.visit(statement)
-            for statement in item.orelse:
-                self.visit(statement)
-            if is_hot:
-                self.hot_loop_depth -= 1
-
-        def visit_Call(self, item: ast.Call) -> None:
-            if re.fullmatch(callee_pattern, _call_name(item)):
-                target = inside_calls if self.hot_loop_depth else outside_calls
-                target.append(getattr(item, "lineno", 0))
+            if re.search(loop_test, ast.unparse(item.test)):
+                self.loops.append(item)
             self.generic_visit(item)
 
-    InvocationVisitor().visit(node)
+        def visit_Call(self, item: ast.Call) -> None:
+            self.calls.append(item)
+            self.generic_visit(item)
+
+    collector = ScopedCollector()
+    collector.visit(node)
+    hot_loops = [
+        loop for loop in collector.loops
+        if not loop_contains or re.search(loop_contains, ast.unparse(loop))
+    ]
     failures: list[str] = []
-    if not helper_present:
-        failures.append(f"no helper matching {callee_pattern}")
-    if not helper_publishes:
-        failures.append(
-            f"helper {callee_pattern} has no call matching {contains_call_pattern}"
-        )
-    if helper_uses_rmw and inside_calls:
-        failures.append(
-            f"callee {callee_pattern} invoked inside hot loop at lines {inside_calls}"
-        )
-    if helper_uses_rmw and not outside_calls:
-        failures.append(
-            f"callee {callee_pattern} has no invocation outside loop {loop_test_pattern}"
-        )
-    if helper_uses_alternative and not (inside_calls or outside_calls):
-        failures.append(f"callee {callee_pattern} is never invoked")
-    passed_units = int(helper_present) + int(helper_publishes) + int(
-        (helper_uses_rmw and bool(outside_calls) and not inside_calls)
-        or (helper_uses_alternative and bool(inside_calls or outside_calls))
+    if len(hot_loops) != 1:
+        failures.append(f"expected one hot loop matching {loop_test}, found {len(hot_loops)}")
+        return _result(False, 3, 0, failures, severity)
+    hot_loop = hot_loops[0]
+    loop_start = getattr(hot_loop, "lineno", 0)
+    loop_end = getattr(hot_loop, "end_lineno", loop_start)
+    loop_calls = [
+        call for call in collector.calls
+        if loop_start <= getattr(call, "lineno", 0) <= loop_end
+    ]
+    compute_lines = [
+        getattr(call, "lineno", 0) for call in loop_calls
+        if re.fullmatch(compute_call, _call_name(call))
+    ]
+    if not compute_lines:
+        failures.append(f"hot loop has no compute call matching {compute_call}")
+    first_compute = min(compute_lines) if compute_lines else loop_end + 1
+
+    def invocation_kinds(call: ast.Call) -> set[str]:
+        direct = direct_kind(call)
+        return ({direct} if direct else set()) | effects.get(_call_name(call), set())
+
+    loop_publications = [
+        (getattr(call, "lineno", 0), invocation_kinds(call))
+        for call in loop_calls if invocation_kinds(call)
+    ]
+    post_publications = [
+        (getattr(call, "lineno", 0), invocation_kinds(call))
+        for call in collector.calls
+        if getattr(call, "lineno", 0) > loop_end and invocation_kinds(call)
+    ]
+    mechanism_present = any(effects.values()) or any(
+        direct_kind(call) for call in collector.calls
+    )
+    unsafe_lines = [
+        line for line, kinds in loop_publications
+        if "rmw" in kinds and line > first_compute
+    ]
+    legal_publication = bool(post_publications) or any(
+        "store" in kinds or ("rmw" in kinds and line < first_compute)
+        for line, kinds in loop_publications
+    )
+    if not mechanism_present:
+        failures.append(f"no completion publication tied to address {address}")
+    if unsafe_lines:
+        failures.append(f"completion RMW occurs after hot-loop compute at lines {unsafe_lines}")
+    if not legal_publication:
+        failures.append("no legal loop-head, owner-store, or post-loop publication")
+    passed_units = int(bool(compute_lines)) + int(mechanism_present) + int(
+        legal_publication and not unsafe_lines
     )
     return _result(not failures, 3, passed_units, failures, severity)
 
@@ -615,7 +656,7 @@ def evaluate_checks(
         "forbid_methods": _check_forbid_methods,
         "assignment_value": _check_assignment_value,
         "parameter_loads": _check_parameter_loads,
-        "callee_outside_loop": _check_callee_outside_loop,
+        "publication_placement": _check_publication_placement,
     }
     for rule in contract.get("checks") or []:
         check_id = str(rule["id"])

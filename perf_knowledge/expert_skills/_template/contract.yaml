@@ -34,6 +34,10 @@ checks:
 
 # Supported generic check kinds:
 # - regex: AST-normalized all/any/none patterns, optionally scoped to a qualified function.
+# - regex_sequence: require related AST-normalized patterns in declaration order.
 # - call_keywords: require keyword-expression identities on any/every matching call.
 # - forbid_methods: reject named method calls on matching receivers in a scope.
+# - assignment_value: relate a matching assignment target to its own RHS.
 # - parameter_loads: require declared runtime values to be consumed in a function scope.
+# - publication_placement: follow local helper calls and reject completion RMWs after a
+#   configured hot-loop compute anchor while allowing loop-head flushes or owner stores.

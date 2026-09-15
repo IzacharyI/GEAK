@@ -34,6 +34,12 @@ def test_repository_planner_extension_passes_generic_envelope():
     extension = yaml.safe_load((SKILL_DIR / "planner_extension.yaml").read_text())
     assert extension["plan_version"] == "mega-plan-v2"
     assert extension["candidate_templates"][0]["id"] == "full_persistent_pipeline"
+    assert (
+        extension["ir_bindings"]["schedule"]["policies"][
+            "completion_publication_frame"
+        ]
+        == "outside_hot_gemm1_tail"
+    )
     assert any(
         route["id"] == "repair_direct_abi"
         for route in extension["failure_routes"]
@@ -43,7 +49,7 @@ def test_repository_planner_extension_passes_generic_envelope():
         if route["id"] == "repair_dependency_publication"
     )
     assert (
-        "g1_completion_publish_outside_hot_loop"
+        "g1_completion_publish_outside_hot_tail"
         in dependency_route["match"]["check_ids"]
     )
 

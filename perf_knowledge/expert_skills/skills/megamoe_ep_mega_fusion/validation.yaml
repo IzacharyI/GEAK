@@ -18,6 +18,7 @@ compiler_hazard_evidence:
   localization: skipcombine and skipg2 still fault; removing the GEMM1-tail completion RMW clears the fault and leaves the expected readiness hang
   classification: flyc register-allocation frame regression from an atomic RMW in the hot work-loop tail
   required_repair: m-tile-owned system store or bounded out-of-frame completion flush
+  repair_validated: false
   acceptance: current contract pass plus on-card JIT and direct correctness
 
 harness: kernel_workflow

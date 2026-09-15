@@ -117,9 +117,12 @@ ok(/runtimeOnlyExactHeadFailure/.test(src) &&
    /next\.contract_failures\.length === 0/.test(src) &&
    /contract_failures: \[\]/.test(src),
   'runtime-only exact-head preservation cannot retain stale structural failures');
-ok(/currentStructuralAuthority/.test(src) &&
-   /contract_failures: currentStructuralAuthority[\s\S]*\? \[\]/.test(src),
-  'Planner input suppresses stale failures when exact-head structural authority is current');
+ok(/structural_state_conflict/.test(src) &&
+   /structural_verified: c\.structural_verified === true && !structuralConflict/.test(src),
+  'legacy structural pass plus required failures is normalized fail-closed');
+ok(/failed_required_checks/.test(src) && /authoritativeIds/.test(src) &&
+   /authoritativeIds\.has\(failure\.id\)/.test(src),
+  'reference parity prose cannot become an authoritative contract failure');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

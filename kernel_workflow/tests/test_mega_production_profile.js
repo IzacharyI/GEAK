@@ -43,6 +43,12 @@ ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
   'Skill-on search stops early only after reaching its full-fusion target');
 ok(/dispatch deadline reached/.test(src) && /MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S/.test(src),
   'the workflow preserves final-validation time instead of spending the full wall budget on search');
+ok(/availableAfterPrepS < 900/.test(src) &&
+   /if \(shouldStructuralVerify\) megaAdvanceMs\(300000\)/.test(src),
+  'production reserves Author, structural, and GPU handoff time and charges structural verification');
+ok(/GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS/.test(src) &&
+   /GPU_RUN_TIMEOUT_S: gpuRunBudgetS/.test(src),
+  'inner GPU lease wait and run deadlines fit inside the verifier timeout');
 
 console.log('\n# production validates best-first and pays fallback only on failure');
 ok(/for \(let i = 0; i < finalistOrder\.length; i\+\+\)/.test(src) &&
