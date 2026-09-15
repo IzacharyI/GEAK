@@ -1,6 +1,6 @@
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v2
+revision: mega-ep-fusion-v3
 description: Declarative source and MegaPlanIR preflight for the validated persistent-fusion target.
 
 source:
@@ -52,7 +52,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: mega-ep-fusion-v2
+      value: mega-ep-fusion-v3
     - id: matched_skill_id
       path: expert_skill_id
       op: eq
@@ -371,6 +371,15 @@ checks:
     patterns:
       - 'def _g2_comp_addr\(tile_index\):[\s\S]{0,180}return s2_ctr\s*\+\s*fx\.Int64\(tile_index\)\s*\*\s*fx\.Int64\(4\)'
 
+  - id: zero_based_first_tile_ready_all_reads
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    match: none
+    patterns:
+      - '_buffer_load\(\s*g2_s2ctr_rsrc,\s*fx\.Int32\(1\)\s*\+\s*peek_tile'
+
   - id: device_fuse_combine_guard
     category: correctness
     kind: regex
@@ -379,6 +388,16 @@ checks:
     patterns:
       - 'fuse_combine'
       - 'if const_expr\(fuse_combine\)'
+
+  - id: fuse_combine_controls_token_publication
+    category: lifecycle
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1
+    call: make_stage2_body_emitter
+    keywords:
+      publish_tok_ready: 'fuse_combine'
+      p2p_write_through: 'fuse_combine'
 
   - id: expert_skew_preemption
     category: schedule
@@ -433,6 +452,28 @@ checks:
       - 'if compact_owner:[\s\S]{0,1000}_c_pad\s*=\s*fx\.Int32\(fz_k\)\s*\*\s*c_epoch'
       - '_c_t\s*>=\s*i32_cur_tok'
 
+  - id: combine_generation_published_before_startup_gate
+    category: lifecycle
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '_c_rsrc\s*=\s*_make_buffer_from_addr\(c_ctr,\s*fx\.Int32\)'
+      - '_buffer_store\(\s*_c_rsrc,\s*fx\.Int32\(0\),\s*fx\.Int32\(0\)'
+      - '_buffer_store\(\s*_c_rsrc,\s*fx\.Int32\(1\),[\s\S]{0,240}_buffer_load\(\s*_c_rsrc,\s*fx\.Int32\(1\)[\s\S]{0,120}\+\s*fx\.Int32\(1\)'
+      - 'store_i32_system\(\s*gate_addr,\s*fx\.Int32\(0\),\s*gate_epoch'
+
+  - id: g2_completion_and_heads_reset_before_plan
+    category: lifecycle
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '_ctr_rsrc\s*=\s*_make_buffer_from_addr\(s2_ctr,\s*fx\.Int32\)'
+      - '_buffer_store\(\s*_ctr_rsrc,\s*fx\.Int32\(_c\),\s*fx\.Int32\(0\)'
+      - '_buffer_store\(\s*_ctr_rsrc,\s*i32_s2_maxmb\s*\+\s*tid\s*\*\s*fx\.Int32\(16\),\s*fx\.Int32\(0\)'
+      - 'emit_dispatch_plan\('
+
   - id: combine_transport_and_work_domain
     category: correctness
     kind: call_keywords
@@ -465,9 +506,23 @@ checks:
       - 's3_total_work\s*=\s*cur_rank_num_token\s*\*\s*warps_per_tok'
       - 'blockwise_fp8_transport'
       - 'hdim_per_warp'
+      - 'def _emit_item\(s3_work_idx\)'
       - 'tok_id\s*=\s*s3_work_idx\s*//\s*warps_per_tok'
       - 'part_id\s*=\s*s3_work_idx\s*%\s*warps_per_tok'
       - 'return\s*\(\s*consts,\s*_emit_item\s*\)'
+
+  - id: adaptive_combine_partition_bounds
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - 'n_elems\s*=\s*n_i32'
+      - 'hdim_per_warp\s*=\s*\(\s*n_elems\s*\+\s*warps_per_tok\s*-\s*1\s*\)\s*//\s*warps_per_tok'
+      - 'rem_hdim\s*=\s*n_elems\s*-\s*hdim_off'
+      - 'eff_end\s*=\s*\(\s*rem_hdim\s*<\s*hdim_per_warp\s*\)\.select\(\s*rem_hdim,\s*hdim_per_warp\s*\)'
+      - '_accum_step\(\s*hdim_off\s*\+\s*ec'
+      - '_accum_loop\(\s*eff_end'
 
   - id: adaptive_combine_values_are_consumed
     category: correctness
@@ -487,9 +542,51 @@ checks:
     patterns:
       - 'expert_scale_rsrcs'
       - 'if const_expr\(blockwise_fp8_transport\)'
+      - 'expert_tok_addr\s*\+\s*fx\.Int64\((?:hidden_dim|N_OUT)\)'
+      - 'dtype=T\.i32'
+      - 'scale_idx\s*=\s*\(\s*ec_abs\s*\+\s*u\s*\*\s*64\s*\)\s*//\s*8'
       - 'dtype=T\.i8'
-      - 'cvt_pk_f32_fp8'
-      - '_to_accum\([\s\S]{0,100}\*\s*scales'
+      - '(?:cvt_pk_f32_fp8|_to_accum\s*=\s*spec\.to_accum)'
+      - 'ds_bpermute'
+      - 'sc_i32\s*<<\s*fx\.Int32\(23\)'
+      - '_to_accum\(\s*vals\[u\]\[k_slot\]\s*\)\s*\*\s*scales\[u\]\[k_slot\]'
+
+  - id: blockwise_fp8_row_layout_matches_producer
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - 'nbytes\s*=\s*(?:spec\.nbytes|(?:N_OUT|hidden_dim)\s*\+\s*(?:N_OUT|hidden_dim)\s*//\s*32)'
+      - 'slot_idx\s*=\s*tok_id\s*\*\s*(?:TOPK|experts_per_token)\s*\+\s*k_slot'
+      - 'expert_tok_off\s*=\s*fx\.Int64\(slot_idx\)\s*\*\s*nbytes'
+      - 'expert_tok_addr\s*=\s*(?:c_inp|addr_shmem_tok)\s*\+\s*expert_tok_off'
+
+  - id: blockwise_scale_never_uses_readiness_pointer
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    match: none
+    patterns:
+      - 'create_buffer_resource_from_addr\(\s*c_peer_ready\s*\)'
+
+  - id: combine_item_has_no_workgroup_barrier
+    category: lifecycle
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter._emit_item
+    match: none
+    patterns:
+      - 'fx\.barrier\('
+
+  - id: standalone_and_fused_share_combine_item
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: emit_combine_barrier_and_reduce
+    patterns:
+      - 'make_combine_reduce_emitter\('
 
   - id: combine_queue_consumes_output_work_domain
     category: correctness
@@ -499,7 +596,10 @@ checks:
     patterns:
       - '\(\s*_c_consts,\s*_c_emit\s*\)\s*=\s*make_combine_reduce_emitter'
       - '_c_total\s*=\s*_c_consts\[[''"]s3_total_work[''"]\]'
-      - '_c_emit\('
+      - '_c_item\s*=\s*_c_base\s*\+\s*_c_wave'
+      - 'if _c_item\s*<\s*_c_total'
+      - '_c_emit\(\s*_c_item\s*\)'
+      - 'comb_active\s*=\s*_c_base\s*<\s*_c_total'
 
   - id: combine_queue_rejects_routed_row_bound
     category: correctness
@@ -540,6 +640,25 @@ checks:
       - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_packed_off'
       - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_weight_off'
       - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_peer_off'
+
+  - id: stage2_emitter_metadata_lds_is_slab_relative
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter
+    patterns:
+      - 'lds_typed_ptr\(\s*_?lds_base_i32\s*\+\s*fx\.Int32\(lds_peer_off\)'
+      - 'lds_typed_ptr\(\s*_?lds_base_i32\s*\+\s*fx\.Int32\(lds_packed_off\)'
+      - 'lds_typed_ptr\(\s*_?lds_base_i32\s*\+\s*fx\.Int32\(lds_weight_off\)'
+
+  - id: stage1_peer_lds_is_slab_relative
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    match: none
+    patterns:
+      - '_s2_lds_typed_ptr\(\s*fx\.Int32\(g2_lds_peer_off\)'
 
   - id: aliased_lds_pool
     category: resource

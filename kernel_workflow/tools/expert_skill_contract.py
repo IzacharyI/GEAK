@@ -253,6 +253,39 @@ def _check_regex(
     return _result(False, 1, 0, [f"unsupported regex match mode: {mode}"], severity)
 
 
+def _check_regex_sequence(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Require related source patterns to occur in declaration order."""
+    name = str(rule.get("file") or "")
+    scope = rule.get("scope")
+    patterns = [str(value) for value in rule.get("patterns") or []]
+    if not patterns:
+        return _result(False, 1, 0, ["regex_sequence has no patterns"], severity)
+    node = _scope_node(trees.get(name), str(scope) if scope else None)
+    if node is None:
+        return _result(
+            False, len(patterns), 0,
+            [f"missing file/scope: {name}:{scope or '<module>'}"], severity,
+        )
+    text = _active_code(node)
+    cursor = 0
+    passed = 0
+    failures: list[str] = []
+    for pattern in patterns:
+        match = re.search(pattern, text[cursor:], re.MULTILINE)
+        if match is None:
+            failures.append(f"after offset {cursor}: {pattern}")
+            break
+        cursor += match.end()
+        passed += 1
+    if failures:
+        failures.extend(patterns[passed + 1:])
+    return _result(not failures, len(patterns), passed, failures, severity)
+
+
 def _check_call_keywords(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -467,6 +500,7 @@ def evaluate_checks(
     results: dict[str, dict[str, Any]] = {}
     evaluators = {
         "regex": _check_regex,
+        "regex_sequence": _check_regex_sequence,
         "call_keywords": _check_call_keywords,
         "forbid_methods": _check_forbid_methods,
         "assignment_value": _check_assignment_value,

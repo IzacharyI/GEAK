@@ -1,6 +1,6 @@
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v2
+revision: mega-ep-fusion-v3
 plan_version: mega-plan-v2
 
 applicability:
@@ -563,6 +563,7 @@ failure_routes:
         - stage2_max_m_blocks_are_block_units
         - stage2_counter_storage_covers_sharded_heads
         - zero_based_first_tile_ready_layout
+        - zero_based_first_tile_ready_all_reads
         - tile_close_counter_covers_routed_rows
         - fixed_slot_group_done_capacity
     repair_intent: express max_m_blocks in Stage2 block units, allocate every sharded head and routed-row tile-close slot, and keep completion counters disjoint from claim heads
@@ -578,6 +579,8 @@ failure_routes:
         - no_host_counter_reset_in_launch_builder
         - no_host_counter_reset_on_hot_path
         - device_generation_and_token_padding
+        - combine_generation_published_before_startup_gate
+        - g2_completion_and_heads_reset_before_plan
         - monotone_token_ready_wait
     repair_intent: separate per-launch reset state from monotone generations and initialize each state before its publication gate
     checkpoint: startup_state
@@ -592,6 +595,8 @@ failure_routes:
         - nested_stage2_emitter
         - every_a_lds_load_forwards_nw
         - stage2_metadata_lds_is_slab_relative
+        - stage2_emitter_metadata_lds_is_slab_relative
+        - stage1_peer_lds_is_slab_relative
         - fused_stage1_jit_identity_covers_runtime_shape
     repair_intent: restore the shared nested emitter, explicit wave partition and relocatable local-memory addressing before adding schedule logic
     checkpoint: shared_emitters
@@ -622,6 +627,7 @@ failure_routes:
         - stage2_tile_close_publication
         - combine_transport_and_work_domain
         - blockwise_transport_selector_is_exact
+        - fuse_combine_controls_token_publication
     repair_intent: publish item readiness at the required scope after payload visibility and wait every dependency touched by an actual claim
     checkpoint: unified_compute_drain
     focus_files:
@@ -652,8 +658,13 @@ failure_routes:
     match:
       check_ids:
         - adaptive_combine_partition
+        - adaptive_combine_partition_bounds
         - adaptive_combine_values_are_consumed
         - blockwise_fp8_reduce_is_decoded
+        - blockwise_fp8_row_layout_matches_producer
+        - blockwise_scale_never_uses_readiness_pointer
+        - combine_item_has_no_workgroup_barrier
+        - standalone_and_fused_share_combine_item
         - combine_queue_consumes_output_work_domain
         - combine_queue_rejects_routed_row_bound
         - combine_third_queue

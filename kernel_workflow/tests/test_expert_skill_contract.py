@@ -113,8 +113,17 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert "stage2_counter_storage_covers_sharded_heads" in checks
     assert "combine_queue_consumes_output_work_domain" in checks
     assert "blockwise_fp8_reduce_is_decoded" in checks
+    assert "adaptive_combine_partition_bounds" in checks
+    assert "blockwise_fp8_row_layout_matches_producer" in checks
+    assert "blockwise_scale_never_uses_readiness_pointer" in checks
+    assert "combine_item_has_no_workgroup_barrier" in checks
+    assert "combine_generation_published_before_startup_gate" in checks
+    assert "g2_completion_and_heads_reset_before_plan" in checks
+    assert "fuse_combine_controls_token_publication" in checks
+    assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
     assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
     assert checks["stage2_max_m_blocks_are_block_units"]["kind"] == "assignment_value"
+    assert checks["combine_generation_published_before_startup_gate"]["kind"] == "regex_sequence"
     assert checks["combine_queue_rejects_routed_row_bound"]["match"] == "none"
     assert len(checks["fixed_slot_group_done_capacity"]["patterns"]) == 1
     consumed = checks["adaptive_combine_values_are_consumed"]["parameters"]
@@ -169,7 +178,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v2",
+        "expert_skill_revision": "mega-ep-fusion-v3",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "target": {"launch_count": 2},
@@ -279,6 +288,32 @@ def test_assignment_value_none_rejects_forbidden_rhs():
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": tree})
     assert not result["domain_separation"]["pass"]
+
+
+def test_regex_sequence_rejects_correct_names_in_wrong_order():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "publish_order",
+        "kind": "regex_sequence",
+        "file": "src/a.py",
+        "scope": "build",
+        "patterns": [r"state\s*=\s*prepare\(\)", r"publish\(state\)"],
+    }]
+    wrong = ast.parse(
+        "def build():\n"
+        "    publish(state)\n"
+        "    state = prepare()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": wrong})
+    assert not result["publish_order"]["pass"]
+
+    right = ast.parse(
+        "def build():\n"
+        "    state = prepare()\n"
+        "    publish(state)\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": right})
+    assert result["publish_order"]["pass"]
 
 
 def test_reference_self_is_calibration_only_and_never_hardware_evidence(tmp_path):
