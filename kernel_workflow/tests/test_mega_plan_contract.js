@@ -51,6 +51,47 @@ ok(!needsPreflight(
   { head: 'same', structural_candidate_head: 'same', structural_verified: true },
   true,
 ), 'the exact independently verified full-target HEAD may use a GPU');
+const identity = {
+  skillId: 'skill', revision: 'v6', bundle: 'bundle',
+  planner: 'planner', contract: 'contract',
+};
+ok(!needsPreflight(
+  { target_topology: { launch_count: 2 } },
+  plan,
+  {
+    head: 'scored-old',
+    working_head: 'working-new',
+    working_snapshot: {
+      head: 'working-new',
+      structural_verified: true,
+      structural_skill_id: 'skill',
+      structural_candidate_head: 'working-new',
+      structural_skill_bundle_sha256: 'bundle',
+      structural_planner_extension_sha256: 'planner',
+      structural_contract_revision: 'v6',
+      structural_contract_sha256: 'contract',
+    },
+  },
+  true,
+  identity,
+), 'an exact current-identity working certificate authorizes the next GPU turn');
+ok(needsPreflight(
+  { target_topology: { launch_count: 2 } },
+  plan,
+  {
+    working_head: 'working-new',
+    working_snapshot: {
+      head: 'working-new', structural_verified: true,
+      structural_candidate_head: 'working-new',
+      structural_skill_id: 'skill', structural_contract_revision: 'v6',
+      structural_skill_bundle_sha256: 'stale',
+      structural_planner_extension_sha256: 'planner',
+      structural_contract_sha256: 'contract',
+    },
+  },
+  true,
+  identity,
+), 'a stale working bundle cannot authorize GPU use');
 ok(!needsPreflight(
   { target_topology: { launch_count: 3 } }, plan, null, true,
 ), 'a complete partial fallback is not forced through the full-target Skill contract');

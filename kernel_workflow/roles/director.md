@@ -76,8 +76,13 @@ continued wave build on the cumulative best instead of restarting. Handle it as 
   is absent from `STATE.json:candidate_registry` (for example, its first agent timed out before the
   registry writer), add an `authoring` record with those fields. If the id exists but the manifest
   names a newer committed attempt/head, preserve the verified registry snapshot
-  and update its `working_head` plus `working_snapshot` from the manifest. Never infer correctness,
-  a score, or finalist status from a lane manifest.
+  and update its `working_head` plus `working_snapshot` from the manifest. When a sibling
+  `candidate_result.json` has the same candidate id, attempt id and exact clean tree HEAD, copy its
+  checkpoint fields and complete structural identity into `working_snapshot`: structural pass/report,
+  Skill id/revision, candidate tree digest, bundle/Planner/contract digests, exact contract failures,
+  evidence manifest, topology and blocker. A mismatch copies none of them. This working structural
+  certificate may authorize the next turn; dropping it creates an infinite structural-preflight loop.
+  Never infer runtime correctness, a score, or finalist status from a lane manifest/result.
 - **When `MODE!=mega`, if `STATE_DIR` is set AND `$STATE_DIR/best/` exists and is non-empty** (a prior wave's cumulative-best
   workspace — it contains the optimized `kernel_src/` AND the immutable oracle `unittest.py`/`meta.json`/
   `reference_io.pt`): create `EVAL_DIR` as usual, but **seed `baseline/` and `workspace/` by copying from

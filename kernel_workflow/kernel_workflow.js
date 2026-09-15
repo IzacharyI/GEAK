@@ -753,8 +753,6 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   provenance: { type: 'string' },
   next_blocker: { type: 'string' },
   notes: { type: 'string' },
-  // Every candidate owns an explicit activation manifest; Expert Skills provide knowledge, not a
-  // separate source type or orchestrator-owned activation.
   activation: obj({
     mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
     path_marker: { type: 'string' }, marker_how: { type: 'string' },
@@ -842,8 +840,7 @@ function structuralEvidenceIdentityVerdict(report, expected) {
 }
 // <</REPLAY:structural_evidence_identity>>
 
-// A structured, operator-neutral description of a whole-kernel topology. Operator-specific region,
-// queue and capability names are values supplied by Analyze/Skill data, never fields in this schema.
+// Operator-neutral whole-kernel topology.
 const MEGA_TOPOLOGY_SCHEMA = obj({
   launch_count: { type: 'number' },
   included_regions: { type: 'array', items: { type: 'string' } },
@@ -867,12 +864,30 @@ function candidateClaimsPlanTarget(direction, planIr) {
   return Number.isFinite(planned) && Number.isFinite(declared) && declared === planned;
 }
 
-function authoringContractNeedsPreflight(direction, planIr, candidate, contractEnabled) {
-  if (!contractEnabled || !candidateClaimsPlanTarget(direction, planIr)) return false;
+function megaEffectiveLaneCheckpoint(candidate) {
   const c = candidate || {};
+  const w = c.working_snapshot && typeof c.working_snapshot === 'object'
+    ? c.working_snapshot : {};
+  return String(c.working_head || '') && String(w.head || '') === String(c.working_head)
+    ? w : c;
+}
+
+function authoringContractNeedsPreflight(
+  direction, planIr, candidate, contractEnabled, expected = {}
+) {
+  if (!contractEnabled || !candidateClaimsPlanTarget(direction, planIr)) return false;
+  const c = megaEffectiveLaneCheckpoint(candidate);
+  const identityMatches =
+    (!expected.skillId || c.structural_skill_id === expected.skillId) &&
+    (!expected.revision || c.structural_contract_revision === expected.revision) &&
+    (!expected.bundle || c.structural_skill_bundle_sha256 === expected.bundle) &&
+    (!expected.planner ||
+      c.structural_planner_extension_sha256 === expected.planner) &&
+    (!expected.contract || c.structural_contract_sha256 === expected.contract);
   return !(c.structural_verified === true &&
     String(c.structural_candidate_head || '') &&
-    String(c.structural_candidate_head) === String(c.head || ''));
+    String(c.structural_candidate_head) === String(c.head || '') &&
+    identityMatches);
 }
 
 // Convert the operator-neutral descriptor into Verify's historical TARGET_SHAPE vocabulary.
@@ -3298,39 +3313,19 @@ function roundEvidence(clean, roleOf, outcomeOf) {
 // <</REPLAY:evidence_stop>>
 
 // <<REPLAY:claim_boundary>>
-// THE CLAIM BOUNDARY. Three decisions that together answer one question: did a measurement that
-// happened on hardware actually reach the scoring harness?
-//
-// They are lifted out as pure predicates rather than left inline because of what they cost when they
-// were inline. On 2026-08-23 a real, reproducible, bit-identical +20.6% was measured three separate
-// times and entered the harness zero times — once because the engineer's declared patch did not exist
-// (the effect lived only in bench CLI flags), once because the engineer wrote a correct claim to disk
-// and then kept measuring past the round's deadline, so `eng` was null. Neither failure was at the
-// measurement boundary; the instrument worked every time. Both were here.
-//
-// The predicates are deliberately dumb. `needsRecovery` and `recovered` share one definition of
-// "usable" so that recovery can never accept something the caller would have rejected, and `unbacked`
-// requires BOTH that verify could not apply the patch AND that the engineer's own numbers claim a win
-// — an unapplied patch under a null claim is just a null result, and calling it a reporting failure
-// would train readers to ignore the label.
 function claimBoundary(speedupOf, requireComplete) {
   const usable = (c) => !!c && (!requireComplete || c.claim_complete === true) &&
     Array.isArray(c.per_case) && c.per_case.length > 0;
   return {
-    // Go looking on disk for a claim the engineer never handed back?
     needsRecovery: (eng) => !usable(eng),
-    // Is what came off disk a claim, or an empty acknowledgement that there was nothing there?
     recovered: (onDisk) => usable(onDisk),
-    // A win the engineer cannot hand over. Not "tried and lost" — unmeasured, and re-dispatchable.
     unbacked: (r) => !!r && !!r.ver && r.ver.status === 'apply_failed' && speedupOf(r.eng) > 1.0,
   };
 }
 // <</REPLAY:claim_boundary>>
 
 // <<REPLAY:mega_candidate_registry>>
-// Mega keeps whole-kernel candidates as independent lineages. A lane may commit WIP to its own tree
-// without changing the globally selected implementation; only a complete, independently verified
-// score can become a finalist. Expert knowledge does not alter this lifecycle.
+// Mega whole-kernel candidates remain independent lineages until verified.
 function validMegaCandidateId(value) {
   const id = String(value || '');
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) && id !== 'frozen_baseline';
@@ -3365,15 +3360,37 @@ function normalizeContractFailures(raw) {
 }
 function normalizeMegaWorkingSnapshot(raw) {
   const w = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const failures = normalizeContractFailures(w.contract_failures);
+  const structuralConflict = w.structural_verified === true &&
+    failures.some((failure) => failure.severity === 'required');
   return {
     head: String(w.head || ''),
     status: String(w.status || ''),
     patch: String(w.patch || ''),
+    attempt_id: String(w.attempt_id || ''),
+    checkpoint_complete: w.checkpoint_complete === true,
+    structural_verified: w.structural_verified === true && !structuralConflict,
+    structural_report: String(w.structural_report || ''),
+    structural_skill_id: String(w.structural_skill_id || ''),
+    structural_candidate_head: String(w.structural_candidate_head || ''),
+    structural_candidate_tree_digest: String(w.structural_candidate_tree_digest || ''),
+    structural_skill_bundle_sha256: String(w.structural_skill_bundle_sha256 || ''),
+    structural_planner_extension_sha256:
+      String(w.structural_planner_extension_sha256 || ''),
+    structural_contract_revision: String(w.structural_contract_revision || ''),
+    structural_contract_sha256: String(w.structural_contract_sha256 || ''),
+    evidence_manifest: String(w.evidence_manifest || ''),
     activation: normalizeMegaActivation(w.activation),
+    topology_sig: String(w.topology_sig || ''),
     topology: w.topology && typeof w.topology === 'object' && !Array.isArray(w.topology)
       ? { ...w.topology } : {},
     changed_files: Array.isArray(w.changed_files) ? w.changed_files.map(String) : [],
-    contract_failures: normalizeContractFailures(w.contract_failures),
+    contract_failures: structuralConflict ? [{
+      id: 'structural_state_conflict', category: 'plan', severity: 'required',
+      messages: ['working structural pass conflicts with required failures'],
+    }] : failures,
+    next_blocker: String(w.next_blocker || ''),
+    notes: String(w.notes || ''),
   };
 }
 function normalizeMegaCandidate(raw) {
@@ -3468,25 +3485,27 @@ function upsertMegaCandidate(registry, incoming) {
   const i = list.findIndex((c) => c.id === next.id);
   if (i < 0) return [...list, next];
   const prev = list[i];
-  const sameStructuralHead = prev.structural_verified === true &&
-    !!prev.structural_candidate_head &&
-    next.head === prev.structural_candidate_head &&
-    next.head === prev.head;
+  const priorStructural = megaEffectiveLaneCheckpoint(prev);
+  const sameStructuralHead = priorStructural.structural_verified === true &&
+    !!priorStructural.structural_candidate_head &&
+    next.head === priorStructural.structural_candidate_head &&
+    next.head === priorStructural.head;
   const runtimeOnlyExactHeadFailure = sameStructuralHead &&
     !next.structural_verified && next.contract_failures.length === 0;
   if (runtimeOnlyExactHeadFailure) {
     next = normalizeMegaCandidate({
       ...next,
-      checkpoint_complete: prev.checkpoint_complete,
+      checkpoint_complete: priorStructural.checkpoint_complete,
       structural_verified: true,
-      structural_report: prev.structural_report,
-      structural_skill_id: prev.structural_skill_id,
-      structural_candidate_head: prev.structural_candidate_head,
-      structural_candidate_tree_digest: prev.structural_candidate_tree_digest,
-      structural_skill_bundle_sha256: prev.structural_skill_bundle_sha256,
-      structural_planner_extension_sha256: prev.structural_planner_extension_sha256,
-      structural_contract_revision: prev.structural_contract_revision,
-      structural_contract_sha256: prev.structural_contract_sha256,
+      structural_report: priorStructural.structural_report,
+      structural_skill_id: priorStructural.structural_skill_id,
+      structural_candidate_head: priorStructural.structural_candidate_head,
+      structural_candidate_tree_digest: priorStructural.structural_candidate_tree_digest,
+      structural_skill_bundle_sha256: priorStructural.structural_skill_bundle_sha256,
+      structural_planner_extension_sha256:
+        priorStructural.structural_planner_extension_sha256,
+      structural_contract_revision: priorStructural.structural_contract_revision,
+      structural_contract_sha256: priorStructural.structural_contract_sha256,
       contract_failures: [],
     });
   }
@@ -3500,10 +3519,26 @@ function upsertMegaCandidate(registry, incoming) {
         head: next.head || next.working_head || prev.working_head,
         status: next.status || next.working_status || prev.working_status,
         patch: next.patch,
+        attempt_id: next.attempt_id,
+        checkpoint_complete: next.checkpoint_complete,
+        structural_verified: next.structural_verified,
+        structural_report: next.structural_report,
+        structural_skill_id: next.structural_skill_id,
+        structural_candidate_head: next.structural_candidate_head,
+        structural_candidate_tree_digest: next.structural_candidate_tree_digest,
+        structural_skill_bundle_sha256: next.structural_skill_bundle_sha256,
+        structural_planner_extension_sha256:
+          next.structural_planner_extension_sha256,
+        structural_contract_revision: next.structural_contract_revision,
+        structural_contract_sha256: next.structural_contract_sha256,
+        evidence_manifest: next.evidence_manifest,
         activation: next.activation,
+        topology_sig: next.topology_sig,
         topology: next.topology,
         changed_files: next.changed_files,
         contract_failures: next.contract_failures,
+        next_blocker: next.next_blocker,
+        notes: next.notes,
       },
       next_blocker: next.next_blocker || prev.next_blocker,
       notes: next.notes || prev.notes,
@@ -3524,6 +3559,7 @@ function upsertMegaCandidate(registry, incoming) {
 
 function megaRegistryForSearch(registry) {
   return (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate).map((c) => {
+    const effective = megaEffectiveLaneCheckpoint(c);
     return {
       id: c.id,
       source: c.source,
@@ -3533,26 +3569,26 @@ function megaRegistryForSearch(registry) {
       working_head: c.working_head,
       working_status: c.working_status,
       status: c.status,
-      checkpoint_complete: c.checkpoint_complete,
-      structural_verified: c.structural_verified,
+      checkpoint_complete: effective.checkpoint_complete === true,
+      structural_verified: effective.structural_verified === true,
       runtime_verified: c.runtime_verified,
       score_complete: c.score_complete,
-      structural_report: c.structural_report,
-      structural_skill_id: c.structural_skill_id,
-      structural_candidate_head: c.structural_candidate_head,
-      structural_candidate_tree_digest: c.structural_candidate_tree_digest,
-      structural_skill_bundle_sha256: c.structural_skill_bundle_sha256,
-      structural_planner_extension_sha256: c.structural_planner_extension_sha256,
-      structural_contract_revision: c.structural_contract_revision,
-      structural_contract_sha256: c.structural_contract_sha256,
-      contract_failures: c.working_snapshot.contract_failures.length
-        ? c.working_snapshot.contract_failures : c.contract_failures,
+      structural_report: effective.structural_report || '',
+      structural_skill_id: effective.structural_skill_id || '',
+      structural_candidate_head: effective.structural_candidate_head || '',
+      structural_candidate_tree_digest: effective.structural_candidate_tree_digest || '',
+      structural_skill_bundle_sha256: effective.structural_skill_bundle_sha256 || '',
+      structural_planner_extension_sha256:
+        effective.structural_planner_extension_sha256 || '',
+      structural_contract_revision: effective.structural_contract_revision || '',
+      structural_contract_sha256: effective.structural_contract_sha256 || '',
+      contract_failures: effective.contract_failures || [],
       absolute_score: c.absolute_score,
       target_guard: c.target_guard,
       per_case: c.per_case,
-      topology_sig: c.topology_sig,
-      next_blocker: c.next_blocker,
-      notes: c.notes,
+      topology_sig: effective.topology_sig || c.topology_sig,
+      next_blocker: effective.next_blocker || c.next_blocker,
+      notes: effective.notes || c.notes,
       attempts: c.attempts,
     };
   });
@@ -5791,27 +5827,18 @@ if (setup.resumed && setup.prior_state) {
   const ps = setup.prior_state;
   if (Number.isFinite(ps.cumulative) && ps.cumulative > cumulative) cumulative = ps.cumulative;
   if (Array.isArray(ps.insights)) {
-    // A resumed wave inherits the previous wave's board as round-0 entries, so continuity across
-    // waves works the same way continuity across rounds does.
     insightBook = mergeInsights(insightBook, ps.insights, 0, false).book;
     history.insights = renderInsights(insightBook);
   }
   if (Array.isArray(ps.ledger)) history.ledger = ps.ledger;
   if (ps.bottleneck_now) history.bottleneck_now = ps.bottleneck_now;
   if (Array.isArray(ps.best_per_case) && ps.best_per_case.length) bestPerCase = ps.best_per_case;
-  // The shelf crosses waves for the same reason the ledger does: a candidate that verified in wave
-  // 12 round 2 is exactly the thing wave 13 should not re-derive. Rounds restart at 1 each wave, so
-  // a carried entry's base_round is rewritten to 0 — older than anything this wave will absorb, and
-  // therefore aged against every absorption rather than none. The absorbed sets come with it, so a
-  // patch the previous wave's winners already invalidated stays invalid instead of being reoffered.
   if (Array.isArray(ps.shelf)) {
     shelf = ps.shelf.filter((e) => e && e.id && !e.absorbed)
       .map((e) => ({ ...e, base_round: 0, files: shelfFiles(e),
         footprint: shelfFiles(e).length ? 'known' : 'unknown' }));
   }
   if (ps.absorbed_files && typeof ps.absorbed_files === 'object') {
-    // Everything the previous wave absorbed, collapsed to round 0.5: after a carried entry's
-    // base_round of 0, before this wave's round 1.
     const prior = [];
     for (const k of Object.keys(ps.absorbed_files)) for (const f of (ps.absorbed_files[k] || [])) prior.push(f);
     if (prior.length) absorbedByRound[0.5] = [...new Set(prior.map(shelfFile))];
@@ -6283,7 +6310,13 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const candidateClaimsSkillTarget =
     candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
   const authorPreflightRequired = authoringContractNeedsPreflight(
-    d, analysis && analysis.mega_plan_ir, existing, CHECK_EXPERT_SKILL_CONTRACT
+    d, analysis && analysis.mega_plan_ir, existing, CHECK_EXPERT_SKILL_CONTRACT, {
+      skillId: EXPERT_SKILL_ID,
+      revision: EXPERT_SKILL_REVISION,
+      bundle: EXPERT_SKILL_BUNDLE_SHA256,
+      planner: EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+      contract: EXPERT_SKILL_CONTRACT_SHA256,
+    }
   );
   if (authorPreflightRequired) {
     log(`Mega round ${currentRound}: full-target candidate ${candidateId} has no current exact-HEAD ` +

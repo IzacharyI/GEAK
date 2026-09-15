@@ -8,6 +8,10 @@ const match = src.match(
   /\/\/ <<REPLAY:mega_candidate_registry>>([\s\S]*?)\/\/ <<\/REPLAY:mega_candidate_registry>>/,
 );
 if (!match) throw new Error('missing mega_candidate_registry replay region');
+const topology = src.match(
+  /\/\/ <<REPLAY:mega_topology_contract>>([\s\S]*?)\/\/ <<\/REPLAY:mega_topology_contract>>/,
+);
+if (!topology) throw new Error('missing mega_topology_contract replay region');
 
 const api = new Function(`
   function guardContract(v, targets, regressions) {
@@ -24,6 +28,7 @@ const api = new Function(`
     const row = (v.per_case || []).find((r) => r.name === targets[0]);
     return row ? Number(row.speedup) : 0;
   }
+  ${topology[1]}
   ${match[1]}
   return {
     validMegaCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
@@ -94,6 +99,34 @@ console.log('\n# WIP cannot overwrite verified evidence');
     'new authoring progress is retained separately');
   ok(api.megaRegistryForSearch(registry)[0].contract_failures[0].id === 'counter_layout',
     'an incomplete authoring result preserves exact structured failures for the next Planner');
+}
+{
+  let registry = [complete('guided', 1.0448)];
+  registry = api.upsertMegaCandidate(registry, {
+    id: 'guided', source: 'search', status: 'authoring', claim_complete: false,
+    checkpoint_complete: true, tree: '/state/guided', head: 'working-head',
+    attempt_id: 'guided:2', structural_verified: true,
+    structural_report: '/eval/working-structure.json',
+    structural_skill_id: 'skill',
+    structural_candidate_head: 'working-head',
+    structural_candidate_tree_digest: 'working-tree-digest',
+    structural_skill_bundle_sha256: 'working-bundle',
+    structural_planner_extension_sha256: 'working-planner',
+    structural_contract_revision: 'v6',
+    structural_contract_sha256: 'working-contract',
+    evidence_manifest: '/eval/working-evidence.json',
+    contract_failures: [],
+  });
+  const working = registry[0].working_snapshot;
+  const search = api.megaRegistryForSearch(registry)[0];
+  ok(working.structural_verified &&
+     working.structural_candidate_head === 'working-head' &&
+     working.structural_skill_bundle_sha256 === 'working-bundle',
+    'a verified WIP retains its complete structural certificate');
+  ok(search.structural_verified &&
+     search.structural_candidate_head === 'working-head' &&
+     search.structural_contract_sha256 === 'working-contract',
+    'Planner and author preflight consume the effective working certificate');
 }
 {
   const structural = {

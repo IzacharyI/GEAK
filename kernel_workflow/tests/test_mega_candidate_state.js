@@ -98,8 +98,12 @@ ok(/MEGA STATE PERSIST FAILED/.test(src) &&
 ok(/working_snapshot: \{/.test(src) &&
    /activation: next\.activation/.test(src) &&
    /topology: next\.topology/.test(src) &&
-   /changed_files: next\.changed_files/.test(src),
-  'unverified candidate progress is persisted as a structured working snapshot');
+   /structural_skill_bundle_sha256: next\.structural_skill_bundle_sha256/.test(src) &&
+   /structural_contract_sha256: next\.structural_contract_sha256/.test(src),
+  'working progress persists its complete structural certificate');
+ok(/megaEffectiveLaneCheckpoint/.test(src) &&
+   /const effective = megaEffectiveLaneCheckpoint\(c\)/.test(src),
+  'author preflight and Planner consume the effective working checkpoint');
 ok(/structural_contract_revision: structuralPass/.test(src) &&
    /structural_contract_sha256: structuralPass/.test(src) &&
    /structural_candidate_tree_digest: structuralPass/.test(src) &&
@@ -107,8 +111,7 @@ ok(/structural_contract_revision: structuralPass/.test(src) &&
    /structural_planner_extension_sha256: structuralPass/.test(src) &&
    /contract_failures: structuralPass/.test(src),
   'new structural evidence stores exact candidate, bundle, Planner and contract identity');
-ok(/c\.working_snapshot\.contract_failures\.length/.test(src) &&
-   /c\.working_snapshot\.contract_failures : c\.contract_failures/.test(src),
+ok(/contract_failures: effective\.contract_failures \|\| \[\]/.test(src),
   'structured contract failures reach the planner through the candidate registry');
 ok(/contract_failures: normalizeContractFailures\(eng && eng\.contract_failures\)/.test(src) &&
    /evidence_manifest: String\(eng && eng\.evidence_manifest/.test(src),
