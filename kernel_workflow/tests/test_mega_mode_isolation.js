@@ -145,6 +145,10 @@ ok(/const MEGA_STRUCTURAL_ONLY = MODE === 'mega'/.test(src) &&
    /!MEGA_STRUCTURAL_ONLY/.test(src) &&
    /structural-only acceptance reached/.test(src),
   'structural-only mode forbids runtime Verify and stops on a complete source contract');
+ok(/const benchCache = MEGA_STRUCTURAL_ONLY \? null/.test(src) &&
+   /const bench = MEGA_STRUCTURAL_ONLY \? structuralBench/.test(src) &&
+   /STRUCTURAL_ONLY: no GPU benchmark/.test(src),
+  'structural-only mode cannot fall through to a GPU benchmark');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'

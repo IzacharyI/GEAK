@@ -346,6 +346,88 @@ def _check_forbid_methods(
     return _result(not failures, 1, int(not failures), failures, severity)
 
 
+def _check_assignment_value(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Relate an assignment target to its value without operator-specific code.
+
+    Plain regex checks can independently find a target name and an unrelated
+    expression elsewhere in a function. This check keeps the relation local to
+    one AST assignment so declarative contracts can reject dead or miswired
+    shape/capacity variables.
+    """
+    name = str(rule.get("file") or "")
+    scope = rule.get("scope")
+    node = _scope_node(trees.get(name), str(scope) if scope else None)
+    if node is None:
+        return _result(
+            False, 1, 0,
+            [f"missing file/scope: {name}:{scope or '<module>'}"], severity,
+        )
+    target_pattern = str(rule.get("target") or "")
+    value_pattern = str(rule.get("value") or "")
+    if not target_pattern or not value_pattern:
+        return _result(
+            False, 1, 0,
+            ["assignment_value requires target and value patterns"], severity,
+        )
+
+    assignments: list[tuple[str, str, int]] = []
+    for item in ast.walk(node):
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                assignments.append(
+                    (ast.unparse(target), ast.unparse(item.value), getattr(item, "lineno", 0))
+                )
+        elif isinstance(item, ast.AnnAssign) and item.value is not None:
+            assignments.append(
+                (ast.unparse(item.target), ast.unparse(item.value), getattr(item, "lineno", 0))
+            )
+        elif isinstance(item, ast.NamedExpr):
+            assignments.append(
+                (ast.unparse(item.target), ast.unparse(item.value), getattr(item, "lineno", 0))
+            )
+
+    targeted = [
+        (target, value, line)
+        for target, value, line in assignments
+        if re.fullmatch(target_pattern, target)
+    ]
+    matching = [
+        (target, value, line)
+        for target, value, line in targeted
+        if re.search(value_pattern, value)
+    ]
+    mode = str(rule.get("match") or "any")
+    if mode == "any":
+        passed = bool(matching)
+        failures = [] if passed else [
+            f"no assignment {target_pattern!r} has value matching {value_pattern!r}"
+        ]
+    elif mode == "every":
+        passed = bool(targeted) and len(matching) == len(targeted)
+        failures = [] if passed else [
+            f"line {line}: {target}={value} !~ {value_pattern}"
+            for target, value, line in targeted
+            if not re.search(value_pattern, value)
+        ]
+        if not targeted:
+            failures.append(f"no assignment target matching {target_pattern!r}")
+    elif mode == "none":
+        passed = not matching
+        failures = [
+            f"line {line}: forbidden {target}={value} matches {value_pattern}"
+            for target, value, line in matching
+        ]
+    else:
+        return _result(
+            False, 1, 0, [f"unsupported assignment_value mode: {mode}"], severity
+        )
+    return _result(passed, 1, int(passed), failures, severity)
+
+
 def _check_parameter_loads(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -387,6 +469,7 @@ def evaluate_checks(
         "regex": _check_regex,
         "call_keywords": _check_call_keywords,
         "forbid_methods": _check_forbid_methods,
+        "assignment_value": _check_assignment_value,
         "parameter_loads": _check_parameter_loads,
     }
     for rule in contract.get("checks") or []:

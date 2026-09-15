@@ -4579,8 +4579,22 @@ async function fastTestCachePublish() {
 // PHASE: Benchmark setup (Benchmark Engineer)
 // ===========================================================================
 phase('Benchmark');
-const benchCache = await fastTestCacheLoad('bench');
-const bench = benchCache ? benchCache.bench : await agentT(
+const structuralGuardNames = [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])];
+const structuralBench = {
+  baseline_per_case: structuralGuardNames.map((name) => ({
+    name, latency_ms: 1, baseline_ms: 1, speedup: 0,
+    role: TARGET_GUARDS.includes(name) ? 'target' : 'regression_guard',
+    runs_ms: [], drift_pct: 0, params: 'structural-only placeholder',
+    metric: PROMOTION_METRIC,
+  })),
+  baseline_geomean_ms: 1,
+  num_test_cases: structuralGuardNames.length,
+  reliable: false,
+  positive_control: { claim_complete: false },
+  notes: 'STRUCTURAL_ONLY: no GPU benchmark.',
+};
+const benchCache = MEGA_STRUCTURAL_ONLY ? null : await fastTestCacheLoad('bench');
+const bench = MEGA_STRUCTURAL_ONLY ? structuralBench : benchCache ? benchCache.bench : await agentT(
   roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
@@ -4993,7 +5007,7 @@ log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (d
 // fast-test cache so a LATER `mega_fast_test` wave can skip re-measuring them. Only when at least one
 // front stage ran FRESH this wave — a full cache hit already reused an up-to-date cache. No-op (no
 // agent() call) when MEGA_FAST_TEST is off.
-if (MEGA_FAST_TEST && !benchCache) await fastTestCachePublish();
+if (!MEGA_STRUCTURAL_ONLY && MEGA_FAST_TEST && !benchCache) await fastTestCachePublish();
 
 // ===========================================================================
 // PHASE: Optimization loop (budget-controlled)

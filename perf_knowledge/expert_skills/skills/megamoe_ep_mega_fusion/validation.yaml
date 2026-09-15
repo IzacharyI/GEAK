@@ -1,6 +1,6 @@
 schema_version: expert-skill-validation-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v1
+revision: mega-ep-fusion-v2
 status: validated
 last_verified: "2026-09-04"
 gpu: gfx950/MI355X

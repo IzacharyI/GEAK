@@ -1,5 +1,6 @@
 """Generic declarative Expert Skill contract tests."""
 
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -104,8 +105,20 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     )
     contract = MODULE.load_contract(path)
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
-    assert any(item["id"] == "host_ready_pointer_identity" for item in contract["checks"])
-    assert any(item["id"] == "combine_transport_and_work_domain" for item in contract["checks"])
+    checks = {item["id"]: item for item in contract["checks"]}
+    assert "host_ready_pointer_identity" in checks
+    assert "combine_transport_and_work_domain" in checks
+    assert "stage2_max_m_blocks_are_block_units" in checks
+    assert "stage2_counter_storage_covers_sharded_heads" in checks
+    assert "combine_queue_consumes_output_work_domain" in checks
+    assert "blockwise_fp8_reduce_is_decoded" in checks
+    assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
+    assert checks["stage2_max_m_blocks_are_block_units"]["kind"] == "assignment_value"
+    assert checks["combine_queue_rejects_routed_row_bound"]["match"] == "none"
+    assert len(checks["fixed_slot_group_done_capacity"]["patterns"]) == 1
+    consumed = checks["adaptive_combine_values_are_consumed"]["parameters"]
+    assert "hdim_per_warp" in consumed
+    assert "s3_total_work" in consumed
     dependency = next(
         item for item in contract["checks"]
         if item["id"] == "chunk_all_dependencies"
@@ -127,7 +140,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v1",
+        "expert_skill_revision": "mega-ep-fusion-v2",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "target": {"launch_count": 2},
@@ -189,6 +202,54 @@ def test_generic_engine_contains_no_operator_specific_contract():
     assert "megamoe_ep_mega_fusion" not in source
     assert "mega_moe_stage1.py" not in source
     assert "AITER_MEGAMOE" not in source
+
+
+def test_assignment_value_relates_target_to_its_own_rhs():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "capacity_units",
+        "kind": "assignment_value",
+        "file": "src/a.py",
+        "scope": "build",
+        "target": "capacity",
+        "value": r"ceildiv\(rows, block\)",
+    }]
+    unrelated = ast.parse(
+        "def build(rows, block):\n"
+        "    blocks = ceildiv(rows, block)\n"
+        "    capacity = rows\n"
+        "    return capacity\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": unrelated})
+    assert not result["capacity_units"]["pass"]
+
+    related = ast.parse(
+        "def build(rows, block):\n"
+        "    capacity = ceildiv(rows, block)\n"
+        "    return capacity\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": related})
+    assert result["capacity_units"]["pass"]
+
+
+def test_assignment_value_none_rejects_forbidden_rhs():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "domain_separation",
+        "kind": "assignment_value",
+        "file": "src/a.py",
+        "scope": "build",
+        "target": "output_extent",
+        "value": r"routed_extent",
+        "match": "none",
+    }]
+    tree = ast.parse(
+        "def build(output_extent, routed_extent):\n"
+        "    output_extent = routed_extent\n"
+        "    return output_extent\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": tree})
+    assert not result["domain_separation"]["pass"]
 
 
 def test_reference_self_is_calibration_only_and_never_hardware_evidence(tmp_path):

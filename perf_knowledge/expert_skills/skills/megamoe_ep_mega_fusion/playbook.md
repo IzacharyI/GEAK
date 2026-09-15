@@ -1,6 +1,6 @@
 ---
 playbook_id: megamoe_ep_tile_pipeline
-revision: mega-ep-fusion-v1
+revision: mega-ep-fusion-v2
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true

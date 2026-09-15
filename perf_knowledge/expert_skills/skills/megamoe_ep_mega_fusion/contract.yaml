@@ -1,6 +1,6 @@
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v1
+revision: mega-ep-fusion-v2
 description: Declarative source and MegaPlanIR preflight for the validated persistent-fusion target.
 
 source:
@@ -52,7 +52,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: mega-ep-fusion-v1
+      value: mega-ep-fusion-v2
     - id: matched_skill_id
       path: expert_skill_id
       op: eq
@@ -208,14 +208,22 @@ checks:
       - 'fuse_combine\s*=\s*fuse_comb'
       - 'if fuse_comb'
 
+  - id: host_fuse_combine_direct_abi
+    category: abi
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._fused_all_kwargs
+    call: dict
+    keywords:
+      fuse_combine: 'variant\.fuse_combine'
+
   - id: fixed_slot_group_done_capacity
     category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._allocate_dispatch_workspace
     patterns:
-      - 'group_done'
-      - '(?:_group_done_slots\(self\.world_size\)|torch\.zeros\(self\.world_size)'
+      - '[''"]group_done[''"]\s*:\s*torch\.zeros\(\s*(?:_group_done_slots\(self\.world_size\)|self\.world_size)\s*,'
 
   - id: no_private_token_ready_shadow
     category: abi
@@ -236,7 +244,15 @@ checks:
       - 'comb_op\._fx_tok_ready'
       - 'comb_op\._fx_p2p_tok_ready'
       - '_fx_fused_comb_ctr'
-      - '_fx_fused_comb_mtile_ctr'
+      - '(?:_fx_fused_comb_mtile_ctr|_s1_c_mtile_ctr\.data_ptr)'
+
+  - id: no_host_counter_reset_in_launch_builder
+    category: lifecycle
+    kind: forbid_methods
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._fused_all_kwargs
+    methods: [zero_, fill_]
+    receivers: ['_s1_s2ctr', '_s1_c_ctr', '_s1_c_tok_ready', '_s1_c_mtile_ctr']
 
   - id: no_host_counter_reset_on_hot_path
     category: lifecycle
@@ -245,6 +261,22 @@ checks:
     scope: MegaMoEV2._run_fused_stage1
     methods: [zero_, fill_]
     receivers: ['ctr', 'ready', 'epoch']
+
+  - id: stage2_counter_storage_covers_sharded_heads
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._build_fused_stage1
+    patterns:
+      - '_s1_s2ctr\s*=\s*torch\.zeros\(\s*max\(\s*1\s*,\s*self\._s1_nvm\s*\)'
+
+  - id: tile_close_counter_covers_routed_rows
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._build_fused_stage1
+    patterns:
+      - '_s1_c_mtile_ctr\s*=\s*torch\.zeros\(\s*max\(\s*1\s*,\s*self\._s1_nvm\s*\)'
 
   - id: selected_stage2_geometry
     category: resource
@@ -255,6 +287,24 @@ checks:
       - 'BM\s*=\s*stage2\.block_m'
       - 'BN\s*=\s*stage2\.block_n'
       - '_g2_active_block_m\s*=\s*stage2\.block_m'
+      - '_g2_sbm\s*=\s*(?:int\()?full_config\.stage1\.sort_block_m'
+
+  - id: stage2_max_m_blocks_are_block_units
+    category: correctness
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._fused_all_kwargs
+    target: '(?:max_m_blocks|_g2_max_m_blocks)'
+    value: '(?:ceildiv\(self\._s1_nvm,\s*(?:BM|stage2\.block_m)\)|\(self\._s1_nvm\s*\+\s*(?:BM|stage2\.block_m)\s*-\s*1\)\s*//\s*(?:BM|stage2\.block_m))'
+
+  - id: stage2_max_m_blocks_direct_abi_value
+    category: abi
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._fused_all_kwargs
+    call: dict
+    keywords:
+      i32_max_m_blocks: 'fx\.Int32\((?:max_m_blocks|_g2_max_m_blocks)\)'
 
   - id: direct_fused_kernel_abi
     category: abi
@@ -313,6 +363,23 @@ checks:
       - 'work_shard.*fx\.Int64\(64\)'
       - 'work_shard\s*\+\s*local\s*\*\s*fx\.Int32\(WORK_SHARDS\)'
 
+  - id: zero_based_first_tile_ready_layout
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - 'def _g2_comp_addr\(tile_index\):[\s\S]{0,180}return s2_ctr\s*\+\s*fx\.Int64\(tile_index\)\s*\*\s*fx\.Int64\(4\)'
+
+  - id: device_fuse_combine_guard
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1
+    patterns:
+      - 'fuse_combine'
+      - 'if const_expr\(fuse_combine\)'
+
   - id: expert_skew_preemption
     category: schedule
     kind: regex
@@ -361,9 +428,9 @@ checks:
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
     patterns:
-      - 'c_ctr'
-      - '\+\s*fx\.Int32\(1\)'
-      - '_c_pad\s*=\s*fx\.Int32\(fz_k\)\s*\*\s*c_epoch'
+      - '_c_rsrc\s*=\s*_make_buffer_from_addr\(c_ctr,\s*fx\.Int32\)'
+      - '_buffer_store\(\s*_c_rsrc,\s*fx\.Int32\(1\),[\s\S]{0,240}_buffer_load\(\s*_c_rsrc,\s*fx\.Int32\(1\)[\s\S]{0,120}\+\s*fx\.Int32\(1\)'
+      - 'if compact_owner:[\s\S]{0,1000}_c_pad\s*=\s*fx\.Int32\(fz_k\)\s*\*\s*c_epoch'
       - '_c_t\s*>=\s*i32_cur_tok'
 
   - id: combine_transport_and_work_domain
@@ -379,6 +446,14 @@ checks:
       tok_ready_addr: 'c_tok_ready'
       tok_ready_epoch: 'c_epoch'
 
+  - id: blockwise_transport_selector_is_exact
+    category: correctness
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    target: 'g2_blockwise_fp8'
+    value: 'g2_p2p_quant_type\s*==\s*[''"]fp8_blockwise_1x32[''"]'
+
   - id: adaptive_combine_partition
     category: performance
     kind: regex
@@ -390,6 +465,50 @@ checks:
       - 's3_total_work\s*=\s*cur_rank_num_token\s*\*\s*warps_per_tok'
       - 'blockwise_fp8_transport'
       - 'hdim_per_warp'
+      - 'tok_id\s*=\s*s3_work_idx\s*//\s*warps_per_tok'
+      - 'part_id\s*=\s*s3_work_idx\s*%\s*warps_per_tok'
+      - 'return consts,\s*_emit_item'
+
+  - id: adaptive_combine_values_are_consumed
+    category: correctness
+    kind: parameter_loads
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    parameters:
+      - hdim_per_warp
+      - s3_total_work
+    min_loads: 1
+
+  - id: blockwise_fp8_reduce_is_decoded
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - 'expert_scale_rsrcs'
+      - 'if const_expr\(blockwise_fp8_transport\)'
+      - 'dtype=T\.i8'
+      - 'cvt_pk_f32_fp8'
+      - '_to_accum\([\s\S]{0,100}\*\s*scales'
+
+  - id: combine_queue_consumes_output_work_domain
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '_c_consts,\s*_c_emit\s*=\s*make_combine_reduce_emitter'
+      - '_c_total\s*=\s*_c_consts\[[''"]s3_total_work[''"]\]'
+      - '_c_emit\('
+
+  - id: combine_queue_rejects_routed_row_bound
+    category: correctness
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    target: '(?:c_total_tokens|_c_total)'
+    value: 'g2_num_valid'
+    match: none
 
   - id: monotone_token_ready_wait
     category: lifecycle
@@ -412,6 +531,16 @@ checks:
       - 'atomic_add_system'
       - 'arg_p2p_tok_ready'
 
+  - id: stage2_metadata_lds_is_slab_relative
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: p2p_scatter_epilog
+    patterns:
+      - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_packed_off'
+      - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_weight_off'
+      - 'lds_typed_ptr\(\s*lds_acc_base\s*\+\s*lds_peer_off'
+
   - id: aliased_lds_pool
     category: resource
     kind: regex
@@ -430,3 +559,11 @@ checks:
       - [s2_metiles, s2_max_expert_tiles]
       - [i32_s2_maxmb, i32_max_m_blocks]
     min_loads: 1
+
+  - id: fused_stage1_jit_identity_covers_runtime_shape
+    category: compiler
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1
+    target: kernel_name
+    value: '(?=[\s\S]*fused_g2_pref)(?=[\s\S]*fuse_combine)(?=[\s\S]*G2_CHUNK)'

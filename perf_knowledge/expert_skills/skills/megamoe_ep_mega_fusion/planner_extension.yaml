@@ -1,6 +1,6 @@
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v1
+revision: mega-ep-fusion-v2
 plan_version: mega-plan-v2
 
 applicability:
@@ -545,8 +545,10 @@ failure_routes:
       check_ids:
         - no_private_token_ready_shadow
         - host_ready_pointer_identity
+        - host_fuse_combine_direct_abi
         - direct_fused_kernel_abi
         - active_capacity_arguments_are_consumed
+        - stage2_max_m_blocks_direct_abi_value
         - ordered_abi
     repair_intent: make every active buffer, readiness pointer and capacity a typed direct launcher argument in identical host-kernel order
     checkpoint: host_wiring
@@ -555,10 +557,25 @@ failure_routes:
       - aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     proof: call-keyword identity and active runtime-value consumption checks pass
 
+  - id: repair_counter_abi
+    match:
+      check_ids:
+        - stage2_max_m_blocks_are_block_units
+        - stage2_counter_storage_covers_sharded_heads
+        - zero_based_first_tile_ready_layout
+        - tile_close_counter_covers_routed_rows
+        - fixed_slot_group_done_capacity
+    repair_intent: express max_m_blocks in Stage2 block units, allocate every sharded head and routed-row tile-close slot, and keep completion counters disjoint from claim heads
+    checkpoint: startup_state
+    focus_files:
+      - aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+      - aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    proof: host allocation bounds every device index and the completion/head regions do not overlap
+
   - id: repair_state_lifecycle
     match:
       check_ids:
-        - fixed_slot_group_done_capacity
+        - no_host_counter_reset_in_launch_builder
         - no_host_counter_reset_on_hot_path
         - device_generation_and_token_padding
         - monotone_token_ready_wait
@@ -574,6 +591,8 @@ failure_routes:
       check_ids:
         - nested_stage2_emitter
         - every_a_lds_load_forwards_nw
+        - stage2_metadata_lds_is_slab_relative
+        - fused_stage1_jit_identity_covers_runtime_shape
     repair_intent: restore the shared nested emitter, explicit wave partition and relocatable local-memory addressing before adding schedule logic
     checkpoint: shared_emitters
     focus_files:
@@ -602,6 +621,7 @@ failure_routes:
         - no_per_tile_system_flush
         - stage2_tile_close_publication
         - combine_transport_and_work_domain
+        - blockwise_transport_selector_is_exact
     repair_intent: publish item readiness at the required scope after payload visibility and wait every dependency touched by an actual claim
     checkpoint: unified_compute_drain
     focus_files:
@@ -632,8 +652,13 @@ failure_routes:
     match:
       check_ids:
         - adaptive_combine_partition
+        - adaptive_combine_values_are_consumed
+        - blockwise_fp8_reduce_is_decoded
+        - combine_queue_consumes_output_work_domain
+        - combine_queue_rejects_routed_row_bound
         - combine_third_queue
         - combine_pointer_count
+        - device_fuse_combine_guard
     repair_intent: share the production reducer and claim output work once per block before wave-level partition
     checkpoint: output_reduce_queue
     focus_files:

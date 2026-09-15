@@ -43,13 +43,13 @@ ok(/async function fastTestCachePublish\(\)\s*\{\s*\n\s*if \(!MEGA_FAST_TEST\) r
    'fastTestCachePublish returns before any agent() when the flag is off');
 
 console.log('\n# 3. benchmark cache miss measures; Mega pre-candidate profile stays executable');
-ok(/const benchCache = await fastTestCacheLoad\('bench'\);\s*\nconst bench = benchCache \? benchCache\.bench : await agentT\(/.test(src),
+ok(/const benchCache = MEGA_STRUCTURAL_ONLY \? null : await fastTestCacheLoad\('bench'\);\s*\nconst bench = MEGA_STRUCTURAL_ONLY \? structuralBench : benchCache \? benchCache\.bench : await agentT\(/.test(src),
    'the real benchmark agentT() call is the else-branch of the bench cache (unchanged prompt/opts when off)');
 ok(/const profileCache = MODE === 'mega' \? null : await fastTestCacheLoad\('profile'\);/.test(src) &&
    /if \(MODE === 'mega'\)[\s\S]{0,900}profiler_used: 'benchmark-only'/.test(src) &&
    !/roleAgent\('profile_engineer', 'mega_analysis'/.test(src),
    'Mega does not run fused-only flags against a pre-candidate frozen baseline');
-ok(/if \(MEGA_FAST_TEST && !benchCache\) await fastTestCachePublish\(\);/.test(src),
+ok(/if \(!MEGA_STRUCTURAL_ONLY && MEGA_FAST_TEST && !benchCache\) await fastTestCachePublish\(\);/.test(src),
    'a fresh benchmark still publishes reusable calibration artifacts');
 
 console.log('\n# 4. reuse is gated on a validity key recomputed from disk (honesty gate)');
@@ -72,7 +72,7 @@ ok(/NO GPU, NO lease/.test(bench),
 console.log('\n# 5. the scoring denominator is never served from cache');
 ok(/pairedGuardReadout/.test(src) && !/fastTestCache\w*\([^)]*\)[\s\S]{0,200}pairedGuardReadout/.test(src),
    'scores stay median(base/cand) from the per-candidate paired A/B, independent of the cache');
-ok(/const bench = benchCache \? benchCache\.bench/.test(src) &&
+ok(/const bench = MEGA_STRUCTURAL_ONLY \? structuralBench : benchCache \? benchCache\.bench/.test(src) &&
    /const BASELINE_PER_CASE = benchR\.baseline_per_case;/.test(src),
    'a cached BASELINE_PER_CASE only re-enters as advisory context, not as a paired-A/B reading');
 
