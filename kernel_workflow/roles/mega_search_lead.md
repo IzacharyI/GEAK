@@ -15,7 +15,8 @@ Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK`, `SKILL_DIR`,
 provides one, `EXPERT_SKILL_PLANNER_EXTENSION` plus
 `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_BUNDLE_TOOL`,
 `EXPERT_SKILL_BUNDLE_SHA256`, `EXPERT_SKILL_PLANNER_EXTENSION_SHA256`, and
-`EXPERT_SKILL_CONTRACT_SHA256`.
+`EXPERT_SKILL_CONTRACT_SHA256`, plus `EXPERT_SKILL_VALIDATION_STATUS` and
+`EXPERT_SKILL_USAGE`.
 
 Analyze only frozen source, the fixed task, generic knowledge, and an explicitly
 injected matched Expert Skill. Never read candidate state, sibling worktrees,
@@ -46,9 +47,11 @@ run handoffs, or an external implementation/reference tree.
    an extension-only field into the core schema: put domain-specific values
    under the relevant `parameters` object. Before use, run
    `EXPERT_SKILL_BUNDLE_TOOL EXPERT_SKILL_ID --emit-bundle` and require all
-   three supplied SHA-256 identities to match. Emit the Skill id, revision,
-   bundle digest and Planner Extension digest in `mega_plan_ir`; a mismatch
-   is an incomplete Analyze contract.
+   three supplied SHA-256 identities and the supplied validation status to
+   match. For an experimental Skill, require `auto_apply:false` and
+   `explicit_pin_modes` to contain `EXPERT_SKILL_USAGE`. Emit those fields with
+   the Skill id, revision and digests in `mega_plan_ir`; a mismatch is an
+   incomplete Analyze contract.
 8. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
    `EVAL_DIR`. `analysis.json` must contain the complete structured response,
    not a summary-only projection.
@@ -95,6 +98,9 @@ Return the ordinary analysis schema with this lowerable IR shape:
     "expert_skill_revision": "matched revision or null",
     "expert_skill_bundle_sha256": "matched bundle digest or null",
     "expert_skill_planner_extension_sha256": "matched extension digest or null",
+    "expert_skill_validation_status": "validated|experimental|null",
+    "expert_skill_auto_apply": false,
+    "expert_skill_explicit_pin_modes": ["authoring", "candidate_validation"],
     "target": {
       "launch_count": 1,
       "required_regions": ["region_a", "region_b"],
@@ -214,7 +220,7 @@ Plan exactly one complete candidate direction:
    `repair_intent`, checkpoint, focus files and proof requirement; do not
    replace the structured route with a prose guess.
 3. Derive implementation from the task graph and MegaPlanIR. A matched Skill is
-   a validated prior, not a special lane.
+   an evidence-qualified prior at its declared validation status, not a special lane.
 4. Preserve the operator-neutral `target_topology` fields. A partial terminal
    must declare `rung_deviation`; it remains a complete runnable operator.
 5. Keep any verified above-baseline candidate as fallback. While budget remains,

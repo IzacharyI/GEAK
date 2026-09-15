@@ -12,8 +12,8 @@ on-box. validate_skill.py has three modes:
   --static            schema + operator alignment + required sections + links. No GPU. (CI default.)
   --emit-bundle       emit path-independent component digests for a strict RunContract.
   --emit-plan         print the exact Workflow invocation to measure this skill (by scope).
-  --record ...        check supplied measured numbers against `expects`, then stamp the skill's
-                      validation block (status: validated|failed) and reindex.
+  --record ...        legacy validation-v1 result recorder. Validation-v2 transfers remain
+                      experimental until exact-candidate hardware evidence is promoted.
 
 Examples:
   python _contribute/validate_skill.py flydsl_fp8_gemm_playbook --static
@@ -31,6 +31,12 @@ CAP_INDEX = os.path.normpath(os.path.join(ROOT, "..", "index", "capability_index
 GEAK = os.path.normpath(os.path.join(ROOT, "..", ".."))
 REQUIRED_SECTIONS = ["When to use", "Mechanism", "Procedure", "Do-no-harm notes", "Sources"]
 FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
+V2_REQUIRED_CANDIDATE_GATES = {
+    "independent_structure", "device_jit", "path_activation_all_ranks",
+    "launch_shape", "direct_accuracy", "graph_liveness", "residency",
+    "distributed_memory_order", "artifact_distinctness",
+    "paired_performance", "do_no_harm",
+}
 
 
 def load(skill_id):
@@ -61,6 +67,232 @@ def load_validation(skill_path, fm):
         return path, {}
     data = yaml.safe_load(open(path)) or {}
     return path, data if isinstance(data, dict) else {}
+
+
+def validation_metadata(validation):
+    data = validation if isinstance(validation, dict) else {}
+    status = str(data.get("status") or "draft")
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    requested_auto = usage.get("auto_apply")
+    auto_apply = (
+        status == "validated"
+        and (
+            requested_auto is True
+            if data.get("schema_version") == "expert-skill-validation-v2"
+            else (True if requested_auto is None else requested_auto is True)
+        )
+    )
+    modes = usage.get("explicit_pin_modes") or []
+    return {
+        "validation_status": status,
+        "reference_evidence_status": str(
+            (data.get("reference_evidence") or {}).get("status") or ""
+        ),
+        "constraint_validation_status": str(
+            (data.get("constraint_validation") or {}).get("status") or ""
+        ),
+        "auto_apply": auto_apply,
+        "explicit_pin_modes": [str(value) for value in modes],
+    }
+
+
+def validation_errors(fm, validation, base_dir=None):
+    data = validation if isinstance(validation, dict) else {}
+    schema = str(data.get("schema_version") or "expert-skill-validation-v1")
+    status = str(data.get("status") or "")
+    allowed = {"draft", "experimental", "validated", "stale", "failed", "mega_only"}
+    errors = []
+    if schema not in {"expert-skill-validation-v1", "expert-skill-validation-v2"}:
+        return [f"validation_file uses unsupported schema {schema!r}"]
+    if status not in allowed:
+        errors.append("validation_file status is invalid")
+    if schema == "expert-skill-validation-v1":
+        return errors
+
+    reference = data.get("reference_evidence")
+    constraints = data.get("constraint_validation")
+    policy = data.get("candidate_validation_policy")
+    usage = data.get("usage")
+    if status != "draft" and (
+        not isinstance(reference, dict) or reference.get("status") != "measured"
+    ):
+        errors.append("v2 reference_evidence.status must be measured")
+    if not isinstance(constraints, dict) or constraints.get("status") not in {
+        "draft", "static_validated", "hardware_validated", "failed",
+    }:
+        errors.append("v2 constraint_validation.status is invalid")
+        constraints = {}
+    if status != "draft" and (
+        not isinstance(policy, dict) or not policy.get("required_gates")
+    ):
+        errors.append("v2 candidate_validation_policy.required_gates must be non-empty")
+    if not isinstance(usage, dict):
+        errors.append("v2 usage must be an object")
+        usage = {}
+    modes = usage.get("explicit_pin_modes") or []
+    if not isinstance(modes, list) or set(modes) - {"authoring", "candidate_validation"}:
+        errors.append("v2 usage.explicit_pin_modes is invalid")
+    if status != "validated" and usage.get("auto_apply") is True:
+        errors.append("only a validated v2 skill may auto_apply")
+    if status == "experimental" and not modes:
+        errors.append("experimental v2 skill requires an explicit pin mode")
+    if status == "validated":
+        if constraints.get("status") != "hardware_validated":
+            errors.append("validated v2 skill requires hardware_validated constraints")
+        if constraints.get("hardware_verified") is not True:
+            errors.append("validated v2 skill requires hardware_verified=true")
+        rules = constraints.get("rules") or {}
+        if not isinstance(rules, dict) or not rules:
+            errors.append("validated v2 skill requires non-empty rule evidence")
+            rules = {}
+        evidence = data.get("candidate_evidence")
+        if not isinstance(evidence, dict):
+            errors.append("validated v2 skill requires exact candidate_evidence")
+            evidence = {}
+        for field, pattern in (
+            ("candidate_head", r"[0-9a-f]{40}"),
+            ("candidate_tree_sha256", r"[0-9a-f]{64}"),
+            ("checker_sha256", r"[0-9a-f]{64}"),
+            ("manifest_sha256", r"[0-9a-f]{64}"),
+        ):
+            if not re.fullmatch(pattern, str(evidence.get(field) or "")):
+                errors.append(f"validated v2 candidate_evidence.{field} is invalid")
+        if not str(evidence.get("manifest_uri") or ""):
+            errors.append("validated v2 candidate_evidence.manifest_uri is required")
+        for field in (
+            "contract_sha256", "planner_extension_sha256", "checker_sha256"
+        ):
+            if str(evidence.get(field) or "") != str(
+                (constraints.get("subject") or {}).get(field) or ""
+            ):
+                errors.append(
+                    f"validated v2 candidate_evidence.{field} must match constraint subject"
+                )
+        gate_results = evidence.get("gates")
+        required_gates = (policy or {}).get("required_gates") or []
+        missing_required = V2_REQUIRED_CANDIDATE_GATES - set(required_gates)
+        if missing_required:
+            errors.append(
+                "validated v2 policy omits mandatory gates: "
+                + ", ".join(sorted(missing_required))
+            )
+        if not isinstance(gate_results, dict):
+            errors.append("validated v2 candidate_evidence.gates must be an object")
+            gate_results = {}
+        for gate in required_gates:
+            if gate_results.get(gate) not in (True, "pass"):
+                errors.append(f"validated v2 candidate gate is not passing: {gate}")
+        manifest_uri = str(evidence.get("manifest_uri") or "")
+        manifest = {}
+        if not base_dir:
+            errors.append("validated v2 manifest verification requires a skill directory")
+        elif (
+            os.path.isabs(manifest_uri)
+            or ".." in manifest_uri.replace("\\", "/").split("/")
+        ):
+            errors.append("validated v2 manifest_uri must be skill-relative")
+        else:
+            manifest_path = os.path.join(base_dir, manifest_uri)
+            if not os.path.isfile(manifest_path):
+                errors.append("validated v2 manifest_uri does not exist")
+            else:
+                raw_manifest = open(manifest_path, "rb").read()
+                if hashlib.sha256(raw_manifest).hexdigest() != evidence.get("manifest_sha256"):
+                    errors.append("validated v2 manifest_sha256 does not match manifest bytes")
+                try:
+                    manifest = json.loads(raw_manifest)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    errors.append("validated v2 candidate manifest is not valid JSON")
+        if manifest:
+            if manifest.get("schema_version") != "expert-skill-candidate-evidence-v1":
+                errors.append("validated v2 candidate manifest schema is invalid")
+            for field in (
+                "candidate_head", "candidate_tree_sha256", "contract_sha256",
+                "planner_extension_sha256", "checker_sha256",
+            ):
+                if manifest.get(field) != evidence.get(field):
+                    errors.append(
+                        f"validated v2 candidate manifest {field} mismatch"
+                    )
+            if manifest.get("skill_revision") != fm.get("revision"):
+                errors.append("validated v2 candidate manifest skill revision mismatch")
+            manifest_gates = manifest.get("gates")
+            raw_evidence = manifest.get("raw_evidence")
+            if not isinstance(manifest_gates, dict) or not isinstance(raw_evidence, dict):
+                errors.append("validated v2 manifest gates/raw_evidence are required")
+            else:
+                for gate in required_gates:
+                    row = raw_evidence.get(gate)
+                    if manifest_gates.get(gate) not in (True, "pass"):
+                        errors.append(
+                            f"validated v2 manifest lacks raw passing evidence: {gate}"
+                        )
+                        continue
+                    if not isinstance(row, dict):
+                        errors.append(
+                            f"validated v2 raw evidence is not structured: {gate}"
+                        )
+                        continue
+                    uri = str(row.get("artifact_uri") or "")
+                    digest = str(row.get("sha256") or "")
+                    if (
+                        not base_dir or not uri
+                        or os.path.isabs(uri)
+                        or ".." in uri.replace("\\", "/").split("/")
+                    ):
+                        errors.append(
+                            f"validated v2 raw evidence path is invalid: {gate}"
+                        )
+                        continue
+                    artifact_path = os.path.join(base_dir, uri)
+                    if not os.path.isfile(artifact_path):
+                        errors.append(
+                            f"validated v2 raw evidence artifact is missing: {gate}"
+                        )
+                        continue
+                    raw_artifact = open(artifact_path, "rb").read()
+                    if hashlib.sha256(raw_artifact).hexdigest() != digest:
+                        errors.append(
+                            f"validated v2 raw evidence hash mismatch: {gate}"
+                        )
+                        continue
+                    try:
+                        artifact = json.loads(raw_artifact)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        errors.append(
+                            f"validated v2 raw evidence is not JSON: {gate}"
+                        )
+                        continue
+                    if not (
+                        artifact.get("schema_version")
+                        == "expert-skill-gate-evidence-v1"
+                        and artifact.get("gate") == gate
+                        and artifact.get("status") in (True, "pass")
+                        and artifact.get("candidate_head")
+                        == evidence.get("candidate_head")
+                        and artifact.get("candidate_tree_sha256")
+                        == evidence.get("candidate_tree_sha256")
+                    ):
+                        errors.append(
+                            f"validated v2 raw evidence content mismatch: {gate}"
+                        )
+        for rule_id, rule in rules.items():
+            repair = rule.get("positive_repair") if isinstance(rule, dict) else None
+            if not isinstance(repair, dict) or repair.get("status") != "validated":
+                errors.append(
+                    f"validated v2 skill has pending positive repair: {rule_id}"
+                )
+            elif repair.get("candidate_head") != evidence.get("candidate_head"):
+                errors.append(
+                    f"validated v2 rule evidence is not bound to candidate: {rule_id}"
+                )
+            elif repair.get("candidate_tree_sha256") != evidence.get(
+                "candidate_tree_sha256"
+            ):
+                errors.append(
+                    f"validated v2 rule tree evidence is not bound to candidate: {rule_id}"
+                )
+    return errors
 
 
 def _canonical_component_sha256(path):
@@ -99,11 +331,13 @@ def skill_bundle_identity(skill_path, fm):
     canonical = json.dumps(
         manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode()
+    _, validation = load_validation(skill_path, fm)
     return {
         **manifest,
         "bundle_sha256": hashlib.sha256(canonical).hexdigest(),
         "planner_extension_sha256": components.get("planner_extension", ""),
         "contract_sha256": components.get("contract", ""),
+        **validation_metadata(validation),
     }
 
 
@@ -332,6 +566,7 @@ def static_check(skill_path, fm, body):
         if not referenced or not os.path.isfile(referenced):
             errs.append(f"{key} does not exist: {fm.get(key)!r}")
     contract_path = None
+    contract = {}
     try:
         contract_path = _skill_file(skill_path, fm, "contract_file")
     except ValueError:
@@ -372,14 +607,60 @@ def static_check(skill_path, fm, body):
         errs.append(str(exc))
         validation_path, validation = None, {}
     if validation_path:
-        if validation.get("schema_version") != "expert-skill-validation-v1":
-            errs.append("validation_file must use schema_version expert-skill-validation-v1")
+        if fm.get("validation_schema") and str(
+            validation.get("schema_version") or ""
+        ) != str(fm.get("validation_schema")):
+            errs.append("validation_file schema must match skill.md validation_schema")
         if validation.get("skill_id") != fm.get("id"):
             errs.append("validation_file skill_id must match skill.md id")
         if str(validation.get("revision") or "") != str(fm.get("revision") or ""):
             errs.append("validation_file revision must match skill.md revision")
-        if validation.get("status") not in ("draft", "validated", "stale", "failed", "mega_only"):
-            errs.append("validation_file status is invalid")
+        errs.extend(
+            validation_errors(fm, validation, os.path.dirname(validation_path))
+        )
+        if validation.get("schema_version") == "expert-skill-validation-v2":
+            reference_subject = (
+                (validation.get("reference_evidence") or {}).get("subject") or {}
+            )
+            pins = contract.get("pins") if isinstance(contract, dict) else {}
+            for evidence_key, pin_key in (
+                ("revision", "reference_revision"),
+                ("tree_sha256", "reference_tree_sha256"),
+                ("baseline_tree_sha256", "baseline_tree_sha256"),
+            ):
+                if str(reference_subject.get(evidence_key) or "") != str(
+                    (pins or {}).get(pin_key) or ""
+                ):
+                    errs.append(
+                        f"v2 reference subject {evidence_key} must match contract pin {pin_key}"
+                    )
+            constraint_subject = (
+                (validation.get("constraint_validation") or {}).get("subject") or {}
+            )
+            if str(constraint_subject.get("skill_revision") or "") != str(
+                fm.get("revision") or ""
+            ):
+                errs.append("v2 constraint subject skill_revision must match skill.md")
+            for evidence_key, component_key in (
+                ("contract_sha256", "contract_file"),
+                ("planner_extension_sha256", "planner_extension_file"),
+            ):
+                component_path = _skill_file(skill_path, fm, component_key)
+                if str(constraint_subject.get(evidence_key) or "") != (
+                    _canonical_component_sha256(component_path)
+                ):
+                    errs.append(
+                        f"v2 constraint subject {evidence_key} must match current component"
+                    )
+            checker_path = os.path.join(
+                GEAK, "kernel_workflow", "tools", "expert_skill_contract.py"
+            )
+            if str(constraint_subject.get("checker_sha256") or "") != (
+                _canonical_component_sha256(checker_path)
+            ):
+                errs.append(
+                    "v2 constraint subject checker_sha256 must match current checker"
+                )
     return errs
 
 
@@ -409,7 +690,14 @@ def emit_plan(skill_path, skill_id, fm, args):
             f"expert_skill_id={skill_id}",
             f"expert_skill_revision={fm.get('revision') or ''}",
             f"expert_skill_bundle_sha256={identity['bundle_sha256']}",
+            f"expert_skill_validation_status={identity['validation_status']}",
         ]
+        if identity["validation_status"] == "experimental":
+            extras.extend([
+                "mode=mega",
+                "expert_skill_usage=authoring",
+                "mega_structural_only=true",
+            ])
         for key in (
             "playbook_file", "planner_extension_file", "contract_file", "validation_file",
             "runtime_validation_file",
@@ -435,8 +723,16 @@ def emit_plan(skill_path, skill_id, fm, args):
               f"use_expert_skills=true {' '.join(extras)}")
         print(f"  target_language={(fm.get('match') or {}).get('to_backend') or 'triton'}")
         print(f"  task='reproduce expert_skill:{skill_id}; beat oracle, hold parity'")
-    print("\nThen stamp the result with:  validate_skill.py", skill_id,
-          "--record --artifact <eval_dir> ...")
+    if identity["validation_status"] == "experimental":
+        print(
+            "\nAfter structural authoring, reuse the exact identity/path arguments "
+            "with mode=mega, expert_skill_usage=candidate_validation, "
+            "mega_structural_only=false, require_expert_skill_contract=true, and "
+            "the required runtime gates. Do not use --record for a v2 transfer."
+        )
+    else:
+        print("\nThen stamp the result with:  validate_skill.py", skill_id,
+              "--record --artifact <eval_dir> ...")
 
 
 def record(path, fm, body, txt, args):
@@ -463,6 +759,14 @@ def record(path, fm, body, txt, args):
         sys.exit("ERROR: --artifact <eval_dir> required to record a result")
 
     validation_path, validation = load_validation(path, fm)
+    if (
+        fm.get("validation_schema") == "expert-skill-validation-v2"
+        or validation.get("schema_version") == "expert-skill-validation-v2"
+    ):
+        sys.exit(
+            "ERROR: --record cannot validate a v2 transfer; promote only from an "
+            "exact-candidate finalist manifest"
+        )
     validation["status"] = "validated" if ok else "failed"
     validation["last_verified"] = args.date or ""
     validation["gpu"] = args.gpu or ""
@@ -508,6 +812,12 @@ def main():
     path, fm, body, txt = load(a.skill_id)
 
     if a.emit_bundle:
+        errs = static_check(path, fm, body)
+        if errs:
+            print("STATIC FAIL:")
+            for error in errs:
+                print("  -", error)
+            sys.exit(1)
         print(json.dumps(skill_bundle_identity(path, fm), sort_keys=True, indent=2))
         return
     if a.emit_plan:

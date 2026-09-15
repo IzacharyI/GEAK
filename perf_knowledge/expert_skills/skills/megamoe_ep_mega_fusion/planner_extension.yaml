@@ -1,6 +1,6 @@
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v5
+revision: mega-ep-fusion-v6
 plan_version: mega-plan-v2
 
 applicability:
@@ -77,10 +77,14 @@ ir_bindings:
       unit: routed_row
       extent: num_valid
       index_type: i32
-    - id: first_stage_tiles
-      unit: tile
-      extent: ceildiv(num_valid, stage1_block_m) * stage1_n_tiles
+    - id: first_stage_m_tiles
+      unit: m_tile
+      extent: ceildiv(num_valid, stage1_block_m)
       index_type: i32
+      owned_subdomain:
+        unit: n_stripe
+        extent_per_claim: stage1_n_tiles
+        linear_index: m_tile * stage1_n_tiles + n_stripe
     - id: second_stage_units
       unit: tile_pair
       extent: ceildiv(num_valid, stage2_block_m) * stage2_n_tiles
@@ -101,7 +105,7 @@ ir_bindings:
       engine: scalar_memory
     - id: first_compute
       role: producer_consumer
-      work_domain: first_stage_tiles
+      work_domain: first_stage_m_tiles
       engine: matrix_memory
     - id: second_compute_transport
       role: producer_consumer
@@ -206,7 +210,7 @@ ir_bindings:
       generation: launch_epoch
       producers: [first_compute]
       consumers: [second_compute_transport]
-      publish: waitcnt_then_block_barrier_then_owner_system_store_or_out_of_frame_atomic_flush
+      publish: waitcnt_then_block_barrier_then_thread0_system_store_stage1_n_tiles
       wait: greater_than(stage1_n_tiles - 1)
     - id: second_claim_heads
       element_type: i32
@@ -255,12 +259,12 @@ ir_bindings:
 
   queues:
     - id: first_compute_queue
-      work_domain: first_stage_tiles
-      claim_unit: tile
+      work_domain: first_stage_m_tiles
+      claim_unit: m_tile
       owner: workgroup
       shards: 4
       stride_bytes: 64
-      chunk_policy: one_tile
+      chunk_policy: one_m_tile_all_n_stripes
       ready_when: dispatch plan and payload tile are ready
       priority: 1
     - id: second_compute_queue
@@ -302,7 +306,7 @@ ir_bindings:
       consumer: second_compute_transport
       scope: system
       counter: first_tile_ready
-      publish: write_through_then_owner_system_store_or_out_of_frame_atomic_flush
+      publish: write_through_then_waitcnt_barrier_thread0_system_store_stage1_n_tiles
       wait: each_distinct_dependency
     - id: second_to_reduce_item_ready
       producer: second_compute_transport
@@ -411,7 +415,10 @@ ir_bindings:
       output_reduce_claim: one_agent_atomic_per_workgroup_then_wave_partition
       role_transition: dynamic_after_local_queue_drain
       completion_publication_granularity: per_m_tile
-      completion_publication_frame: outside_hot_gemm1_tail
+      first_compute_claim_domain: m_tile
+      first_compute_stripe_ownership: all_n_tiles_per_claim
+      completion_publication_operation: waitcnt_barrier_thread0_system_store_n_tiles
+      completion_rmw_in_unified_loop: forbidden_transitively
     parameters:
       combine_third_queue: true
       g2_chunk_large: 16
@@ -434,8 +441,8 @@ ir_bindings:
       rule: only consumer_active, g2_pend and g2_next are loop-carried
     - id: block_uniform_barriers
       rule: every workgroup barrier is reached uniformly, including continuation paths
-    - id: completion_publication_frame
-      rule: the system-scope GEMM1 completion RMW is invoked from an m-tile-owned or post-loop flush, never from the hot unified GEMM work-loop tail
+    - id: owned_mtile_completion
+      rule: one workgroup claims one m-tile, computes every N stripe, then thread 0 publishes stage1_n_tiles with an ordered system store; no completion-address RMW is reachable from the fused region
 
   evidence_requirements:
     activation: fused path marker from all eight ranks
@@ -527,8 +534,21 @@ failure_routes:
         - work_domains_declared
         - buffers_declared
         - counters_declared
+        - experimental_validation_status
+        - experimental_never_auto_applies
+        - experimental_pin_modes
         - completion_publication_granularity
-        - completion_publication_frame
+        - first_compute_claim_domain
+        - first_compute_stripe_ownership
+        - completion_publication_operation
+        - completion_rmw_in_unified_loop
+        - first_stage_domain_is_mtile
+        - first_stage_domain_extent
+        - first_stage_owned_stripes
+        - first_compute_region_domain
+        - first_compute_queue_domain
+        - first_compute_queue_claim
+        - first_compute_queue_chunk
     repair_intent: rebuild MegaPlanIR from this extension and current frozen-source evidence before authoring
     checkpoint: host_wiring
     focus_files: []
@@ -631,14 +651,14 @@ failure_routes:
       check_ids:
         - chunk_all_dependencies
         - g1_write_through_publication
-        - g1_completion_publish_outside_hot_tail
+        - g1_owned_mtile_completion
         - no_per_tile_system_flush
         - stage2_tile_close_publication
         - combine_transport_and_work_domain
         - blockwise_transport_selector_is_exact
         - fuse_combine_controls_token_publication
         - token_ready_payload_loads_are_system_scope
-    repair_intent: publish item readiness at the required scope after payload visibility, keep the completion RMW outside the hot GEMM loop frame, and wait every dependency touched by an actual claim
+    repair_intent: make one workgroup own every N stripe of an m-tile, then publish stage1_n_tiles with waitcnt, barrier and one thread-0 system store; reject any completion-address RMW reachable from the fused region
     checkpoint: unified_compute_drain
     focus_files:
       - aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
@@ -708,7 +728,7 @@ runtime_feedback:
   - metric: gemm1_publish_atomic_frame_fault
     plan_path: schedule.primary_loop
     failure_category: compiler
-    response: hoist the system-scope completion RMW into an m-tile-owned or post-loop flush and require an on-card retry; do not apply pointer clamps
+    response: remove the completion RMW, claim one m-tile per workgroup, compute every N stripe, and publish stage1_n_tiles with one ordered owner system store; require an on-card retry
   - metric: peer_token_wait_cycles
     plan_path: schedule.parameters
     failure_category: schedule
@@ -724,7 +744,7 @@ anti_patterns:
   - module-level replacement for the validated nested dynamic emitter
   - agent-scope publication consumed by a cross-domain relaxed wait
   - readiness inferred from only the numerically greatest dependency in a sharded producer graph
-  - system or agent atomic RMW invoked from the hot GEMM1 accumulation or unified work-loop tail
+  - completion-address system or agent atomic RMW reachable anywhere from the fused unified region
   - per-stripe remote token publication
   - host reset of monotone cross-rank readiness
   - fixed large-shape tuning forced through every token bucket

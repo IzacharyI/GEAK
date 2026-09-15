@@ -16,6 +16,10 @@ import argparse, os, re, shutil, sys
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from validate_skill import validation_errors  # noqa: E402
+
 ROOT = os.path.dirname(HERE)                       # .../expert_skills
 SKILLS_DIR = os.path.join(ROOT, "skills")
 TEMPLATE = os.path.join(ROOT, "_template", "SKILL_TEMPLATE.md")
@@ -43,15 +47,44 @@ def known_operators():
     return {c["operator"] for c in (data.get("candidates") or []) if "operator" in c}
 
 
-def validation_status(skill_path, fm):
+def validation_metadata(skill_path, fm):
     relative = str(fm.get("validation_file") or "").strip()
     if relative:
         path = os.path.join(os.path.dirname(skill_path), relative)
         if os.path.isfile(path):
             data = yaml.safe_load(open(path)) or {}
-            return data.get("status", "draft")
-        return "draft"
-    return (fm.get("validation") or {}).get("status", "draft")
+        else:
+            data = {}
+    else:
+        data = fm.get("validation") or {}
+    errors = validation_errors(fm, data, os.path.dirname(skill_path))
+    if errors:
+        raise ValueError(
+            f"{skill_path}: invalid validation metadata: {'; '.join(errors)}"
+        )
+    status = str(data.get("status") or "draft")
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    requested_auto = usage.get("auto_apply")
+    return {
+        "validation_status": status,
+        "reference_evidence_status": str(
+            (data.get("reference_evidence") or {}).get("status") or ""
+        ),
+        "constraint_validation_status": str(
+            (data.get("constraint_validation") or {}).get("status") or ""
+        ),
+        "auto_apply": (
+            status == "validated"
+            and (
+                requested_auto is True
+                if data.get("schema_version") == "expert-skill-validation-v2"
+                else (True if requested_auto is None else requested_auto is True)
+            )
+        ),
+        "explicit_pin_modes": [
+            str(value) for value in usage.get("explicit_pin_modes") or []
+        ],
+    }
 
 
 def reindex():
@@ -85,22 +118,25 @@ def reindex():
             "validation_file": (
                 f"skills/{sub}/{fm['validation_file']}" if fm.get("validation_file") else ""
             ),
+            "validation_schema": fm.get("validation_schema", ""),
             "runtime_validation_file": (
                 f"skills/{sub}/{fm['runtime_validation_file']}"
                 if fm.get("runtime_validation_file") else ""
             ),
             "match": fm.get("match", {}),
             "expects": fm.get("expects", {}),
-            "validation_status": validation_status(skill_md, fm),
+            **validation_metadata(skill_md, fm),
         })
     header = (
         "# index.yaml — expert_skills selector (AUTO-MAINTAINED by _contribute/scaffold.py + "
         "validate_skill.py).\n"
         "# Regenerate with:  python _contribute/scaffold.py --reindex\n"
-        "# NOT a ranking. Filter by (operator, gen, arch_class, [from->to], status==validated) -> MEASURE.\n"
+        "# NOT a ranking. Filter by operator/gen/arch/backend, status==validated, auto_apply==true.\n"
         "# Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).\n\n"
         "schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, "
-        "validation_file, runtime_validation_file, match, expects, validation_status}\n\n"
+        "validation_file, validation_schema, runtime_validation_file, match, expects, validation_status, "
+        "reference_evidence_status, constraint_validation_status, auto_apply, "
+        "explicit_pin_modes}\n\n"
     )
     with open(INDEX, "w") as f:
         f.write(header)

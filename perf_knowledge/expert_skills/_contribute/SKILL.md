@@ -41,16 +41,21 @@ Edit `skills/<slug>/skill.md`. The body sections are required and must be non-em
 python _contribute/validate_skill.py <slug> --static          # schema/operator/sections (no GPU)
 python _contribute/validate_skill.py <slug> --emit-plan --model <MODEL>   # prints the on-box command
 # ... run that Workflow command on a box; it produces an eval dir with the measured delta ...
-python _contribute/validate_skill.py <slug> --record --artifact <eval_dir> \
+python _contribute/validate_skill.py <legacy-v1-slug> --record --artifact <eval_dir> \
   --gpu gfx942/MI300X --model <name> --date 2026-06-17 \
   --e2e-pct 2.1 --parity pass            # (kernel scope: --isolated 1.27 instead of --e2e-pct)
 ```
-- **Efficacy**: the measured delta must meet the skill's `expects` (`isolated_speedup_min` or
-  `e2e_delta_min_pct`) with parity. Otherwise `--record` stamps `status: failed` and exits non-zero.
+- **Efficacy**: the measured delta must meet the skill's `expects`
+  (`isolated_speedup_min` or `e2e_delta_min_pct`) with parity.
 - **Do-no-harm**: also run the control scenario from `_emit-plan` (a model/shape that does NOT match
   the selector) with `use_expert_skills=true` and confirm `|e2e delta|` stays within the noise band —
   i.e. the skill is inert when not triggered. Record that eval dir in the skill's Sources.
-- `--record` writes `validation.yaml` and reindexes; only `validated` skills are auto-applied.
+- `--record` is retained only for legacy validation-v1 packages. Validation-v2
+  separately records measured reference evidence, static transfer constraints,
+  and exact-candidate hardware evidence. An `experimental` v2 transfer is
+  non-auto-applicable and must use exact component digests plus an explicit
+  `authoring` or `candidate_validation` pin. It cannot become `validated` while
+  any positive repair remains pending.
 
 ### 4. Open a PR
 ```bash

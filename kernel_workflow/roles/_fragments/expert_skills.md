@@ -20,7 +20,8 @@ faster but can never reduce a result below your measured baseline.
    - box `gen` ∈ `match.gens`; `op_spec.dtype` ∈ `match.dtypes`; `op_spec.regime` ∈ `match.regimes`
    - migration skills: `from_backend`→`to_backend` fits this run's `mode`/`target_language`
      (e.g. authoring Triton from a TileLang source → a `tilelang→triton` skill applies)
-   - `validation_status == validated` (ignore draft/failed; `stale` = plain reference only)
+   - `validation_status == validated && auto_apply == true` (ignore
+     draft/experimental/failed; `stale` = plain reference only)
 3. For each match, read `skill.md` plus its optional `playbook_file`; treat the described mechanism
    as a **high-prior author/optimize candidate**. Honor its kernel structure, named lever, pitfalls,
    `Do-no-harm notes`, then measure against the immutable oracle as usual. The skill's

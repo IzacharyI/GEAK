@@ -36,10 +36,16 @@ def test_repository_planner_extension_passes_generic_envelope():
     assert extension["candidate_templates"][0]["id"] == "full_persistent_pipeline"
     assert (
         extension["ir_bindings"]["schedule"]["policies"][
-            "completion_publication_frame"
+            "completion_rmw_in_unified_loop"
         ]
-        == "outside_hot_gemm1_tail"
+        == "forbidden_transitively"
     )
+    first_queue = next(
+        queue for queue in extension["ir_bindings"]["queues"]
+        if queue["id"] == "first_compute_queue"
+    )
+    assert first_queue["claim_unit"] == "m_tile"
+    assert first_queue["chunk_policy"] == "one_m_tile_all_n_stripes"
     assert any(
         route["id"] == "repair_direct_abi"
         for route in extension["failure_routes"]
@@ -49,7 +55,7 @@ def test_repository_planner_extension_passes_generic_envelope():
         if route["id"] == "repair_dependency_publication"
     )
     assert (
-        "g1_completion_publish_outside_hot_tail"
+        "g1_owned_mtile_completion"
         in dependency_route["match"]["check_ids"]
     )
 
@@ -123,6 +129,8 @@ def test_generated_index_exposes_planner_extension():
         if item["id"] == "megamoe_ep_mega_fusion"
     )
     assert entry["planner_extension_file"].endswith("/planner_extension.yaml")
+    assert entry["validation_status"] == "experimental"
+    assert entry["auto_apply"] is False
 
 
 def test_bundle_identity_is_path_independent_and_content_bound(tmp_path):

@@ -39,15 +39,16 @@ for (const t of TARGETS) {
   // both, and pinned OFF, because this test is about the expert-skills toggle: the assertions below
   // must hold on the block the DEFAULT run emits.
   const make = new Function(
-    'USE_EXPERT_SKILLS', 'EXPERT_SKILL_ROLES', 'EXPERT_SKILLS_DIR', 'WORKFLOW_DIR', 'CAPABILITY_EVAL',
+    'USE_EXPERT_SKILLS', 'EXPERT_SKILL_ROLES', 'EXPERT_SKILLS_DIR', 'WORKFLOW_DIR',
+    'CAPABILITY_EVAL', 'MODE', 'EXPERT_SKILL_DIR',
     m[0] + '\nreturn expertSkillsBlock;');
   const roles = new Set([t.consumer]);
 
-  const off = make(false, roles, '/x/expert_skills', '/wf', false);
+  const off = make(false, roles, '/x/expert_skills', '/wf', false, 'standard', '');
   ok(off(t.consumer) === '', `OFF -> '' for consumer role (${t.consumer})`);
   ok(off(t.nonConsumer) === '', `OFF -> '' for non-consumer role (${t.nonConsumer})`);
 
-  const on = make(true, roles, '/x/expert_skills', '/wf', false);
+  const on = make(true, roles, '/x/expert_skills', '/wf', false, 'standard', '');
   ok(on(t.consumer) !== '', `ON -> non-empty for consumer role (${t.consumer})`);
   ok(on(t.nonConsumer) === '', `ON -> '' for NON-consumer role (${t.nonConsumer}) (no pollution)`);
   ok(on(t.consumer).includes('/x/expert_skills/index.yaml'), 'ON block points at the skills index');

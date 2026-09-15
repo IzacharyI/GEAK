@@ -210,6 +210,9 @@ const MEGA_FINAL_RESERVE_S = Math.max(600, Math.min(MEGA_TIME_BUDGET_S / 2,
   Number(A.mega_final_reserve_s || (MEGA_PRODUCTION ? 7200 : 3600))));
 const MEGA_CLOSEOUT_RESERVE_S = Math.max(300, Number(A.mega_closeout_reserve_s || 900));
 const EXPERT_SKILL_ID = String(A.expert_skill_id || '');
+if (EXPERT_SKILL_ID && !/^[a-z0-9][a-z0-9_-]*$/.test(EXPERT_SKILL_ID)) {
+  throw new Error('expert_skill_id must be a safe slug');
+}
 const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || 'v1');
 const EXPERT_SKILL_BUNDLE_SHA256 = String(A.expert_skill_bundle_sha256 || '');
 const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 =
@@ -228,13 +231,7 @@ const MEGA_FINAL_FALLBACK_K = Math.max(MEGA_FINAL_TOP_K,
   Number(A.mega_final_fallback_k || (MEGA_PRODUCTION ? 2 : MEGA_FINAL_TOP_K)));
 const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
   A.mega_tie_noise_pct != null ? A.mega_tie_noise_pct : 1.45));
-// Mega topology is part of every candidate contract. It is not an experimental side channel:
-// dropping it turns a whole-kernel plan back into an untyped single-switch optimization.
-// When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
-// the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
-// graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
-// This turns on an OPTIONAL capture+replay smoke in the verify step so that failure is caught at the cheap
-// isolated stage. Unset (standalone single-kernel runs / non-graph ops) => byte-identical to before.
+// Graph-captured targets require an isolated capture/replay smoke.
 const REQUIRE_GRAPH_CAPTURE = A.require_graph_capture != null
   ? String(A.require_graph_capture) === 'true'
   : !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
@@ -289,25 +286,32 @@ const primSpeedup = (o) => {
 };
 const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
   (WORKFLOW_DIR ? WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge' : '')).replace(/\/+$/, '');
-// Expert skills = human-authored, validated performance knowledge (perf_knowledge/expert_skills/).
-// A matched skill's semantic/compiler-shape MUST rules are normative inside the ordinary lifecycle;
-// it NEVER creates a special mode and never overrides frozen-source facts or measurement. Default
-// OFF (opt-in: pass use_expert_skills="true"). When OFF (the default) NOTHING is injected -> byte-identical
-// to a build without this feature. When invoked by the e2e layer the flag + dir are passed down.
+// Expert Skills are opt-in and never override frozen-source facts or measurement.
 const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
-const EXPERT_SKILL_BUNDLE_TOOL = String(A.expert_skill_bundle_tool ||
-  `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`);
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
-const EXPERT_SKILL_PLAYBOOK_FILE = String(A.expert_skill_playbook || '');
+const PINNED_MEGA_SKILL = MODE === 'mega' && !!EXPERT_SKILL_DIR;
+const EXPERT_SKILL_BUNDLE_TOOL = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`
+  : String(A.expert_skill_bundle_tool || `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`);
+const EXPERT_SKILL_PLAYBOOK_FILE = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILL_DIR}/playbook.md` : String(A.expert_skill_playbook || '');
 const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
-  String(A.expert_skill_planner_extension || '');
-const EXPERT_SKILL_CONTRACT_FILE = String(A.expert_skill_contract || '');
-const EXPERT_SKILL_VALIDATION_FILE = String(A.expert_skill_validation || '');
+  PINNED_MEGA_SKILL ? `${EXPERT_SKILL_DIR}/planner_extension.yaml`
+    : String(A.expert_skill_planner_extension || '');
+const EXPERT_SKILL_CONTRACT_FILE = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILL_DIR}/contract.yaml` : String(A.expert_skill_contract || '');
+const EXPERT_SKILL_VALIDATION_FILE = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILL_DIR}/validation.yaml` : String(A.expert_skill_validation || '');
+const EXPERT_SKILL_VALIDATION_STATUS = String(
+  A.expert_skill_validation_status || ''
+);
+const EXPERT_SKILL_USAGE = String(A.expert_skill_usage || '');
 const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = USE_EXPERT_SKILLS &&
-  String(A.require_expert_skill_bundle_identity || 'false') === 'true';
+  (PINNED_MEGA_SKILL ||
+   String(A.require_expert_skill_bundle_identity || 'false') === 'true');
 const validSha256 = (value) => /^[a-f0-9]{64}$/.test(String(value || ''));
 if (REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY &&
     (!EXPERT_SKILL_ID || !EXPERT_SKILL_REVISION ||
@@ -320,20 +324,45 @@ if (REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY &&
     'paths, and canonical bundle/extension/contract SHA-256 values'
   );
 }
-const EXPERT_SKILL_CONTRACT_TOOL = String(A.expert_skill_contract_tool ||
-  `${WORKFLOW_DIR}/tools/expert_skill_contract.py`);
+const EXPERT_SKILL_CONTRACT_TOOL = PINNED_MEGA_SKILL
+  ? `${WORKFLOW_DIR}/tools/expert_skill_contract.py`
+  : String(A.expert_skill_contract_tool || `${WORKFLOW_DIR}/tools/expert_skill_contract.py`);
 const EXPERT_SKILL_REFERENCE_PATH = String(A.expert_skill_reference_path || '').replace(/\/+$/, '');
 const CHECK_EXPERT_SKILL_CONTRACT = MODE === 'mega' && USE_EXPERT_SKILLS &&
   !!EXPERT_SKILL_ID && !!EXPERT_SKILL_CONTRACT_FILE &&
   String(A.verify_expert_skill_contract != null
     ? A.verify_expert_skill_contract : 'true') === 'true';
 const REQUIRE_EXPERT_SKILL_CONTRACT = CHECK_EXPERT_SKILL_CONTRACT &&
-  (MEGA_STRUCTURAL_ONLY ||
+  (PINNED_MEGA_SKILL || MEGA_STRUCTURAL_ONLY ||
     String(A.require_expert_skill_contract || 'false') === 'true');
 if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
   throw new Error('mega_structural_only requires an enabled Expert Skill contract');
 }
-const GRAPH_CONTRACT_TOOL = String(A.graph_contract_tool || '');
+if (USE_EXPERT_SKILLS && EXPERT_SKILL_VALIDATION_STATUS &&
+    !['validated', 'experimental'].includes(EXPERT_SKILL_VALIDATION_STATUS)) {
+  throw new Error('only validated or explicitly pinned experimental Expert Skills may run');
+}
+if (USE_EXPERT_SKILLS && EXPERT_SKILL_ID && !EXPERT_SKILL_VALIDATION_STATUS) {
+  throw new Error('an explicitly pinned Expert Skill requires validation status');
+}
+if (USE_EXPERT_SKILLS && PINNED_MEGA_SKILL) {
+  if (!['authoring', 'candidate_validation'].includes(EXPERT_SKILL_USAGE) ||
+      !REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY || !EXPERT_SKILL_VALIDATION_FILE) {
+    throw new Error(
+      'pinned Mega Expert Skill requires exact bundle identity, validation file, and ' +
+      'expert_skill_usage=authoring|candidate_validation'
+    );
+  }
+  if (EXPERT_SKILL_USAGE === 'authoring' && !MEGA_STRUCTURAL_ONLY) {
+    throw new Error('pinned authoring usage requires mega_structural_only=true');
+  }
+  if (EXPERT_SKILL_USAGE === 'candidate_validation' &&
+      !REQUIRE_EXPERT_SKILL_CONTRACT) {
+    throw new Error('pinned candidate_validation requires the structural contract');
+  }
+}
+const GRAPH_CONTRACT_TOOL = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILL_DIR}/graph_validation.py` : String(A.graph_contract_tool || '');
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
 const BENCH_HARNESS = String(A.benchmark_harness || '');
 const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
@@ -343,27 +372,12 @@ const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
 const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
   A.expert_skill_accuracy_cases || [],
 ));
-// Only planning + authoring roles consult skills; every other role gets no injection. Mega uses the
-// same Search Lead/Engineer roles with the flag on or off.
 const EXPERT_SKILL_ROLES = new Set([
   'tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'mega_search_lead',
 ]);
 
-// ---- Capability-evaluation mode (OPTIONAL, default OFF -> byte-identical behaviour) --------------
-// In production, "this is already implemented next door, port it" is correct and the prior-art sweep
-// exists to say exactly that. When the run is instead being used to measure whether the WORKFLOW can
-// derive a result, that same doctrine imports the answer and the headline number stops meaning
-// anything. Observed: a tech_lead published a reference path/branch/HEAD in roadmap.md §0, and an
-// engineer's patch came back containing a 511-line file BYTE-IDENTICAL to that reference. The
-// measured +4.3% was real; the run had demonstrated nothing.
-//
-// With capability_eval="true": prior art is reduced to CONCLUSIONS for the engineers (mechanism prose,
-// no paths/hashes/source — see tech_lead.md 4d), and verify gains a byte-identity provenance check
-// against known_reference_paths that returns status:"plagiarized" (verify_engineer.md 5b).
+// Capability evaluation hides reference addresses and enables provenance checks.
 const CAPABILITY_EVAL = String(A.capability_eval != null ? A.capability_eval : 'false') === 'true';
-// Strict autonomy is stronger than capability_eval. Capability mode hides known implementations;
-// strict mode additionally refuses inherited code/state and turns the final-shape evidence into
-// load-bearing gates. It is opt-in so ordinary kernel workflows remain backward compatible.
 const STRICT_AUTONOMY = String(A.strict_autonomy != null ? A.strict_autonomy : 'false') === 'true';
 if (STRICT_AUTONOMY && !CAPABILITY_EVAL) {
   throw new Error('args.strict_autonomy requires capability_eval=true');
@@ -392,16 +406,7 @@ const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : '
 const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
 const REQUIRE_ARTIFACT_DISTINCT = String(
   A.require_artifact_distinct != null ? A.require_artifact_distinct : 'false') === 'true';
-// ON-HARDWARE ACTIVATION. Opt-in (default OFF, so a wave that does not ask for it is byte-identical to
-// before). When set, a switched / perf-bearing candidate may be committed or counted as an enabling
-// step ONLY if its patched path was EXECUTED ON THE DEVICE this round — not merely compile-screened.
-// This closes the exact hole that let a fused arm bank for many rounds behind a default-OFF flag,
-// green on py_compile + a static ISA-distinctness hash, whose ON path crashed at JIT-trace time the
-// first time it was ever run on hardware. `artifact_distinct: 'yes'` is satisfiable from a COMPILE_ONLY
-// build (see roles/gfx950_lowering.md's lease-free method); it proves two binaries differ, NOT that the
-// selected one ever traced+launched. `activation_confirmed: 'yes'` is likewise satisfiable from a host
-// marker + static hash. Neither exercises the switch on a card. This flag makes on-device execution a
-// hard, machine-checked field rather than prose the planner is free to defer.
+// Require an activated switched path to have actually launched on hardware.
 const REQUIRE_HW_ACTIVATION = String(
   A.require_hardware_activation != null ? A.require_hardware_activation : 'false') === 'true';
 const ACCURACY_METRIC = String(A.accuracy_metric || 'relL2');
@@ -415,6 +420,25 @@ if (STRICT_AUTONOMY && !(Number.isSafeInteger(launchTargetArg) && launchTargetAr
 }
 const LAUNCH_TARGET = Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0
   ? launchTargetArg : 2;
+if (PINNED_MEGA_SKILL &&
+    EXPERT_SKILL_USAGE === 'candidate_validation') {
+  const missing = [
+    [!MEGA_STRUCTURAL_ONLY, 'mega_structural_only=false'],
+    [STRICT_AUTONOMY, 'strict_autonomy'],
+    [REQUIRE_GRAPH_CAPTURE, 'require_graph_capture'],
+    [DIRECT_GRAPH_ACCURACY, 'direct_graph_accuracy'],
+    [REQUIRE_HW_ACTIVATION, 'require_hardware_activation'],
+    [REQUIRE_ARTIFACT_DISTINCT, 'require_artifact_distinct'],
+    [REQUIRE_OVERLAP, 'require_overlap'],
+    [REQUIRE_ATTRIBUTION, 'require_attribution'],
+    [REQUIRED_REPLAYS >= 256, 'required_replays>=256'],
+    [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
+    [LAUNCH_TARGET === 2, 'launch_target=2'],
+  ].filter(([ok]) => !ok).map(([, label]) => label);
+  if (missing.length) {
+    throw new Error(`pinned candidate_validation missing gates: ${missing.join(', ')}`);
+  }
+}
 const CONTAINMENT_PREFLIGHT = (A.containment_preflight &&
   typeof A.containment_preflight === 'object') ? A.containment_preflight : {};
 const REFERENCE_LEAK_MARKER_FILE = String(A.reference_leak_marker_file || '');
@@ -1117,6 +1141,11 @@ const ANALYZE_SCHEMA = obj({
       expert_skill_revision: { type: ['string', 'null'] },
       expert_skill_bundle_sha256: { type: ['string', 'null'] },
       expert_skill_planner_extension_sha256: { type: ['string', 'null'] },
+      expert_skill_validation_status: { type: ['string', 'null'] },
+      expert_skill_auto_apply: { type: ['boolean', 'null'] },
+      expert_skill_explicit_pin_modes: {
+        type: 'array', items: { type: 'string' },
+      },
       target: obj({
         launch_count: { type: 'number' },
         required_regions: { type: 'array', items: { type: 'string' } },
@@ -1952,21 +1981,23 @@ async function agentT(p, o) {
   return null;
 }
 
-// Expert-skills injection. PURELY ADDITIVE: '' when OFF or the role is not a skills consumer, so
-// roleAgent is byte-identical to the pre-feature build in those cases. When ON, appends an advisory
-// pointer telling the agent to Read the fragment + query the skills index (scripts have no fs access).
+// Add Skill context only to roles that consume it.
 function expertSkillsBlock(role) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
   if (MODE === 'mega' && EXPERT_SKILL_DIR) {
     if (!['mega_search_lead', 'engineer', 'deep_engineer'].includes(role)) return '';
-    return `\n\n## MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE\n` +
+    return `\n\n## MEGA EXPERT SKILL — ${
+      EXPERT_SKILL_VALIDATION_STATUS === 'experimental'
+        ? 'EXPERIMENTAL TRANSFER, EXPLICIT PIN' : 'VALIDATED PRIOR'
+    }\n` +
       `Read ${EXPERT_SKILL_DIR}/skill.md` +
       (EXPERT_SKILL_PLAYBOOK_FILE ? ` and its detailed playbook ${EXPERT_SKILL_PLAYBOOK_FILE}` : '') +
       (EXPERT_SKILL_PLANNER_EXTENSION_FILE
         ? ` and its machine-readable Planner Extension ${EXPERT_SKILL_PLANNER_EXTENSION_FILE}` : '') +
       (EXPERT_SKILL_CONTRACT_FILE
         ? ` and its machine-readable contract ${EXPERT_SKILL_CONTRACT_FILE}` : '') +
-      `. Use them as validated design knowledge while still performing the ordinary ` +
+      `. validation_status=${EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, ` +
+      `usage=${EXPERT_SKILL_USAGE || 'legacy'}. Use them while still performing the ordinary ` +
       `tile-task-graph analysis, candidate planning, source authoring, and measurement loop. They do not ` +
       `create a reproduction lane or special candidate source, and they do not override current ` +
       `source constraints or measured results. When the skill match and baseline revision apply, its ` +
@@ -1980,7 +2011,7 @@ function expertSkillsBlock(role) {
           `not a reason to reinterpret stale knowledge.`
         : '') +
       (role === 'engineer'
-        ? ` The playbook is a known-working mechanism prior, not a request to repeatedly ` +
+        ? ` The playbook is a pinned mechanism prior, not a request to repeatedly ` +
           `redesign its scaffolding. Time-box helper refactors to the first quarter of the turn; then wire ` +
           `the next unresolved tile-pipeline edge into the real caller and run the earliest meaningful ` +
           `compile/on-card smoke. A turn that only rearranges an unused emitter has not advanced the candidate.`
@@ -1989,13 +2020,11 @@ function expertSkillsBlock(role) {
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
     `Also Read ${WORKFLOW_DIR}/roles/_fragments/expert_skills.md and follow it: query ` +
     `${EXPERT_SKILLS_DIR}/index.yaml for skills whose \`match\` fits this op (operator/dtype/regime, and ` +
-    `from_backend->to_backend for migration skills) and whose validation_status is \`validated\`, and ` +
+    `from_backend->to_backend for migration skills) and whose validation_status is \`validated\` and ` +
+    `auto_apply is true, and ` +
     `treat each as a HIGH-PRIOR candidate to reproduce — advisory only, never overriding your isolated ` +
     `A/B vs the oracle, never reducing a result below the measured baseline.` +
-    // A skill is written for production, so it rightly cites its own reference implementation by
-    // branch and commit — that is what makes it reproducible. Under capability_eval those citations
-    // become a map to the answer, and the skill is read off disk by the agent, so the orchestrator
-    // cannot redact them. Say what is usable instead. `reproduce` above means re-derive, not fetch.
+    // Capability evaluation may use mechanisms, never reference addresses.
     (CAPABILITY_EVAL
       ? ` **Capability eval: use a skill's MECHANISM and MEASUREMENTS, never its addresses.** Its ` +
         `Sources/Procedure sections may cite a branch, commit, or sibling checkout containing the ` +
@@ -2287,13 +2316,7 @@ if (MODE === 'author') {
 // MEGA CANDIDATE REGISTRY — no blocking pre-loop reproduction phase.
 // ===========================================================================
 
-// Mega candidate portfolio. Every candidate uses the same Analyze -> Plan -> Author -> Verify
-// lifecycle. Expert Skills alter the advisory context only; they never create a special candidate
-// source, lane, scheduler, or acceptance contract.
-// MEGA_CANDIDATE_STATES is declared here (not next to normalizeMegaCandidate further down) because the
-// top-level `if (MODE === 'mega')` seed below calls upsertMegaCandidate -> normalizeMegaCandidate,
-// which reads it. Under top-level-await module semantics the module body executes top-to-bottom, so a
-// const declared after that call would still be in its temporal dead zone when the seed runs.
+// One candidate portfolio and lifecycle, with or without Expert Skills.
 const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected'];
 let megaCandidateRegistry = [];
 let megaStateSequenceBase = 0;
@@ -2310,18 +2333,11 @@ if (MODE === 'mega') {
 // PHASE: Analyze + Roadmap (TechLead)
 // ===========================================================================
 phase('Analyze');
-// The two analyze call sites below repeat their inputs verbatim instead of sharing one object, and
-// that is deliberate: tests/test_input_contract.js reads THIS FILE and checks that every input a
-// role declares is actually threaded to it. A spread of a named object hides the inputs from that
-// check, which then reports the role as under-supplied. Factoring these eight lines out would trade
-// a real static guard for a cosmetic saving. If you add an input, add it in both places.
 let analysis = await agentT(
   roleAgent(MODE === 'mega' ? 'mega_search_lead' : 'tech_lead',
     'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
     KERNEL_KNOWLEDGE_DIR: MODE === 'mega' ? '' : KERNEL_KNOWLEDGE_DIR,
-    // Authoritative resolved rank count (from gpus_per_job | op_spec.resource | job_gpu_ids).
-    // >1 is what makes the `distributed` specialty eligible; OP_SPEC.resource may be absent.
     GPUS_PER_JOB: String(GPU_RESOURCE.gpusPerJob),
     ...(A.require_task_graph ? { REQUIRE_TASK_GRAPH: '1' } : {}),
     ...(MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
@@ -2332,6 +2348,8 @@ let analysis = await agentT(
       EXPERT_SKILL_BUNDLE_SHA256,
       EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
       EXPERT_SKILL_CONTRACT_SHA256,
+      EXPERT_SKILL_VALIDATION_STATUS,
+      EXPERT_SKILL_USAGE,
     } : {}),
     ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
     ...(STRICT_AUTONOMY ? {
@@ -2339,11 +2357,6 @@ let analysis = await agentT(
       PROMOTION_METRIC, LAUNCH_TARGET: Number(A.launch_target || 2),
       REQUIRE_OVERLAP, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
     } : {}),
-    // The resume flag says "a prior wave already built the roadmap"; STATE_DIR is the only place
-    // that roadmap and the open-rung list actually survive between waves, because EVAL_DIR is
-    // rebuilt from scratch by the caller. roles/tech_lead.md's fast path already instructs
-    // analyze to read `STATE_DIR` and `STATE.json` — until now it was never given either, so the
-    // instruction could not be followed and the fast path had nothing to resume from.
     ...(STATE_DIR && MODE !== 'mega' ? { STATE_DIR } : {}),
     ...(MODE === 'mega' ? {} : RESUME_INPUT),
   }),
@@ -2393,7 +2406,9 @@ function megaPlanIRVerdict(
   expectedSkillRevision = '',
   expectedSkillId = '',
   expectedPlannerExtensionSha256 = '',
-  expectedSkillBundleSha256 = ''
+  expectedSkillBundleSha256 = '',
+  expectedValidationStatus = '',
+  expectedSkillUsage = ''
 ) {
   const errors = [];
   if (!plan || typeof plan !== 'object') return { pass: false, errors: ['plan missing'] };
@@ -2413,6 +2428,19 @@ function megaPlanIRVerdict(
   if (expectedSkillBundleSha256 &&
       String(plan.expert_skill_bundle_sha256 || '') !== String(expectedSkillBundleSha256)) {
     errors.push('expert_skill_bundle_sha256 does not match the RunContract');
+  }
+  if (expectedValidationStatus &&
+      String(plan.expert_skill_validation_status || '') !== expectedValidationStatus) {
+    errors.push('expert_skill_validation_status does not match bundle metadata');
+  }
+  if (expectedValidationStatus === 'experimental') {
+    if (plan.expert_skill_auto_apply !== false) {
+      errors.push('experimental Skill must report auto_apply=false');
+    }
+    if (!Array.isArray(plan.expert_skill_explicit_pin_modes) ||
+        !plan.expert_skill_explicit_pin_modes.includes(expectedSkillUsage)) {
+      errors.push('experimental Skill bundle does not permit the requested usage');
+    }
   }
   const collections = [
     'work_domains', 'regions', 'buffers', 'counters', 'queues', 'events',
@@ -2517,7 +2545,9 @@ function analyzeResumeDegenerate(
   expectedSkillRevision = '',
   expectedSkillId = '',
   expectedPlannerExtensionSha256 = '',
-  expectedSkillBundleSha256 = ''
+  expectedSkillBundleSha256 = '',
+  expectedValidationStatus = '',
+  expectedSkillUsage = ''
 ) {
   const rungs = (ver && Array.isArray(ver.candidate_directions) ? ver.candidate_directions : [])
     .filter((c) => c && (c.id || c.title));
@@ -2531,7 +2561,9 @@ function analyzeResumeDegenerate(
     expectedSkillRevision,
     expectedSkillId,
     expectedPlannerExtensionSha256,
-    expectedSkillBundleSha256
+    expectedSkillBundleSha256,
+    expectedValidationStatus,
+    expectedSkillUsage
   );
   const megaPlanMissing = !!requireMegaPlan && !planVerdict.pass;
   if (rungs.length && !graphMissing && !megaPlanMissing) return { retry: false, reason: '' };
@@ -2559,7 +2591,9 @@ function analyzeResumeDegenerate(
     MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
       ? EXPERT_SKILL_PLANNER_EXTENSION_SHA256 : '',
     MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
-      ? EXPERT_SKILL_BUNDLE_SHA256 : '');
+      ? EXPERT_SKILL_BUNDLE_SHA256 : '',
+    MODE === 'mega' && USE_EXPERT_SKILLS ? EXPERT_SKILL_VALIDATION_STATUS : '',
+    MODE === 'mega' && USE_EXPERT_SKILLS ? EXPERT_SKILL_USAGE : '');
   if (d.retry) {
     log(d.reason);
     // Identical to the call above except that RESUME_INPUT is absent — that omission IS the fix.
@@ -2578,6 +2612,8 @@ function analyzeResumeDegenerate(
           EXPERT_SKILL_BUNDLE_SHA256,
           EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
           EXPERT_SKILL_CONTRACT_SHA256,
+          EXPERT_SKILL_VALIDATION_STATUS,
+          EXPERT_SKILL_USAGE,
         } : {}),
         ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
         ...(STRICT_AUTONOMY ? {
@@ -2612,7 +2648,9 @@ function analyzeResumeDegenerate(
       MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
         ? EXPERT_SKILL_PLANNER_EXTENSION_SHA256 : '',
       MODE === 'mega' && USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE
-        ? EXPERT_SKILL_BUNDLE_SHA256 : '');
+        ? EXPERT_SKILL_BUNDLE_SHA256 : '',
+      MODE === 'mega' && USE_EXPERT_SKILLS ? EXPERT_SKILL_VALIDATION_STATUS : '',
+      MODE === 'mega' && USE_EXPERT_SKILLS ? EXPERT_SKILL_USAGE : '');
     if (got.length && !fullContract.retry) {
       log(`ANALYZE RE-RUN recovered a ladder of ${got.length} rung(s). Using the full analysis.`);
       analysis = full;

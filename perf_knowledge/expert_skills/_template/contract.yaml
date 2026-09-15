@@ -39,5 +39,7 @@ checks:
 # - forbid_methods: reject named method calls on matching receivers in a scope.
 # - assignment_value: relate a matching assignment target to its own RHS.
 # - parameter_loads: require declared runtime values to be consumed in a function scope.
-# - publication_placement: follow local helper calls and reject completion RMWs after a
-#   configured hot-loop compute anchor while allowing loop-head flushes or owner stores.
+# - publication_placement: follow local helper calls and reject completion RMWs anywhere
+#   in a configured hot loop while allowing owner stores or a post-loop phase.
+# - owned_completion_protocol: prove m-tile ownership, all-stripe compute, ordered
+#   thread-owner system store, and transitive absence of completion-address RMWs.

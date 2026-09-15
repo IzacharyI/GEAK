@@ -78,7 +78,8 @@ match.operator == bottleneck.operator
 AND gen ∈ match.gens
 AND model_arch_class ∈ match.arch_class   (or match.arch_class contains '*')
 AND (migration skills) from_backend/to_backend fit the live path
-AND index.validation_status == validated  (sourced from validation.yaml or legacy inline metadata)
+AND index.validation_status == validated
+AND index.auto_apply == true
 ```
 
 There is **no ranking** here (same as `capability_index.yaml`). Every match enters the candidate set;
@@ -96,9 +97,12 @@ consumes it:
 
 ## Validation status lifecycle
 
-`draft` → (validate passes) → `validated` → (staleness: age / aiter·triton version drift) → `stale`
-→ (re-validate) → `validated`. A failed validation sets `failed` and the PR cannot land as `validated`.
-Only `validated` skills are auto-applied; `stale` is demoted to a plain reference (re-measure forced).
+Validation v2 separates measured reference evidence, transfer-constraint
+validation, and exact-candidate hardware evidence. `experimental` skills never
+auto-apply; they may be used only with exact revision/component digests and an
+explicit `authoring` or `candidate_validation` usage. Only a transfer with
+hardware-validated constraints and no pending positive repair may become
+`validated`. `stale` remains a plain reference until re-validation.
 
 ## Contributing
 

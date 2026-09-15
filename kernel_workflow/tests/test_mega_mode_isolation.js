@@ -39,6 +39,8 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_BUNDLE_SHA256 = 'b'.repeat(64);
   const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 = 'p'.repeat(64);
   const EXPERT_SKILL_CONTRACT_SHA256 = 'c'.repeat(64);
+  const EXPERT_SKILL_VALIDATION_STATUS = 'experimental';
+  const EXPERT_SKILL_USAGE = 'authoring';
   const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = true;
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
@@ -54,8 +56,8 @@ ok(enabled('mega_search_lead').includes('skill.md') &&
    enabled('mega_search_lead').includes('planner_extension.yaml') &&
    enabled('mega_search_lead').includes('contract.yaml'),
   'the common Mega planner receives the matched skill/playbook/extension/contract when enabled');
-ok(enabled('engineer').includes('NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE'),
-  'the common Engineer receives the same matched normative knowledge');
+ok(enabled('engineer').includes('EXPERIMENTAL TRANSFER, EXPLICIT PIN'),
+  'the common Engineer receives the explicitly pinned transfer knowledge');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
   'skill injection cannot create a reproduction candidate source');
 const disabled = makeBlock(false);

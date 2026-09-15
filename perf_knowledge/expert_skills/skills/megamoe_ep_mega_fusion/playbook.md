@@ -1,11 +1,11 @@
 ---
 playbook_id: megamoe_ep_tile_pipeline
-revision: mega-ep-fusion-v5
+revision: mega-ep-fusion-v6
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true
-normative_scope: semantic_and_compiler_shape
-source: validated_knowledge
+normative_scope: explicitly_pinned_authoring
+source: measured_reference
 oracle_role: post_authoring_comparison_only
 ---
 
@@ -19,6 +19,13 @@ inside the ordinary Mega planner/Engineer lifecycle. Current hardware evidence
 may override a rule only when the candidate records the contradiction and the
 replacement invariant explicitly. It does not create a reproduction mode,
 candidate source, or reserved lane.
+
+The measured reference and the v6 transfer are deliberately not conflated.
+The reference used a per-stripe system atomic in its unified-loop tail. That
+exact source frame ran successfully, but the same abstract operation in the
+evolved independent candidate produced a repeatable compiler frame fault.
+Revision v6 therefore marks its one-m-tile owner-store rule as an experimental
+transfer deviation rather than claiming it was the measured reference shape.
 
 ## 0. Oracle use and known defects
 
@@ -465,8 +472,8 @@ Scope matrix for the pinned gfx950 source:
 
 - agent atomic: entry ticket, GEMM1/GEMM2 queue heads, Stage2 tile-close
   counter, and combine claim head;
-- system atomic: GEMM1 completion publication and remote peer token-ready
-  publication;
+- system atomic: remote peer token-ready publication;
+- owner-only system store: GEMM1 m-tile completion publication;
 - owner-only ordinary load/store: combine generation;
 - workgroup release plus block barrier: Stage2 tile-close ordering.
 
@@ -481,7 +488,8 @@ cache modifier. Completion publication preserves this ordering:
 
 1. all waves execute `s_waitcnt(0)`;
 2. execute a block barrier;
-3. publish the completion counter for `unit // n_tiles` at system scope.
+3. thread 0 publishes `n_tiles` to the completion counter for the claimed
+   m-tile with `store_i32_system`.
 
 The counter threshold is `n_tiles`: all N-column tiles for that Stage1 m-tile.
 The validated gfx950 source uses system scope even though the logical edge is
@@ -492,25 +500,19 @@ not add a separate per-tile `fence_system_release()`. The consumer waits with
 `int32_wait_until_greater_than(counter, n_tiles - 1)`. There is no whole-grid
 `ready1 == NUM_G1_BLOCKS` barrier.
 
-The publication operation MUST NOT place a system- or agent-scope atomic RMW
-in the hot GEMM1 accumulation or unified `while consumer_active` work-loop
-tail. On gfx950/flyc this changes the register-allocation frame and has
-repeatedly produced a target-independent null-base device fault even when
-`s2_ctr` is host-valid and in bounds. Source-level pointer checks and the
-GPU-free contract cannot prove this compiler property.
+The fused region and every transitively called local helper MUST contain no
+system- or agent-scope atomic RMW whose address derives from the GEMM1
+completion table. Moving that RMW from the loop tail to the loop head still
+leaves it in the same gfx950/flyc register-allocation frame and has reproduced
+the same target-independent null-base device fault with a valid `s2_ctr`.
 
-Use one of these compiler-safe shapes while preserving item-level readiness:
-
-- make one CTA own all N stripes of an m-tile, then publish `n_tiles` with an
-  owner-only system-visible store; or
-- accumulate per-CTA completion locally and flush the required system RMW from
-  a bounded publication phase outside the hot unified-loop codegen frame.
-
-The first shape preserves immediate per-m-tile overlap without an RMW. The
-second must not introduce a whole-grid barrier or a separate post-GEMM1 GEMM2
-drain. In both cases the publication uses the direct `s2_ctr` argument, and a
-GEMM2 claim still waits on the exact m-tile dependencies it reads. Do not
-tunnel the counter through an extended dispatch-pointer table.
+The selected v6 shape is exact: one CTA claims one m-tile, computes all
+`n_tiles` column stripes, executes `s_waitcnt(0)` and a block barrier, and then
+thread 0 performs one system-visible store of `n_tiles` to that m-tile's direct
+`s2_ctr` counter. Do not substitute a loop-head or post-loop completion atomic,
+split stripe ownership across CTAs, tunnel the counter through an extended
+dispatch-pointer table, add a whole-grid barrier, or add a separate GEMM2
+drain.
 
 Any change to this placement requires an on-card JIT/correctness retry; a
 structural pass alone is insufficient evidence.
@@ -587,9 +589,10 @@ The priority order is:
 2. on the route-gated preemption path, a `ticket % 6 == 0` block may
    non-destructively peek and claim an already-ready GEMM2 chunk only when the
    `(5,4)` expert-skew predicate is true;
-3. otherwise claim one GEMM1 tile from this block's sharded GEMM1 head;
+3. otherwise claim one GEMM1 m-tile from this block's sharded GEMM1 head,
+   compute every N stripe owned by that claim, then publish once;
 4. once GEMM1 is drained, claim one sharded GEMM2 chunk and wait only for the
-   last in-range pair's own m-tile counter;
+   complete set of in-range m-tile dependencies;
 5. execute one unit and repeat.
 
 The GEMM2 queue claim unit is a chunk of 16 consecutive linear Stage2 units for
@@ -829,7 +832,7 @@ on-device correctness/liveness smoke may localize a fault.
 
 ## 14. Final verification
 
-For a candidate implementing the complete reference design:
+For a candidate implementing the complete v6 transfer design:
 
 - candidate activation is exactly `AITER_MEGAMOE_FUSE_ALL=1`;
 - baseline activation is exactly `AITER_MEGAMOE_FUSE_ALL=0`;

@@ -37,33 +37,45 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
-console.log('\n# the validated fusion package is matched normative knowledge');
-ok(/role: normative_prior/.test(skill) &&
+console.log('\n# the experimental transfer is explicit and fail-closed');
+ok(/role: experimental_authoring_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
-  'skill declares normative constraints inside the common Mega lifecycle');
+  'skill declares explicitly pinned constraints inside the common Mega lifecycle');
 ok(/playbook_file: playbook\.md/.test(skill) &&
    /contract_file: contract\.yaml/.test(skill) &&
    /validation_file: validation\.yaml/.test(skill),
   'skill points to separate human, machine and evidence artifacts');
 ok(/normative: true/.test(playbook) &&
-   /normative_scope: semantic_and_compiler_shape/.test(playbook) &&
+   /normative_scope: explicitly_pinned_authoring/.test(playbook) &&
    /does not create a reproduction mode,[\s\S]{0,80}reserved lane/.test(playbook),
   'normative implementation constraints do not create a reproduction sub-mode');
 ok(/schema_version: expert-skill-contract-v1/.test(contract) &&
    /host_ready_pointer_identity/.test(contract) &&
    /combine_transport_and_work_domain/.test(contract) &&
-   /g1_completion_publish_outside_hot_tail/.test(contract) &&
-   /kind: publication_placement/.test(contract),
+   /g1_owned_mtile_completion/.test(contract) &&
+   /kind: owned_completion_protocol/.test(contract),
   'the generic checker receives declarative Skill invariants');
-ok(/schema_version: expert-skill-validation-v1/.test(validation) &&
-   /status: validated/.test(validation),
-  'measured validation status is separate from prose');
+ok(/schema_version: expert-skill-validation-v2/.test(validation) &&
+   /status: experimental/.test(validation) &&
+   /auto_apply: false/.test(validation),
+  'reference evidence, transfer status, and auto-application are separate');
 ok(/CTA.*local shard drains[\s\S]*without a global stage barrier/i.test(skill),
   'expert knowledge carries the tile-pipeline mechanism, not merely launch fusion');
 
 console.log('\n# runtime uses the same roles and candidate source');
-ok(/MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE/.test(wf),
+ok(/EXPERIMENTAL TRANSFER, EXPLICIT PIN/.test(wf),
   'enabled skill is appended to the common planner/engineer prompt');
+ok(/pinned authoring usage requires mega_structural_only=true/.test(wf) &&
+   /pinned candidate_validation requires the structural contract/.test(wf),
+  'experimental usage is mechanically limited to explicit authoring or validation');
+ok(/expert_skill_id must be a safe slug/.test(wf) &&
+   /PINNED_MEGA_SKILL/.test(wf) &&
+   /explicitly pinned Expert Skill requires validation status/.test(wf),
+  'explicit Skill status and component paths cannot float independently');
+ok(/pinned candidate_validation missing gates/.test(wf) &&
+   /required_replays>=256/.test(wf) &&
+   /direct_graph_accuracy/.test(wf),
+  'experimental candidate validation requires the full runtime evidence profile');
 ok(/Candidate source remains search\/integrated/.test(wf),
   'expert guidance does not introduce a validated-skill candidate');
 ok(!/role = source === 'validated_skill' \? 'mega_engineer'/.test(wf) &&
@@ -103,6 +115,6 @@ ok(/IMPORT_IDENTITY_VOID/.test(engineer) &&
   'author, verifier and final arbiter reject installed/global module resolution');
 
 console.log(failures === 0
-  ? '\nPASS: validated fusion knowledge guides the ordinary Mega lifecycle.'
+  ? '\nPASS: experimental transfer knowledge is explicit and fail-closed.'
   : `\nFAIL: ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

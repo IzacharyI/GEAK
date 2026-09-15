@@ -30,8 +30,8 @@ ok(/patch must be ON by default/i.test(engineer),
 console.log('\n# Expert Skill constraints are normative knowledge, not a special lane');
 ok(/AITER_MEGAMOE_FUSE_ALL=1/.test(playbook) &&
    /normative: true/.test(playbook) &&
-   /normative_scope: semantic_and_compiler_shape/.test(playbook),
-  'the matched playbook makes semantic/source-shape constraints normative');
+   /normative_scope: explicitly_pinned_authoring/.test(playbook),
+  'the explicitly pinned playbook makes transfer constraints normative');
 ok(/SEARCH_ACCEPTS_PARTIAL_FUSION/.test(verify),
   'Verify can measure a different full or partial fusion activation');
 ok(!/roles\/mega_engineer\.md/.test(wf) &&

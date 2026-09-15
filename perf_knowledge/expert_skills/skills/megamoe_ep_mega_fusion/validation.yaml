@@ -1,25 +1,80 @@
-schema_version: expert-skill-validation-v1
+schema_version: expert-skill-validation-v2
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v5
-status: validated
-last_verified: "2026-09-15"
-gpu: gfx950/MI355X
-model: MegaMoE_v2
-measured:
-  isolated: 1.0448
-  e2e_pct: 4.48
-  parity: pass
-artifact: recorded_measurement_only
+revision: mega-ep-fusion-v6
+status: experimental
 
-compiler_hazard_evidence:
-  date: "2026-09-15"
-  candidate_head: deea163c2a331d78874d4cde25270bde59634bb4
-  symptom: all-rank null-base device fault at 128 and 512 tokens
-  localization: skipcombine and skipg2 still fault; removing the GEMM1-tail completion RMW clears the fault and leaves the expected readiness hang
-  classification: flyc register-allocation frame regression from an atomic RMW in the hot work-loop tail
-  required_repair: m-tile-owned system store or bounded out-of-frame completion flush
-  repair_validated: false
-  acceptance: current contract pass plus on-card JIT and direct correctness
+reference_evidence:
+  status: measured
+  subject:
+    kind: source_reference
+    revision: 494c25a7e016b83ce4fd2bb2de148b602f7a5661
+    tree_sha256: 53cc0eca0c814e8344600dc2064b6b4ba57683286e51dd6453e015de44dfe7ec
+    baseline_tree_sha256: 54a1711b081b17af7a9744113d707a32f68b90a5a0272f4bf6d03ab14b9fa6ef
+  recorded_at: "2026-09-15"
+  gpu: gfx950/MI355X
+  model: MegaMoE_v2
+  measured:
+    isolated: 1.0448
+    e2e_pct: 4.48
+    parity: pass
+  mechanism_facts:
+    first_compute_claim_domain: flat_m_tile_n_stripe
+    completion_publication: per_stripe_system_atomic_in_unified_loop_tail
+    note: This is measured reference evidence, not the v6 transfer constraint.
+  artifact:
+    kind: recorded_measurement_only
+    uri: ""
+    sha256: ""
+    reproducible: false
+
+constraint_validation:
+  status: static_validated
+  hardware_verified: false
+  subject:
+    skill_revision: mega-ep-fusion-v6
+    contract_sha256: 0af410093c146601f4b864ec9c49f1001bf9c9bdd622fd597083bdc0e289670a
+    planner_extension_sha256: 535f60ded23fff7bc1346bebc11c9b5d0935671b252e35d7fc2616415d65c8b3
+    checker_sha256: 1d846e418e53f890d604ddf87c9f26a62102c5cef9db5750bdfe3b9eed6306e7
+  rules:
+    g1_owned_mtile_completion:
+      transfer_deviation:
+        from_reference: per_stripe_system_atomic_in_unified_loop_tail
+        to_experimental_rule: one_m_tile_owner_system_store
+        reason: the reference atomic shape is not compiler-equivalent in the evolved candidate frame
+      negative_observations:
+        - candidate_head: deea163c2a331d78874d4cde25270bde59634bb4
+          placement: unified_loop_tail
+          result: all_rank_null_base_device_fault
+        - candidate_head: ab51d41348d4d169850d2e527a1ee81024d11ccc
+          placement: unified_loop_head
+          result: all_rank_null_base_device_fault
+      positive_repair:
+        status: pending
+        candidate_head: 578db1423530cb1f4aecd99097a3e0e8fb639c94
+        candidate_tree_sha256: 58b80d7f627dec6b82f624dd85082b74e58f0b22554c1820ce45568e2bddb25e
+        required:
+          - exact_head_independent_structure
+          - on_card_jit
+          - direct_ep8_accuracy
+
+candidate_validation_policy:
+  evidence_scope: exact_candidate_head_and_tree_digest
+  required_gates:
+    - independent_structure
+    - device_jit
+    - path_activation_all_ranks
+    - launch_shape
+    - direct_accuracy
+    - graph_liveness
+    - residency
+    - distributed_memory_order
+    - artifact_distinctness
+    - paired_performance
+    - do_no_harm
+
+usage:
+  auto_apply: false
+  explicit_pin_modes: [authoring, candidate_validation]
 
 harness: kernel_workflow
 efficacy:
@@ -43,6 +98,6 @@ do_no_harm:
     - name: replay_stress
       assert: arrival-jittered graph replay passes before finalist promotion
     - name: compiler_frame_publication
-      assert: no system or agent atomic RMW is invoked from the hot GEMM1 or unified work-loop tail; placement changes require an on-card retry
+      assert: no completion-address system or agent atomic RMW is reachable from the fused region; the owner-store replacement requires an on-card retry
     - name: frozen_denominator
       assert: paired rank-max performance is measured against frozen SCATTERED MegaMoE V2

@@ -498,12 +498,11 @@ def _check_publication_placement(
     trees: dict[str, ast.AST],
     severity: str,
 ) -> dict[str, Any]:
-    """Reject completion RMWs after compute in a selected hot loop.
+    """Reject completion RMWs anywhere in a selected hot loop.
 
     Local helper calls are followed transitively so renaming or wrapping the
     publication operation does not evade the placement relation. An owner-only
-    store may remain after compute; an RMW is legal only before the compute
-    anchor (for example a carried next-iteration flush) or after the hot loop.
+    store may remain in the loop; an RMW is legal only after the hot loop.
     """
     name = str(rule.get("file") or "")
     scope = str(rule.get("scope") or "")
@@ -625,23 +624,921 @@ def _check_publication_placement(
         direct_kind(call) for call in collector.calls
     )
     unsafe_lines = [
-        line for line, kinds in loop_publications
-        if "rmw" in kinds and line > first_compute
+        line for line, kinds in loop_publications if "rmw" in kinds
     ]
     legal_publication = bool(post_publications) or any(
-        "store" in kinds or ("rmw" in kinds and line < first_compute)
+        "store" in kinds
         for line, kinds in loop_publications
     )
     if not mechanism_present:
         failures.append(f"no completion publication tied to address {address}")
     if unsafe_lines:
-        failures.append(f"completion RMW occurs after hot-loop compute at lines {unsafe_lines}")
+        failures.append(f"completion RMW occurs inside hot loop at lines {unsafe_lines}")
     if not legal_publication:
-        failures.append("no legal loop-head, owner-store, or post-loop publication")
+        failures.append("no legal owner-store or post-loop publication")
     passed_units = int(bool(compute_lines)) + int(mechanism_present) + int(
         legal_publication and not unsafe_lines
     )
     return _result(not failures, 3, passed_units, failures, severity)
+
+
+def _check_owned_completion_protocol(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Prove an owner-only completion store and reject completion-address RMWs.
+
+    The rule is intentionally declarative: operator names, helper names,
+    expressions and primitive names all come from the contract. Local callees
+    are followed transitively for the negative RMW proof.
+    """
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    root = _scope_node(trees.get(name), scope)
+    if not isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, 9, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    active = ast.parse(_active_code(root))
+    root = active.body[0] if active.body else root
+    wrappers = {str(value) for value in rule.get("normalize_wrappers") or []}
+
+    class StripWrappers(ast.NodeTransformer):
+        def visit_Call(self, item: ast.Call):  # noqa: N802
+            item = self.generic_visit(item)
+            if (
+                _call_name(item) in wrappers
+                and len(item.args) == 1
+                and not item.keywords
+            ):
+                return item.args[0]
+            return item
+
+    def expr(item: ast.AST) -> str:
+        copied = ast.parse(ast.unparse(item), mode="eval").body
+        normalized = StripWrappers().visit(copied)
+        return ast.unparse(ast.fix_missing_locations(normalized))
+
+    def matches(item: ast.AST, pattern: Any) -> bool:
+        return bool(re.fullmatch(str(pattern or ""), expr(item)))
+
+    def call_matches(call: ast.Call, pattern: Any) -> bool:
+        value = str(pattern or "")
+        return bool(
+            re.fullmatch(value, _call_name(call))
+            or re.fullmatch(value, ast.unparse(call.func))
+        )
+
+    def function_parameters(
+        item: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> list[str]:
+        return [
+            argument.arg
+            for argument in (
+                list(item.args.posonlyargs)
+                + list(item.args.args)
+                + list(item.args.kwonlyargs)
+            )
+        ]
+
+    class Collector(ast.NodeVisitor):
+        def __init__(self, owner: ast.AST, skip_nested: bool = True) -> None:
+            self.owner = owner
+            self.skip_nested = skip_nested
+            self.nodes: list[ast.AST] = []
+
+        def generic_visit(self, item: ast.AST) -> None:
+            self.nodes.append(item)
+            super().generic_visit(item)
+
+        def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+            self.nodes.append(item)
+            if item is self.owner or not self.skip_nested:
+                super().generic_visit(item)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    def scoped_nodes(owner: ast.AST, skip_nested: bool = True) -> list[ast.AST]:
+        collector = Collector(owner, skip_nested)
+        collector.visit(owner)
+        return collector.nodes
+
+    all_nodes = scoped_nodes(root, skip_nested=False)
+    helpers = {
+        item.name: item
+        for item in all_nodes
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item is not root
+    }
+    failures: list[str] = []
+    passed = 0
+
+    region_cfg = rule.get("region") or {}
+    region_guard = str(region_cfg.get("guard") or "")
+    regions = [
+        item for item in scoped_nodes(root)
+        if isinstance(item, ast.If) and matches(item.test, region_guard)
+    ]
+    if len(regions) != 1:
+        failures.append(
+            f"expected one selected region matching {region_guard!r}, found {len(regions)}"
+        )
+        return _result(False, 9, passed, failures, severity)
+    region = regions[0]
+    arm = str(region_cfg.get("arm") or "body")
+    if arm not in {"body", "orelse"}:
+        return _result(
+            False, 9, passed, [f"unsupported selected region arm: {arm}"], severity
+        )
+    region_scope = ast.Module(
+        body=list(getattr(region, arm)), type_ignores=[]
+    )
+    loop_cfg = region_cfg.get("loop") or {}
+    loop_test = str(loop_cfg.get("test") or "")
+    loop_contains = str(loop_cfg.get("contains") or "")
+    loops = [
+        item for item in scoped_nodes(region_scope)
+        if isinstance(item, ast.While)
+        and matches(item.test, loop_test)
+        and (
+            not loop_contains
+            or re.search(loop_contains, ast.unparse(item))
+        )
+    ]
+    if len(loops) != 1:
+        failures.append(
+            f"expected one selected loop matching {loop_test!r}, found {len(loops)}"
+        )
+        return _result(False, 9, passed, failures, severity)
+    loop = loops[0]
+    passed += 1
+
+    claim = rule.get("claim") or {}
+    handoff = rule.get("handoff") or {}
+    region_nodes = scoped_nodes(region_scope)
+
+    def assignments_to(nodes: list[ast.AST], pattern: Any) -> list[ast.AST]:
+        return [
+            item for item in nodes
+            if isinstance(item, (ast.Assign, ast.AnnAssign))
+            and any(
+                matches(target, pattern)
+                for target in (
+                    item.targets if isinstance(item, ast.Assign) else [item.target]
+                )
+            )
+        ]
+
+    extent_definitions = assignments_to(
+        region_nodes, claim.get("extent_target")
+    )
+    extent_assignments = [
+        item for item in extent_definitions
+        if matches(item.value, claim.get("extent_value"))
+    ]
+    root_nodes = scoped_nodes(root)
+    source_extent_definitions = assignments_to(
+        root_nodes, claim.get("source_extent_target")
+    )
+    source_extent_assignments = [
+        item for item in source_extent_definitions
+        if matches(item.value, claim.get("source_extent_value"))
+    ]
+    if (
+        len(extent_assignments) == len(source_extent_assignments) == 1
+        and len(extent_definitions) == len(source_extent_definitions) == 1
+    ):
+        passed += 1
+    else:
+        failures.append("source and fused m-tile extent relation is missing or ambiguous")
+
+    claim_helper_name = str(claim.get("helper") or "")
+    claim_helper = helpers.get(claim_helper_name)
+    claim_helper_defs = [
+        item for item in all_nodes
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name == claim_helper_name
+    ]
+    claim_rebindings = assignments_to(region_nodes, claim_helper_name)
+    claim_ok = (
+        isinstance(claim_helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and len(claim_helper_defs) == 1 and not claim_rebindings
+    )
+    claim_nodes = scoped_nodes(claim_helper) if claim_ok else []
+
+    class GuardedCalls(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.guards: list[ast.AST] = []
+            self.calls: list[tuple[ast.Call, tuple[ast.AST, ...]]] = []
+
+        def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+            return
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_If(self, item: ast.If) -> None:
+            self.guards.append(item.test)
+            for statement in item.body:
+                self.visit(statement)
+            self.guards.pop()
+            for statement in item.orelse:
+                self.visit(statement)
+
+        def visit_Call(self, item: ast.Call) -> None:
+            self.calls.append((item, tuple(self.guards)))
+            self.generic_visit(item)
+
+    guarded_calls = GuardedCalls()
+    for statement in loop.body:
+        guarded_calls.visit(statement)
+    claim_invocations = [
+        (call, guards)
+        for call, guards in guarded_calls.calls
+        if call_matches(call, claim_helper_name)
+    ]
+    claim_invoked_by_owner = bool(claim_invocations) and all(
+        any(matches(guard, claim.get("owner_test")) for guard in guards)
+        for _, guards in claim_invocations
+    )
+
+    def writes_handoff(call: ast.Call) -> bool:
+        return (
+            call_matches(call, handoff.get("store_call"))
+            and len(call.args) >= 2
+            and matches(call.args[1], handoff.get("scratch"))
+        )
+
+    def path_write_states(
+        statements: list[ast.stmt],
+        incoming: list[tuple[bool, bool]] | None = None,
+        helper_is_write: bool = False,
+    ) -> list[tuple[bool, bool]]:
+        states = list(incoming or [(False, True)])
+        for statement in statements:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            next_states: list[tuple[bool, bool]] = []
+            for written, active_path in states:
+                if not active_path:
+                    next_states.append((written, False))
+                elif isinstance(statement, ast.If):
+                    next_states.extend(path_write_states(
+                        statement.body, [(written, True)], helper_is_write
+                    ))
+                    next_states.extend(
+                        path_write_states(
+                            statement.orelse,
+                            [(written, True)],
+                            helper_is_write,
+                        )
+                        if statement.orelse else [(written, True)]
+                    )
+                elif isinstance(
+                    statement, (ast.Break, ast.Continue, ast.Return, ast.Raise)
+                ):
+                    next_states.append((written, False))
+                else:
+                    call = (
+                        statement.value
+                        if isinstance(statement, ast.Expr)
+                        and isinstance(statement.value, ast.Call)
+                        else None
+                    )
+                    emits = bool(call) and (
+                        writes_handoff(call)
+                        or (
+                            helper_is_write
+                            and call_matches(call, claim_helper_name)
+                        )
+                    )
+                    next_states.append((written or emits, True))
+            states = next_states
+        return states
+
+    claim_helper_writes_all_paths = (
+        claim_ok
+        and all(written for written, _ in path_write_states(claim_helper.body))
+    )
+    owner_ifs = [
+        statement for statement in loop.body
+        if isinstance(statement, ast.If)
+        and matches(statement.test, claim.get("owner_test"))
+    ]
+    owner_index = loop.body.index(owner_ifs[0]) if len(owner_ifs) == 1 else -1
+    owner_reachable = owner_index >= 0 and not any(
+        isinstance(item, (ast.Break, ast.Continue, ast.Return, ast.Raise))
+        for statement in loop.body[:owner_index]
+        for item in ast.walk(statement)
+    )
+    owner_writes_all_paths = (
+        len(owner_ifs) == 1
+        and owner_reachable
+        and claim_helper_writes_all_paths
+        and all(
+            written for written, _ in path_write_states(
+                owner_ifs[0].body, helper_is_write=True
+            )
+        )
+    )
+    local_definitions = assignments_to(claim_nodes, claim.get("local_target"))
+    local_assignments = [
+        item for item in local_definitions
+        if matches(item.value, claim.get("local_value") or ".*")
+    ]
+    local_ok = False
+    if len(local_assignments) == 1:
+        atomic_calls = [
+            item for item in ast.walk(local_assignments[0].value)
+            if isinstance(item, ast.Call)
+            and call_matches(item, claim.get("atomic_call"))
+        ]
+        local_ok = len(atomic_calls) == 1 and len(atomic_calls[0].args) >= 2
+        if local_ok:
+            local_ok = (
+                matches(atomic_calls[0].args[0], claim.get("head_address"))
+                and matches(atomic_calls[0].args[1], claim.get("increment"))
+            )
+    index_definitions = assignments_to(claim_nodes, claim.get("index_target"))
+    index_assignments = [
+        item for item in index_definitions
+        if matches(item.value, claim.get("index_value"))
+    ]
+    bounds = [
+        item for item in claim_nodes
+        if isinstance(item, ast.If) and matches(item.test, claim.get("bound"))
+    ]
+    if (
+        claim_ok and claim_invoked_by_owner and local_ok
+        and owner_writes_all_paths
+        and len(local_definitions) == len(local_assignments) == 1
+        and len(index_definitions) == len(index_assignments) == 1
+        and len(bounds) == 1
+    ):
+        passed += 1
+    else:
+        failures.append(
+            "m-tile claim relation failed: "
+            f"helper={claim_ok}, owner_call={claim_invoked_by_owner}, "
+            f"all_paths={owner_writes_all_paths}, atomic={local_ok}, "
+            f"index={len(index_assignments)}, bound={len(bounds)}"
+        )
+
+    handoff_ok = False
+    if len(bounds) == 1:
+        stores = [
+            statement.value for statement in bounds[0].body
+            if isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and call_matches(statement.value, handoff.get("store_call"))
+            and len(statement.value.args) >= 2
+            and matches(statement.value.args[1], handoff.get("scratch"))
+        ]
+        expected = handoff.get("values") or []
+        handoff_ok = len(stores) == 1 and any(
+            isinstance(call, ast.Call)
+            and call_matches(call, handoff.get("vector_call"))
+            and call.args
+            and isinstance(call.args[0], (ast.List, ast.Tuple))
+            and len(call.args[0].elts) == len(expected)
+            and all(
+                matches(value, pattern)
+                for value, pattern in zip(call.args[0].elts, expected)
+            )
+            for call in ast.walk(stores[0].args[0])
+        )
+    view_definitions = assignments_to(region_nodes, handoff.get("view_target"))
+    view_assignments = [
+        item for item in view_definitions
+        if matches(item.value, handoff.get("view_value"))
+    ]
+    load_definitions = assignments_to(
+        scoped_nodes(loop), handoff.get("load_target")
+    )
+    load_assignments = [
+        item for item in loop.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and matches(item.targets[0], handoff.get("load_target"))
+        and matches(item.value, handoff.get("load_value"))
+    ]
+    unit_definitions = assignments_to(
+        scoped_nodes(loop), handoff.get("unit_target")
+    )
+    unit_assignments = [
+        item for item in loop.body
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and matches(item.targets[0], handoff.get("unit_target"))
+        and matches(item.value, handoff.get("unit_value"))
+    ]
+    claim_statement_indexes = [
+        index for index, statement in enumerate(loop.body)
+        if any(
+            isinstance(item, ast.Call) and call_matches(item, claim_helper_name)
+            for item in ast.walk(statement)
+            if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+    ]
+    load_indexes = [
+        index for index, statement in enumerate(loop.body)
+        if statement in load_assignments
+    ]
+    barrier_between = (
+        len(claim_statement_indexes) == 1 and len(load_indexes) == 1
+        and claim_statement_indexes[0] < load_indexes[0]
+        and any(
+            isinstance(loop.body[index], ast.Expr)
+            and isinstance(loop.body[index].value, ast.Call)
+            and call_matches(loop.body[index].value, handoff.get("barrier_call"))
+            for index in range(claim_statement_indexes[0] + 1, load_indexes[0])
+        )
+    )
+    if (
+        handoff_ok and len(view_definitions) == len(view_assignments) == 1
+        and len(load_definitions) == len(load_assignments) == 1
+        and len(unit_definitions) == len(unit_assignments) == 1
+        and barrier_between
+    ):
+        passed += 1
+    else:
+        failures.append(
+            "claimed m-tile handoff failed: "
+            f"store={handoff_ok}, view={len(view_assignments)}, "
+            f"load={len(load_assignments)}, unit={len(unit_assignments)}, "
+            f"barrier={barrier_between}"
+        )
+
+    stripes = rule.get("stripes") or {}
+    mode_ifs = [
+        item for item in scoped_nodes(loop)
+        if isinstance(item, ast.If) and matches(item.test, stripes.get("mode_test"))
+    ]
+    stripe_loop: ast.For | None = None
+    compute_ok = False
+    publish_ok = False
+    if len(mode_ifs) == 1:
+        for_candidates = [
+            item for item in mode_ifs[0].body
+            if isinstance(item, ast.For)
+            and matches(item.target, stripes.get("iterator"))
+            and isinstance(item.iter, ast.Call)
+            and call_matches(item.iter, stripes.get("range_call"))
+            and len(item.iter.args) == 1
+            and matches(item.iter.args[0], stripes.get("count"))
+        ]
+        if len(for_candidates) == 1:
+            stripe_loop = for_candidates[0]
+            compute_calls = [
+                statement.value for statement in stripe_loop.body
+                if isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and call_matches(statement.value, stripes.get("compute_call"))
+            ]
+            compute_ok = (
+                not stripe_loop.orelse
+                and len(stripe_loop.body) == 1
+                and len(compute_calls) == 1
+                and len(compute_calls[0].args) == 1
+                and matches(compute_calls[0].args[0], stripes.get("compute_index"))
+            )
+            publication = rule.get("publication") or {}
+            later = mode_ifs[0].body[mode_ifs[0].body.index(stripe_loop) + 1:]
+            publish_calls = [
+                statement.value for statement in later
+                if isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and call_matches(statement.value, publication.get("helper"))
+            ]
+            all_publish_calls = [
+                item for item in scoped_nodes(region_scope)
+                if isinstance(item, ast.Call)
+                and call_matches(item, publication.get("helper"))
+            ]
+            publish_ok = (
+                len(later) == 1
+                and len(publish_calls) == 1
+                and len(all_publish_calls) == 1
+                and len(publish_calls[0].args) == 1
+                and matches(publish_calls[0].args[0], publication.get("argument"))
+                and not mode_ifs[0].orelse
+            )
+    if compute_ok:
+        passed += 1
+    else:
+        failures.append("one owner claim does not compute every configured N stripe")
+    if publish_ok:
+        passed += 1
+    else:
+        failures.append("completion publication does not occur once after all stripe compute")
+
+    publication = rule.get("publication") or {}
+    publish_helper_name = str(publication.get("helper") or "")
+    publish_helper = helpers.get(publish_helper_name)
+    publish_helper_defs = [
+        item for item in all_nodes
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name == publish_helper_name
+    ]
+    publish_rebindings = assignments_to(region_nodes, publish_helper_name)
+    protocol_ok = False
+    if (
+        isinstance(publish_helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and len(publish_helper_defs) == 1 and not publish_rebindings
+    ):
+        statements = publish_helper.body
+        helper_params = function_parameters(publish_helper)
+        wait_indexes = [
+            index for index, statement in enumerate(statements)
+            if isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and call_matches(statement.value, publication.get("wait_call"))
+            and len(statement.value.args) == 1
+            and matches(statement.value.args[0], publication.get("wait_argument"))
+        ]
+        barrier_indexes = [
+            index for index, statement in enumerate(statements)
+            if isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and call_matches(statement.value, publication.get("barrier_call"))
+        ]
+        owner_ifs = [
+            (index, statement) for index, statement in enumerate(statements)
+            if isinstance(statement, ast.If)
+            and matches(statement.test, publication.get("owner_test"))
+        ]
+        if len(wait_indexes) == len(barrier_indexes) == len(owner_ifs) == 1:
+            owner_index, owner_if = owner_ifs[0]
+            stores = [
+                statement.value for statement in owner_if.body
+                if isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Call)
+                and call_matches(statement.value, publication.get("store_call"))
+            ]
+            all_stores = [
+                item for item in ast.walk(publish_helper)
+                if isinstance(item, ast.Call)
+                and call_matches(item, publication.get("store_call"))
+            ]
+            if (
+                len(stores) == len(all_stores) == 1
+                and len(owner_if.body) == 1 and not owner_if.orelse
+                and len(stores[0].args) >= 3
+            ):
+                address = stores[0].args[0]
+                address_ok = (
+                    isinstance(address, ast.Call)
+                    and call_matches(address, publication.get("address_call"))
+                    and len(address.args) == 1
+                    and matches(address.args[0], publication.get("address_argument"))
+                )
+                protocol_ok = (
+                    bool(helper_params)
+                    and len(statements) == 3
+                    and matches(
+                        ast.Name(id=helper_params[0], ctx=ast.Load()),
+                        publication.get("address_argument"),
+                    )
+                    and wait_indexes[0] < barrier_indexes[0] < owner_index
+                    and address_ok
+                    and matches(stores[0].args[1], publication.get("store_offset"))
+                    and matches(stores[0].args[2], publication.get("store_value"))
+                )
+    if protocol_ok:
+        passed += 1
+    else:
+        failures.append("waitcnt/barrier/thread-owner/system-store protocol relation failed")
+
+    rmw_calls = [str(value) for value in publication.get("forbidden_rmw_calls") or []]
+    address_call = str(publication.get("address_call") or "")
+    direct_address_patterns = [
+        str(value)
+        for value in publication.get("direct_address_patterns") or []
+    ]
+    address_base_patterns = [
+        str(value) for value in publication.get("address_base_patterns") or []
+    ]
+    address_index_patterns = [
+        str(value) for value in publication.get("address_index_patterns") or []
+    ]
+
+    def names_in(item: ast.AST) -> set[str]:
+        return {
+            child.id for child in ast.walk(item)
+            if isinstance(child, ast.Name)
+        }
+
+    address_producers: set[str] = set()
+    address_callable_aliases: set[str] = set()
+
+    def contains_address_producer(item: ast.AST) -> bool:
+        return any(
+            isinstance(child, ast.Call)
+            and (
+                call_matches(child, address_call)
+                or _call_name(child) in address_producers
+                or _call_name(child) in address_callable_aliases
+            )
+            for child in ast.walk(item)
+        ) or any(
+            re.search(pattern, expr(item)) for pattern in direct_address_patterns
+        )
+
+    changed = True
+    while changed:
+        changed = False
+        for helper_name, helper in helpers.items():
+            returns = [
+                item.value for item in ast.walk(helper)
+                if isinstance(item, ast.Return) and item.value is not None
+            ]
+            if (
+                helper_name not in address_producers
+                and any(contains_address_producer(value) for value in returns)
+            ):
+                address_producers.add(helper_name)
+                changed = True
+
+    changed = True
+    while changed:
+        changed = False
+        for item in all_nodes:
+            if not isinstance(item, ast.Assign) or len(item.targets) != 1:
+                continue
+            target = item.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            value_name = (
+                item.value.id if isinstance(item.value, ast.Name)
+                else item.value.attr if isinstance(item.value, ast.Attribute)
+                else ""
+            )
+            if (
+                target.id not in address_callable_aliases
+                and (
+                    re.fullmatch(address_call, value_name)
+                    or value_name in address_producers
+                    or value_name in address_callable_aliases
+                )
+            ):
+                address_callable_aliases.add(target.id)
+                changed = True
+
+    def has_address_call(item: ast.AST) -> bool:
+        return contains_address_producer(item)
+
+    def tainted_names(helper: ast.AST) -> set[str]:
+        tainted: set[str] = set()
+        base_tainted: set[str] = set()
+        index_tainted: set[str] = set()
+        changed_taint = True
+        while changed_taint:
+            changed_taint = False
+            for item in ast.walk(helper):
+                if not isinstance(item, (ast.Assign, ast.AnnAssign)):
+                    continue
+                targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+                value_names = names_in(item.value)
+                base_value = (
+                    any(re.search(pattern, expr(item.value)) for pattern in address_base_patterns)
+                    or bool(value_names & base_tainted)
+                )
+                index_value = (
+                    any(re.search(pattern, expr(item.value)) for pattern in address_index_patterns)
+                    or bool(value_names & index_tainted)
+                )
+                completion_value = (
+                    has_address_call(item.value)
+                    or bool(value_names & tainted)
+                    or (base_value and index_value)
+                    or (
+                        bool(value_names & base_tainted)
+                        and bool(value_names & index_tainted)
+                    )
+                )
+                for target in targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    for state, applies in (
+                        (base_tainted, base_value),
+                        (index_tainted, index_value),
+                        (tainted, completion_value),
+                    ):
+                        if applies and target.id not in state:
+                            state.add(target.id)
+                            changed_taint = True
+        return tainted
+
+    def expanded_names(
+        helper: ast.AST,
+        item: ast.AST,
+    ) -> set[str]:
+        dependencies: dict[str, set[str]] = {}
+        for assignment in ast.walk(helper):
+            if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = (
+                assignment.targets
+                if isinstance(assignment, ast.Assign)
+                else [assignment.target]
+            )
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    dependencies[target.id] = names_in(assignment.value)
+        found = names_in(item)
+        changed_names = True
+        while changed_names:
+            changed_names = False
+            inherited = set().union(*(
+                dependencies.get(value, set()) for value in found
+            ))
+            if not inherited.issubset(found):
+                found.update(inherited)
+                changed_names = True
+        return found
+
+    def callable_aliases(owner: ast.AST, patterns: list[str]) -> set[str]:
+        aliases: set[str] = set()
+        changed_aliases = True
+        while changed_aliases:
+            changed_aliases = False
+            for item in ast.walk(owner):
+                if not isinstance(item, ast.Assign) or len(item.targets) != 1:
+                    continue
+                target = item.targets[0]
+                if not isinstance(target, ast.Name):
+                    continue
+                value_name = (
+                    item.value.id if isinstance(item.value, ast.Name)
+                    else item.value.attr if isinstance(item.value, ast.Attribute)
+                    else ""
+                )
+                if (
+                    target.id not in aliases
+                    and (
+                        any(re.fullmatch(pattern, value_name) for pattern in patterns)
+                        or value_name in aliases
+                    )
+                ):
+                    aliases.add(target.id)
+                    changed_aliases = True
+        return aliases
+
+    def call_argument(
+        call: ast.Call,
+        callee: ast.FunctionDef | ast.AsyncFunctionDef,
+        index: int,
+    ) -> ast.AST | None:
+        if index < len(call.args):
+            return call.args[index]
+        params = function_parameters(callee)
+        if index >= len(params):
+            return None
+        return next(
+            (
+                keyword.value for keyword in call.keywords
+                if keyword.arg == params[index]
+            ),
+            None,
+        )
+
+    sink_params: dict[str, set[int]] = {helper: set() for helper in helpers}
+    unsafe_helpers: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for helper_name, helper in helpers.items():
+            params = function_parameters(helper)
+            tainted = tainted_names(helper)
+            helper_rmw_aliases = callable_aliases(helper, rmw_calls)
+            for call in (
+                item for item in ast.walk(helper) if isinstance(item, ast.Call)
+            ):
+                if (
+                    any(call_matches(call, pattern) for pattern in rmw_calls)
+                    or _call_name(call) in helper_rmw_aliases
+                ):
+                    for argument in [
+                        *call.args, *(keyword.value for keyword in call.keywords)
+                    ]:
+                        argument_names = expanded_names(helper, argument)
+                        if has_address_call(argument) or argument_names & tainted:
+                            unsafe_helpers.add(helper_name)
+                        for index, parameter in enumerate(params):
+                            if parameter in argument_names and index not in sink_params[helper_name]:
+                                sink_params[helper_name].add(index)
+                                changed = True
+                callee = _call_name(call)
+                for sink_index in sink_params.get(callee, set()):
+                    argument = call_argument(call, helpers[callee], sink_index)
+                    if argument is None:
+                        continue
+                    argument_names = expanded_names(helper, argument)
+                    if has_address_call(argument) or argument_names & tainted:
+                        unsafe_helpers.add(helper_name)
+                    for index, parameter in enumerate(params):
+                        if parameter in argument_names and index not in sink_params[helper_name]:
+                            sink_params[helper_name].add(index)
+                            changed = True
+
+    def direct_calls(owner: ast.AST) -> set[str]:
+        return {
+            _call_name(item) for item in scoped_nodes(owner)
+            if isinstance(item, ast.Call) and _call_name(item)
+        }
+
+    reachable: set[str] = set()
+    pending = list(direct_calls(region_scope))
+    while pending:
+        callee = pending.pop()
+        if callee in reachable or callee not in helpers:
+            continue
+        reachable.add(callee)
+        pending.extend(direct_calls(helpers[callee]))
+
+    region_unsafe = False
+    region_tainted = tainted_names(region_scope)
+    region_rmw_aliases = callable_aliases(region_scope, rmw_calls)
+    for call in (
+        item for item in scoped_nodes(region_scope) if isinstance(item, ast.Call)
+    ):
+        if (
+            any(call_matches(call, pattern) for pattern in rmw_calls)
+            or _call_name(call) in region_rmw_aliases
+        ):
+            region_unsafe |= any(
+                has_address_call(argument)
+                or expanded_names(region_scope, argument) & region_tainted
+                for argument in [
+                    *call.args, *(keyword.value for keyword in call.keywords)
+                ]
+            )
+        for sink_index in sink_params.get(_call_name(call), set()):
+            argument = call_argument(
+                call, helpers[_call_name(call)], sink_index
+            )
+            if argument is not None:
+                region_unsafe |= (
+                    has_address_call(argument)
+                    or bool(expanded_names(region_scope, argument) & region_tainted)
+                )
+    extra_completion_store = False
+    store_pattern = publication.get("store_call")
+    for owner_name, owner in [
+        ("<region>", region_scope),
+        *((name, helpers[name]) for name in reachable if name != publish_helper_name),
+    ]:
+        owner_tainted = tainted_names(owner)
+        store_aliases = callable_aliases(owner, [str(store_pattern or "")])
+        for call in (
+            item for item in scoped_nodes(owner) if isinstance(item, ast.Call)
+        ):
+            if not (
+                call_matches(call, store_pattern)
+                or _call_name(call) in store_aliases
+            ) or not call.args:
+                continue
+            address = call.args[0]
+            if (
+                has_address_call(address)
+                or expanded_names(owner, address) & owner_tainted
+            ):
+                extra_completion_store = True
+                break
+        if extra_completion_store:
+            break
+    rmw_safe = (
+        not region_unsafe
+        and not (reachable & unsafe_helpers)
+        and not extra_completion_store
+    )
+    if rmw_safe:
+        passed += 1
+    else:
+        failures.append(
+            "extra completion write or atomic RMW is reachable from the selected fused region"
+        )
+
+    forbidden_calls = [
+        str(value) for value in publication.get("forbidden_calls") or []
+    ]
+    selected_nodes = [
+        region_scope,
+        *(helpers[name] for name in reachable),
+    ]
+    helper_forbidden = any(
+        any(
+            isinstance(item, ast.Call)
+            and any(call_matches(item, pattern) for pattern in forbidden_calls)
+            for item in scoped_nodes(owner)
+        )
+        for owner in selected_nodes
+    )
+    if not helper_forbidden:
+        passed += 1
+    else:
+        failures.append("publication helper contains a forbidden per-item fence/call")
+
+    return _result(not failures, 9, passed, failures, severity)
 
 
 def evaluate_checks(
@@ -657,6 +1554,7 @@ def evaluate_checks(
         "assignment_value": _check_assignment_value,
         "parameter_loads": _check_parameter_loads,
         "publication_placement": _check_publication_placement,
+        "owned_completion_protocol": _check_owned_completion_protocol,
     }
     for rule in contract.get("checks") or []:
         check_id = str(rule["id"])
@@ -680,10 +1578,22 @@ _MISSING = object()
 def _get_path(value: Any, path: str) -> Any:
     current = value
     for component in str(path).split("."):
-        if isinstance(current, dict) and component in current:
-            current = current[component]
-        else:
+        selected = re.fullmatch(r"([^\[]+)\[id=([^\]]+)\]", component)
+        key = selected.group(1) if selected else component
+        if not isinstance(current, dict) or key not in current:
             return _MISSING
+        current = current[key]
+        if selected:
+            if not isinstance(current, list):
+                return _MISSING
+            matches = [
+                item for item in current
+                if isinstance(item, dict)
+                and str(item.get("id") or "") == selected.group(2)
+            ]
+            if len(matches) != 1:
+                return _MISSING
+            current = matches[0]
     return current
 
 

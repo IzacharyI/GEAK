@@ -68,7 +68,8 @@ ok(/Production identity-only tier/.test(director),
 ok(/timeout_marker: true/.test(src) && /MEGA SAFE STOP/.test(src),
   'a timed-out candidate/finalist stops safely instead of overlapping recovery or fallback GPU work');
 ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src) &&
-   /MEGA EXPERT SKILL — NORMATIVE KNOWLEDGE IN THE COMMON LIFECYCLE/.test(src),
+   /MEGA EXPERT SKILL/.test(src) &&
+   /EXPERIMENTAL TRANSFER, EXPLICIT PIN/.test(src),
   'skill-enabled and skill-disabled Mega candidates use the same Engineer lifecycle');
 ok(/max_retries: 1/.test(src),
   'bounded production calls cannot multiply their wall budget through API retries');

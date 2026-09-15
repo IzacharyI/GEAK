@@ -3,11 +3,12 @@ id: megamoe_ep_mega_fusion
 title: 'MegaMoE EP8 persistent tile-pipeline playbook'
 kind: expert_skill
 mode: mega
-revision: mega-ep-fusion-v5
+revision: mega-ep-fusion-v6
 playbook_file: playbook.md
 planner_extension_file: planner_extension.yaml
 contract_file: contract.yaml
 validation_file: validation.yaml
+validation_schema: expert-skill-validation-v2
 runtime_validation_file: graph_validation.py
 constraint_profile: semantic_and_compiler_shape
 authors:
@@ -41,35 +42,40 @@ expects:
   e2e_delta_min_pct: 1.0
   parity: required
 provenance:
-  source: validated_knowledge
+  source: measured_reference
   origin: deconstructed_capability
+  transfer_status: static_validated
   reuse_mode: common_mega_candidate_lifecycle
 incumbent:
-  label: validated_persistent_megakernel
+  label: measured_reference_persistent_megakernel
   is_ceiling: false
   measured_gain_vs_baseline_pct:
     tokens512_uniform: 1.49
     tokens8192_uniform: 4.71
-role: normative_prior
+role: experimental_authoring_prior
 supersedes:
   - mega-ep-fusion-v4
+  - mega-ep-fusion-v5
 ---
 
 # MegaMoE EP8 persistent tile-pipeline playbook
 
-Use this skill as validated design knowledge inside the ordinary `mode=mega`
+Use this experimental transfer of measured reference knowledge inside an
+explicitly pinned ordinary `mode=mega`
 Analyze → Plan → Author → Verify loop. It does not create a reproduction mode,
 reserved lane, source label, or scheduler. When the match and baseline revision
 apply, the detailed playbook's `MUST`/`MUST NOT` source-shape constraints override
 generic optimization heuristics and Engineer improvisation; correctness and
-current hardware evidence still override the playbook.
+current hardware evidence still override the playbook. Revision v6 is not
+hardware-validated until an exact generated candidate passes the declared
+on-card gates.
 
 ## Required reading
 
-Read repository-relative `playbook.md` as a detailed validated implementation
-guide and `contract.yaml` as its machine-readable preflight. The playbook records
-one design known to reach the validated performance band, including synchronization and
-geometry details plus the FlyDSL source shapes on which it was validated.
+Read repository-relative `playbook.md` as a detailed measured-reference
+implementation guide and `contract.yaml` as its machine-readable transfer
+preflight. The reference reached the recorded performance band; the v6 transfer
+rules remain experimental until candidate validation.
 Re-derive applicability from the current frozen source/task graph. Do not
 replace the direct fused ABI, nested emitter, unified queue loop, publication
 scope or generation protocol unless current evidence proves the replacement
@@ -79,7 +85,7 @@ and the deviation is recorded.
 
 Use for `mode=mega`, EP8 MegaMoE V2 on gfx950. With
 `use_expert_skills=false`, this skill package must be absent and the
-same roles derive candidates without this validated fusion knowledge.
+same roles derive candidates without this fusion knowledge.
 
 ## Mechanism
 
@@ -92,17 +98,17 @@ explicit:
 - GEMM2/P2P and combine can likewise be phase-staggered across CTAs;
 - LDS/VGPR/CU residency, publication/acquire scope, monotone generations and
   graph replay safety are correctness constraints;
-- system/agent atomic RMW publication must stay out of the hot GEMM1/unified
-  work-loop frame; use m-tile ownership with a system store or a bounded
-  out-of-frame flush and require an on-card retry;
-- full fusion is the known validated design, while a measured faster partial fusion
-  is also a valid Mega candidate.
+- the fused region and local call closure contain no completion-address atomic
+  RMW; one CTA claims one m-tile, computes all N stripes, then performs the
+  ordered thread-0 system store;
+- full fusion is the measured reference topology; the v6 owner-store transfer
+  remains experimental until exact-candidate hardware validation.
 
 For the pinned baseline, the following are closed source shapes, not equivalent
 implementations: separate GEMM1-then-GEMM2 loops, fused pointers hidden in
 trailing dispatch-table slots, a module-level Stage2 device body replacing the
 nested closure/JIT emitter, and an agent-scope G1 completion publish. The
-playbook specifies the validated alternatives.
+  playbook specifies the pinned transfer shape.
 
 ## Procedure
 
@@ -140,7 +146,7 @@ speed gates as a skill-disabled candidate.
 
 ## Sources
 
-- `playbook.md`: detailed validated implementation guide.
+- `playbook.md`: detailed measured-reference implementation guide.
 - `planner_extension.yaml`: machine-readable MegaPlanIR bindings, candidate
   checkpoints, and contract-failure repair routes.
 - `contract.yaml`: machine-readable source and MegaPlanIR preflight.

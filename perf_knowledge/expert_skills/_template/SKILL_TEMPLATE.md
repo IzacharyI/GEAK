@@ -9,6 +9,7 @@ playbook_file: ""        # optional detailed implementation guide in this skill 
 planner_extension_file: ""  # optional machine-readable Analyze/Plan bindings for mode=mega
 contract_file: ""        # optional declarative source/PlanIR preflight
 validation_file: validation.yaml
+validation_schema: expert-skill-validation-v2
 runtime_validation_file: ""  # optional operator-specific runtime verifier
 # ---- selector: the workflow matches these against the live bottleneck ----
 match:

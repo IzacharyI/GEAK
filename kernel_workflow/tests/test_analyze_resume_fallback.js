@@ -50,6 +50,9 @@ const MEGA_COMPLETE = {
     expert_skill_revision: 'skill-v1',
     expert_skill_bundle_sha256: 'b'.repeat(64),
     expert_skill_planner_extension_sha256: 'p'.repeat(64),
+    expert_skill_validation_status: 'experimental',
+    expert_skill_auto_apply: false,
+    expert_skill_explicit_pin_modes: ['authoring', 'candidate_validation'],
     target: {
       launch_count: 1, required_regions: ['producer', 'consumer'],
       required_queues: ['work'],
@@ -121,8 +124,18 @@ console.log('\n# the wave-15 shape');
     'a PlanIR bound to the active Planner Extension revision proceeds');
   ok(analyzeResumeDegenerate(
     false, MEGA_COMPLETE, true, true, 'skill-v1', 'skill', 'p'.repeat(64), 'b'.repeat(64),
+    'experimental', 'authoring',
   ).retry === false,
-  'a PlanIR bound to the complete Skill bundle identity proceeds');
+  'a PlanIR bound to complete experimental bundle metadata proceeds');
+  const forgedStatus = JSON.parse(JSON.stringify(MEGA_COMPLETE));
+  forgedStatus.mega_plan_ir.expert_skill_validation_status = 'validated';
+  const forged = analyzeResumeDegenerate(
+    false, forgedStatus, true, true,
+    'skill-v1', 'skill', 'p'.repeat(64), 'b'.repeat(64),
+    'experimental', 'authoring',
+  );
+  ok(forged.retry === true && /validation_status/.test(forged.reason),
+    'a caller cannot relabel an experimental bundle as validated');
   const staleSkillPlan = JSON.parse(JSON.stringify(MEGA_COMPLETE));
   staleSkillPlan.mega_plan_ir.expert_skill_revision = 'stale-skill';
   const stale = analyzeResumeDegenerate(false, staleSkillPlan, true, true, 'skill-v1');
