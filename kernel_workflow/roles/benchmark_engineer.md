@@ -582,7 +582,8 @@ use this output verbatim. Hand-written `find`, alternate `json.dumps`, ignored
 comment fields, or a remembered prior digest are pipeline failures.
 
 Steps:
-1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`, `key_valid:false`, done.
+1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`,
+   `key_valid:false`, `commandment_materialized:false`, done.
 2. Read the cached key. Recompute `current_key` from disk NOW. Set `key_valid` iff they are EXACTLY
    equal. A mismatch is not an error — it means the base/instrument/spec moved and the wave must
    re-measure; say which component differs in `note`.
@@ -590,14 +591,22 @@ Steps:
    - `bench`: read `CACHE_DIR/baseline_timing.json`, `CACHE_DIR/COMMANDMENT.md`, `CACHE_DIR/setup_ab_control*.json`
      and rebuild the full `PHASE=setup` Return JSON (below) into the `bench` field — including
      `positive_control` from a `setup_ab_control*.json` with `claim_complete:true`. This is the same
-     reconstruction as `PHASE=recover`, from `CACHE_DIR` instead of `EVAL_DIR`.
+     reconstruction as `PHASE=recover`, from `CACHE_DIR` instead of `EVAL_DIR`. Before returning,
+     atomically copy the cached `COMMANDMENT.md` to the exact current
+     `EVAL_DIR/COMMANDMENT.md`, verify the two byte hashes match, and set
+     `commandment_materialized:true`. Set the returned
+     `bench.commandment_path` to that current path. Never return a path to
+     `CACHE_DIR` or an older run. If materialization or hash verification
+     fails, set `commandment_materialized:false` and `key_valid:false`.
    - `profile`: read `CACHE_DIR/mega_analysis/*.json` (rank_records / xgmi / combine_wait) and rebuild
      the `mega_analysis` return shape into the `analysis` field (`bottleneck`, `top_opportunities`,
      `dispatch_count`, `path_marker`, `rank_max_ms`, `xgmi_amplification`, `combine_wait_p95_us`, …).
+     Set `commandment_materialized:false`; it is not applicable to this cache kind.
    A reconstructed payload that is missing required fields is a cache MISS — set `key_valid:false` and
    say so, never fabricate a number.
 
-Return JSON: `{ "cache_present": bool, "key_valid": bool, "current_key": "…", "cached_key": "…",
+Return JSON: `{ "cache_present": bool, "key_valid": bool, "commandment_materialized": bool,
+"current_key": "…", "cached_key": "…",
 "note": "…", "bench": { …PHASE=setup shape… }, "analysis": { …mega_analysis shape… } }`. Fill only
 the field matching `CACHE_KIND`; leave the other `{}`.
 

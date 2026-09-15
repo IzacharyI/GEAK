@@ -106,8 +106,14 @@ validation:
             placement: unified_loop_head
             result: all_rank_null_base_device_fault
         positive_repair:
-          status: pending
+          status: hardware_failed_unresolved
           candidate_evidence_id: owner-mtile-system-store-v1
+          hardware_observation:
+            evidence_id: owner-store-all-rank-nil-fault-r1
+            path_mega_markers: 8
+            observed_sizes: [128, 8192]
+            result: deterministic_all_rank_null_base_device_fault
+            interpretation: removing the completion RMW was insufficient; do not attribute the remaining fault without a new bisection
           required:
             - exact_head_independent_structure
             - on_card_jit
@@ -272,6 +278,10 @@ exact source frame ran successfully, but the same abstract operation in the
 evolved independent candidate produced a repeatable compiler frame fault.
 Revision v6 therefore marks its one-m-tile owner-store rule as an experimental
 transfer deviation rather than claiming it was the measured reference shape.
+The first exact-tree EP8 attempt reached `path=MEGA` on all eight ranks but
+still produced the same all-rank nil-address fault at 128 and 8192 tokens.
+Therefore the owner store is structurally valid but not a proven runtime fix;
+the remaining fault must be localized independently before another source edit.
 
 ## 0. Oracle use and known defects
 

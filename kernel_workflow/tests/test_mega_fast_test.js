@@ -75,6 +75,13 @@ ok(/pairedGuardReadout/.test(src) && !/fastTestCache\w*\([^)]*\)[\s\S]{0,200}pai
 ok(/const bench = MEGA_STRUCTURAL_ONLY \? structuralBench : benchCache \? benchCache\.bench/.test(src) &&
    /const BASELINE_PER_CASE = benchR\.baseline_per_case;/.test(src),
    'a cached BASELINE_PER_CASE only re-enters as advisory context, not as a paired-A/B reading');
+ok(/commandment_materialized/.test(src) &&
+   /String\(res\.bench && res\.bench\.commandment_path \|\| ''\) === COMMANDMENT/.test(src),
+  'a cache hit is rejected unless it materializes the current EVAL_DIR COMMANDMENT');
+ok(/atomically copy the cached `COMMANDMENT\.md`/.test(bench) &&
+   /verify the two byte hashes match/.test(bench) &&
+   /Never return a path to[\s\S]*an older run/.test(bench),
+  'the cache loader copies and verifies the immutable contract for this run');
 
 console.log('\n# 6. every fast-test input the role declares is actually threaded (contract mirror)');
 for (const name of [
