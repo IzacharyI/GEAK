@@ -37,8 +37,11 @@ This is a GPU-free post-authoring gate.
    `sealed_before_reference_comparison:true`,
    `reference_exposed_during_authoring:false` only when
    `REFERENCE_WAS_HIDDEN=1`, and that digest.
-4. Atomically write the supplied `MEGA_PLAN_IR` to
-   `STRUCTURAL_VERIFY_DIR/mega_plan_ir.json`. Then run
+4. Atomically serialize the supplied `MEGA_PLAN_IR` object exactly to
+   `STRUCTURAL_VERIFY_DIR/mega_plan_ir.json`; do not reconstruct, summarize,
+   normalize, or drop nested fields such as `resources.parameters`. Read it
+   back and require deep equality with the supplied object before continuing.
+   Then run
    `EXPERT_SKILL_CONTRACT_TOOL --contract EXPERT_SKILL_CONTRACT` with the frozen
    baseline, candidate, manifest and `--plan-json`; add
    `--reference EXPERT_SKILL_REFERENCE_PATH` only when provided. Write
@@ -57,7 +60,15 @@ actionable `next_blocker`, plus the tool's exact `contract_revision` and
 `candidate_tree_digest`; these are evidence identity, not descriptive notes.
 Copy every failed required check into structured
 `contract_failures:[{id,category,severity,messages}]`; prose may summarize but
-must not replace this list. Return `plan_consistent:true` only when the tool
+must not replace this list. This array MUST be copied exactly from the contract
+tool's `contract_failures` field. Never synthesize failures from informational
+reference-comparison fields such as `required_changed_files_missing`,
+`required_new_symbols`, `missing_new_symbols`, `reference_changed_files`, or
+`exact_reference_files`; those fields are advisory unless the declarative
+contract itself emitted the same ID in `contract_failures`. Likewise, copy
+`structural_compatible`, `independent_structure_pass`, `capability_eligible`
+and `plan_consistent` exactly from `structural_result.json` rather than
+re-evaluating them in prose. Return `plan_consistent:true` only when the tool
 reports exact resource/schedule/ABI consistency. Always return `hardware_verified:false`,
 `accuracy_verified:false`, and `performance_verified:false`; this phase proves
 source structure only.

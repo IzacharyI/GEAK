@@ -79,7 +79,11 @@ cut-point/probe may modify the working tree only to collect diagnostic
 evidence: it is not a candidate, earns no correctness/performance credit, and
 must be completely restored to the exact verified HEAD before another normal
 run. Once you apply a production fix, GPU authorization is revoked for the
-rest of the turn: commit and return for independent structural Verify. Never
+rest of the Author turn: commit, finalize the manifest/result with
+`claim_complete:true` and `candidate_status:"authoring"`, and return for
+independent structural Verify. If that NEW exact HEAD passes, the orchestrator
+may immediately hand it to a separate independent on-card Verify role in the
+same candidate turn; the Author must not perform that retry itself. Never
 compile or measure a changed candidate HEAD using a stale pass.
 
 Every Python command for a Mega candidate must resolve imports from the

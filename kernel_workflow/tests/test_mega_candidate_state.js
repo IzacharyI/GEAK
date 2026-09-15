@@ -107,11 +107,19 @@ ok(/structural_contract_revision: structuralPass/.test(src) &&
    /structural_planner_extension_sha256: structuralPass/.test(src) &&
    /contract_failures: structuralPass/.test(src),
   'new structural evidence stores exact candidate, bundle, Planner and contract identity');
-ok(/contract_failures: c\.working_snapshot\.contract_failures/.test(src),
+ok(/c\.working_snapshot\.contract_failures\.length/.test(src) &&
+   /c\.working_snapshot\.contract_failures : c\.contract_failures/.test(src),
   'structured contract failures reach the planner through the candidate registry');
 ok(/contract_failures: normalizeContractFailures\(eng && eng\.contract_failures\)/.test(src) &&
    /evidence_manifest: String\(eng && eng\.evidence_manifest/.test(src),
   'incomplete Engineer feedback enters the registry instead of being dropped before persistence');
+ok(/runtimeOnlyExactHeadFailure/.test(src) &&
+   /next\.contract_failures\.length === 0/.test(src) &&
+   /contract_failures: \[\]/.test(src),
+  'runtime-only exact-head preservation cannot retain stale structural failures');
+ok(/currentStructuralAuthority/.test(src) &&
+   /contract_failures: currentStructuralAuthority[\s\S]*\? \[\]/.test(src),
+  'Planner input suppresses stale failures when exact-head structural authority is current');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

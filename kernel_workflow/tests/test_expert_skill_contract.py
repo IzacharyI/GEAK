@@ -123,6 +123,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert "unified_loop_starts_with_lds_hazard_barrier" in checks
     assert "token_ready_payload_loads_are_system_scope" in checks
     assert "standalone_combine_reaches_shared_reduce_helper" in checks
+    assert "g1_completion_publish_outside_hot_loop" in checks
     assert "fuse_combine_controls_token_publication" in checks
     assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
     assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
@@ -182,7 +183,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v4",
+        "expert_skill_revision": "mega-ep-fusion-v5",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "target": {"launch_count": 2},
@@ -320,6 +321,53 @@ def test_regex_sequence_rejects_correct_names_in_wrong_order():
     assert result["publish_order"]["pass"]
 
 
+def test_callee_outside_loop_rejects_rmw_helper_in_hot_loop():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "publish_frame",
+        "kind": "callee_outside_loop",
+        "file": "src/a.py",
+        "scope": "kernel",
+        "callee": "_publish",
+        "contains_call": r"atomic_add_system",
+        "alternative_call": r"store_i32_system",
+        "loop_test": "consumer_active",
+    }]
+    unsafe = ast.parse(
+        "def kernel(consumer_active, addr):\n"
+        "    def _publish():\n"
+        "        ops.atomic_add_system(addr, 1)\n"
+        "    while consumer_active:\n"
+        "        work()\n"
+        "        _publish()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": unsafe})
+    assert not result["publish_frame"]["pass"]
+    assert "inside hot loop" in result["publish_frame"]["failures"][0]
+
+    flushed = ast.parse(
+        "def kernel(consumer_active, addr):\n"
+        "    def _publish():\n"
+        "        ops.atomic_add_system(addr, 1)\n"
+        "    while consumer_active:\n"
+        "        work()\n"
+        "    _publish()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": flushed})
+    assert result["publish_frame"]["pass"]
+
+    owned = ast.parse(
+        "def kernel(consumer_active, addr):\n"
+        "    def _publish():\n"
+        "        ops.store_i32_system(addr, 0, 1)\n"
+        "    while consumer_active:\n"
+        "        work()\n"
+        "        _publish()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": owned})
+    assert result["publish_frame"]["pass"]
+
+
 def test_reference_self_is_calibration_only_and_never_hardware_evidence(tmp_path):
     contract = _contract()
     baseline = _root(tmp_path, "baseline", "def old():\n    pass\n")
@@ -362,6 +410,28 @@ def test_independent_shape_can_pass_with_valid_seal_and_plan(tmp_path):
     assert result["independent_structure_pass"]
     assert result["capability_eligible"]
     assert result["provenance_status"] == "attested_unverified"
+
+
+def test_reference_parity_gaps_are_informational_unless_declared(tmp_path):
+    contract = _contract()
+    baseline = _root(tmp_path, "baseline", "def old():\n    pass\n")
+    reference = _root(
+        tmp_path, "reference",
+        "def new():\n    return 1\n\ndef reference_extra():\n    return 2\n",
+    )
+    candidate = _root(
+        tmp_path, "candidate",
+        "def new():\n    value = 1\n    return value\n",
+    )
+    result = MODULE.evaluate(
+        contract, baseline, candidate, reference,
+        _manifest(contract, candidate), _plan(),
+    )
+    assert result["missing_new_symbols"]
+    assert result["required_changed_files_missing"] == []
+    assert result["contract_failures"] == []
+    assert result["independent_structure_pass"]
+    assert result["capability_eligible"]
 
 
 def test_feature_in_static_dead_code_or_comment_is_rejected(tmp_path):

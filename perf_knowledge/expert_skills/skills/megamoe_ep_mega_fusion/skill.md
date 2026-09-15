@@ -3,7 +3,7 @@ id: megamoe_ep_mega_fusion
 title: 'MegaMoE EP8 persistent tile-pipeline playbook'
 kind: expert_skill
 mode: mega
-revision: mega-ep-fusion-v4
+revision: mega-ep-fusion-v5
 playbook_file: playbook.md
 planner_extension_file: planner_extension.yaml
 contract_file: contract.yaml
@@ -51,7 +51,8 @@ incumbent:
     tokens512_uniform: 1.49
     tokens8192_uniform: 4.71
 role: normative_prior
-supersedes: []
+supersedes:
+  - mega-ep-fusion-v4
 ---
 
 # MegaMoE EP8 persistent tile-pipeline playbook
@@ -91,6 +92,9 @@ explicit:
 - GEMM2/P2P and combine can likewise be phase-staggered across CTAs;
 - LDS/VGPR/CU residency, publication/acquire scope, monotone generations and
   graph replay safety are correctness constraints;
+- system/agent atomic RMW publication must stay out of the hot GEMM1/unified
+  work-loop frame; use m-tile ownership with a system store or a bounded
+  out-of-frame flush and require an on-card retry;
 - full fusion is the known validated design, while a measured faster partial fusion
   is also a valid Mega candidate.
 

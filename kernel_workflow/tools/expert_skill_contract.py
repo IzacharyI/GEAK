@@ -493,6 +493,116 @@ def _check_parameter_loads(
     )
 
 
+def _check_callee_outside_loop(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Require a publication helper to be invoked outside a selected hot loop.
+
+    This is deliberately relation-aware: a regex can find a safe helper
+    definition and an unrelated loop without proving where the helper is
+    called. An RMW-backed helper must be invoked outside the selected loop. A
+    declared non-RMW alternative (for example an owner-only system store) may
+    remain in the loop, but the helper must still contain publication and be
+    invoked.
+    """
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, 3, 0,
+            [f"missing function scope: {name}:{scope}"], severity,
+        )
+    callee_pattern = str(rule.get("callee") or "")
+    contains_call_pattern = str(rule.get("contains_call") or "")
+    alternative_call_pattern = str(rule.get("alternative_call") or "")
+    loop_test_pattern = str(rule.get("loop_test") or "")
+    if not callee_pattern or not contains_call_pattern or not loop_test_pattern:
+        return _result(
+            False, 3, 0,
+            ["callee_outside_loop requires callee, contains_call and loop_test"],
+            severity,
+        )
+
+    helpers = [
+        item for item in ast.walk(node)
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and re.fullmatch(callee_pattern, item.name)
+    ]
+    helper_present = bool(helpers)
+    helper_uses_rmw = any(
+        isinstance(item, ast.Call)
+        and re.fullmatch(contains_call_pattern, _call_name(item))
+        for helper in helpers
+        for item in ast.walk(helper)
+    )
+    helper_uses_alternative = bool(alternative_call_pattern) and any(
+        isinstance(item, ast.Call)
+        and re.fullmatch(alternative_call_pattern, _call_name(item))
+        for helper in helpers
+        for item in ast.walk(helper)
+    )
+    helper_publishes = helper_uses_rmw or helper_uses_alternative
+
+    inside_calls: list[int] = []
+    outside_calls: list[int] = []
+
+    class InvocationVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.hot_loop_depth = 0
+
+        def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+            if item is node:
+                self.generic_visit(item)
+            # Nested helper bodies are declarations, not call sites in the
+            # enclosing loop. Their invocations are visited from the caller.
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_While(self, item: ast.While) -> None:
+            is_hot = bool(re.search(loop_test_pattern, ast.unparse(item.test)))
+            if is_hot:
+                self.hot_loop_depth += 1
+            for statement in item.body:
+                self.visit(statement)
+            for statement in item.orelse:
+                self.visit(statement)
+            if is_hot:
+                self.hot_loop_depth -= 1
+
+        def visit_Call(self, item: ast.Call) -> None:
+            if re.fullmatch(callee_pattern, _call_name(item)):
+                target = inside_calls if self.hot_loop_depth else outside_calls
+                target.append(getattr(item, "lineno", 0))
+            self.generic_visit(item)
+
+    InvocationVisitor().visit(node)
+    failures: list[str] = []
+    if not helper_present:
+        failures.append(f"no helper matching {callee_pattern}")
+    if not helper_publishes:
+        failures.append(
+            f"helper {callee_pattern} has no call matching {contains_call_pattern}"
+        )
+    if helper_uses_rmw and inside_calls:
+        failures.append(
+            f"callee {callee_pattern} invoked inside hot loop at lines {inside_calls}"
+        )
+    if helper_uses_rmw and not outside_calls:
+        failures.append(
+            f"callee {callee_pattern} has no invocation outside loop {loop_test_pattern}"
+        )
+    if helper_uses_alternative and not (inside_calls or outside_calls):
+        failures.append(f"callee {callee_pattern} is never invoked")
+    passed_units = int(helper_present) + int(helper_publishes) + int(
+        (helper_uses_rmw and bool(outside_calls) and not inside_calls)
+        or (helper_uses_alternative and bool(inside_calls or outside_calls))
+    )
+    return _result(not failures, 3, passed_units, failures, severity)
+
+
 def evaluate_checks(
     contract: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -505,6 +615,7 @@ def evaluate_checks(
         "forbid_methods": _check_forbid_methods,
         "assignment_value": _check_assignment_value,
         "parameter_loads": _check_parameter_loads,
+        "callee_outside_loop": _check_callee_outside_loop,
     }
     for rule in contract.get("checks") or []:
         check_id = str(rule["id"])

@@ -1,8 +1,8 @@
 schema_version: expert-skill-validation-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v4
+revision: mega-ep-fusion-v5
 status: validated
-last_verified: "2026-09-04"
+last_verified: "2026-09-15"
 gpu: gfx950/MI355X
 model: MegaMoE_v2
 measured:
@@ -10,6 +10,15 @@ measured:
   e2e_pct: 4.48
   parity: pass
 artifact: recorded_measurement_only
+
+compiler_hazard_evidence:
+  date: "2026-09-15"
+  candidate_head: deea163c2a331d78874d4cde25270bde59634bb4
+  symptom: all-rank null-base device fault at 128 and 512 tokens
+  localization: skipcombine and skipg2 still fault; removing the GEMM1-tail completion RMW clears the fault and leaves the expected readiness hang
+  classification: flyc register-allocation frame regression from an atomic RMW in the hot work-loop tail
+  required_repair: m-tile-owned system store or bounded out-of-frame completion flush
+  acceptance: current contract pass plus on-card JIT and direct correctness
 
 harness: kernel_workflow
 efficacy:
@@ -32,5 +41,7 @@ do_no_harm:
       assert: relL2 is below 0.10 for 128, 512, and 8192 tokens
     - name: replay_stress
       assert: arrival-jittered graph replay passes before finalist promotion
+    - name: compiler_frame_publication
+      assert: no system or agent atomic RMW is invoked from the hot GEMM1 or unified work-loop tail; placement changes require an on-card retry
     - name: frozen_denominator
       assert: paired rank-max performance is measured against frozen SCATTERED MegaMoE V2

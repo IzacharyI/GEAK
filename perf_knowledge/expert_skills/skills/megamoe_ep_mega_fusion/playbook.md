@@ -1,6 +1,6 @@
 ---
 playbook_id: megamoe_ep_tile_pipeline
-revision: mega-ep-fusion-v4
+revision: mega-ep-fusion-v5
 baseline_identity: workflow_supplied_frozen_tree
 mode: mega
 normative: true
@@ -477,12 +477,11 @@ system scope.
 ### GEMM1 to GEMM2
 
 GEMM1 activation and scale stores use the gfx95x system-visible write-through
-cache modifier. After one GEMM1 tile:
+cache modifier. Completion publication preserves this ordering:
 
 1. all waves execute `s_waitcnt(0)`;
 2. execute a block barrier;
-3. thread 0 performs `atomic_add_system` on the completion counter for
-   `unit // n_tiles`.
+3. publish the completion counter for `unit // n_tiles` at system scope.
 
 The counter threshold is `n_tiles`: all N-column tiles for that Stage1 m-tile.
 The validated gfx950 source uses system scope even though the logical edge is
@@ -493,11 +492,28 @@ not add a separate per-tile `fence_system_release()`. The consumer waits with
 `int32_wait_until_greater_than(counter, n_tiles - 1)`. There is no whole-grid
 `ready1 == NUM_G1_BLOCKS` barrier.
 
-The publication lives in the same unified `kind/unit` work loop immediately
-after `_do_scheduled_tile(unit)`. It uses the direct `s2_ctr` kernel argument.
-Do not tunnel the counter through an extended dispatch-pointer table or move
-GEMM2 into a second post-loop drain: both change the compiler frame and are not
-the validated source shape.
+The publication operation MUST NOT place a system- or agent-scope atomic RMW
+in the hot GEMM1 accumulation or unified `while consumer_active` work-loop
+tail. On gfx950/flyc this changes the register-allocation frame and has
+repeatedly produced a target-independent null-base device fault even when
+`s2_ctr` is host-valid and in bounds. Source-level pointer checks and the
+GPU-free contract cannot prove this compiler property.
+
+Use one of these compiler-safe shapes while preserving item-level readiness:
+
+- make one CTA own all N stripes of an m-tile, then publish `n_tiles` with an
+  owner-only system-visible store; or
+- accumulate per-CTA completion locally and flush the required system RMW from
+  a bounded publication phase outside the hot unified-loop codegen frame.
+
+The first shape preserves immediate per-m-tile overlap without an RMW. The
+second must not introduce a whole-grid barrier or a separate post-GEMM1 GEMM2
+drain. In both cases the publication uses the direct `s2_ctr` argument, and a
+GEMM2 claim still waits on the exact m-tile dependencies it reads. Do not
+tunnel the counter through an extended dispatch-pointer table.
+
+Any change to this placement requires an on-card JIT/correctness retry; a
+structural pass alone is insufficient evidence.
 
 Do not add and repeatedly benchmark a producer-only readiness activation
 switch while Stage2 still launches separately. The counter has no consumer in

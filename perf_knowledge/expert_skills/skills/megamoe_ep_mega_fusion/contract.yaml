@@ -1,6 +1,6 @@
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v4
+revision: mega-ep-fusion-v5
 description: Declarative source and MegaPlanIR preflight for the validated persistent-fusion target.
 
 source:
@@ -38,6 +38,9 @@ copy_detection:
 
 forbidden_markers:
   - AITER_MEGAMOE_G2_DIAG
+  - AITER_MEGAMOE_DIAGCUT
+  - AITER_MEGA_CCUT
+  - AITER_MEGA_RCUT
   - AITER_MEGAMOE_SKIP_COMBINE
   - AITER_MEGAMOE_DISP_DEBUG
   - AITER_MEGAMOE_FUSE_DRAIN
@@ -52,7 +55,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: mega-ep-fusion-v4
+      value: mega-ep-fusion-v5
     - id: matched_skill_id
       path: expert_skill_id
       op: eq
@@ -449,6 +452,16 @@ checks:
     call: build_fused_gemm1
     keywords:
       out_cache_modifier: '_G1_OUT_WT'
+
+  - id: g1_completion_publish_outside_hot_loop
+    category: compiler
+    kind: callee_outside_loop
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    callee: '_g2_publish_tile_done'
+    contains_call: 'atomic_add_system'
+    alternative_call: 'store_i32_system'
+    loop_test: 'consumer_active'
 
   - id: no_per_tile_system_flush
     category: performance

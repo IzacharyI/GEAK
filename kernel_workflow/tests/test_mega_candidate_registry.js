@@ -117,8 +117,30 @@ console.log('\n# WIP cannot overwrite verified evidence');
   });
   ok(registry[0].structural_verified &&
      registry[0].structural_candidate_head === 'sealed-head' &&
-     registry[0].structural_contract_sha256 === 'contract-digest',
+     registry[0].structural_contract_sha256 === 'contract-digest' &&
+     registry[0].contract_failures.length === 0,
   'an incomplete runtime attempt preserves exact-HEAD structural evidence');
+  const stalePersisted = {
+    ...structural,
+    contract_failures: [{
+      id: 'stale_advisory', category: 'structure', severity: 'required',
+      messages: ['old verifier prose'],
+    }],
+  };
+  ok(api.megaRegistryForSearch([stalePersisted])[0].contract_failures.length === 0,
+    'Planner ignores stale failures when exact-head structural authority is current');
+  registry = api.upsertMegaCandidate([structural], {
+    id: 'structural', source: 'search', status: 'authoring',
+    tree: '/state/structural', head: 'sealed-head', claim_complete: false,
+    contract_failures: [{
+      id: 'real_structural_failure', category: 'compiler', severity: 'required',
+      messages: ['current verifier rejected the exact head'],
+    }],
+  });
+  ok(!registry[0].structural_verified &&
+     registry[0].contract_failures[0].id === 'real_structural_failure',
+  'an exact-head structural failure revokes the old pass instead of creating contradictory state');
+  registry = [structural];
   registry = api.upsertMegaCandidate(registry, {
     id: 'structural', source: 'search', status: 'authoring',
     tree: '/state/structural', head: 'changed-head', claim_complete: false,

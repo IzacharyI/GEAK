@@ -1,6 +1,6 @@
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v4
+revision: mega-ep-fusion-v5
 plan_version: mega-plan-v2
 
 applicability:
@@ -432,6 +432,8 @@ ir_bindings:
       rule: only consumer_active, g2_pend and g2_next are loop-carried
     - id: block_uniform_barriers
       rule: every workgroup barrier is reached uniformly, including continuation paths
+    - id: completion_publication_frame
+      rule: the system-scope GEMM1 completion RMW is invoked from an m-tile-owned or post-loop flush, never from the hot unified GEMM work-loop tail
 
   evidence_requirements:
     activation: fused path marker from all eight ranks
@@ -625,13 +627,14 @@ failure_routes:
       check_ids:
         - chunk_all_dependencies
         - g1_write_through_publication
+        - g1_completion_publish_outside_hot_loop
         - no_per_tile_system_flush
         - stage2_tile_close_publication
         - combine_transport_and_work_domain
         - blockwise_transport_selector_is_exact
         - fuse_combine_controls_token_publication
         - token_ready_payload_loads_are_system_scope
-    repair_intent: publish item readiness at the required scope after payload visibility and wait every dependency touched by an actual claim
+    repair_intent: publish item readiness at the required scope after payload visibility, keep the completion RMW outside the hot GEMM loop frame, and wait every dependency touched by an actual claim
     checkpoint: unified_compute_drain
     focus_files:
       - aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
@@ -698,6 +701,10 @@ runtime_feedback:
     plan_path: schedule.parameters
     failure_category: schedule
     response: inspect claim chunk boundaries, readiness coverage and producer cohort before tuning preemption
+  - metric: gemm1_publish_atomic_frame_fault
+    plan_path: schedule.primary_loop
+    failure_category: compiler
+    response: hoist the system-scope completion RMW into an m-tile-owned or post-loop flush and require an on-card retry; do not apply pointer clamps
   - metric: peer_token_wait_cycles
     plan_path: schedule.parameters
     failure_category: schedule
@@ -713,6 +720,7 @@ anti_patterns:
   - module-level replacement for the validated nested dynamic emitter
   - agent-scope publication consumed by a cross-domain relaxed wait
   - readiness inferred from only the numerically greatest dependency in a sharded producer graph
+  - system or agent atomic RMW invoked from the hot GEMM1 accumulation or unified work-loop tail
   - per-stripe remote token publication
   - host reset of monotone cross-rank readiness
   - fixed large-shape tuning forced through every token bucket

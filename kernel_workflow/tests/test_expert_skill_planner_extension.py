@@ -38,6 +38,14 @@ def test_repository_planner_extension_passes_generic_envelope():
         route["id"] == "repair_direct_abi"
         for route in extension["failure_routes"]
     )
+    dependency_route = next(
+        route for route in extension["failure_routes"]
+        if route["id"] == "repair_dependency_publication"
+    )
+    assert (
+        "g1_completion_publish_outside_hot_loop"
+        in dependency_route["match"]["check_ids"]
+    )
 
 
 def _write_fixture(tmp_path, extension):

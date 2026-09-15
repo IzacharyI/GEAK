@@ -3445,10 +3445,10 @@ function upsertMegaCandidate(registry, incoming) {
     !!prev.structural_candidate_head &&
     next.head === prev.structural_candidate_head &&
     next.head === prev.head;
-  // Runtime failure is evidence about an already-sealed source checkpoint, not a source mutation.
-  // Keep that exact-HEAD structural authority across incomplete/failed runtime attempts. A changed
-  // HEAD cannot satisfy this predicate and must pay independent structural Verify again.
-  if (sameStructuralHead && !next.structural_verified) {
+  // Preserve exact-HEAD structural proof only for a runtime-only failure.
+  const runtimeOnlyExactHeadFailure = sameStructuralHead &&
+    !next.structural_verified && next.contract_failures.length === 0;
+  if (runtimeOnlyExactHeadFailure) {
     next = normalizeMegaCandidate({
       ...next,
       checkpoint_complete: prev.checkpoint_complete,
@@ -3461,13 +3461,9 @@ function upsertMegaCandidate(registry, incoming) {
       structural_planner_extension_sha256: prev.structural_planner_extension_sha256,
       structural_contract_revision: prev.structural_contract_revision,
       structural_contract_sha256: prev.structural_contract_sha256,
-      contract_failures: next.contract_failures.length
-        ? next.contract_failures : prev.contract_failures,
+      contract_failures: [],
     });
   }
-  // Never combine a new unverified HEAD/status with an older verified score. Preserve the complete
-  // snapshot and record only where lane-local WIP has advanced; Director checks out `head`, not
-  // `working_head`, for final measurement.
   if (prev.claim_complete && !next.claim_complete) {
     list[i] = normalizeMegaCandidate({
       ...prev,
@@ -3502,6 +3498,8 @@ function upsertMegaCandidate(registry, incoming) {
 
 function megaRegistryForSearch(registry) {
   return (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate).map((c) => {
+    const currentStructuralAuthority = c.structural_verified &&
+      !!c.structural_candidate_head && c.structural_candidate_head === c.head;
     return {
       id: c.id,
       source: c.source,
@@ -3523,8 +3521,10 @@ function megaRegistryForSearch(registry) {
       structural_planner_extension_sha256: c.structural_planner_extension_sha256,
       structural_contract_revision: c.structural_contract_revision,
       structural_contract_sha256: c.structural_contract_sha256,
-      contract_failures: c.working_snapshot.contract_failures.length
-        ? c.working_snapshot.contract_failures : c.contract_failures,
+      contract_failures: currentStructuralAuthority
+        ? []
+        : (c.working_snapshot.contract_failures.length
+          ? c.working_snapshot.contract_failures : c.contract_failures),
       absolute_score: c.absolute_score,
       target_guard: c.target_guard,
       per_case: c.per_case,
@@ -6396,8 +6396,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       (existing && existing.topology) || {},
     activation: candidateActivation,
     provenance: (eng && eng.provenance) || (existing && existing.provenance) || source,
-    // Engineer completion only enables independent Verify. It never inherits or creates verified
-    // score/correctness evidence for this HEAD.
     claim_complete: false,
     checkpoint_complete: !!(eng && eng.claim_complete === true),
     structural_verified: false,
@@ -6526,11 +6524,18 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   }
   const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
     (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
+  const postAuthoringVerify = !!(
+    eng && String(eng.candidate_status || '') === 'authoring' &&
+    eng.build !== false && expectedHead &&
+    (!existing || expectedHead !== String(existing.head || '')) &&
+    candidateClaimsSkillTarget && meta.structural_verified
+  );
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
     (!contractBlocksRuntime || meta.structural_verified) &&
     !MEGA_STRUCTURAL_ONLY &&
     (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
-    ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || ''));
+    (postAuthoringVerify ||
+      ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
   if (shouldVerify) {
     ver = await agentT(
       roleAgent('verify_engineer', 'verify',
