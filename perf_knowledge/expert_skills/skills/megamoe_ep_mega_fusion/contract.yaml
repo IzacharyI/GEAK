@@ -467,7 +467,7 @@ checks:
       - 'hdim_per_warp'
       - 'tok_id\s*=\s*s3_work_idx\s*//\s*warps_per_tok'
       - 'part_id\s*=\s*s3_work_idx\s*%\s*warps_per_tok'
-      - 'return consts,\s*_emit_item'
+      - 'return\s*\(\s*consts,\s*_emit_item\s*\)'
 
   - id: adaptive_combine_values_are_consumed
     category: correctness
@@ -497,7 +497,7 @@ checks:
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
     patterns:
-      - '_c_consts,\s*_c_emit\s*=\s*make_combine_reduce_emitter'
+      - '\(\s*_c_consts,\s*_c_emit\s*\)\s*=\s*make_combine_reduce_emitter'
       - '_c_total\s*=\s*_c_consts\[[''"]s3_total_work[''"]\]'
       - '_c_emit\('
 

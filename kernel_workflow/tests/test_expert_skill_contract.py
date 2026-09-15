@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,34 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     )
     assert any("_g2_run_unit" in pattern for pattern in dependency["patterns"])
     assert all(item["id"] != "chunk_last_dependency" for item in contract["checks"])
+
+
+def test_repository_tuple_patterns_match_ast_normalized_python():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "contract.yaml"
+    )
+    checks = {
+        item["id"]: item
+        for item in MODULE.load_contract(path)["checks"]
+    }
+    emitter_text = MODULE._active_code(ast.parse(
+        "def make_combine_reduce_emitter():\n"
+        "    return consts, _emit_item\n"
+    ))
+    return_pattern = checks["adaptive_combine_partition"]["patterns"][-1]
+    assert re.search(return_pattern, emitter_text)
+
+    queue_text = MODULE._active_code(ast.parse(
+        "def kernel():\n"
+        "    _c_consts, _c_emit = make_combine_reduce_emitter()\n"
+    ))
+    assign_pattern = checks["combine_queue_consumes_output_work_domain"]["patterns"][0]
+    assert re.search(assign_pattern, queue_text)
 
 
 def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
