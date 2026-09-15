@@ -1,6 +1,6 @@
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v3
+revision: mega-ep-fusion-v4
 plan_version: mega-plan-v2
 
 applicability:
@@ -597,6 +597,7 @@ failure_routes:
         - stage2_metadata_lds_is_slab_relative
         - stage2_emitter_metadata_lds_is_slab_relative
         - stage1_peer_lds_is_slab_relative
+        - unified_loop_starts_with_lds_hazard_barrier
         - fused_stage1_jit_identity_covers_runtime_shape
     repair_intent: restore the shared nested emitter, explicit wave partition and relocatable local-memory addressing before adding schedule logic
     checkpoint: shared_emitters
@@ -612,6 +613,7 @@ failure_routes:
         - unified_gemm_queue
         - expert_skew_preemption
         - sharded_g2_heads
+        - g2_peek_bounds_dominate_completion_read
     repair_intent: use one outer kind-unit loop with carried continuation, sharded claims and a producer-preserving preemption cohort
     checkpoint: unified_compute_drain
     focus_files:
@@ -628,6 +630,7 @@ failure_routes:
         - combine_transport_and_work_domain
         - blockwise_transport_selector_is_exact
         - fuse_combine_controls_token_publication
+        - token_ready_payload_loads_are_system_scope
     repair_intent: publish item readiness at the required scope after payload visibility and wait every dependency touched by an actual claim
     checkpoint: unified_compute_drain
     focus_files:
@@ -665,6 +668,7 @@ failure_routes:
         - blockwise_scale_never_uses_readiness_pointer
         - combine_item_has_no_workgroup_barrier
         - standalone_and_fused_share_combine_item
+        - standalone_combine_reaches_shared_reduce_helper
         - combine_queue_consumes_output_work_domain
         - combine_queue_rejects_routed_row_bound
         - combine_third_queue

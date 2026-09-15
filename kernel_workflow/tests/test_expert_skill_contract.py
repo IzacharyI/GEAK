@@ -119,6 +119,10 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert "combine_item_has_no_workgroup_barrier" in checks
     assert "combine_generation_published_before_startup_gate" in checks
     assert "g2_completion_and_heads_reset_before_plan" in checks
+    assert "g2_peek_bounds_dominate_completion_read" in checks
+    assert "unified_loop_starts_with_lds_hazard_barrier" in checks
+    assert "token_ready_payload_loads_are_system_scope" in checks
+    assert "standalone_combine_reaches_shared_reduce_helper" in checks
     assert "fuse_combine_controls_token_publication" in checks
     assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
     assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
@@ -178,7 +182,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v3",
+        "expert_skill_revision": "mega-ep-fusion-v4",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "target": {"launch_count": 2},

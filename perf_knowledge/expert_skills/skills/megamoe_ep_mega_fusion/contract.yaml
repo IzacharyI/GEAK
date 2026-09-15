@@ -1,6 +1,6 @@
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v3
+revision: mega-ep-fusion-v4
 description: Declarative source and MegaPlanIR preflight for the validated persistent-fusion target.
 
 source:
@@ -52,7 +52,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: mega-ep-fusion-v3
+      value: mega-ep-fusion-v4
     - id: matched_skill_id
       path: expert_skill_id
       op: eq
@@ -380,6 +380,24 @@ checks:
     patterns:
       - '_buffer_load\(\s*g2_s2ctr_rsrc,\s*fx\.Int32\(1\)\s*\+\s*peek_tile'
 
+  - id: g2_peek_bounds_dominate_completion_read
+    category: correctness
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '(?:peek_head|peek)\s*='
+      - 'if\s+(?:\(?\s*peek_head|_g2_cid\(\s*peek\s*\))\s*<\s*(?:g2_total_units|total_g2_claims)'
+      - '(?:peek_done|done)\s*='
+
+  - id: unified_loop_starts_with_lds_hazard_barrier
+    category: lifecycle
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - 'while consumer_active:\s*fx\.barrier\(\)'
+
   - id: device_fuse_combine_guard
     category: correctness
     kind: regex
@@ -551,6 +569,15 @@ checks:
       - 'sc_i32\s*<<\s*fx\.Int32\(23\)'
       - '_to_accum\(\s*vals\[u\]\[k_slot\]\s*\)\s*\*\s*scales\[u\]\[k_slot\]'
 
+  - id: token_ready_payload_loads_are_system_scope
+    category: lifecycle
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - 'IN_CACHE\s*=\s*_SLC_CACHE\s*\|\s*1\s*\|\s*16\s*if\s*tok_ready_addr\s+is\s+not\s+None\s+else\s+_SLC_CACHE'
+      - 'cache_modifier=IN_CACHE'
+
   - id: blockwise_fp8_row_layout_matches_producer
     category: correctness
     kind: regex
@@ -587,6 +614,14 @@ checks:
     scope: emit_combine_barrier_and_reduce
     patterns:
       - 'make_combine_reduce_emitter\('
+
+  - id: standalone_combine_reaches_shared_reduce_helper
+    category: correctness
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_kernel.ep_combine_intranode
+    patterns:
+      - 'emit_combine_barrier_and_reduce\('
 
   - id: combine_queue_consumes_output_work_domain
     category: correctness
