@@ -297,14 +297,14 @@ const EXPERT_SKILL_BUNDLE_TOOL = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`
   : String(A.expert_skill_bundle_tool || `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`);
 const EXPERT_SKILL_PLAYBOOK_FILE = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/playbook.md` : String(A.expert_skill_playbook || '');
+  ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_playbook || '');
 const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
-  PINNED_MEGA_SKILL ? `${EXPERT_SKILL_DIR}/planner_extension.yaml`
+  PINNED_MEGA_SKILL ? `${EXPERT_SKILL_DIR}/skill.md`
     : String(A.expert_skill_planner_extension || '');
 const EXPERT_SKILL_CONTRACT_FILE = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/contract.yaml` : String(A.expert_skill_contract || '');
+  ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_contract || '');
 const EXPERT_SKILL_VALIDATION_FILE = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/validation.yaml` : String(A.expert_skill_validation || '');
+  ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_validation || '');
 const EXPERT_SKILL_VALIDATION_STATUS = String(
   A.expert_skill_validation_status || ''
 );
@@ -362,7 +362,7 @@ if (USE_EXPERT_SKILLS && PINNED_MEGA_SKILL) {
   }
 }
 const GRAPH_CONTRACT_TOOL = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/graph_validation.py` : String(A.graph_contract_tool || '');
+  ? `${WORKFLOW_DIR}/tools/expert_skill_runtime.py` : String(A.graph_contract_tool || '');
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
 const BENCH_HARNESS = String(A.benchmark_harness || '');
 const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
@@ -1990,13 +1990,9 @@ function expertSkillsBlock(role) {
       EXPERT_SKILL_VALIDATION_STATUS === 'experimental'
         ? 'EXPERIMENTAL TRANSFER, EXPLICIT PIN' : 'VALIDATED PRIOR'
     }\n` +
-      `Read ${EXPERT_SKILL_DIR}/skill.md` +
-      (EXPERT_SKILL_PLAYBOOK_FILE ? ` and its detailed playbook ${EXPERT_SKILL_PLAYBOOK_FILE}` : '') +
-      (EXPERT_SKILL_PLANNER_EXTENSION_FILE
-        ? ` and its machine-readable Planner Extension ${EXPERT_SKILL_PLANNER_EXTENSION_FILE}` : '') +
-      (EXPERT_SKILL_CONTRACT_FILE
-        ? ` and its machine-readable contract ${EXPERT_SKILL_CONTRACT_FILE}` : '') +
-      `. validation_status=${EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, ` +
+      `Read ${EXPERT_SKILL_DIR}/skill.md once; it contains the detailed playbook, ` +
+      `machine-readable Planner Extension, structural contract, validation evidence, and runtime ` +
+      `validator. validation_status=${EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, ` +
       `usage=${EXPERT_SKILL_USAGE || 'legacy'}. Use them while still performing the ordinary ` +
       `tile-task-graph analysis, candidate planning, source authoring, and measurement loop. They do not ` +
       `create a reproduction lane or special candidate source, and they do not override current ` +
@@ -6319,6 +6315,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
             EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
             EXPERT_SKILL_BUNDLE_SHA256,
@@ -6616,6 +6613,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
@@ -8194,6 +8192,7 @@ if (MODE === 'mega') {
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,

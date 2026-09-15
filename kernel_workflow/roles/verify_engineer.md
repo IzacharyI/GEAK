@@ -117,8 +117,8 @@ invented reference-parity failures.
 - `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
   provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
   content digests and reveal neither source location nor reference-only filenames.
-- `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_PLAYBOOK`,
-  `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
+- `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`,
+  `EXPERT_SKILL_PLAYBOOK`, `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
   `EXPERT_SKILL_ACCURACY_CASES`, and `EXPERT_SKILL_SOURCE_FILES` describe
   optional matched knowledge. They never create a different candidate source
   or relax the common verification lifecycle.
@@ -200,6 +200,7 @@ denominator.
    drain-vs-floor, a triangle-bound estimate, or accuracy inherited from another HEAD is not
    evidence. Run `GRAPH_CONTRACT_TOOL` from the candidate environment in one EP8 lease:
    `torchrun --standalone --nproc_per_node=8 GRAPH_CONTRACT_TOOL --candidate-tree "$WS"
+   --skill-file EXPERT_SKILL_FILE
    --accuracy-cases <EXPERT_SKILL_ACCURACY_CASES> --liveness-cases <EXPERT_SKILL_ACCURACY_CASES>
    --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
    --rtol <ACCURACY_THRESHOLD> --json-output "$VERIFY_DIR/graph_contract.json"`.

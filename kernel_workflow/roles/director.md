@@ -239,7 +239,7 @@ Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU
 `REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, `DIRECT_GRAPH_ACCURACY`,
 `BIMODAL_GUARDS`, `BASELINE_ACTIVATION`,
 `CANDIDATE_IMPORT_MODULES`,
-optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_PLAYBOOK`,
+optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`, `EXPERT_SKILL_PLAYBOOK`,
 `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
 `EXPERT_SKILL_ACCURACY_CASES`, `EXPERT_SKILL_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
 `GRAPH_CONTRACT_TOOL` and `GRAPH_CONTRACT_REPLAYS` provide the executable direct-graph and
@@ -286,6 +286,7 @@ batch may contain all finalists for one exhaustive comparison.
      candidate output directly with the task's numeric reference. Drain-vs-floor or any other
      transitive equivalence is not correctness evidence. Run `GRAPH_CONTRACT_TOOL` in the detached
      candidate environment with `--accuracy-cases <EXPERT_SKILL_ACCURACY_CASES>`,
+     `--skill-file EXPERT_SKILL_FILE`,
      `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, caller-supplied routes, and
      `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON.
 3. A source label (`search` or `integrated`) never relaxes a

@@ -30,10 +30,10 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILLS_DIR = '/skills';
   const EXPERT_SKILL_ID = 'megamoe_ep_mega_fusion';
   const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
-  const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/playbook.md';
+  const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
   const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
-    '/skills/skills/megamoe_ep_mega_fusion/planner_extension.yaml';
-  const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/contract.yaml';
+    '/skills/skills/megamoe_ep_mega_fusion/skill.md';
+  const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
   const EXPERT_SKILL_REVISION = 'v1';
   const EXPERT_SKILL_BUNDLE_TOOL = '/skills/_contribute/validate_skill.py';
   const EXPERT_SKILL_BUNDLE_SHA256 = 'b'.repeat(64);
@@ -52,10 +52,9 @@ const makeBlock = (enabled) => new Function(`
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
 ok(enabled('mega_search_lead').includes('skill.md') &&
-   enabled('mega_search_lead').includes('playbook.md') &&
-   enabled('mega_search_lead').includes('planner_extension.yaml') &&
-   enabled('mega_search_lead').includes('contract.yaml'),
-  'the common Mega planner receives the matched skill/playbook/extension/contract when enabled');
+   enabled('mega_search_lead').includes('machine-readable Planner Extension') &&
+   enabled('mega_search_lead').includes('structural contract'),
+  'the common Mega planner receives the single embedded Skill when enabled');
 ok(enabled('engineer').includes('EXPERIMENTAL TRANSFER, EXPLICIT PIN'),
   'the common Engineer receives the explicitly pinned transfer knowledge');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),

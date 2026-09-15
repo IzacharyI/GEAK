@@ -102,7 +102,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "contract.yaml"
+        / "skill.md"
     )
     contract = MODULE.load_contract(path)
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
@@ -150,7 +150,7 @@ def test_repository_tuple_patterns_match_ast_normalized_python():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "contract.yaml"
+        / "skill.md"
     )
     checks = {
         item["id"]: item
@@ -178,7 +178,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "contract.yaml"
+        / "skill.md"
     )
     contract = MODULE.load_contract(path)
     plan = {
@@ -281,7 +281,7 @@ def test_repository_plan_contract_rejects_flat_first_stage_claims():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "contract.yaml"
+        / "skill.md"
     )
     contract = MODULE.load_contract(path)
     plan = {

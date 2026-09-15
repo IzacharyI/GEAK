@@ -9,18 +9,9 @@ const skill = fs.readFileSync(path.join(
   ROOT, 'perf_knowledge', 'expert_skills', 'skills',
   'megamoe_ep_mega_fusion', 'skill.md',
 ), 'utf8');
-const playbook = fs.readFileSync(path.join(
-  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'playbook.md',
-), 'utf8');
-const contract = fs.readFileSync(path.join(
-  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'contract.yaml',
-), 'utf8');
-const validation = fs.readFileSync(path.join(
-  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'validation.yaml',
-), 'utf8');
+const playbook = skill;
+const contract = skill;
+const validation = skill;
 const engineer = fs.readFileSync(path.join(
   ROOT, 'kernel_workflow', 'roles', 'engineer.md',
 ), 'utf8');
@@ -41,10 +32,11 @@ console.log('\n# the experimental transfer is explicit and fail-closed');
 ok(/role: experimental_authoring_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
   'skill declares explicitly pinned constraints inside the common Mega lifecycle');
-ok(/playbook_file: playbook\.md/.test(skill) &&
-   /contract_file: contract\.yaml/.test(skill) &&
-   /validation_file: validation\.yaml/.test(skill),
-  'skill points to separate human, machine and evidence artifacts');
+ok(/embedded_components: \[planner_extension, contract, runtime_validation\]/.test(skill) &&
+   /```expert-skill-planner-extension/.test(skill) &&
+   /```expert-skill-contract/.test(skill) &&
+   /```expert-skill-runtime-python/.test(skill),
+  'one skill file embeds human, machine, evidence, and runtime components');
 ok(/normative: true/.test(playbook) &&
    /normative_scope: explicitly_pinned_authoring/.test(playbook) &&
    /does not create a reproduction mode,[\s\S]{0,80}reserved lane/.test(playbook),

@@ -9,7 +9,7 @@ const engineer = fs.readFileSync(path.join(wfDir, 'roles', 'engineer.md'), 'utf8
 const verify = fs.readFileSync(path.join(wfDir, 'roles', 'verify_engineer.md'), 'utf8');
 const playbook = fs.readFileSync(path.join(
   wfDir, '..', 'perf_knowledge', 'expert_skills', 'skills',
-  'megamoe_ep_mega_fusion', 'playbook.md'), 'utf8');
+  'megamoe_ep_mega_fusion', 'skill.md'), 'utf8');
 
 let failures = 0;
 const ok = (value, message) => {

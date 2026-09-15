@@ -3,19 +3,20 @@
 # NOT a ranking. Filter by operator/gen/arch/backend, status==validated, auto_apply==true.
 # Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).
 
-schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, validation_file, validation_schema, runtime_validation_file, match, expects, validation_status, reference_evidence_status, constraint_validation_status, auto_apply, explicit_pin_modes}
+schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, validation_file, validation_schema, runtime_validation_file, embedded_components, match, expects, validation_status, reference_evidence_status, constraint_validation_status, auto_apply, explicit_pin_modes}
 
 skills:
 - id: flydsl_fp8_gemm_playbook
   file: skills/flydsl_fp8_gemm_playbook/skill.md
   scope: e2e
   revision: ''
-  playbook_file: ''
+  playbook_file: skills/flydsl_fp8_gemm_playbook/skill.md
   planner_extension_file: ''
   contract_file: ''
-  validation_file: ''
+  validation_file: skills/flydsl_fp8_gemm_playbook/skill.md
   validation_schema: ''
   runtime_validation_file: ''
+  embedded_components: []
   match:
     operator: dense_gemm
     arch_class:
@@ -43,12 +44,13 @@ skills:
   file: skills/flydsl_rewrite_quantized_moe/skill.md
   scope: kernel
   revision: ''
-  playbook_file: ''
+  playbook_file: skills/flydsl_rewrite_quantized_moe/skill.md
   planner_extension_file: ''
   contract_file: ''
-  validation_file: ''
+  validation_file: skills/flydsl_rewrite_quantized_moe/skill.md
   validation_schema: ''
   runtime_validation_file: ''
+  embedded_components: []
   match:
     operator: fused_moe_grouped_gemm
     arch_class:
@@ -79,12 +81,16 @@ skills:
   file: skills/megamoe_ep_mega_fusion/skill.md
   scope: kernel
   revision: mega-ep-fusion-v6
-  playbook_file: skills/megamoe_ep_mega_fusion/playbook.md
-  planner_extension_file: skills/megamoe_ep_mega_fusion/planner_extension.yaml
-  contract_file: skills/megamoe_ep_mega_fusion/contract.yaml
-  validation_file: skills/megamoe_ep_mega_fusion/validation.yaml
+  playbook_file: skills/megamoe_ep_mega_fusion/skill.md
+  planner_extension_file: skills/megamoe_ep_mega_fusion/skill.md
+  contract_file: skills/megamoe_ep_mega_fusion/skill.md
+  validation_file: skills/megamoe_ep_mega_fusion/skill.md
   validation_schema: expert-skill-validation-v2
-  runtime_validation_file: skills/megamoe_ep_mega_fusion/graph_validation.py
+  runtime_validation_file: skills/megamoe_ep_mega_fusion/skill.md
+  embedded_components:
+  - planner_extension
+  - contract
+  - runtime_validation
   match:
     operator: moe_dispatch_combine
     arch_class:
@@ -123,12 +129,13 @@ skills:
   file: skills/mla_tilelang_to_triton/skill.md
   scope: kernel
   revision: ''
-  playbook_file: ''
+  playbook_file: skills/mla_tilelang_to_triton/skill.md
   planner_extension_file: ''
   contract_file: ''
-  validation_file: ''
+  validation_file: skills/mla_tilelang_to_triton/skill.md
   validation_schema: ''
   runtime_validation_file: ''
+  embedded_components: []
   match:
     operator: mla_attention
     arch_class:

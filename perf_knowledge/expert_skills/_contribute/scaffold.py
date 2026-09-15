@@ -106,23 +106,41 @@ def reindex():
             "scope": fm.get("scope", "kernel"),
             "revision": fm.get("revision", ""),
             "playbook_file": (
-                f"skills/{sub}/{fm['playbook_file']}" if fm.get("playbook_file") else ""
+                f"skills/{sub}/{fm['playbook_file']}" if fm.get("playbook_file")
+                else f"skills/{sub}/skill.md"
             ),
             "planner_extension_file": (
                 f"skills/{sub}/{fm['planner_extension_file']}"
-                if fm.get("planner_extension_file") else ""
+                if fm.get("planner_extension_file")
+                else (
+                    f"skills/{sub}/skill.md"
+                    if "planner_extension" in (fm.get("embedded_components") or [])
+                    else ""
+                )
             ),
             "contract_file": (
-                f"skills/{sub}/{fm['contract_file']}" if fm.get("contract_file") else ""
+                f"skills/{sub}/{fm['contract_file']}" if fm.get("contract_file")
+                else (
+                    f"skills/{sub}/skill.md"
+                    if "contract" in (fm.get("embedded_components") or [])
+                    else ""
+                )
             ),
             "validation_file": (
-                f"skills/{sub}/{fm['validation_file']}" if fm.get("validation_file") else ""
+                f"skills/{sub}/{fm['validation_file']}" if fm.get("validation_file")
+                else (f"skills/{sub}/skill.md" if fm.get("validation") else "")
             ),
             "validation_schema": fm.get("validation_schema", ""),
             "runtime_validation_file": (
                 f"skills/{sub}/{fm['runtime_validation_file']}"
-                if fm.get("runtime_validation_file") else ""
+                if fm.get("runtime_validation_file")
+                else (
+                    f"skills/{sub}/skill.md"
+                    if "runtime_validation" in (fm.get("embedded_components") or [])
+                    else ""
+                )
             ),
+            "embedded_components": fm.get("embedded_components", []),
             "match": fm.get("match", {}),
             "expects": fm.get("expects", {}),
             **validation_metadata(skill_md, fm),
@@ -134,7 +152,8 @@ def reindex():
         "# NOT a ranking. Filter by operator/gen/arch/backend, status==validated, auto_apply==true.\n"
         "# Only 'validated' skills are auto-applied by the workflows (advisory priors, never override A/B).\n\n"
         "schema: {id, file, scope, revision, playbook_file, planner_extension_file, contract_file, "
-        "validation_file, validation_schema, runtime_validation_file, match, expects, validation_status, "
+        "validation_file, validation_schema, runtime_validation_file, embedded_components, "
+        "match, expects, validation_status, "
         "reference_evidence_status, constraint_validation_status, auto_apply, "
         "explicit_pin_modes}\n\n"
     )

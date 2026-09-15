@@ -31,6 +31,11 @@ CAP_INDEX = os.path.normpath(os.path.join(ROOT, "..", "index", "capability_index
 GEAK = os.path.normpath(os.path.join(ROOT, "..", ".."))
 REQUIRED_SECTIONS = ["When to use", "Mechanism", "Procedure", "Do-no-harm notes", "Sources"]
 FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
+EMBEDDED_TAGS = {
+    "planner_extension": "expert-skill-planner-extension",
+    "contract": "expert-skill-contract",
+    "runtime_validation": "expert-skill-runtime-python",
+}
 V2_REQUIRED_CANDIDATE_GATES = {
     "independent_structure", "device_jit", "path_activation_all_ranks",
     "launch_shape", "direct_accuracy", "graph_liveness", "residency",
@@ -67,6 +72,46 @@ def load_validation(skill_path, fm):
         return path, {}
     data = yaml.safe_load(open(path)) or {}
     return path, data if isinstance(data, dict) else {}
+
+
+def embedded_component_names(fm):
+    values = fm.get("embedded_components") or []
+    return {str(value) for value in values} if isinstance(values, list) else set()
+
+
+def load_embedded_component(skill_path, fm, label):
+    if label not in embedded_component_names(fm):
+        return None
+    tag = EMBEDDED_TAGS.get(label)
+    if not tag:
+        raise ValueError(f"unsupported embedded component: {label}")
+    text = open(skill_path).read()
+    matches = re.findall(
+        rf"```{re.escape(tag)}[^\n]*\n(.*?)\n```",
+        text,
+        flags=re.S,
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            f"skill.md must contain exactly one fenced {tag} block"
+        )
+    if label == "runtime_validation":
+        return matches[0]
+    data = yaml.safe_load(matches[0])
+    if not isinstance(data, dict):
+        raise ValueError(f"embedded {label} must contain a YAML object")
+    return data
+
+
+def load_component(skill_path, fm, file_key, label):
+    path = _skill_file(skill_path, fm, file_key)
+    if path:
+        if not os.path.isfile(path):
+            raise ValueError(f"{file_key} does not exist: {fm.get(file_key)!r}")
+        if label == "runtime_validation":
+            return open(path).read(), path
+        return yaml.safe_load(open(path)) or {}, path
+    return load_embedded_component(skill_path, fm, label), skill_path
 
 
 def validation_metadata(validation):
@@ -306,6 +351,14 @@ def _canonical_component_sha256(path):
     return hashlib.sha256(payload).hexdigest()
 
 
+def _canonical_value_sha256(value):
+    if isinstance(value, (dict, list)):
+        payload = yaml.safe_dump(value, sort_keys=True).encode()
+    else:
+        payload = str(value).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def skill_bundle_identity(skill_path, fm):
     """Return a path-independent identity for every Skill knowledge component."""
     components = {"skill": _canonical_component_sha256(skill_path)}
@@ -322,6 +375,12 @@ def skill_bundle_identity(skill_path, fm):
             path = None
         if path:
             components[label] = _canonical_component_sha256(path)
+        elif label in embedded_component_names(fm):
+            components[label] = _canonical_value_sha256(
+                load_embedded_component(skill_path, fm, label)
+            )
+    if "validation" not in components and isinstance(fm.get("validation"), dict):
+        components["validation"] = _canonical_value_sha256(fm["validation"])
     manifest = {
         "schema_version": "expert-skill-bundle-v1",
         "skill_id": str(fm.get("id") or ""),
@@ -344,18 +403,24 @@ def skill_bundle_identity(skill_path, fm):
 def planner_extension_errors(skill_path, fm):
     """Validate the generic envelope without interpreting operator-specific values."""
     relative = str(fm.get("planner_extension_file") or "").strip()
-    if not relative:
+    embedded = "planner_extension" in embedded_component_names(fm)
+    if not relative and not embedded:
         return []
     try:
-        path = _skill_file(skill_path, fm, "planner_extension_file")
+        if embedded:
+            extension = load_embedded_component(
+                skill_path, fm, "planner_extension"
+            )
+            path = skill_path
+        else:
+            path = _skill_file(skill_path, fm, "planner_extension_file")
+            extension = yaml.safe_load(open(path)) if path else {}
     except ValueError as exc:
         return [str(exc)]
-    if not path or not os.path.isfile(path):
-        return [f"planner_extension_file does not exist: {relative!r}"]
-    try:
-        extension = yaml.safe_load(open(path)) or {}
     except (OSError, yaml.YAMLError) as exc:
         return [f"cannot parse planner_extension_file: {exc}"]
+    if not embedded and (not path or not os.path.isfile(path)):
+        return [f"planner_extension_file does not exist: {relative!r}"]
     if not isinstance(extension, dict):
         return ["planner_extension_file must contain a YAML object"]
 
@@ -461,8 +526,10 @@ def planner_extension_errors(skill_path, fm):
         route_ids = []
         known_check_ids = set()
         try:
-            contract_path = _skill_file(skill_path, fm, "contract_file")
-            contract = yaml.safe_load(open(contract_path)) if contract_path else {}
+            contract, _ = load_component(
+                skill_path, fm, "contract_file", "contract"
+            )
+            contract = contract or {}
             known_check_ids.update(
                 str(item.get("id")) for item in (contract.get("checks") or [])
                 if isinstance(item, dict) and item.get("id")
@@ -565,15 +632,30 @@ def static_check(skill_path, fm, body):
             continue
         if not referenced or not os.path.isfile(referenced):
             errs.append(f"{key} does not exist: {fm.get(key)!r}")
+    for label in embedded_component_names(fm):
+        try:
+            component = load_embedded_component(skill_path, fm, label)
+            if label == "runtime_validation":
+                compile(component, f"{skill_path}#{EMBEDDED_TAGS[label]}", "exec")
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            errs.append(str(exc))
+        except SyntaxError as exc:
+            errs.append(f"embedded runtime_validation is invalid Python: {exc}")
     contract_path = None
+    contract_embedded = "contract" in embedded_component_names(fm)
     contract = {}
     try:
-        contract_path = _skill_file(skill_path, fm, "contract_file")
+        if contract_embedded:
+            contract = load_embedded_component(skill_path, fm, "contract")
+            contract_path = skill_path
+        else:
+            contract_path = _skill_file(skill_path, fm, "contract_file")
     except ValueError:
         pass
     if contract_path and os.path.isfile(contract_path):
         try:
-            contract = yaml.safe_load(open(contract_path)) or {}
+            if not contract_embedded:
+                contract = yaml.safe_load(open(contract_path)) or {}
             if contract.get("schema_version") != "expert-skill-contract-v1":
                 errs.append("contract_file must use schema_version expert-skill-contract-v1")
             if contract.get("skill_id") != fm.get("id"):
@@ -606,7 +688,8 @@ def static_check(skill_path, fm, body):
     except ValueError as exc:
         errs.append(str(exc))
         validation_path, validation = None, {}
-    if validation_path:
+    if validation_path or validation:
+        validation_base = os.path.dirname(validation_path or skill_path)
         if fm.get("validation_schema") and str(
             validation.get("schema_version") or ""
         ) != str(fm.get("validation_schema")):
@@ -616,7 +699,7 @@ def static_check(skill_path, fm, body):
         if str(validation.get("revision") or "") != str(fm.get("revision") or ""):
             errs.append("validation_file revision must match skill.md revision")
         errs.extend(
-            validation_errors(fm, validation, os.path.dirname(validation_path))
+            validation_errors(fm, validation, validation_base)
         )
         if validation.get("schema_version") == "expert-skill-validation-v2":
             reference_subject = (
@@ -645,10 +728,19 @@ def static_check(skill_path, fm, body):
                 ("contract_sha256", "contract_file"),
                 ("planner_extension_sha256", "planner_extension_file"),
             ):
-                component_path = _skill_file(skill_path, fm, component_key)
-                if str(constraint_subject.get(evidence_key) or "") != (
-                    _canonical_component_sha256(component_path)
-                ):
+                label = (
+                    "contract" if component_key == "contract_file"
+                    else "planner_extension"
+                )
+                component, component_path = load_component(
+                    skill_path, fm, component_key, label
+                )
+                digest = (
+                    _canonical_value_sha256(component)
+                    if label in embedded_component_names(fm)
+                    else _canonical_component_sha256(component_path)
+                )
+                if str(constraint_subject.get(evidence_key) or "") != digest:
                     errs.append(
                         f"v2 constraint subject {evidence_key} must match current component"
                     )
@@ -709,6 +801,21 @@ def emit_plan(skill_path, skill_id, fm, args):
                 extras.append(
                     f"{arg}={os.path.join(SKILLS_DIR, skill_id, str(fm[key]))}"
                 )
+        embedded = embedded_component_names(fm)
+        if embedded:
+            extras.extend([
+                f"expert_skill_playbook={skill_path}",
+                f"expert_skill_planner_extension={skill_path}",
+                f"expert_skill_contract={skill_path}",
+                f"expert_skill_validation={skill_path}",
+            ])
+        if "runtime_validation" in embedded:
+            extras.append(
+                "graph_contract_tool="
+                + os.path.join(
+                    GEAK, "kernel_workflow", "tools", "expert_skill_runtime.py"
+                )
+            )
         if identity["planner_extension_sha256"]:
             extras.extend([
                 "require_expert_skill_bundle_identity=true",

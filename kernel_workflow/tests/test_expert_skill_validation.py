@@ -32,19 +32,17 @@ SCAFFOLD = _load_module("scaffold_skill", SCAFFOLD_PATH)
 
 
 def _v6_validation():
-    path = (
-        ROOT
-        / "perf_knowledge"
-        / "expert_skills"
-        / "skills"
-        / "megamoe_ep_mega_fusion"
-        / "validation.yaml"
-    )
-    return yaml.safe_load(path.read_text())
+    skill_path, metadata, _, _ = VALIDATE.load("megamoe_ep_mega_fusion")
+    _, validation = VALIDATE.load_validation(skill_path, metadata)
+    return validation
 
 
 def test_repository_v6_is_explicit_experimental_transfer():
     skill_path, skill_metadata, body, _ = VALIDATE.load("megamoe_ep_mega_fusion")
+    assert sorted(
+        path.name for path in Path(skill_path).parent.iterdir()
+        if path.is_file()
+    ) == ["skill.md"]
     validation = _v6_validation()
     metadata = VALIDATE.validation_metadata(validation)
     assert validation["schema_version"] == "expert-skill-validation-v2"

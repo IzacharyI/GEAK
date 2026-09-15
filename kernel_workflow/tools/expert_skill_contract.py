@@ -29,7 +29,19 @@ CONTRACT_SCHEMA_VERSION = "expert-skill-contract-v1"
 
 
 def load_contract(path: Path) -> dict[str, Any]:
-    data = yaml.safe_load(path.read_text())
+    text = path.read_text()
+    if path.suffix.lower() == ".md":
+        matches = re.findall(
+            r"```expert-skill-contract[^\n]*\n(.*?)\n```",
+            text,
+            flags=re.S,
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"skill markdown must contain exactly one embedded contract: {path}"
+            )
+        text = matches[0]
+    data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError(f"contract must be a mapping: {path}")
     if data.get("schema_version") != CONTRACT_SCHEMA_VERSION:
