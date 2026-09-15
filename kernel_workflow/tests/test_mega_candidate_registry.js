@@ -239,6 +239,41 @@ console.log('\n# search may score a complete partial fusion');
     'exact two-launch enforcement remains available for a full-fusion target');
 }
 
+console.log('\n# completed hardware failures remain authoritative');
+{
+  const meta = {
+    id: 'faulted', source: 'search', status: 'authoring',
+    tree: '/state/faulted', head: 'faulted-head', attempt_id: 'faulted:1',
+    next_blocker: 'run independent Verify', notes: 'author-only checkpoint',
+  };
+  const ver = {
+    status: 'correctness_failed', correctness: 'fail', claim_complete: true,
+    attempt_id: 'faulted:1', candidate_head: 'faulted-head',
+    evidence_manifest: '/eval/faulted/verify/evidence_manifest.json',
+    activation_confirmed: 'yes', activation_on_hardware: 'yes',
+    notes: 'path=MEGA x8, then nil-base device fault at bs=128',
+    per_case: [], accuracy_results: [], replay_count: 0,
+  };
+  const faulted = api.megaCandidateFromVerification(meta, ver, {
+    targetGuards: ['8192_uniform'], regressionGuards: [], launchTarget: 2,
+    promotionMetric: 'operator_e2e', accuracyMetric: 'relL2', accuracyThreshold: 0.1,
+    requiredReplays: 30, requiredPairs: 5, allowPartialFusion: true,
+  });
+  const resumed = api.normalizeMegaCandidate(faulted);
+  const planner = api.megaRegistryForSearch([resumed])[0];
+  ok(resumed.verification_status === 'correctness_failed' &&
+     resumed.correctness === 'fail' && resumed.gpu_executed &&
+     resumed.activation_on_hardware === 'yes',
+    'a complete failed Verify records that hardware executed and correctness failed');
+  ok(resumed.next_blocker.includes('correctness_failed') &&
+     resumed.next_blocker.includes('/eval/faulted/verify/evidence_manifest.json') &&
+     resumed.notes.includes('nil-base'),
+    'Verify failure evidence replaces the stale author-only blocker and notes');
+  ok(planner.gpu_executed && planner.verification_status === 'correctness_failed' &&
+     planner.notes.includes('nil-base'),
+    'the next Planner receives the completed hardware failure verbatim');
+}
+
 console.log('\n# calibration remains fail-closed');
 {
   const pc = {

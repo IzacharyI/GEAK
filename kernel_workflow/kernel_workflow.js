@@ -715,6 +715,8 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   structural_verified: { type: 'boolean' },
   runtime_verified: { type: 'boolean' },
   score_complete: { type: 'boolean' },
+  verification_status: { type: 'string' },
+  gpu_executed: { type: 'boolean' },
   structural_report: { type: 'string' },
   structural_skill_id: { type: 'string' },
   structural_candidate_head: { type: 'string' },
@@ -3437,6 +3439,10 @@ function normalizeMegaCandidate(raw) {
     structural_verified: c.structural_verified === true && !structuralConflict,
     runtime_verified: c.runtime_verified === true,
     score_complete: c.score_complete === true,
+    verification_status: String(c.verification_status || ''),
+    correctness: String(c.correctness || ''),
+    gpu_executed: c.gpu_executed === true,
+    activation_on_hardware: String(c.activation_on_hardware || ''),
     structural_report: String(c.structural_report || ''),
     structural_skill_id: String(c.structural_skill_id || ''),
     structural_candidate_head: String(c.structural_candidate_head || ''),
@@ -3583,6 +3589,10 @@ function megaRegistryForSearch(registry) {
       structural_contract_revision: effective.structural_contract_revision || '',
       structural_contract_sha256: effective.structural_contract_sha256 || '',
       contract_failures: effective.contract_failures || [],
+      verification_status: c.verification_status,
+      correctness: c.correctness,
+      gpu_executed: c.gpu_executed,
+      activation_on_hardware: c.activation_on_hardware,
       absolute_score: c.absolute_score,
       target_guard: c.target_guard,
       per_case: c.per_case,
@@ -3971,6 +3981,7 @@ function megaCandidateFromVerification(meta, ver, opts) {
     Number.isFinite(nullArm) &&
     (Number(targetReadout.score) - 1) * 100 > Math.abs(nullArm);
   const verificationStatusPass = String(v.status || '').toLowerCase() === 'verified';
+  const verificationFailed = v.claim_complete === true && !verificationStatusPass;
   const record = normalizeMegaCandidate({
     ...(meta || {}),
     claim_complete: v.claim_complete === true,
@@ -4004,6 +4015,19 @@ function megaCandidateFromVerification(meta, ver, opts) {
       String(v.activation_on_hardware || '').toLowerCase() === 'yes' &&
       launchPass && livenessPass,
     score_complete: verificationStatusPass && measurementPass,
+    verification_status: String(v.status || ''),
+    correctness: String(v.correctness || ''),
+    gpu_executed: String(v.activation_on_hardware || '').toLowerCase() === 'yes',
+    activation_on_hardware: String(v.activation_on_hardware || ''),
+    next_blocker: verificationFailed
+      ? `independent Verify ${v.status || 'failed'} at HEAD ${
+        v.candidate_head || meta && meta.head || '(missing)'}; correctness=${
+        v.correctness || 'unknown'}, activation_on_hardware=${
+        v.activation_on_hardware || 'unknown'}; evidence=${
+        v.evidence_manifest || '(missing)'}`
+      : String(meta && meta.next_blocker || ''),
+    notes: v.claim_complete === true && v.notes ? String(v.notes) :
+      String(meta && meta.notes || ''),
   });
   record.status = megaCandidateHardPass(record) ? 'scored'
     : (record.correctness_pass && record.activation_pass && record.launch_pass ? 'runnable' : 'authoring');
@@ -5967,28 +5991,14 @@ async function persistMegaCandidateState(currentRound, finalizing) {
         SHELF: shelf, ABSORBED_FILES: absorbedByRound,
       }),
     { phase: 'Optimize', label: `mega candidate state r${currentRound}`, schema: MEMORY_SCHEMA,
-      // 300s, not 60s: this update_memory agent must Read the multi-KB tech_lead.md role doc, orient
-      // on PHASE=update_memory, write STATE.json + the full candidate registry, and echo back the
-      // exact state_round/state_sequence/state_generation. A 60s cap cut it off mid-orientation
-      // (4 tool calls: read role doc, grep it, re-read, ls STATE_DIR) before it wrote anything, so
-      // persisted came back null and the lineage guard threw at round 1. This cap is a real-time
-      // hung-guard only; the persist does NOT advance MEGA_CLOCK, so a larger cap costs no candidate
-      // rounds. Matches recoverMegaCalibration's 300s above. Raised 300s->600s: by round 4+ the
-      // registry has grown (multiple lanes, cumulative diffs, insights) and emitting the write helper
-      // + 36KB STATE.json under a 300s cap tipped over BEFORE the write landed — the round-4 killer.
+      // Large late-round registries need a real-time hung guard wider than the modeled turn clock.
       ...(MEGA_PRODUCTION ? { timeout_ms: 600000, max_retries: 1 } : {}) });
   const echoOk = (r) => Boolean(r && r.state_written === true &&
     Number(r.state_round) === Number(currentRound) &&
     Number(r.state_sequence) === sequence &&
     String(r.state_generation || '') === generation);
   if (!echoOk(persisted)) {
-    // A failed primary echo has TWO causes: (a) the write LANDED and only the structured echo was cut
-    // off at the agent layer (false-negative), or (b) the agent hit its cap BEFORE emitting the write
-    // helper for a grown registry, so STATE.json genuinely did not advance. Observed BOTH at round 4
-    // of real waves — cont3 was (a) (disk carried round-4 seq/gen, null echo threw away ~2h), cont5
-    // was (b) (no r4 write helper, disk still at round 3). Distinguish with a READ-ONLY verifier; if
-    // the write is genuinely missing, RETRY the write once with a larger cap; and if it STILL will not
-    // land, DO NOT kill the wave — the persist is bookkeeping, not candidate work.
+    // Distinguish a landed write with a lost echo from a genuinely missing write.
     const readState = (labelSuffix) => agentT(
       roleAgent('tech_lead', 'update_memory',
         'READ-ONLY verification: read STATE.json in STATE_DIR and report its state_written (true iff ' +
@@ -6768,10 +6778,13 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     winner: selected ? { source: selected.id, geomean: selected.absolute_score } : null,
     improved, cumulative,
   });
+  const verificationFaulted = !!(ver && ver.claim_complete === true &&
+    (String(ver.correctness || '').toLowerCase().startsWith('fail') ||
+      /fail|fault|crash|error/.test(String(ver.status || '').toLowerCase())));
   const rungOutcome = ver && ver.claim_complete === true &&
       Array.isArray(ver.per_case) && ver.per_case.length
     ? 'measured'
-    : (eng && (eng.build === false ||
+    : (verificationFaulted || eng && (eng.build === false ||
       String(eng.correctness || '').toLowerCase().startsWith('fail')))
       ? 'faulted' : 'unmeasured';
   recordRungOutcome(d.roadmap_rung, rungOutcome);

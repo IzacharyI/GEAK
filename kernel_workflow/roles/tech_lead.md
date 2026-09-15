@@ -951,6 +951,15 @@ none of them, so skip this whole block then):**
   When `CANDIDATE_REGISTRY` is present, copy it **verbatim**. Candidate lane trees already live under
   `$STATE_DIR/candidates/<id>/tree`; never collapse them into `$STATE_DIR/best`, never rewrite their
   `source/base_id/tree/head/attempt_id/evidence_manifest`, and never delete a slow runnable lane.
+  A complete failed Verify is authoritative evidence, not pending work: preserve
+  `verification_status`, `correctness`, `gpu_executed`, and `activation_on_hardware`. In particular,
+  `gpu_executed=true` plus `runtime_verified=false` means the candidate reached the device and failed;
+  do not describe that round as GPU-free or still awaiting its first Verify.
+  Atomically mirror each registry row to
+  `$STATE_DIR/candidates/<id>/candidate_result.json`, translating `id/source/base_id/status/patch` to
+  `candidate_id/candidate_source/base_candidate_id/candidate_status/patch_file` while retaining the
+  full row. This sibling checkpoint must name the same attempt and HEAD as the lane manifest so Setup
+  never recovers an older author-only result.
   `MEASUREMENT_CALIBRATION.ready=false` is a real state: preserve it so a resumed wave does not publish
   scores collected before the control completed.
 

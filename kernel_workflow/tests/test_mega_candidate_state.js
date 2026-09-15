@@ -126,6 +126,14 @@ ok(/structural_state_conflict/.test(src) &&
 ok(/failed_required_checks/.test(src) && /authoritativeIds/.test(src) &&
    /authoritativeIds\.has\(failure\.id\)/.test(src),
   'reference parity prose cannot become an authoritative contract failure');
+ok(/verification_status: String\(v\.status/.test(src) &&
+   /gpu_executed: String\(v\.activation_on_hardware/.test(src) &&
+   /next_blocker: verificationFailed/.test(src) &&
+   /verificationFaulted \|\| eng/.test(src),
+  'completed Verify failures persist as hardware evidence and fault the roadmap rung');
+ok(/gpu_executed=true[\s\S]{0,180}runtime_verified=false/.test(lead) &&
+   /candidates\/<id>\/candidate_result\.json/.test(lead),
+  'state writer distinguishes on-card failure and mirrors the latest lane checkpoint');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'
