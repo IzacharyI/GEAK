@@ -69,7 +69,8 @@ source structure only.
 - `FROZEN_KERNEL_PATH` — the immutable original denominator. Use it, not current canonical, when
   `PROMOTION_METRIC=changed_kernel` requires an absolute-to-frozen score.
 - `PATCH` — path to the candidate's `best_patch.diff` (generated relative to `CANONICAL`'s git HEAD).
-- `CANDIDATE_TREE` (mega only) — whole candidate tree. When non-empty it replaces the
+- `CANDIDATE_TREE` and `CANDIDATE_IMPORT_MODULES` (mega only) — whole candidate
+  tree plus modules whose `__file__` must resolve inside the assembled tree. When non-empty it replaces the
   CANONICAL+PATCH assembly step; `PATCH` may be empty.
 - `EXPECTED_HEAD` (required with `CANDIDATE_TREE`) — the exact candidate commit to verify. Never
   benchmark the lane's live working tree.
@@ -150,12 +151,19 @@ denominator.
    if [ -z "${CANDIDATE_TREE:-}" ]; then
      git apply "$PATCH" || { echo "PATCH_APPLY_FAILED"; }
    fi
+   export PYTHONPATH="$WS${PYTHONPATH:+:$PYTHONPATH}"
    ```
    (Use `$WS` as your verify workspace for all subsequent commands.)
    If the patch fails to apply → return `status:"apply_failed"`, `verified_geomean:0`.
    When `CANDIDATE_TREE` is present, record its source/head identity before copying and set
    `candidate_tree` and `candidate_head=EXPECTED_HEAD` in the result. A missing head or mismatched
    archive is `status:"apply_failed"`.
+   Before taking a lease, import every module listed by
+   `CANDIDATE_IMPORT_MODULES` and require its resolved `__file__` to be under
+   `$WS`. Repeat that probe inside the lease immediately before the candidate
+   command. Any module resolving to an installed/global checkout is
+   `IMPORT_IDENTITY_VOID`: no correctness, runtime, or performance evidence may
+   be returned from that command.
 2. Read `COMMANDMENT.md` for the exact correctness + full-benchmark commands + parse hint.
 3. Run the already lease-wrapped CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
    never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.

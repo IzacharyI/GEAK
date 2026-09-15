@@ -24,6 +24,12 @@ const validation = fs.readFileSync(path.join(
 const engineer = fs.readFileSync(path.join(
   ROOT, 'kernel_workflow', 'roles', 'engineer.md',
 ), 'utf8');
+const verifier = fs.readFileSync(path.join(
+  ROOT, 'kernel_workflow', 'roles', 'verify_engineer.md',
+), 'utf8');
+const director = fs.readFileSync(path.join(
+  ROOT, 'kernel_workflow', 'roles', 'director.md',
+), 'utf8');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -71,6 +77,14 @@ ok(/fail-closed GPU prohibition/.test(engineer) &&
    /temporary compile-time[\s\S]*earns no correctness\/performance credit/.test(engineer) &&
    /Once you apply a production fix[\s\S]*GPU authorization is revoked/.test(engineer),
   'Engineer may bisect reversibly but cannot use stale evidence after a production fix');
+ok(/CANDIDATE_IMPORT_MODULES/.test(wf) &&
+   /CANDIDATE_PYTHONPATH/.test(wf) &&
+   /every module in \$\{JSON\.stringify\(CANDIDATE_IMPORT_MODULES\)\}/.test(wf),
+  'the caller supplies a generic candidate import-identity contract');
+ok(/IMPORT_IDENTITY_VOID/.test(engineer) &&
+   /IMPORT_IDENTITY_VOID/.test(verifier) &&
+   /IMPORT_IDENTITY_VOID/.test(director),
+  'author, verifier and final arbiter reject installed/global module resolution');
 
 console.log(failures === 0
   ? '\nPASS: validated fusion knowledge guides the ordinary Mega lifecycle.'

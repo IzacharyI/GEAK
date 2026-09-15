@@ -361,6 +361,9 @@ if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
 const GRAPH_CONTRACT_TOOL = String(A.graph_contract_tool || '');
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
 const BENCH_HARNESS = String(A.benchmark_harness || '');
+const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
+  A.candidate_import_modules || [],
+));
 const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
 const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
   A.expert_skill_accuracy_cases || [],
@@ -6255,6 +6258,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
           BASE_CANDIDATE_ID: baseCandidateId, BASE_TREE: baseTree, BASE_HEAD: baseHead,
           CANDIDATE_TREE: tree, OUTPUT_DIR: outDir, ATTEMPT_ID: attemptId,
+          CANDIDATE_PYTHONPATH: tree,
+          CANDIDATE_IMPORT_MODULES,
           LANE_MANIFEST: laneManifest, LANE_LOCK: laneLock,
           CANDIDATE_TIMEOUT_S: commandBudgetS,
           SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
@@ -6321,6 +6326,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `base_candidate_id/tree/attempt_id so a ` +
       `timed-out first attempt is discoverable on resume. ` +
       `If it exists, continue from its HEAD; never recreate it. Read ${WORKFLOW_DIR}/roles/${roleFile}. ` +
+      `Before every candidate Python or torchrun command, export ` +
+      `PYTHONPATH="${tree}\${PYTHONPATH:+:\$PYTHONPATH}" and fail closed unless both ` +
+      `every module in ${JSON.stringify(CANDIDATE_IMPORT_MODULES)} resolves under ${tree}. ` +
       `Commit WIP to THIS lane after every real advance. Write ${outDir}/candidate_result.json ` +
       `atomically only after its evidence files are final. Return candidate_id/source/base, tree, head, ` +
       `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
@@ -6420,6 +6428,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         'reading an optional reference; never edit candidate source and never run a GPU command.', {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
           CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+          CANDIDATE_IMPORT_MODULES,
           FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
@@ -8103,7 +8112,7 @@ if (MODE === 'mega') {
           EVAL_DIR, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           BASELINE_TREE: `${EVAL_DIR}/baseline`, COMMANDMENT,
           GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR,
-          CANDIDATES: batch, TOP_K: batch.length,
+          CANDIDATES: batch, TOP_K: batch.length, CANDIDATE_IMPORT_MODULES,
           MEGA_PROFILE,
           TIE_NOISE_PCT: MEGA_TIE_NOISE_PCT,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,

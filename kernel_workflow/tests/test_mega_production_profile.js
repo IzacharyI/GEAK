@@ -25,6 +25,7 @@ ok(/A\.mega_candidate_timeout_s \|\|\s*\n\s*3600/.test(src) &&
    /MEGA_PRODUCTION \? 7200 : 3600/.test(src),
   'candidate and finalist calls have separate bounded timeouts');
 ok(/A\.expert_skill_id/.test(src) &&
+   /A\.candidate_import_modules/.test(src) &&
    /A\.expert_skill_playbook/.test(src) &&
    /A\.expert_skill_planner_extension/.test(src) &&
    /A\.expert_skill_bundle_sha256/.test(src) &&

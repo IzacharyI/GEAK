@@ -238,6 +238,7 @@ Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU
 `REQUIRED_PAIRS_BY_GUARD`, `TIE_NOISE_PCT`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`,
 `REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, `DIRECT_GRAPH_ACCURACY`,
 `BIMODAL_GUARDS`, `BASELINE_ACTIVATION`,
+`CANDIDATE_IMPORT_MODULES`,
 optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_PLAYBOOK`,
 `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
 `EXPERT_SKILL_ACCURACY_CASES`, `EXPERT_SKILL_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
@@ -253,6 +254,11 @@ batch may contain all finalists for one exhaustive comparison.
 1. Never edit a candidate tree. Verify its declared `head` exists. Benchmark a detached temporary
    copy checked out at that exact head, not whatever newer WIP currently occupies the lane. Drop a
    candidate whose tree/head is missing.
+   Prepend each detached candidate root to `PYTHONPATH`; before taking a lease,
+   import every caller-supplied `CANDIDATE_IMPORT_MODULES` entry and require its
+   resolved `__file__` to be under that root. Repeat inside the lease immediately
+   before candidate execution. A global/installed resolution is
+   `IMPORT_IDENTITY_VOID`, never candidate evidence.
 2. On one collective lease, independently run every finalist with the same command/environment. Interleave
    candidate arms with the frozen baseline on each supplied target/regression guard, use the supplied
    promotion metric, and run every supplied regression guard. Recheck the supplied accuracy metric,

@@ -25,7 +25,9 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 - `KERNEL_KNOWLEDGE_DIR` (may be empty), `KK_OPERATOR`, `KK_LANGUAGE`, `KK_REFS` — pointers into the
   AMD operator×backend SOTA base, resolved by the TechLead for THIS kernel (see the next section).
 - **MEGA candidate lane (only when `CANDIDATE_ID` is present):** `BASE_TREE`,
-  `BASE_HEAD`, `CANDIDATE_TREE`, `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
+  `BASE_HEAD`, `CANDIDATE_TREE`, `CANDIDATE_PYTHONPATH`,
+  `CANDIDATE_IMPORT_MODULES`,
+  `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
   `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`, `TASK_GRAPH`,
   `RESOURCE_TIMELINE`, and `MEGA_PLAN_IR`; optionally `STRUCTURAL_ONLY` and
   `STRUCTURAL_TARGET`. A Skill-enabled Mega lane may also provide
@@ -77,6 +79,32 @@ must be completely restored to the exact verified HEAD before another normal
 run. Once you apply a production fix, GPU authorization is revoked for the
 rest of the turn: commit and return for independent structural Verify. Never
 compile or measure a changed candidate HEAD using a stale pass.
+
+Every Python command for a Mega candidate must resolve imports from the
+candidate, not an installed/global checkout. Before an import, correctness,
+benchmark, or graph command:
+
+```bash
+export PYTHONPATH="$CANDIDATE_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}"
+export GEAK_CANDIDATE_ROOT="$CANDIDATE_TREE"
+export GEAK_CANDIDATE_IMPORT_MODULES='<JSON value from CANDIDATE_IMPORT_MODULES>'
+python - <<'PY'
+import importlib, json, os
+from pathlib import Path
+root = Path(os.environ["GEAK_CANDIDATE_ROOT"]).resolve()
+for name in json.loads(os.environ["GEAK_CANDIDATE_IMPORT_MODULES"]):
+    module = importlib.import_module(name)
+    resolved = Path(module.__file__).resolve()
+    assert resolved.is_relative_to(root), f"{name} resolved outside candidate: {resolved}"
+PY
+```
+
+Run the same probe inside the lease command immediately before `torchrun`.
+If any declared module resolves outside `CANDIDATE_TREE`, the command is
+`IMPORT_IDENTITY_VOID`: release/skip the lease and return no runtime evidence.
+Merely invoking a script from the candidate working directory does not put its
+repository root first on `sys.path`, because Python inserts the script's own
+subdirectory.
 
 When `STRUCTURAL_ONLY=1`, do not acquire a GPU lease or run any GPU command.
 Complete the full target topology in source, run only AST/py_compile/static
