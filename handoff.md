@@ -29,7 +29,8 @@ Removing the architecture checks would not make the result valid.
 Therefore:
 
 - use MI300 for the infrastructure smoke in section 5;
-- use an 8x MI355X/MI350-class `gfx950` node for sections 6-8;
+- use an 8x MI350/MI355X-class `gfx950` node for functional bring-up;
+- use MI355X for authoritative tuning and performance results;
 - do not interpret an MI300 architecture rejection as evidence that the v7
   combine repair passed or failed.
 
@@ -114,8 +115,12 @@ For the exact operator, the machine additionally needs:
 - at least 150 GiB free VRAM on every card before the EP8 job;
 - MORI-SHMEM and its Python package;
 - a writable AITER JIT directory and a separate writable FlyDSL cache;
-- `libpci-dev`; RCCL available through the ROCm PyTorch build;
+- `libpci-dev` and `libibverbs-dev` (or distro equivalents); RCCL available
+  through the ROCm PyTorch build;
 - no other EP8 job using the selected cards.
+
+No model checkpoint or external dataset is required. The in-tree harness
+generates deterministic V4-Pro inputs, routes, and A8W4 weights.
 
 The existing ROCm 7.2 setup required a small MORI JIT compatibility patch:
 
@@ -221,7 +226,7 @@ Install AITER/FlyDSL in the existing ROCm Python environment:
 ```bash
 python3 -m pip install --pre "flydsl==0.3.0"
 cd "$ROOT/aiter-v7"
-python3 setup.py develop
+AITER_USE_SYSTEM_TRITON=1 python3 setup.py develop
 ```
 
 Set paths. The selected AITER checkout must come first in `PYTHONPATH`;
@@ -232,13 +237,26 @@ export GEAK="$ROOT/GEAK"
 export AITER="$ROOT/aiter-v7"
 export MORI="$ROOT/mori"
 export PYTHONPATH="$AITER:$MORI:$MORI/python"
-export AITER_JIT_DIR="$ROOT/cache/aiter"
-export FLYDSL_RUNTIME_CACHE_DIR="$ROOT/cache/flydsl"
-export TORCH_EXTENSIONS_DIR="$ROOT/cache/torch_extensions"
+# Set this to gfx942-rocm72-v7 on MI300 and gfx950-rocm72-v7 on gfx950.
+export CACHE_NAMESPACE="${CACHE_NAMESPACE:?set architecture/ROCm/source cache namespace}"
+export AITER_JIT_DIR="$ROOT/cache/$CACHE_NAMESPACE/aiter"
+export FLYDSL_RUNTIME_CACHE_DIR="$ROOT/cache/$CACHE_NAMESPACE/flydsl"
+export TORCH_EXTENSIONS_DIR="$ROOT/cache/$CACHE_NAMESPACE/torch_extensions"
 export MORI_SOCKET_IFNAME=lo
 export MORI_SHMEM_HEAP_SIZE=40G
 mkdir -p "$AITER_JIT_DIR" "$FLYDSL_RUNTIME_CACHE_DIR" "$TORCH_EXTENSIONS_DIR"
 ```
+
+Never share these caches across GPU architectures, ROCm/FlyDSL versions, or
+different source trees. Before taking an eight-GPU lease, finish the AITER
+installation and CPU-side import below so its core extensions are not first
+built inside the bounded lease. The fused FlyDSL/MORI body may still need its
+first device JIT while MORI is initialized; retain that output as part of the
+first smoke log rather than copying a cache from another machine.
+
+In particular, do not copy the old `geak_jit/mega_recipe_v1_acceptance`
+directory: it contains no portable `.so` manifest, was built with
+`--offload-arch=native`, and embeds source-host paths.
 
 CPU-side import and syntax preflight:
 
@@ -315,6 +333,29 @@ GPU_GROUP_SMOKE_PASS world_size=8
 
 Re-run it once to prove the prior lease and process group were cleaned up.
 
+MORI itself supports MI300. Validate its environment and an EP8
+dispatch/combine case separately:
+
+```bash
+cd "$MORI"
+bash tools/diagnose_env.sh | tee "$ROOT/logs/mi300_mori_env.log"
+GEAK_GPU_REQUIRE_IDLE=1 \
+GEAK_GPU_MAX_BUSY_PCT=5 \
+GEAK_GPU_MAX_VRAM_MB=1024 \
+GEAK_GPU_WAIT_TIMEOUT=1800 \
+GEAK_GPU_RUN_TIMEOUT=1800 \
+bash "$GEAK/kernel_workflow/scripts/gpu_lock.sh" \
+  pool:8:0,1,2,3,4,5,6,7 -- \
+  env PYTHONPATH="$PYTHONPATH" timeout 25m pytest \
+    'tests/python/ops/test_dispatch_combine_intranode.py::test_dispatch_combine[none-True-8-32-1-1-0-7168-data_type0-8]' \
+    -x -v 2>&1 | tee "$ROOT/logs/mi300_mori_ep8.log"
+```
+
+For an intra-node run, every non-self `ms.shmem_ptr_p2p()` result must be
+nonzero. MORI defines zero as RDMA/non-P2P or invalid; the MegaMoE host path
+does not currently reject zero before storing the peer table, so a zero can
+later appear as a nil pointer or hang.
+
 Stop here for this MegaMoE candidate on MI300. Do not run the v7 hardware
 acceptance command, do not remove the `gfx95x` checks, and do not quote an
 MI300 performance number as an M2.5/MI355X result.
@@ -331,6 +372,12 @@ least 150 GiB free before starting.
 There is no hardware result yet for candidate `6b41e1d`; its current authority
 is GPU-free structural verification only. The first `bs=128` run below is new
 evidence, not a confirmation of an already-tested candidate.
+
+MI350 is useful for `gfx950` JIT and correctness bring-up, but the only bundled
+EP8 geometry file is
+`flydsl_gfx950_mi355x_IntraNode_ep8.json`. The resolver can select its best
+filename even when the model does not match, so MI350 performance is not an
+MI355X tuning result.
 
 Use explicit switches; they are read at import time:
 
@@ -374,6 +421,10 @@ Pass conditions:
 - no `Memory access fault` and no `(nil)` address;
 - `relL2 < 0.10`;
 - command completes without a timeout.
+
+`path=MEGA` is printed before `_run_fused_stage1`; it may therefore appear
+immediately before an architecture or JIT exception. Marker count proves route
+selection, not successful compilation or execution.
 
 The previous hardware failure was a deterministic all-rank nil-address fault
 at `bs=128` in the combine reducer. This first run is the decisive check for
@@ -424,6 +475,25 @@ itself prove CUDA-graph replay safety. The normal timing path captures a graph
 but only replays it for `--iters`. Preserve the repeated-call result as
 liveness evidence, then collect separate graph-capture/replay and route-mutation
 evidence before final promotion.
+
+Run the embedded v7 runtime checker for that stronger evidence, through the
+same lease/environment wrapper:
+
+```bash
+# Replace the inner torchrun command of the section 7 lease with:
+torchrun --standalone --nproc_per_node=8 \
+  "$GEAK/kernel_workflow/tools/expert_skill_runtime.py" \
+  --skill-file \
+    "$GEAK/perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion/skill.md" \
+  --candidate-tree "$AITER" \
+  --accuracy-cases 128,512,8192 \
+  --liveness-cases 128,512,8192 \
+  --routes uniform,rank-mixed-skew \
+  --replays 256 \
+  --numeric-checkpoint-interval 16 \
+  --rtol 0.10 \
+  --json-output "$ROOT/logs/v7_graph_contract.json"
+```
 
 Runtime launch count must be established from a profiler/trace: one quant
 launch plus one persistent megakernel per rank. The static `launches=2` field
@@ -477,9 +547,12 @@ Return one archive containing:
 ```text
 logs/
   mi300_gpu_group_smoke.log
+  mi300_mori_env.log
+  mi300_mori_ep8.log
   v7_bs128_smoke.log          # gfx950 only
   v7_correctness.log          # gfx950 only
   liveness.log                # gfx950 only
+  v7_graph_contract.json      # gfx950 only
   benchmark_*.log             # gfx950 only
 machine.txt
 versions.txt
