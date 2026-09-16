@@ -43,6 +43,9 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    lowering authority; prose never replaces it. A matched Skill may populate
    operator-specific IDs and `parameters`, but no operator name is built into
    the schema.
+   `owned_subdomain` is a direct `work_domains[]` field; never place it under
+   that domain's `parameters`, because contract paths and downstream relation
+   checks address `work_domains[id=...].owned_subdomain`.
 7. When `EXPERT_SKILL_PLANNER_EXTENSION` is present, read it as YAML and
    require `schema_version=expert-skill-planner-extension-v1`, matching
    `revision`, and `plan_version=mega-plan-v2`. Bind its `ir_bindings` into
@@ -113,7 +116,12 @@ Return the ordinary analysis schema with this lowerable IR shape:
     },
     "work_domains": [{
       "id": "items", "unit": "tile", "extent": "runtime expression",
-      "index_type": "i32"
+      "index_type": "i32",
+      "owned_subdomain": {
+        "unit": "subtile",
+        "extent_per_claim": "compile-time expression",
+        "linear_index": "claim * extent + subtile"
+      }
     }],
     "regions": [{
       "id": "region_a", "role": "producer",

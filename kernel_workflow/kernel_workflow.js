@@ -2471,6 +2471,13 @@ function megaPlanIRVerdict(
   for (const name of ['work_domains', 'regions', 'buffers', 'counters', 'queues', 'events']) {
     requireUnique(plan[name], name);
   }
+  for (const d of Array.isArray(plan.work_domains) ? plan.work_domains : []) {
+    if (d.parameters && d.parameters.owned_subdomain)
+      errors.push(`work_domain ${d.id || '?'} owned_subdomain must be direct`);
+    const o = d.owned_subdomain;
+    if (o && ['unit', 'extent_per_claim', 'linear_index'].some((k) => !o[k]))
+      errors.push(`work_domain ${d.id || '?'} owned_subdomain incomplete`);
+  }
   for (const region of Array.isArray(plan.regions) ? plan.regions : []) {
     if (!domains.has(String(region.work_domain || ''))) {
       errors.push(`region ${region.id || '?'} references unknown work_domain`);

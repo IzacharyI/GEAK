@@ -32,9 +32,9 @@ const ok = (cond, msg) => {
 
 const m = src.match(/\/\/ <<REPLAY:analyze_resume_fallback>>([\s\S]*?)\/\/ <<\/REPLAY:analyze_resume_fallback>>/);
 if (!m) { console.error('  FAIL: no <<REPLAY:analyze_resume_fallback>> region — nothing to test'); process.exit(1); }
-const { analyzeResumeDegenerate } =
+const { analyzeResumeDegenerate, megaPlanIRVerdict } =
   // eslint-disable-next-line no-new-func
-  new Function(`${m[1]}\nreturn { analyzeResumeDegenerate };`)();
+  new Function(`${m[1]}\nreturn { analyzeResumeDegenerate, megaPlanIRVerdict };`)();
 
 const LADDER = { candidate_directions: [
   { id: 'D0', title: 'D0 Instrumentation' },
@@ -154,6 +154,22 @@ console.log('\n# the wave-15 shape');
   const invalid = analyzeResumeDegenerate(false, dangling, true, true);
   ok(invalid.retry === true && /unknown counter/.test(invalid.reason),
     'relationally invalid PlanIR is rejected even when every collection is populated');
+  const misplacedOwned = JSON.parse(JSON.stringify(MEGA_COMPLETE.mega_plan_ir));
+  misplacedOwned.work_domains[0].parameters = {
+    owned_subdomain: {
+      unit: 'subtile', extent_per_claim: 'n', linear_index: 'item*n+subtile',
+    },
+  };
+  const misplacedVerdict = megaPlanIRVerdict(misplacedOwned);
+  ok(!misplacedVerdict.pass &&
+     misplacedVerdict.errors.some((e) => /owned_subdomain must be direct/.test(e)),
+  'owned subdomains nested under parameters fail before contract verification');
+  delete misplacedOwned.work_domains[0].parameters;
+  misplacedOwned.work_domains[0].owned_subdomain = {
+    unit: 'subtile', extent_per_claim: 'n', linear_index: 'item*n+subtile',
+  };
+  ok(megaPlanIRVerdict(misplacedOwned).pass,
+    'a complete direct owned_subdomain passes generic PlanIR relations');
 }
 
 console.log('\n# it must not fire anywhere else');
