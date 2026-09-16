@@ -215,7 +215,7 @@ const EXPERT_SKILL_ID = String(A.expert_skill_id || '');
 if (EXPERT_SKILL_ID && !/^[a-z0-9][a-z0-9_-]*$/.test(EXPERT_SKILL_ID)) {
   throw new Error('expert_skill_id must be a safe slug');
 }
-const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || 'v1');
+const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || '');
 const EXPERT_SKILL_BUNDLE_SHA256 = String(A.expert_skill_bundle_sha256 || '');
 const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 =
   String(A.expert_skill_planner_extension_sha256 || '');
@@ -316,7 +316,7 @@ const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = USE_EXPERT_SKILLS &&
    String(A.require_expert_skill_bundle_identity || 'false') === 'true');
 const validSha256 = (value) => /^[a-f0-9]{64}$/.test(String(value || ''));
 if (REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY &&
-    (!EXPERT_SKILL_ID || !EXPERT_SKILL_REVISION ||
+    (!EXPERT_SKILL_ID ||
      !EXPERT_SKILL_PLANNER_EXTENSION_FILE || !EXPERT_SKILL_CONTRACT_FILE ||
      !validSha256(EXPERT_SKILL_BUNDLE_SHA256) ||
      !validSha256(EXPERT_SKILL_PLANNER_EXTENSION_SHA256) ||
