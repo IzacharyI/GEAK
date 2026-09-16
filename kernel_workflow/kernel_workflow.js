@@ -202,6 +202,8 @@ const MEGA_CANDIDATE_TIMEOUT_S = Math.max(300, Number(A.mega_candidate_timeout_s
   3600));
 const MEGA_STRUCTURAL_ONLY = MODE === 'mega' &&
   String(A.mega_structural_only != null ? A.mega_structural_only : 'false') === 'true';
+const MEGA_ROUTE_ONLY = MODE === 'mega' &&
+  String(A.mega_route_only != null ? A.mega_route_only : 'false') === 'true';
 const MEGA_FINAL_TIMEOUT_S = Math.max(600, Number(A.mega_final_timeout_s ||
   (MEGA_PRODUCTION ? 7200 : 3600)));
 const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
@@ -4669,8 +4671,9 @@ const structuralBench = {
   positive_control: { claim_complete: false },
   notes: 'STRUCTURAL_ONLY: no GPU benchmark.',
 };
-const benchCache = MEGA_STRUCTURAL_ONLY ? null : await fastTestCacheLoad('bench');
-const bench = MEGA_STRUCTURAL_ONLY ? structuralBench : benchCache ? benchCache.bench : await agentT(
+const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY;
+const benchCache = noGpuFrontMatter ? null : await fastTestCacheLoad('bench');
+const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench : await agentT(
   roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
@@ -5083,7 +5086,7 @@ log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (d
 // fast-test cache so a LATER `mega_fast_test` wave can skip re-measuring them. Only when at least one
 // front stage ran FRESH this wave — a full cache hit already reused an up-to-date cache. No-op (no
 // agent() call) when MEGA_FAST_TEST is off.
-if (!MEGA_STRUCTURAL_ONLY && MEGA_FAST_TEST && !benchCache) await fastTestCachePublish();
+if (!noGpuFrontMatter && MEGA_FAST_TEST && !benchCache) await fastTestCachePublish();
 
 // ===========================================================================
 // PHASE: Optimization loop (budget-controlled)
@@ -6223,7 +6226,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
     await recoverMegaCalibration(`before-round-${currentRound}`);
   }
-  const pool = await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
+  const pool = (MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY)
+    ? null : await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
   const d = await planMegaCandidateTurn(currentRound, remaining, pool);
   if (!d) return { stop: true, reason: 'no mega candidate direction was planned' };
   if (analysis && analysis.resource_timeline) {
@@ -6241,6 +6245,17 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     return {
       stop: true,
       reason: `Mega direction refused before authoring: ${topologyVerdict.reason}`,
+    };
+  }
+  if (MEGA_ROUTE_ONLY) {
+    return {
+      stop: true,
+      direction: d,
+      reason: `route-only PASS: candidate=${d.candidate_id}, rung=${
+        d.roadmap_rung || d.id}, launch_count=${topologyLaunchCount(d.target_topology)}, ` +
+        `target=${Number(analysis && analysis.mega_plan_ir &&
+          analysis.mega_plan_ir.target &&
+          analysis.mega_plan_ir.target.launch_count)}; no candidate source or GPU was touched`,
     };
   }
   if (STRICT_AUTONOMY) {
@@ -6331,6 +6346,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   }
   let eng = null;
   let laneWriterTimedOut = false;
+  const authorGpuProhibited = authorPreflightRequired || MEGA_STRUCTURAL_ONLY;
   const role = 'engineer';
   const roleFile = 'engineer.md';
   eng = await agentT(
@@ -6345,10 +6361,11 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_TIMEOUT_S: commandBudgetS,
           SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
           KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
-          GPU_ID: authorPreflightRequired
-            ? 'STRUCTURAL_PREFLIGHT_REQUIRED_NO_GPU'
+          GPU_ID: authorGpuProhibited
+            ? (MEGA_STRUCTURAL_ONLY
+              ? 'STRUCTURAL_ONLY_NO_GPU' : 'STRUCTURAL_PREFLIGHT_REQUIRED_NO_GPU')
             : GPU_RESOURCE.specForIndex(0),
-          GPUS_PER_JOB: authorPreflightRequired
+          GPUS_PER_JOB: authorGpuProhibited
             ? '0' : String(GPU_RESOURCE.gpusPerJob),
           AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
             authorPreflightRequired ? '1' : '0',

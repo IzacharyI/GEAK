@@ -100,8 +100,8 @@ ok(/async function samplePool\(round, timeoutMs\)/.test(wf),
 // It must run BEFORE the plan, or it is a postmortem of a round already budgeted.
 const iSample = wf.indexOf('const pool = await samplePool(round)');
 const iPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'", iSample);
-const iMegaSample = wf.indexOf('const pool = await samplePool(currentRound,');
-const iMegaPlanCall = wf.indexOf("roleAgent('tech_lead', 'plan_round'", iMegaSample);
+const iMegaSample = wf.indexOf('const pool = (MEGA_STRUCTURAL_ONLY');
+const iMegaPlanCall = wf.indexOf('const d = await planMegaCandidateTurn', iMegaSample);
 ok(iSample > 0 && iPlanCall > iSample &&
    iMegaSample > 0 && iMegaPlanCall > iMegaSample,
    'both canonical and Mega candidate paths sample before plan_round, while directions remain changeable');

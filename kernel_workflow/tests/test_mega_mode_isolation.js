@@ -146,10 +146,19 @@ ok(/const MEGA_STRUCTURAL_ONLY = MODE === 'mega'/.test(src) &&
    /!MEGA_STRUCTURAL_ONLY/.test(src) &&
    /structural-only acceptance reached/.test(src),
   'structural-only mode forbids runtime Verify and stops on a complete source contract');
-ok(/const benchCache = MEGA_STRUCTURAL_ONLY \? null/.test(src) &&
-   /const bench = MEGA_STRUCTURAL_ONLY \? structuralBench/.test(src) &&
-   /STRUCTURAL_ONLY: no GPU benchmark/.test(src),
-  'structural-only mode cannot fall through to a GPU benchmark');
+ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY/.test(src) &&
+   /const benchCache = noGpuFrontMatter \? null/.test(src) &&
+   /const bench = noGpuFrontMatter \? structuralBench/.test(src) &&
+   /STRUCTURAL_ONLY: no GPU benchmark/.test(src) &&
+   /const pool = \(MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)/.test(src) &&
+   /\? \(MEGA_STRUCTURAL_ONLY\s*\? 'STRUCTURAL_ONLY_NO_GPU'/.test(src),
+  'structural-only mode cannot sample, lease, or benchmark a GPU');
+ok(/const MEGA_ROUTE_ONLY = MODE === 'mega'/.test(src) &&
+   /MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)\s*\? null : await samplePool/.test(src) &&
+   /if \(MEGA_ROUTE_ONLY\) \{[\s\S]{0,500}route-only PASS/.test(src) &&
+   /no candidate source or GPU was touched/.test(src) &&
+   /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src),
+  'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'
