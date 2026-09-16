@@ -180,6 +180,39 @@ def test_repository_tuple_patterns_match_ast_normalized_python():
     assert re.search(assign_pattern, queue_text)
 
 
+def test_repository_combine_frame_rules_distinguish_direct_jit_from_wrapper():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "skill.md"
+    )
+    checks = {
+        item["id"]: item
+        for item in MODULE.load_contract(path)["checks"]
+    }
+    direct = MODULE._active_code(ast.parse(
+        "@flyc.jit\n"
+        "def _emit_item(s3_work_idx):\n"
+        "    return s3_work_idx\n"
+    ))
+    wrapped = MODULE._active_code(ast.parse(
+        "def _emit_item(s3_work_idx):\n"
+        "    @flyc.jit\n"
+        "    def _emit_item_body():\n"
+        "        return s3_work_idx\n"
+        "    return _emit_item_body()\n"
+    ))
+    direct_pattern = checks["combine_item_direct_jit_frame"]["patterns"][0]
+    wrapper_pattern = checks["combine_item_has_no_extra_jit_wrapper"]["patterns"][0]
+    assert re.search(direct_pattern, direct)
+    assert not re.search(direct_pattern, wrapped)
+    assert not re.search(wrapper_pattern, direct)
+    assert re.search(wrapper_pattern, wrapped)
+
+
 def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     path = (
         Path(__file__).resolve().parents[2]
