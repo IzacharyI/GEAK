@@ -157,7 +157,8 @@ ok(/const MEGA_ROUTE_ONLY = MODE === 'mega'/.test(src) &&
    /MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)\s*\? null : await samplePool/.test(src) &&
    /if \(MEGA_ROUTE_ONLY\) \{[\s\S]{0,500}route-only PASS/.test(src) &&
    /no candidate source or GPU was touched/.test(src) &&
-   /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src),
+   /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src) &&
+   /mega_route_only: true[\s\S]{0,500}validation_status: 'route_only'/.test(src),
   'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
 
 console.log(failures === 0

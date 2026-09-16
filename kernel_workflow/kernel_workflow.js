@@ -6814,16 +6814,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   return { stop: false, direction: d, record, ver, improved, selected };
 }
 
-// The no-improve stop is a SPEEDUP stop. Under objective=working_kernel every round before the last
-// one is non-improving by construction, so leaving it armed would end the wave on round 3 with a
-// 15-lease budget untouched — see OBJECTIVE, item 2. The remaining stops are the budget and the
-// TechLead's own decision, both of which still apply.
-//
-// `noEvidence` is the same cap applied to a different failure. A round that measures nothing does
-// not advance `noImprove` (roundEvidence explains why), so without a second bound a run whose
-// harness is broken would keep planning rounds until the budget ran out. Three consecutive rounds
-// with no reading is not a search that has run out of ideas, it is an instrument that is not
-// working, and the answer to that is not another lease.
+// Working-kernel mode is budget/decision bounded; no-evidence separately catches a blind harness.
 while (dispatched < BUDGET &&
     (MODE === 'mega' || WORKING_KERNEL ||
      (noImprove < MAX_NO_IMPROVE && noEvidence < MAX_NO_IMPROVE))) {
@@ -6840,6 +6831,19 @@ while (dispatched < BUDGET &&
     }
     const turn = await runMegaCandidateTurn(round, remaining);
     if (turn.stop) {
+      if (MEGA_ROUTE_ONLY) {
+        const d = turn.direction || {};
+        return {
+          mode: MODE, mega_route_only: true,
+          route_pass: String(turn.reason || '').startsWith('route-only PASS:'),
+          eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+          candidate_id: d.candidate_id || '', roadmap_rung: d.roadmap_rung || d.id || '',
+          launch_count: topologyLaunchCount(d.target_topology),
+          target_launch_count: Number(analysis && analysis.mega_plan_ir &&
+            analysis.mega_plan_ir.target && analysis.mega_plan_ir.target.launch_count),
+          validation_status: 'route_only', stop_reason: turn.reason,
+        };
+      }
       stopReason = turn.reason;
       break;
     }
