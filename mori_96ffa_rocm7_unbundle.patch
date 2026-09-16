@@ -1,0 +1,44 @@
+diff --git a/python/mori/jit/core.py b/python/mori/jit/core.py
+index 4300de51..2fdd56db 100644
+--- a/python/mori/jit/core.py
++++ b/python/mori/jit/core.py
+@@ -305,6 +305,39 @@ def _hipcc_genco(
+     cmd.extend([str(source), "-o", str(output)])
+ 
+     subprocess.check_call(cmd, stderr=subprocess.STDOUT)
++    _unbundle_if_needed(cfg, output)
++
++
++def _unbundle_if_needed(cfg: BuildConfig, output: Path) -> None:
++    """Extract the bare device code object when hipcc --genco emits a bundle.
++
++    ROCm 7.x's hipcc --genco wraps the single-arch code object in a
++    ``__CLANG_OFFLOAD_BUNDLE__`` fat binary (device entry + host stub). MORI
++    loads the .hsaco directly via hipModuleLoad, which rejects the bundle as
++    ``hipErrorInvalidKernelFile`` ("invalid kernel file"). Unbundle in place so
++    the .hsaco is a plain AMDGPU ELF. Idempotent: a bare code object (older
++    toolchains) does not start with the bundle magic and is left untouched.
++    """
++    with open(output, "rb") as f:
++        if f.read(24) != b"__CLANG_OFFLOAD_BUNDLE__":
++            return
++    bundler = os.path.join(os.path.dirname(cfg.opt), "clang-offload-bundler")
++    if not os.path.isfile(bundler):
++        bundler = "clang-offload-bundler"
++    target = f"hipv4-amdgcn-amd-amdhsa--{cfg.arch}"
++    tmp = output.with_suffix(output.suffix + ".unbundled")
++    subprocess.check_call(
++        [
++            bundler,
++            "--type=o",
++            "--unbundle",
++            f"--targets={target}",
++            f"--input={output}",
++            f"--output={tmp}",
++        ],
++        stderr=subprocess.STDOUT,
++    )
++    os.replace(tmp, output)
+ 
+ 
+ _PARALLEL_KERNEL_GROUPS: dict[str, list[str]] = {

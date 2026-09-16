@@ -1,0 +1,2240 @@
+diff --git a/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py b/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+index 7115ceb2..b6e264c6 100644
+--- a/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
++++ b/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+@@ -65,6 +65,361 @@ def _pack_f32x4_to_fp8(v4f32):
+     )
+ 
+ 
++def make_combine_reduce_emitter(
++    *, model_dim, topk, npes, num_waves, max_tok, p2p_quant_type="none",
++    blockwise_fp8_transport=False, cur_rank_num_token=None, nominal_warp_num=None,
++    tok_ready_addr=None, tok_ready_epoch=None, tok_ready_arrival=None,
++    c_inp=None, c_out=None, c_tok_ready=None, c_peer_ready=None,
++    out_cache_modifier=None,
++):
++    """Host factory for the ONE shared combine reduce body.
++
++    Returns ``emit_combine_reduce`` — the per-token top-k reduction the fused
++    Stage1 combine third queue dispatches (and the standalone combine kernel's
++    Stage 3 reduces onto the same shape). The emitter blocks on the cross-rank
++    arrival counter (``c_tok_ready`` reaching ``topk * epoch``) before summing the
++    token's ``topk`` partials — already weight-scaled by the P2P scatter — into the
++    BF16 output row, so neither caller re-derives the arrival protocol or the
++    reduction. Configured once with the compile-time hidden geometry; the epoch and
++    the arrival target are passed per emit (dynamic) as ``tok_ready_epoch`` /
++    ``tok_ready_arrival``.
++    """
++    N_OUT = int(model_dim)
++    TOPK = int(topk)
++    blockwise_fp8_transport = bool(blockwise_fp8_transport)
++    # External hidden geometry (bf16 output rows). Blockwise FP8 transport packs the hidden
++    # dim as 1-byte FP8 elements plus a trailing per-32 microscale block, so the producer
++    # row stride is ``N_OUT + N_OUT // 32`` and the reduced output row doubles to bf16.
++    hidden_elem_size = 2
++    if blockwise_fp8_transport:
++        n_i32 = N_OUT // 4
++        nbytes = N_OUT + N_OUT // 32
++        out_n_i32 = (N_OUT * 2) // 4
++    else:
++        n_i32 = (N_OUT * hidden_elem_size) // 4
++        nbytes = N_OUT * hidden_elem_size
++        out_n_i32 = n_i32
++    # Cross-rank arrival protocol: a token is ready once all ``topk`` of THIS epoch's
++    # producers have bumped its readiness counter. The per-token expected arrival is topk.
++    tok_ready_expected = int(topk)
++
++    # Blockwise-FP8 vs bf16 decode/encode of one packed Int32 partial, defined once here so
++    # the single reducer body the two callers share never re-derives the transport dequant.
++    if blockwise_fp8_transport:
++
++        def _to_accum(i32_val):
++            _v2f32_fp8 = T.vec(2, T.f32)
++            lo = cvt_pk_f32_fp8(res=_v2f32_fp8, src=i32_val, word_sel=False)
++            hi = cvt_pk_f32_fp8(res=_v2f32_fp8, src=i32_val, word_sel=True)
++            return lo.shuffle(hi, [0, 1, 2, 3])
++
++        def _from_accum(accum_val):
++            return accum_val.to(fx.BFloat16).bitcast(fx.Int32)
++
++        def _zero_accum():
++            return Vec.filled(4, 0.0, fx.Float32)
++
++    else:
++
++        def _to_accum(i32_val):
++            return (
++                Vec.from_elements([i32_val], fx.Int32)
++                .bitcast(fx.BFloat16)
++                .to(fx.Float32)
++            )
++
++        def _from_accum(accum_val):
++            return accum_val.to(fx.BFloat16).bitcast(fx.Int32)[0]
++
++        def _zero_accum():
++            return Vec.filled(2, 0.0, fx.Float32)
++
++    def _accum_experts(vals):
++        acc = _to_accum(vals[0])
++        for k_slot in range(1, len(vals)):
++            acc = acc + _to_accum(vals[k_slot])
++        return _from_accum(acc)
++
++    # Masked buffer_load: returns 0 (i32) when vld_flag is false.
++    def _maybe_load(rsrc, offset, vld_flag, **kwargs):
++        raw = buffer_load(rsrc, offset, **kwargs)
++        return vld_flag.select(raw, 0)
++
++    # Shared Stage-3 partition of the reducer's OUTPUT work across the launch's warps. When
++    # the fused Stage1 role configures the emitter it passes the runtime local token count
++    # and the launch's nominal warp count so the reducer sizes its per-token warp fan-out
++    # identically to the standalone combine kernel's Stage 3.
++    safe_token_count = None
++    warps_per_tok = None
++    s3_total_work = None
++    if cur_rank_num_token is not None:
++        global_warp_num = int(nominal_warp_num)
++        # Clamp the denominator to 1 when cur_rank_num_token == 0 (the loop is empty then).
++        safe_token_count = (cur_rank_num_token == fx.Int32(0)).select(
++            fx.Int32(1), cur_rank_num_token
++        )
++        warps_per_tok = (
++            fx.Int32(global_warp_num) + safe_token_count - fx.Int32(1)
++        ) // safe_token_count
++        if blockwise_fp8_transport:
++            # Align warp partitions to the 8-Int32 blockwise FP8 microscale block.
++            _scale_blocks = fx.Int32(n_i32 // 8)
++            warps_per_tok = (warps_per_tok > _scale_blocks).select(
++                _scale_blocks, warps_per_tok
++            )
++        s3_total_work = cur_rank_num_token * warps_per_tok
++
++    # Compile-time reduce geometry the two callers share. Returned as ``consts`` so the
++    # fused Stage1 third queue reads the OUTPUT work domain ``s3_total_work`` (one reduced
++    # output row per local token) without re-deriving the partition.
++    consts = {
++        "N_OUT": N_OUT,
++        "TOPK": TOPK,
++        "n_i32": n_i32,
++        "out_n_i32": out_n_i32,
++        "nbytes": nbytes,
++        "warps_per_tok": warps_per_tok,
++        "safe_token_count": safe_token_count,
++        "s3_total_work": s3_total_work,
++        "blockwise_fp8_transport": blockwise_fp8_transport,
++        "tok_ready_expected": tok_ready_expected,
++    }
++
++    # Rank-local output buffer resource and cache selectors, built ONCE in the factory
++    # frame (the caller's device trace frame) BEFORE the directly decorated per-item
++    # body. Materializing rsrc_out and the wave-uniform readiness/output bases here —
++    # instead of inside a nested zero-argument @flyc.jit — keeps the system-scope
++    # readiness base and the output store base in live outer-frame scalar registers, so
++    # the fused GEMM1||GEMM2/P2P drain's register pressure cannot spill them into an
++    # uninitialized frame slot. The per-item @flyc.jit closes over these and performs
++    # only the dynamic token/partition arithmetic.
++    SLC_CACHE = _SLC_CACHE
++    # System-scope input cache selector: once a token's readiness is published across
++    # XCDs (tok_ready_addr wired by the fused caller), the reduce consumer's payload and
++    # microscale loads must be SYSTEM-scope (GLC|DLC atop SLC) so monotone cross-rank
++    # readiness holds — an ordinary SLC load can hit a stale L2 line from another XCD.
++    # The standalone caller (tok_ready_addr is None) keeps plain SLC.
++    IN_CACHE = _SLC_CACHE | 1 | 16 if tok_ready_addr is not None else _SLC_CACHE
++    u_c_out = _wave_uniform_i64(c_out)
++    rsrc_out = create_buffer_resource_from_addr(u_c_out)
++    u_c_tok_ready = _wave_uniform_i64(c_tok_ready)
++
++    @flyc.jit
++    def _emit_item(s3_work_idx):
++        """Reduce ONE warp-work item (a token's hidden slice) into ``c_out``.
++
++        ``s3_work_idx`` indexes the OUTPUT work domain: ``tok_id = s3_work_idx //
++        warps_per_tok`` selects the local token and ``part_id = s3_work_idx %
++        warps_per_tok`` its hidden partition. The item sums the token's ``topk`` already
++        weight-scaled partials — decoding blockwise FP8 microscales when the transport is
++        packed — into the bf16 output row. It carries NO workgroup barrier: readiness is a
++        per-token cross-rank spin on ``c_tok_ready`` (lane 0); the token-ready payload
++        loads are already system-scope (IN_CACHE = sc0|sc1) so no separate per-item
++        system-acquire fence is issued, and the reducer stays a warp-scoped work item the
++        fused third queue and the standalone Stage 3 dispatch identically."""
++        lane = fx.thread_idx.x % fx.Int32(64)
++        tok_id = s3_work_idx // warps_per_tok
++        part_id = s3_work_idx % warps_per_tok
++        token = tok_id
++        # Cross-rank arrival: each of the token's topk producers bumps c_tok_ready once
++        # per epoch; wait until all topk of THIS epoch land. No workgroup barrier — the
++        # reducer is a per-warp work item, lane 0 spins for the warp.
++        if lane == fx.Int32(0):
++            mori_shmem.int32_wait_until_greater_than(
++                u_c_tok_ready + fx.Int64(token) * fx.Int64(4), tok_ready_arrival
++            )
++
++        n_elems = n_i32
++        if const_expr(blockwise_fp8_transport):
++            # Align the per-warp hidden slice to the 8-Int32 microscale block.
++            scale_blocks = n_elems // 8
++            hdim_per_warp = (
++                (scale_blocks + warps_per_tok - 1) // warps_per_tok
++            ) * 8
++        else:
++            hdim_per_warp = (n_elems + warps_per_tok - 1) // warps_per_tok
++        hdim_off = part_id * hdim_per_warp
++
++        # This token's topk partials were plain-stored per (tok_id, k_slot) by the P2P
++        # scatter epilogue: row ``slot_idx`` at stride ``nbytes`` from ``c_inp``.
++        expert_rsrcs = []
++        expert_scale_rsrcs = []
++        expert_vlds = []
++        for k_slot in range_constexpr(TOPK):
++            slot_idx = tok_id * TOPK + k_slot
++            expert_tok_off = fx.Int64(slot_idx) * nbytes
++            expert_tok_addr = c_inp + expert_tok_off
++            # Warp-uniform base -> SGPR (avoids a per-lane address waterfall).
++            expert_tok_addr = _wave_uniform_i64(expert_tok_addr)
++            expert_rsrcs.append(create_buffer_resource_from_addr(expert_tok_addr))
++            if const_expr(blockwise_fp8_transport):
++                # Microscales trail the FP8 hidden bytes at + N_OUT within the row.
++                expert_scale_rsrcs.append(
++                    create_buffer_resource_from_addr(
++                        expert_tok_addr + fx.Int64(N_OUT)
++                    )
++                )
++            expert_vlds.append(fx.Boolean(1))
++
++        def _accum_step(
++            ec_abs,
++            U,
++            expert_rsrcs=expert_rsrcs,
++            expert_scale_rsrcs=expert_scale_rsrcs,
++            expert_vlds=expert_vlds,
++            tok_id=tok_id,
++        ):
++            vals = [[] for _ in range(U)]
++            scales = [[] for _ in range(U)]
++            scale_raws = [[] for _ in range(U)]
++            for k_slot in range_constexpr(TOPK):
++                rsrc_k = expert_rsrcs[k_slot]
++                vld_k = expert_vlds[k_slot]
++                for u in range_constexpr(U):
++                    # Select the optional per-u soffset by mutating a kwargs dict, then
++                    # issue the masked load and append in a SINGLE statement. Under the
++                    # FlyDSL AST rewriter an ``if`` lowers to dispatched then/else branch
++                    # functions, so a value bound to a fresh name inside those branches
++                    # does not survive to the enclosing scope; a dict mutation is a side
++                    # effect on an existing object, which does survive.
++                    kw = {}
++                    if u > 0:
++                        kw["soffset_bytes"] = u * 256
++                    vals[u].append(
++                        _maybe_load(
++                            rsrc_k, ec_abs, vld_k, vec_width=1, dtype=T.i32,
++                            cache_modifier=IN_CACHE, **kw,
++                        )
++                    )
++                    if const_expr(blockwise_fp8_transport):
++                        scale_idx = (ec_abs + u * 64) // 8
++                        sc_i32 = fx.Int32(0)
++                        if (lane & 7) == 0:
++                            sc_raw = _maybe_load(
++                                expert_scale_rsrcs[k_slot],
++                                scale_idx,
++                                vld_k,
++                                vec_width=1,
++                                dtype=T.i8,
++                                cache_modifier=IN_CACHE,
++                            )
++                            sc_i32 = (
++                                fx.Uint8(sc_raw).to(fx.Uint32).bitcast(fx.Int32)
++                            )
++                        scale_raws[u].append(sc_i32)
++
++            if const_expr(blockwise_fp8_transport):
++                # Broadcast after issuing all VMEM loads to avoid serial vmcnt waits.
++                for u in range_constexpr(U):
++                    for k_slot in range_constexpr(TOPK):
++                        sc_i32 = fx.Int32(
++                            ds_bpermute(
++                                T.i32,
++                                (lane & fx.Int32(~7)) * fx.Int32(4),
++                                scale_raws[u][k_slot],
++                            )
++                        )
++                        scales[u].append(
++                            (sc_i32 << fx.Int32(23)).bitcast(fx.Float32)
++                        )
++
++            if const_expr(blockwise_fp8_transport):
++                out_off = tok_id * out_n_i32 + ec_abs * 2
++                out_step = 512  # bf16 store on fp8-stride buffer: 2x
++            else:
++                out_off = tok_id * n_i32 + ec_abs
++                out_step = 256
++
++            for u in range_constexpr(U):
++                if const_expr(blockwise_fp8_transport):
++                    fp32_acc = _zero_accum()
++                    for k_slot in range_constexpr(TOPK):
++                        fp32_acc = (
++                            fp32_acc
++                            + _to_accum(vals[u][k_slot]) * scales[u][k_slot]
++                        )
++                    acc = _from_accum(fp32_acc)
++                else:
++                    acc = _accum_experts(vals[u])
++                kw = {"cache_modifier": SLC_CACHE}
++                if u > 0:
++                    kw["soffset_bytes"] = u * out_step
++                buffer_store(acc, rsrc_out, out_off, **kw)
++
++        def _accum_loop(end, U, hdim_off=hdim_off):
++            step = U * 64
++            # Align end down to step so the main loop never overruns; the tail
++            # covers the remainder (U == 1 => empty tail).
++            if const_expr(U > 1):
++                main_end = (end // step) * step
++            else:
++                main_end = end
++            for ec in range(lane, main_end, step):
++                _accum_step(hdim_off + ec, U)
++            if const_expr(U > 1):
++                for ec in range(main_end + lane, end, 64):
++                    _accum_step(hdim_off + ec, 1)
++
++        rem_hdim = n_elems - hdim_off
++        eff_end = (rem_hdim < hdim_per_warp).select(rem_hdim, hdim_per_warp)
++        if _S3_WIDE_PATH_THRESHOLD_I32 < hdim_per_warp:
++            # Wide path: U4 only when BOTH the row and the per-warp hidden slice are
++            # 256-aligned; U2 for the wide-but-misaligned slice. Row divisibility alone
++            # never selects U4 (that would over-pressure a misaligned per-warp slice).
++            if const_expr(n_i32 % 256 == 0):
++                if (hdim_per_warp % 256) < 1:
++                    _accum_loop(eff_end, 4)
++                else:
++                    _accum_loop(eff_end, 2)
++            else:
++                _accum_loop(eff_end, 1)
++        else:
++            _accum_loop(eff_end, 1)
++
++    return (consts, _emit_item)
++
++
++def emit_combine_barrier_and_reduce(
++    *, model_dim, topk, npes, num_waves, max_tok, global_warp_id, global_warp_num,
++    cur_rank_num_token, nominal_warp_num, c_inp, c_out, c_tok_ready, c_peer_ready,
++    tok_ready_epoch, tok_ready_arrival, p2p_quant_type="none",
++    blockwise_fp8_transport=False, out_cache_modifier=None,
++):
++    """Shared combine barrier+reduce entry both the fused and standalone paths route
++    through: configure the ONE reducer via ``make_combine_reduce_emitter`` and drain the
++    OUTPUT work domain, one workgroup barrier before the loop so every warp sees the same
++    published partials, then per-warp ``_emit_item`` items (each of which spins on the
++    cross-rank arrival counter, never re-taking a workgroup barrier)."""
++    (consts, _emit_item) = make_combine_reduce_emitter(
++        model_dim=model_dim,
++        topk=topk,
++        npes=npes,
++        num_waves=num_waves,
++        max_tok=max_tok,
++        p2p_quant_type=p2p_quant_type,
++        blockwise_fp8_transport=blockwise_fp8_transport,
++        cur_rank_num_token=cur_rank_num_token,
++        nominal_warp_num=nominal_warp_num,
++        c_inp=c_inp,
++        c_out=c_out,
++        c_tok_ready=c_tok_ready,
++        c_peer_ready=c_peer_ready,
++        tok_ready_epoch=tok_ready_epoch,
++        tok_ready_arrival=tok_ready_arrival,
++        out_cache_modifier=out_cache_modifier,
++    )
++    fx.barrier()
++    # The OUTPUT-domain grid-stride walk over ``s3_total_work`` is DRIVEN INLINE by the
++    # caller's ``@flyc.kernel`` body, not here. ``s3_total_work`` and ``global_warp_id`` are
++    # dynamic device values; a Python ``range()`` over them only lowers to a device loop
++    # under the kernel decorator's AST rewrite, which does not reach a plain helper (a
++    # helper's ``range()`` runs as real Python and rejects the dynamic bound). This helper
++    # only configures the shared reducer (barrier + per-item emitter) and returns them so
++    # the caller strides ``for s3_work_idx in range(global_warp_id, s3_total_work,
++    # global_warp_num): _emit_item(s3_work_idx)`` inline.
++    return (consts, _emit_item)
++
++
+ def make_dispatch_kernel(
+     *,
+     rank: int,
+@@ -945,7 +1300,38 @@ def make_combine_kernel(
+             hdim_per_warp = (n_elems + warps_per_tok - 1) // warps_per_tok
+         s3_total_work = cur_rank_num_token * warps_per_tok
+ 
+-        for s3_work_idx in range(global_warp_id, s3_total_work, global_warp_num):
++        # The fused-upstream transport (skip_stage1: the k partials are plain-stored per
++        # (tok_id, k_slot) at addr_shmem_tok + slot_idx*nbytes) shares the ONE reduce body
++        # with the fused Stage1 combine third queue through emit_combine_barrier_and_reduce
++        # -> make_combine_reduce_emitter, so neither caller re-derives the top-k reduction.
++        # The legacy decode/zero-copy transport keeps its in-kernel decode reduce below.
++        # Exactly one of the two runs (compile-time split on the transport layout); the
++        # inline loop bound collapses to zero when the shared helper owns the reduce.
++        if const_expr(skip_stage1 and not zero_copy):
++            (_sc_consts, _sc_emit) = emit_combine_barrier_and_reduce(
++                model_dim=hidden_dim, topk=experts_per_token, npes=npes,
++                num_waves=warp_num_per_block, max_tok=max_tok_per_rank,
++                global_warp_id=global_warp_id, global_warp_num=global_warp_num,
++                cur_rank_num_token=cur_rank_num_token,
++                nominal_warp_num=global_warp_num,
++                c_inp=addr_shmem_tok, c_out=addr_out_shmem_tok,
++                c_tok_ready=addr_inp_shmem_tok_id_to_src, c_peer_ready=addr_p2p_tok,
++                tok_ready_epoch=fx.Int32(0), tok_ready_arrival=fx.Int32(-1),
++                blockwise_fp8_transport=blockwise_fp8_transport,
++            )
++            # Drive the shared reducer's OUTPUT work domain INLINE in this @flyc.kernel body
++            # so the dynamic grid-stride range is AST-rewritten into a device loop; the same
++            # single reducer (make_combine_reduce_emitter) the fused Stage1 third queue uses.
++            _sc_total = _sc_consts["s3_total_work"]
++            for s3_work_idx in range(global_warp_id, _sc_total, global_warp_num):
++                _sc_emit(s3_work_idx)
++        _s3_inline = not (skip_stage1 and not zero_copy)
++
++        for s3_work_idx in range(
++            global_warp_id,
++            (s3_total_work if _s3_inline else fx.Int32(0)),
++            global_warp_num,
++        ):
+             tok_id = s3_work_idx // warps_per_tok
+             part_id = s3_work_idx % warps_per_tok
+             hdim_off = part_id * hdim_per_warp
+diff --git a/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py b/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+index fceae8d9..f9be52d7 100644
+--- a/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
++++ b/aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+@@ -570,6 +570,7 @@ class FlyDSLDispatchCombineIntraNodeOp:
+             "_p2p_comb_inp": self.shmem_comb_inp_tok,
+             "_p2p_comb_inp_wts": self.shmem_comb_inp_wts,
+             "_p2p_xdb_mem": self.shmem_xdev_bar_mem,
++            "_p2p_tok_ready": self.shmem_fused_tok_ready,
+         }
+         for _attr, _src in _p2p_srcs.items():
+             setattr(self, _attr, build_p2p_table(_src, r, npes, self._dev))
+@@ -601,6 +602,10 @@ class FlyDSLDispatchCombineIntraNodeOp:
+             "_fx_out_total_recv": self.total_recv,
+             "_fx_comb_inp": self.shmem_comb_inp_tok,
+             "_fx_comb_out": self.shmem_comb_out_tok,
++            "_fx_tok_ready": self.shmem_fused_tok_ready,
++            "_fx_p2p_tok_ready": self._p2p_tok_ready,
++            "_fx_fused_comb_ctr": self.fused_comb_ctr,
++            "_fx_fused_comb_mtile_ctr": self.fused_comb_mtile_ctr,
+             "_fx_xdb_mem": self.shmem_xdev_bar_mem,
+             "_fx_xdev_flag": self._xdev_flag,
+             "_fx_comb_bar": self.comb_bar,
+@@ -695,12 +700,24 @@ class FlyDSLDispatchCombineIntraNodeOp:
+         self.shmem_comb_out_tok = mori_shmem_create_tensor((tok_i16_mt,), torch.int16)
+         self.shmem_comb_out_wts = mori_shmem_create_tensor((mt * k,), torch.float32)
+         self.shmem_xdev_bar_mem = mori_shmem_create_tensor((npes,), torch.int64)
++        # Fused-combine cross-rank token readiness: a distinct symmetric int32 counter
++        # (one per destination local token) that remote peers atomic_add into once per
++        # accepted P2P route. It is separate from the payload buffer shmem_comb_inp_tok
++        # so a readiness arrival is not conflated with a payload write. It is monotone
++        # across launches (padded/gated by a per-launch epoch), never host-cleared on the
++        # compute-launch path.
++        self.shmem_fused_tok_ready = mori_shmem_create_tensor((mt,), torch.int32)
++        # Rank-local fused-combine claim/generation and per-m-tile tile-close counters.
++        # c_ctr[0] = block-claim head; c_ctr[1] = monotone arrival epoch.
++        self.fused_comb_ctr = torch.zeros(2, dtype=torch.int32, device=self._dev)
++        self.fused_comb_mtile_ctr = torch.zeros(mt, dtype=torch.int32, device=self._dev)
+ 
+         # shmem_malloc is uninitialized; zero what combine reads.
+         self.shmem_tok_id_to_src.zero_()
+         self.shmem_comb_inp_tok.zero_()
+         self.shmem_comb_inp_wts.zero_()
+         self.shmem_xdev_bar_mem.zero_()
++        self.shmem_fused_tok_ready.zero_()
+ 
+         self.dest_pe_ctr = torch.zeros(npes, dtype=torch.int32, device=self._dev)
+         self.disp_bar = torch.zeros(1, dtype=torch.int32, device=self._dev)
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/gemm1.py b/aiter/ops/flydsl/kernels/mega_moe/gemm1.py
+index dd76e302..0678063c 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/gemm1.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/gemm1.py
+@@ -271,7 +271,7 @@ def build_fused_gemm1(*, x_tensor, w_rsrc, sw_rsrc, sx_rsrc,
+     model_dim, inter_dim, sort_block_m, tile_n, num_waves, n_per_wave, wave_id,
+     m_repeat, num_acc_n, a_k_step_bytes, total_threads, k_iters, a_lds_i32, n_tiles,
+     expert_offset, b_cache_modifier, swizzle_a, pipe_weights, mfma_amajor, async_a_copy,
+-    use_tile_resource, swiglu_limit=0.0):
++    use_tile_resource, swiglu_limit=0.0, out_cache_modifier=0):
+     # fmt: on
+     """Build the GEMM1 atoms and return its expert resolver and tile runner."""
+     sched = TileScheduler(
+@@ -306,7 +306,7 @@ def build_fused_gemm1(*, x_tensor, w_rsrc, sw_rsrc, sx_rsrc,
+     epi = SiluQuantEpilogue(out_rsrc=out_rsrc, out_scale_rsrc=os_rsrc, sorted_rsrc=trb_rsrc, tokens=0,
+         inter_dim=inter_dim, m_repeat=m_repeat, num_acc_n=num_acc_n, sort_block_m=sort_block_m, tile_n=tile_n,
+         num_waves=num_waves, lds_out=c_tile, swiglu_limit=swiglu_limit, always_valid=True,
+-        out_tensor=out_tensor if use_tile_resource else None)
++        out_tensor=out_tensor if use_tile_resource else None, out_cache_modifier=out_cache_modifier)
+     # fmt: on
+ 
+     def _decode(flat):
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/gemm2.py b/aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+index 1b4b7361..301eba04 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/gemm2.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+@@ -111,12 +111,14 @@ def issue_a_load_lds_dt(
+     KH_TILE_A,
+     K_BYTES,
+     BM=32,
++    NW=4,
+ ):
+     """Load one A tile through a tile-local descriptor so allocations may span the 4 GiB buffer ABI."""
+     lanes_per_row = KH_TILE_A // 16  # 8 (fp4) / 16 (fp8)
+     rows_per_call = 64 // lanes_per_row  # 8 (fp4) / 4 (fp8)
+     a_lane_row = lane // lanes_per_row
+-    rows_per_wave = BM // 4  # rows each wave loads (BM32: 8, BM64: 16)
++    # NW waves cooperate on the BM-row A tile; NW=4 is byte-identical to the legacy BM//4 split.
++    rows_per_wave = BM // NW  # rows each wave loads (BM32/NW4: 8, BM64/NW4: 16)
+     # BM16 fp4: partial-wave round-robin (waves 2,3 re-load, harmless); BM>=32 byte-identical per-wave blocks.
+     partial_wave_gather = rows_per_wave < rows_per_call
+     if const_expr(partial_wave_gather):
+@@ -184,6 +186,7 @@ def gemm2_compute_v2(
+     g2_bhoist=True,
+     g2_ascale_pf=True,
+     expert_offset=0,
++    NW=4,
+ ):
+     """Run the GEMM2 K-loop and return accumulators for the selected epilogue."""
+     # SBM is the sort padding unit; BM is the compute tile and must divide SBM.
+@@ -192,7 +195,10 @@ def gemm2_compute_v2(
+     kMChunks = BM // 16  # 16-row MFMA row-groups
+     kHalves = BK // 128  # 16x16x128 MFMA K-steps per K-tile
+     tilesPerScaleChunk = 256 // BK  # K-tiles sharing one 256-K E8M0 word
+-    numAccN = (BN // 4) // 16  # 16-column MFMA subblocks per wave
++    # NW waves split the BN columns into NW bands of wave_n=BN//NW cols each.
++    # NW=4 -> wave_n=BN//4, byte-identical to the legacy four-wave mapping.
++    wave_n = BN // NW
++    numAccN = wave_n // 16  # 16-column MFMA subblocks per wave
+     nPairs = max(1, numAccN // 2)  # one B-scale per two 16-column subblocks
+     # BM16: single 16-row block owning a 32-row scale chunk (chunk==m_block_idx, rg0-only).
+     is_bm16 = BM < 32
+@@ -266,6 +272,7 @@ def gemm2_compute_v2(
+             KH_TILE_A,
+             K_BYTES,
+             BM=BM,
++            NW=NW,
+         )
+ 
+     def issue_a_ds_read(slot):
+@@ -356,12 +363,12 @@ def gemm2_compute_v2(
+     bq_base_dw = [
+         rocdl.readfirstlane(
+             T.i32,
+-            (e * N_OUT_rt + n_block_idx * BN + wave * (BN // 4) + j * 16) * KH4,
++            (e * N_OUT_rt + n_block_idx * BN + wave * wave_n + j * 16) * KH4,
+         )
+         for j in range_constexpr(numAccN)
+     ]
+ 
+-    mni_base = n_block_idx * (BN // 16 // 2) + wave * (BN // 64 // 2)
++    mni_base = n_block_idx * (BN // 16 // 2) + wave * (numAccN // 2)
+     bscale_views = [
+         scale_view(
+             arg_bscale,
+@@ -388,7 +395,7 @@ def gemm2_compute_v2(
+                 )
+                 load_mask = None
+                 if const_expr(has_pad):
+-                    col = n_block_idx * BN + wave * (BN // 4) + j * 16
++                    col = n_block_idx * BN + wave * wave_n + j * 16
+                     load_mask = (col < N_real) & (
+                         kt_rt * fx.Int32(kHalves) + fx.Int32(half) < halves_real
+                     )
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/gemm_util.py b/aiter/ops/flydsl/kernels/mega_moe/gemm_util.py
+index 075b027a..1cf437eb 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/gemm_util.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/gemm_util.py
+@@ -552,8 +552,10 @@ class SiluQuantEpilogue:
+ 
+     # fmt: off
+     def __init__(self, *, out_rsrc, out_scale_rsrc, sorted_rsrc, tokens, inter_dim, m_repeat, num_acc_n,
+-        sort_block_m, tile_n, num_waves, lds_out, swiglu_limit=0.0, always_valid=False, out_tensor=None):
++        sort_block_m, tile_n, num_waves, lds_out, swiglu_limit=0.0, always_valid=False, out_tensor=None,
++        out_cache_modifier=0):
+     # fmt: on
++        self._out_cache_modifier = int(out_cache_modifier)
+         self._out_rsrc = out_rsrc
+         self._out_scale_rsrc = out_scale_rsrc
+         self._sorted_rsrc = sorted_rsrc
+@@ -686,7 +688,8 @@ class SiluQuantEpilogue:
+                 short_raw = fx.Int32(packed).to(fx.Int16)
+                 out_byte = out_row_base + gcol
+                 out_byte = valid.select(out_byte, fx.Int32(0x40000000))
+-                _buffer_store(out_rsrc, out_byte // fx.Int32(2), short_raw, fx.Int16)
++                _buffer_store(out_rsrc, out_byte // fx.Int32(2), short_raw, fx.Int16,
++                    cache_modifier=self._out_cache_modifier)
+ 
+                 col_s = gcol >> fx.Int32(5)
+                 is_writer = (gcol & fx.Int32(31)) == fx.Int32(0)
+@@ -699,5 +702,6 @@ class SiluQuantEpilogue:
+                 byte_off = d0 * n32 + d3 * fx.Int32(256) + d5 * fx.Int32(64) + d2 * fx.Int32(4) + d4 * fx.Int32(2) + d1
+                 byte_off = is_writer.select(byte_off, fx.Int32(0x40000000))
+                 e8m0_i8 = e8m0_v.to(fx.Int8)
+-                _buffer_store(self._out_scale_rsrc, byte_off, e8m0_i8, fx.Int8)
++                _buffer_store(self._out_scale_rsrc, byte_off, e8m0_i8, fx.Int8,
++                    cache_modifier=self._out_cache_modifier)
+         wait_lds_barrier()
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+index 083595b3..e05e04e5 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+@@ -250,6 +250,10 @@ def _select_large_stage1(
+     work_shards = 1 if bucket <= 32 else 4
+     if bucket == 2048:
+         work_shards = 8
++    # Large-path P2P payload chunk rows: the 512 bucket has fewer rows per m-tile than
++    # the wider large buckets, so it drains in a 256-row chunk; every other large bucket
++    # (including 8192) uses the 384-row chunk. Bucket-derived, no 8192-only override.
++    payload_chunk_rows = 256 if bucket == 512 else 384
+     return Stage1Config(
+         sort_block_m=sort_block_m,
+         tile_n=tile_n,
+@@ -265,7 +269,7 @@ def _select_large_stage1(
+         work_shards=work_shards,
+         external_grouping=bucket == 4 or bucket >= 256,
+         external_counting=bucket >= 256,
+-        payload_chunk_rows=384,
++        payload_chunk_rows=payload_chunk_rows,
+         payload_tile_ready=True,
+     )
+ 
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+index ddc9068d..2c35510e 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+@@ -24,8 +24,24 @@ from .dispatch import (
+ )
+ from .gemm1 import _LdsF32View, build_fused_gemm1
+ from .gemm_util import _buffer_load, _buffer_store, _make_buffer, _make_buffer_from_addr
++from .mega_moe_stage2 import (
++    derive_stage2_emit_constants,
++    make_stage2_body_emitter,
++)
++from .gemm2 import issue_a_load_lds_dt as _s2_issue_a_load_lds_dt
++from .gemm2 import kStages as _s2_kStages
++from ..mxfp4_gemm_common import lds_typed_ptr as _s2_lds_typed_ptr
++from aiter.ops.flydsl.kernels import buffer_ops as _s2_buffer_ops
++from ..flydsl_dispatch_combine_intranode_kernel import make_combine_reduce_emitter
+ 
+ _SC0_CACHE = 1
++# Write-through + L2 bypass cache modifier for cross-rank publication stores (the
++# combine reduce output row), so a peer's read never observes a stale L2 line.
++_P2P_CACHE_WT = 17
++# GEMM1 activation/scale output stores use the same gfx95x system-visible write-through
++# modifier so the GEMM2 consumer's relaxed MORI wait observes completed tiles, not stale
++# L2 lines (playbook section 8, GEMM1->GEMM2 producer ordering).
++_G1_OUT_WT = 17
+ _BUFFER_OFFSET_ABI_BYTES = 1 << 32
+ 
+ 
+@@ -78,6 +94,13 @@ def compile_mega_moe_stage1(
+     work_shards: int | None = None, external_grouping: bool | None = None,
+     external_counting: bool | None = None, payload_chunk_rows: int = 0, payload_tile_ready: bool = False,
+     swiglu_limit: float = 0.0,
++    # --- terminal unified_gemm_drain (4->3) fused GEMM2/P2P scatter, gated by fuse_all ---
++    fuse_all: bool = False, fuse_combine: bool = True,
++    g2_block_m: int = 32, g2_block_n: int = 512, g2_block_k: int = 256,
++    g2_use_nt: bool = True, g2_bhoist: bool = True, g2_ascale_pf: bool = True, g2_bf16_lds: bool = False,
++    g2_p2p_quant_type: str = "none", g2_recv_cap: int = 0, g2_comb_inp_nbytes: int = 0,
++    g2_chunk: int = 16, fused_g2_pref: int = 6,
++    g2_stids_nbytes: int = 0, g2_sweights_nbytes: int = 0, g2_trb_nbytes: int = 0,
+ ):
+     arch = str(get_rocm_arch() or "")
+     if not arch.startswith("gfx95"):
+@@ -157,6 +180,64 @@ def compile_mega_moe_stage1(
+         fz_mtpr, fz_npes, fz_epr, fz_k, fz_tile_m, fz_nbytes, inter_dim, use_tile_resource
+     )
+ 
++    # --- Terminal unified_gemm_drain: derive the ONE Stage2 emit-const set and the shared
++    # Stage2 unit body (nested @flyc.jit) that the fused Stage1 work loop dispatches. The
++    # Stage1 pool and the Stage2 CShuffle slab alias ONE LDS region grown with max() (halves=1);
++    # never allocated additively (MEGA_PLAN_IR resource_lifetimes). Only built when fuse_all so
++    # the FUSE_ALL=0 kernel is byte-identical (same lds_pool_bytes, same kernel_name, same trace).
++    g2_emit_consts = None
++    emit_stage2_body = None
++    G2_BN = int(g2_block_n)
++    G2_BM = int(g2_block_m)
++    G2_BK = int(g2_block_k)
++    G2_N_BLOCKS = model_dim // G2_BN if G2_BN > 0 else 0
++    G2_CHUNK = int(g2_chunk)
++    emit_combine_reduce = None
++    if fuse_all:
++        assert NUM_WAVES % 4 == 0, "fused NW8 tile requires num_waves % 4 == 0"
++        assert G2_BN % NUM_WAVES == 0 and (G2_BN // NUM_WAVES) % 16 == 0
++        assert G2_BM % NUM_WAVES == 0 and G2_BN <= 512
++        assert model_dim % G2_BN == 0, "hidden (model_dim) must tile by G2_BN"
++        assert inter_dim % G2_BK == 0, "INTER_MAX must be a multiple of G2_BK"
++        assert G2_BM in (16, 32, 64, 128) and (sort_block_m % G2_BM) == 0
++        # Route-gated GEMM2 preemption pulls a GEMM2 chunk between GEMM1 tiles only
++        # every fused_g2_pref-th ticket. pref==0 disables preemption; pref>=2 keeps
++        # each GEMM1 cohort intact (never 1, which would preempt on every ticket and
++        # starve the GEMM1 producers this CTA still owns).
++        assert fused_g2_pref == 0 or fused_g2_pref >= 2, (
++            f"fused_g2_pref must be 0 (off) or >= 2, got {fused_g2_pref}"
++        )
++        # Token-ready publication reorders after the P2P payload, so the fused path
++        # publishes with system write-through payload stores (p2p_write_through).
++        g2_emit_consts = derive_stage2_emit_constants(
++            BM=G2_BM, BN=G2_BN, BK=G2_BK, a_dtype="fp8", g2_bf16_lds=g2_bf16_lds,
++            model_dim=model_dim, max_tok=fz_mtpr, npes=fz_npes, topk=fz_k,
++            recv_cap=(g2_recv_cap or None), comb_inp_nbytes=(g2_comb_inp_nbytes or None),
++            rank=fz_rank, experts=fz_epr, p2p_quant_type=g2_p2p_quant_type,
++            publish_tok_ready=fuse_combine,
++        )
++        emit_stage2_body = make_stage2_body_emitter(
++            consts=g2_emit_consts, BM=G2_BM, BN=G2_BN, BK=G2_BK, SBM=sort_block_m,
++            use_nt=g2_use_nt, INTER_MAX=inter_dim, a_dtype="fp8", has_pad=False,
++            g2_bhoist=g2_bhoist, g2_ascale_pf=g2_ascale_pf, npes=fz_npes, topk=fz_k,
++            g2_bf16_lds=g2_bf16_lds, p2p_quant_type=g2_p2p_quant_type,
++            publish_tok_ready=fuse_combine, p2p_write_through=fuse_combine, NW=NUM_WAVES,
++        )
++        # ONE shared combine reduce body: the fused Stage1 combine third queue and the
++        # standalone combine kernel's Stage 3 dispatch the same per-token top-k reducer.
++        _shared_c_consts, emit_combine_reduce = make_combine_reduce_emitter(
++            model_dim=model_dim, topk=fz_k, npes=fz_npes, num_waves=NUM_WAVES,
++            max_tok=fz_mtpr, p2p_quant_type=g2_p2p_quant_type,
++        )
++        # Grow the aliased LDS region so one work unit (GEMM1 tile OR GEMM2 unit OR
++        # combine token block) fits at a time. S2_SLAB is the Stage2 CShuffle slab; the
++        # Stage1 pool and this slab alias ONE region via max() (halves==1), never additive.
++        S2_SLAB = int(g2_emit_consts["lds_bytes"])
++        # ONE Stage2 descriptor: the nested body emitter and its CShuffle slab travel together
++        # so the unified drain (emit) and the LDS aliasing (slab) reference a single object.
++        S2 = {"emit": emit_stage2_body, "slab": S2_SLAB, "consts": g2_emit_consts}
++        lds_pool_bytes = max(lds_pool_bytes, S2["slab"])
++
+     @fx.struct
+     class SharedStorage:
+         pool: fx.Array[fx.Int8, lds_pool_bytes, 16]
+@@ -173,6 +254,7 @@ def compile_mega_moe_stage1(
+         f"_pc{payload_chunk_rows}"
+         f"_ptr{int(payload_tile_ready)}"
+         f"{swiglu_suffix}"
++        f"{('_fused_g2' + str(G2_BM) + 'x' + str(G2_BN) + 'x' + str(G2_BK) + 'c' + str(G2_CHUNK) + 'p' + str(fused_g2_pref) + 'fc' + str(int(fuse_combine))) if fuse_all else ''}"
+     )
+ 
+     @flyc.kernel(name=kernel_name, known_block_size=[TOTAL_THREADS, 1, 1])
+@@ -182,6 +264,14 @@ def compile_mega_moe_stage1(
+         tokens: fx.Int32, addr_disp: fx.Int64, i32_cur_tok: fx.Int32, addr_in_tok: fx.Int64,
+         addr_in_idx: fx.Int64, addr_in_wts: fx.Int64, addr_in_sc: fx.Int64, addr_parity: fx.Int64,
+         addr_expected: fx.Int64,
++        # Direct fused GEMM2/P2P + combine ABI (typed pointer groups; zero placeholders
++        # on the FUSE_ALL=0 path). 12 Stage2 pointers + i32_max_m_blocks + 6 combine ptrs.
++        s2_aq: fx.Int64, s2_ascale: fx.Int64, s2_bq: fx.Int64, s2_bscale: fx.Int64,
++        s2_eids: fx.Int64, s2_cumsum: fx.Int64, s2_max_expert_tiles: fx.Int64, s2_stids: fx.Int64,
++        s2_sweights: fx.Int64, s2_trb: fx.Int64, s2_p2p_comb_inp: fx.Int64, s2_ctr: fx.Int64,
++        i32_max_m_blocks: fx.Int32,
++        c_inp: fx.Int64, c_out: fx.Int64, c_tok_ready: fx.Int64, c_peer_ready: fx.Int64,
++        c_ctr: fx.Int64, c_mtile_ctr: fx.Int64,
+     ):
+         tid = fx.thread_idx.x
+         lds = fx.SharedAllocator().allocate(SharedStorage).peek()
+@@ -262,11 +352,37 @@ def compile_mega_moe_stage1(
+                     group_done_rsrc = _make_buffer_from_addr(a_group_done, fx.Int32)
+                     for destination in range_constexpr(fz_npes if direct_fixed_slot else 1):
+                         _buffer_store(group_done_rsrc, fx.Int32(destination), fx.Int32(0), fx.Int32)
++            # Device-owned GEMM2 completion + sharded-head reset (replaces the host zero_()
++            # of s2_ctr): the owner CTA clears every per-m-tile GEMM1->GEMM2 completion
++            # counter and each shard's claim head before the epoch gate opens, so producers
++            # that pass the gate observe a fresh completion buffer.
++            if const_expr(fuse_all):
++                i32_s2_maxmb = i32_max_m_blocks
++                _ctr_rsrc = _make_buffer_from_addr(s2_ctr, fx.Int32)
++                _c = tid
++                while _c < i32_s2_maxmb:
++                    _buffer_store(_ctr_rsrc, fx.Int32(_c), fx.Int32(0), fx.Int32)
++                    _c = _c + fx.Int32(TOTAL_THREADS)
++                if tid < fx.Int32(WORK_SHARDS):
++                    _buffer_store(
++                        _ctr_rsrc, i32_s2_maxmb + tid * fx.Int32(16), fx.Int32(0), fx.Int32
++                    )
+             fx.barrier()
+             if tid == fx.Int32(0):
+                 fx.rocdl.s_waitcnt(0)
+                 comm_ops.fence_agent_release()
+                 _buffer_store(parity_rsrc, fx.Int32(0), next_parity, fx.Int32)
++                # Device-owned combine arrival generation: clear the block-claim head
++                # (c_ctr[0]) and bump the monotone combine generation (c_ctr[1]) for THIS
++                # launch before the gate opens, replacing the host-side epoch bump.
++                if const_expr(fuse_combine):
++                    _c_rsrc = _make_buffer_from_addr(c_ctr, fx.Int32)
++                    _buffer_store(_c_rsrc, fx.Int32(0), fx.Int32(0), fx.Int32)
++                    _buffer_store(
++                        _c_rsrc, fx.Int32(1),
++                        _buffer_load(_c_rsrc, fx.Int32(1), fx.Int32) + fx.Int32(1),
++                        fx.Int32,
++                    )
+                 fx.rocdl.s_waitcnt(0)
+                 comm_ops.fence_agent_release()
+                 comm_ops.store_i32_system(gate_addr, fx.Int32(0), gate_epoch)
+@@ -392,6 +508,7 @@ def compile_mega_moe_stage1(
+             swizzle_a=swizzle_a, pipe_weights=pipe_weights, mfma_amajor=mfma_amajor,
+             async_a_copy=async_a_copy, use_tile_resource=use_tile_resource,
+             swiglu_limit=swiglu_limit,
++            out_cache_modifier=(_G1_OUT_WT if fuse_all else 0),
+         )
+ 
+         if tid == fx.Int32(0):
+@@ -422,35 +539,462 @@ def compile_mega_moe_stage1(
+                     addr_payload_ready + fx.Int64(pe_index) * fx.Int64(4), payload_expected
+                 )
+ 
+-        # Control CTAs join the work pool after dispatch.
+-        consumer_active = fx.Int32(1) == fx.Int32(1)
+-        work_scratch = fx.recast_iter(fx.Int32, a_buf.ptr)
+-        work_scratch_view = fx.make_view(work_scratch, fx.make_layout(1, 1))
++        def _g2_comp_addr(tile_index):
++            # Zero-based per-tile completion layout: tile 0 lives at s2_ctr[0]. The GEMM2
++            # chunk-claim head does NOT alias the tile-done band (it lives in the sharded
++            # head slots past max_m_blocks), so no +1 slot offset is reserved here.
++            return s2_ctr + fx.Int64(tile_index) * fx.Int64(4)
++
++        def _g2_chunk_ready_all(unit):
++            # A GEMM2 unit reads EVERY Stage1 m-tile that overlaps its BM rows;
++            # BM<=SBM => exactly one tile. Block on all of them (here, the one) so a
++            # chunk never computes before its GEMM1 producers publish completion. The
++            # dependency check lives in this ONE helper for both the per-unit run and
++            # any look-ahead claim.
++            m_block_idx = unit // fx.Int32(G2_N_BLOCKS)
++            s1_tile = (m_block_idx * fx.Int32(G2_BM)) // fx.Int32(sort_block_m)
++            mori_shmem.int32_wait_until_greater_than(
++                _g2_comp_addr(s1_tile), fx.Int32(N_TILES - 1)
++            )
++            comm_ops.fence_system_acquire()
++
+         work_shard = ticket & fx.Int32(WORK_SHARDS - 1)
+-        while consumer_active:
+-            if tid == fx.Int32(0):
+-                local_work = fx.Int32(
++        if fuse_all:
++            # ============================================================================
++            # Terminal unified_gemm_drain (4->3): ONE persistent `while consumer_active`
++            # loop that interleaves GEMM1 tile claims AND sharded GEMM2/P2P chunk claims —
++            # NOT a GEMM1 loop followed by a second GEMM2 drain (MEGA_PLAN_IR MUST). The
++            # three scheduling scalars are consumer_active, g2_pend, g2_next. One CTA claims
++            # one GEMM1 m-tile, computes all N_TILES stripes, then publishes the final count
++            # through one owner-only SYSTEM store. No completion-address atomic RMW is emitted
++            # in the fused region or its local call closure. GEMM2 units consume via a
++            # per-unit blocking wait on
++            # EVERY distinct Stage1 tile they read (BM<=SBM => exactly one), plus a route-gated
++            # non-destructive PEEK preempt so GEMM2 chunks are pulled *between* GEMM1 tiles
++            # (temporal overlap).
++            # ----------------------------------------------------------------------------
++            # s2_ctr layout: zero-based GEMM1 m-tile completion counters followed by
++            # 64-byte-strided sharded GEMM2 claim heads after i32_s2_maxmb.
++            g2_lds_base_i32 = fx.Int32(fx.ptrtoint(a_buf.ptr))
++            # Direct fused ABI: the Stage2 tile-row-base, sorted-expert-ids, srcmap and
++            # combine-weight tables arrive as their own device pointers (never tunneled
++            # through the dispatch table).
++            # Resource-extent clamp of the GEMM2-role tile/route tables. Like the peer
++            # pointer table below, the fused persistent drain's extra live state shifts
++            # register allocation relative to standalone Stage2 and can feed a wild
++            # (out-of-range) index to these loads; srcmap_em/wts_em live in the mori
++            # symmetric heap so a wild read faults at a high VA there. Bind each buffer
++            # resource to its exact host-known byte extent (num_valid_max Int32/Float32 for
++            # the route tables, max_blocks Int32 for the tile-row-base) so the hardware
++            # out-of-bounds check returns 0 for a wild index instead of faulting. Valid
++            # indices are unaffected => correctness-neutral. A 0 extent (unset) keeps the
++            # prior unclamped behaviour for the standalone/SCATTERED callers.
++            g2_trb_rsrc = _s2_buffer_ops.create_buffer_resource_from_addr(
++                s2_trb, num_records_bytes=(int(g2_trb_nbytes) or None)
++            )
++            g2_r_stids = _s2_buffer_ops.create_buffer_resource_from_addr(
++                s2_stids, num_records_bytes=(int(g2_stids_nbytes) or None)
++            )
++            g2_r_sweights = _s2_buffer_ops.create_buffer_resource_from_addr(
++                s2_sweights, num_records_bytes=(int(g2_sweights_nbytes) or None)
++            )
++            g2_eids = s2_eids
++            # Resource-extent clamp of the symmetric-heap peer-pointer table. The fused
++            # persistent drain carries extra live state (GEMM2 chunk claims, the per-m-tile
++            # completion publish, the combine third queue), which shifts register allocation
++            # relative to the standalone Stage2 kernel and can leave a wild (out-of-range)
++            # index feeding this per-peer Int64 pointer load. The table holds exactly
++            # fz_npes peer base addresses, so bind the buffer resource to its real
++            # fz_npes*8-byte extent: the hardware out-of-bounds check then returns 0 for a
++            # wild index instead of faulting at a high VA inside the ~40G symmetric heap.
++            # Valid indices (0..fz_npes-1) are unaffected, so this is correctness-neutral.
++            g2_peer_tbl = _s2_buffer_ops.create_buffer_resource_from_addr(
++                s2_p2p_comb_inp, num_records_bytes=fz_npes * 8
++            )
++            g2_s2ctr_rsrc = _make_buffer_from_addr(s2_ctr, fx.Int32)
++            # s2_cumsum aliases op.num_valid: the Stage1 queue bound and the Stage2 cumsum
++            # bound read ONE pointer so neither recomputes num_valid.
++            g2_cumsum_rsrc = _make_buffer_from_addr(s2_cumsum, fx.Int32)
++            g2_num_valid = _buffer_load(g2_cumsum_rsrc, fx.Int32(0), fx.Int32)
++            g2_is_f8 = bool(g2_emit_consts["is_f8"])
++            g2_KH_TILE_A = int(g2_emit_consts["KH_TILE_A"])
++            g2_lds_peer_off = int(g2_emit_consts["lds_peer_off"])
++            g2_lane = tid % fx.Int32(64)
++            g2_wave = fx.Int32(fx.rocdl.readfirstlane(T.i32, tid // fx.Int32(64)))
++            g2_k_bytes = fx.Int32(inter_dim if g2_is_f8 else inter_dim // 2)
++            g2_total_m_blocks = ceildiv(g2_num_valid, fx.Int32(G2_BM))
++            g2_total_units = g2_total_m_blocks * fx.Int32(G2_N_BLOCKS)
++            # GEMM1 claim domain for the unified drain is the Stage1 m-tile (NOT the flat
++            # (m-tile, n-stripe) tile): one CTA claims an m-tile and owns ALL N_TILES
++            # column stripes, so a single owner can publish per-m-tile completion with a
++            # plain owner store instead of a per-stripe atomic RMW. total_work stays the
++            # flat-tile count for the standalone SCATTERED drain below (byte-identical).
++            g1_total_mtiles = num_m_tiles
++            g2_i32_max_m_blocks = ceildiv(tokens, fx.Int32(G2_BM))
++            # Direct fused ABI aliases: the Stage2 m-block capacity and the peer token-ready
++            # publication base arrive as their own kernel arguments (i32_max_m_blocks /
++            # c_peer_ready); bind the canonical fused names used by the drain and combine.
++            i32_s2_maxmb = i32_max_m_blocks
++            c_p2p_ready = c_peer_ready
++            # Active capacity: the host-provided max routed expert-tile count bounds the GEMM2
++            # drain and drives the (5,4) expert-skew preemption balance. Its own device pointer.
++            g2_metiles_rsrc = _make_buffer_from_addr(s2_max_expert_tiles, fx.Int32)
++            _g2_metiles = _buffer_load(g2_metiles_rsrc, fx.Int32(0), fx.Int32)
++            # Capacity clamp: linear GEMM2 units never exceed the host Stage2 m-block capacity.
++            g2_cap_units = i32_s2_maxmb * fx.Int32(G2_N_BLOCKS)
++            # GEMM2 sharded claim heads live in the s2_ctr buffer immediately PAST the
++            # i32_s2_maxmb GEMM1->GEMM2 completion counters, one Int32 head per 64-byte line
++            # per shard (playbook section 7 ABI: Int32 index max_m_blocks + 16*shard).
++            g2_head = s2_ctr + fx.Int64(i32_s2_maxmb) * fx.Int64(4)
++            # (5,4) expert-skew balance. _g2_skewed is the compile-time bucket property (does
++            # the routed tile ceiling let opportunistic GEMM2 preemption pay off); it is
++            # observed false on the scored 8192-uniform route. _g2_skew_rt refines it at
++            # runtime against the ACTUAL routed tile count so tile-ceiling effects still gate.
++            _g2_skew_num = 5
++            _g2_skew_den = 4
++            _g2_bal_num = _g2_skew_num
++            _g2_max_metiles_static = (fz_cap + fz_tile_m - 1) // fz_tile_m
++            _g2_skewed = bool(
++                (_g2_max_metiles_static * fz_epr * fz_tile_m * _g2_skew_den)
++                > (fz_mtpr * fz_k * _g2_bal_num)
++            )
++            _g2_skew_rt = (
++                _g2_metiles * fx.Int32(fz_epr) * fx.Int32(fz_tile_m) * fx.Int32(_g2_skew_den)
++            ) > (g2_num_valid * fx.Int32(_g2_bal_num))
++            # chunk16 only when the runtime batch is large; else 1 (MEGA_PLAN_IR route gate).
++            g2_chunk_rt = (i32_cur_tok >= fx.Int32(4096)).select(
++                fx.Int32(G2_CHUNK), fx.Int32(1)
++            )
++            # Route-gated GEMM2 preemption: only every fused_g2_pref-th ticket may pull a
++            # GEMM2 chunk between its GEMM1 tiles. preempt_gate folds the host on/off state
++            # (pref==0 => never preempt) at compile time so `ticket % 0` is never emitted.
++            preempt_gate = fused_g2_pref >= 2 and _g2_skewed
++            if const_expr(preempt_gate):
++                g2_pref = fx.Int32(fused_g2_pref)
++                g2_route_rt = (i32_cur_tok >= fx.Int32(4096)) & (
++                    (ticket % g2_pref) == fx.Int32(0)
++                )
++            else:
++                g2_route_rt = fx.Int32(0) == fx.Int32(1)
++
++            def _g2_publish_mtile_done(m_tile):
++                # Owner-only per-m-tile GEMM1->GEMM2 completion publish (compiler-safe
++                # shape: ONE CTA owns and has just computed ALL N_TILES column stripes of
++                # this Stage1 m-tile). Because a single owner holds the whole m-tile, the
++                # completion is published with a plain system-visible STORE of the final
++                # count N_TILES instead of a per-stripe atomic read-modify-write. No atomic
++                # RMW is emitted anywhere in the unified GEMM work-loop code-generation
++                # frame, which removes the register-allocation frame that produced the
++                # null-base device fault on this target while preserving item-level
++                # readiness. Producer ordering is preserved exactly: the GEMM1 activation
++                # /scale stores are system write-through (_G1_OUT_WT); every wave runs
++                # s_waitcnt(0) to retire its own stores, then a block barrier orders them,
++                # then thread 0 issues the single owner system-release store. No separate
++                # per-tile fence_system_release() is added (playbook section 8). The
++                # consumer still waits int32_wait_until_greater_than(counter, N_TILES-1).
++                fx.rocdl.s_waitcnt(0)
++                fx.barrier()
++                if tid == fx.Int32(0):
++                    comm_ops.store_i32_system(
++                        _g2_comp_addr(m_tile), fx.Int32(0), fx.Int32(N_TILES)
++                    )
++
++            def _g2_run_unit(unit):
++                m_block_idx = unit // fx.Int32(G2_N_BLOCKS)
++                _g2_chunk_ready_all(unit)
++                fx.barrier()
++                if tid < fx.Int32(fz_npes):
++                    _pb = _s2_buffer_ops.buffer_load(
++                        g2_peer_tbl, tid, vec_width=1, dtype=fx.Int64
++                    )
++                    fx.ptr_store(
++                        _pb,
++                        _s2_lds_typed_ptr(
++                            g2_lds_base_i32 + fx.Int32(g2_lds_peer_off) + tid * fx.Int32(8),
++                            T.i64, align=8
++                        ),
++                    )
++                # The shared Stage2 body (S2['emit']) now owns its own initial A-stage LDS
++                # loads, so the fused role does NOT pre-issue them here. _g2_chunk_ready_all
++                # has already blocked on every Stage1 m-tile this chunk reads, so the emitter's
++                # A loads observe published GEMM1 output.
++                emit_stage2_body = S2["emit"]
++                emit_stage2_body(
++                    lds_base_i32=g2_lds_base_i32, arg_aq=s2_aq,
++                    arg_ascale=s2_ascale, arg_bq=s2_bq, arg_bscale=s2_bscale,
++                    arg_eids=g2_eids, trb_rsrc=g2_trb_rsrc, r_stids=g2_r_stids,
++                    r_sweights=g2_r_sweights, i32_max_m_blocks=g2_i32_max_m_blocks,
++                    i32_inter=fx.Int32(inter_dim), i32_hidden=fx.Int32(model_dim),
++                    i32_kpad=fx.Int32(0), i32_npad=fx.Int32(0), tx_i32=tid,
++                    lane=g2_lane, wave=g2_wave, unit_bx=unit, m_block_idx=m_block_idx,
++                    arg_p2p_tok_ready=c_peer_ready, arg_mtile_ctr=c_mtile_ctr,
++                )
++
++            def _g2_peek_head():
++                # Non-destructive PEEK of THIS shard's GEMM2 chunk head (agent add-zero RMW):
++                # read the shard-local claim count without advancing it, then map to a global
++                # linear unit base via the interleaved shard mapping.
++                local = fx.Int32(
+                     comm_ops.atomic_add_agent(
+-                        a_work_head + fx.Int64(work_shard) * fx.Int64(64), fx.Int32(1)
++                        g2_head + fx.Int64(work_shard) * fx.Int64(64), fx.Int32(0)
+                     )
+                 )
+-                work = work_shard + local_work * fx.Int32(WORK_SHARDS)
+-                fx.ptr_store(Vec.from_elements([work], fx.Int32), work_scratch)
+-            fx.barrier()
+-            work = Vec(work_scratch_view.load())[0]
+-            if tid == fx.Int32(0):
+-                has_work = (work < total_work).select(fx.Int32(1), fx.Int32(0))
+-                if has_work != fx.Int32(0):  # noqa: SIM102 - keep the device and compile-time branches separate.
++                global_claim = work_shard + local * fx.Int32(WORK_SHARDS)
++                return global_claim * g2_chunk_rt
++
++            def _g2_claim_chunk():
++                # Commit a GEMM2 chunk claim on THIS shard's own 64-byte-line head and map the
++                # returned shard-local claim to its global linear unit base. Shard mapping
++                # global = work_shard + local*WORK_SHARDS keeps distinct shards' bases disjoint.
++                local = fx.Int32(
++                    comm_ops.atomic_add_agent(
++                        g2_head + fx.Int64(work_shard) * fx.Int64(64), fx.Int32(1)
++                    )
++                )
++                global_claim = work_shard + local * fx.Int32(WORK_SHARDS)
++                return global_claim * g2_chunk_rt
++
++            # broadcast slots: [0]=mode (0 done,1 gemm1,2 gemm2), [1]=work, [2]=new_chunk(-1 none)
++            fdrain_scratch = fx.recast_iter(fx.Int32, a_buf.ptr)
++            fdrain_view = fx.make_view(fdrain_scratch, fx.make_layout(3, 1))
++            # Exactly three loop-carried scheduling scalars: consumer_active, g2_pend,
++            # g2_next. GEMM1 completion is published by the m-tile owner with a plain
++            # owner store in this iteration's tail (no atomic RMW in the frame), so no
++            # publication-frame bookkeeping carry is needed.
++            consumer_active = fx.Int32(1) == fx.Int32(1)
++            g2_pend = fx.Int32(0)
++            g2_next = fx.Int32(0)
++            while consumer_active:
++                # LDS hazard barrier FIRST on every iteration (block-uniform, unconditional
++                # first statement on every continuation path): a new drain iteration must not
++                # overwrite the aliased Stage1/Stage2 role LDS (lds_pool = max(stage1_pool,
++                # stage2_slab*halves), halves=1 when fuse_combine) before the PRIOR Stage2
++                # epilogue's LDS reads retire when fuse_combine is False.
++                fx.barrier()
++                if tid == fx.Int32(0):
++                    if g2_pend > fx.Int32(0):
++                        # keep draining the chunk already claimed by this CTA.
++                        fx.ptr_store(
++                            Vec.from_elements(
++                                [fx.Int32(2), fx.Int32(0), fx.Int32(-1)], fx.Int32
++                            ),
++                            fdrain_scratch,
++                        )
++                    else:
++                        def _claim_gemm1_or_drain():
++                            # Floor: claim the next GEMM1 tile; when GEMM1 work is exhausted,
++                            # pull a remaining GEMM2 chunk so the unified drain still retires.
++                            local_claim = fx.Int32(
++                                comm_ops.atomic_add_agent(
++                                    a_work_head + fx.Int64(work_shard) * fx.Int64(64),
++                                    fx.Int32(1),
++                                )
++                            )
++                            work = work_shard + local_claim * fx.Int32(WORK_SHARDS)
++                            if work < g1_total_mtiles:
++                                if const_expr(not direct_fixed_slot):
++                                    _wait_tile_payload(work * fx.Int32(N_TILES))
++                                fx.ptr_store(
++                                    Vec.from_elements(
++                                        [fx.Int32(1), work, fx.Int32(-1)], fx.Int32
++                                    ),
++                                    fdrain_scratch,
++                                )
++                            else:
++                                got = _g2_claim_chunk()
++                                if got < g2_total_units:
++                                    fx.ptr_store(
++                                        Vec.from_elements(
++                                            [fx.Int32(2), fx.Int32(0), got], fx.Int32
++                                        ),
++                                        fdrain_scratch,
++                                    )
++                                else:
++                                    fx.ptr_store(
++                                        Vec.from_elements(
++                                            [fx.Int32(0), fx.Int32(0), fx.Int32(-1)],
++                                            fx.Int32,
++                                        ),
++                                        fdrain_scratch,
++                                    )
++
++                        # Non-destructive PEEK of the GEMM2 chunk head via an agent-scope
++                        # add-zero RMW (reads the head without advancing it). BOUND the peek
++                        # claim to the live GEMM2 range BEFORE any peek-derived completion
++                        # read: the tile-done load and the ready check happen only inside the
++                        # in-range branch (bound then read, never read then bound). Out of
++                        # range falls straight through to the GEMM1 floor.
++                        peek_head = _g2_peek_head()
++                        if (peek_head < g2_total_units) & (peek_head < g2_cap_units):
++                            peek_mblk = peek_head // fx.Int32(G2_N_BLOCKS)
++                            peek_tile = (
++                                peek_mblk * fx.Int32(G2_BM)
++                            ) // fx.Int32(sort_block_m)
++                            peek_done = _buffer_load(
++                                g2_s2ctr_rsrc, peek_tile, fx.Int32
++                            )
++                            preempt_ok = (
++                                g2_route_rt
++                                & _g2_skew_rt
++                                & (peek_done >= fx.Int32(N_TILES))
++                            )
++                            if preempt_ok:
++                                # peek said READY -> claim a GEMM2 chunk now, interleaving it
++                                # between GEMM1 tiles for temporal overlap.
++                                got = _g2_claim_chunk()
++                                if got < g2_total_units:
++                                    fx.ptr_store(
++                                        Vec.from_elements(
++                                            [fx.Int32(2), fx.Int32(0), got], fx.Int32
++                                        ),
++                                        fdrain_scratch,
++                                    )
++                                else:
++                                    fx.ptr_store(
++                                        Vec.from_elements(
++                                            [fx.Int32(0), fx.Int32(0), fx.Int32(-1)],
++                                            fx.Int32,
++                                        ),
++                                        fdrain_scratch,
++                                    )
++                            else:
++                                _claim_gemm1_or_drain()
++                        else:
++                            _claim_gemm1_or_drain()
++                fx.barrier()
++                _vals = Vec(fdrain_view.load())
++                # kind: 0 = drain done, 1 = run a GEMM1 tile, 2 = run a GEMM2 chunk unit.
++                kind = _vals[0]
++                unit = _vals[1]
++                new_chunk = _vals[2]
++                # Uniform carried-var math via select (never a conditional reassignment).
++                claimed_new = new_chunk >= fx.Int32(0)
++                g2_pend_c = claimed_new.select(g2_chunk_rt, g2_pend)
++                g2_next_c = claimed_new.select(new_chunk, g2_next)
++                if kind == fx.Int32(1):
+                     if const_expr(not direct_fixed_slot):
+-                        _wait_tile_payload(work)
+-                fx.ptr_store(Vec.from_elements([has_work], fx.Int32), work_scratch)
+-            fx.barrier()
+-            has_work = Vec(work_scratch_view.load())[0]
+-            if has_work != fx.Int32(0):
+-                if const_expr(not direct_fixed_slot):
+-                    comm_ops.fence_system_acquire()
+-                _do_scheduled_tile(work)
+-            consumer_active = has_work != fx.Int32(0)
++                        comm_ops.fence_system_acquire()
++                    # `unit` is a Stage1 m-tile index. This one CTA owns and computes ALL
++                    # N_TILES column stripes of the m-tile (the Python range unrolls at trace
++                    # time into N_TILES block-uniform _do_scheduled_tile calls), then publishes
++                    # per-m-tile completion with a single owner store (no atomic RMW in this
++                    # frame). Item-level GEMM1->GEMM2 readiness is preserved: the store lands
++                    # the moment this m-tile's stripes retire, and the GEMM2 consumer still
++                    # waits on the exact m-tile counter it reads.
++                    for _n_stripe in range(int(N_TILES)):
++                        _do_scheduled_tile(unit * fx.Int32(N_TILES) + fx.Int32(_n_stripe))
++                    _g2_publish_mtile_done(unit)
++                did_g2 = kind == fx.Int32(2)
++                g2_unit = g2_next_c
++                if did_g2:
++                    if g2_unit < g2_total_units:
++                        _g2_run_unit(g2_unit)
++                g2_next = did_g2.select(g2_next_c + fx.Int32(1), g2_next_c)
++                g2_pend = did_g2.select(g2_pend_c - fx.Int32(1), g2_pend_c)
++                consumer_active = kind != fx.Int32(0)
++
++            # ============================================================================
++            # Combine third queue (3->2): the SAME persistent CTAs, once the unified GEMM
++            # drain has retired, fold the cross-rank combine reduction IN-KERNEL — no
++            # separate combine launch (MEGA_PLAN_IR target_launches=2). Tokens are pulled
++            # off a block-level claim counter c_ctr[0]; c_ctr[1] is the monotone arrival
++            # EPOCH (bumped host-side per launch). Each of the block's NUM_WAVES waves owns
++            # one token and reduces its topk P2P-scattered partials once all topk of THIS
++            # epoch have landed (c_tok_ready[token] > fz_k*epoch - 1). The reduced BF16 row
++            # is published write-through so a peer combine read never sees a stale line.
++            # ----------------------------------------------------------------------------
++            if const_expr(fuse_combine):
++                # Combine third queue. The block-claim head c_ctr[0] and the monotone
++                # combine generation c_ctr[1] were reset/published by the owner CTA before
++                # the epoch gate opened (device-owned, see startup), so here we only READ
++                # the generation and consume the OUTPUT work domain.
++                _c_rsrc = _make_buffer_from_addr(c_ctr, fx.Int32)
++                c_epoch = _buffer_load(_c_rsrc, fx.Int32(1), fx.Int32)
++                # arrival target: the token's fz_k producers each bump once for this epoch;
++                # wait for strictly-greater-than (fz_k*epoch - 1) == all fz_k arrivals.
++                c_arrival_target = fx.Int32(fz_k) * c_epoch - fx.Int32(1)
++                out_cache_modifier = _P2P_CACHE_WT
++                # Configure the ONE shared combine reducer for THIS launch: the fused role
++                # captures the combine ABI pointers, the runtime local token count, the
++                # launch's nominal warp count and this launch's arrival epoch so the
++                # in-kernel third queue partitions/waits identically to the standalone
++                # combine Stage 3. _c_emit(work_idx) reduces one (token, hidden-slice) unit.
++                g2_blockwise_fp8 = g2_p2p_quant_type == 'fp8_blockwise_1x32'
++                (_c_consts, _c_emit) = make_combine_reduce_emitter(
++                    model_dim=model_dim, topk=fz_k, npes=fz_npes, num_waves=NUM_WAVES,
++                    max_tok=fz_mtpr, p2p_quant_type=g2_p2p_quant_type,
++                    blockwise_fp8_transport=g2_blockwise_fp8,
++                    cur_rank_num_token=i32_cur_tok,
++                    nominal_warp_num=launch_grid_x * NUM_WAVES,
++                    c_inp=c_inp, c_out=c_out, c_tok_ready=c_tok_ready,
++                    c_peer_ready=c_peer_ready, tok_ready_addr=c_tok_ready,
++                    tok_ready_epoch=c_epoch, tok_ready_arrival=c_arrival_target,
++                    out_cache_modifier=out_cache_modifier,
++                )
++                # Combine consumes the OUTPUT work domain (s3_total_work warp-units, one
++                # reduced output row per local token fanned across warps_per_tok), NOT the
++                # routed-row GEMM input bound.
++                _c_total = _c_consts['s3_total_work']
++                # Destination-token padding (owner protocol, playbook section 7): every
++                # token outside [0, cur_tok) has its readiness pre-set to topk*epoch so a
++                # later, larger batch that first routes to it is not one combine generation
++                # behind. Owner-only, thread-strided across the mtpr capacity; idempotent.
++                if compact_owner:
++                    _c_pad = fx.Int32(fz_k) * c_epoch
++                    _c_t = tid
++                    while _c_t < fx.Int32(fz_mtpr):
++                        if _c_t >= i32_cur_tok:
++                            comm_ops.store_i32_system(c_tok_ready, _c_t, _c_pad)
++                        _c_t = _c_t + fx.Int32(TOTAL_THREADS)
++                fx.barrier()
++                comb_active = fx.Int32(1) == fx.Int32(1)
++                comb_scratch = fx.recast_iter(fx.Int32, a_buf.ptr)
++                comb_view = fx.make_view(comb_scratch, fx.make_layout(1, 1))
++                while comb_active:
++                    if tid == fx.Int32(0):
++                        block_claim = fx.Int32(
++                            comm_ops.atomic_add_agent(c_ctr, fx.Int32(1))
++                        )
++                        fx.ptr_store(
++                            Vec.from_elements([block_claim], fx.Int32), comb_scratch
++                        )
++                    fx.barrier()
++                    block_claim = Vec(comb_view.load())[0]
++                    _c_base = block_claim * fx.Int32(NUM_WAVES)
++                    _c_wave = wave_id
++                    _c_item = _c_base + _c_wave
++                    if _c_item < _c_total:
++                        _c_emit(_c_item)
++                    comb_active = _c_base < _c_total
++        else:
++            # Control CTAs join the work pool after dispatch (frozen GEMM1-only drain).
++            consumer_active = fx.Int32(1) == fx.Int32(1)
++            work_scratch = fx.recast_iter(fx.Int32, a_buf.ptr)
++            work_scratch_view = fx.make_view(work_scratch, fx.make_layout(1, 1))
++            while consumer_active:
++                if tid == fx.Int32(0):
++                    local_work = fx.Int32(
++                        comm_ops.atomic_add_agent(
++                            a_work_head + fx.Int64(work_shard) * fx.Int64(64), fx.Int32(1)
++                        )
++                    )
++                    work = work_shard + local_work * fx.Int32(WORK_SHARDS)
++                    fx.ptr_store(Vec.from_elements([work], fx.Int32), work_scratch)
++                fx.barrier()
++                work = Vec(work_scratch_view.load())[0]
++                if tid == fx.Int32(0):
++                    has_work = (work < total_work).select(fx.Int32(1), fx.Int32(0))
++                    if has_work != fx.Int32(0):  # noqa: SIM102 - keep the device and compile-time branches separate.
++                        if const_expr(not direct_fixed_slot):
++                            _wait_tile_payload(work)
++                    fx.ptr_store(Vec.from_elements([has_work], fx.Int32), work_scratch)
++                fx.barrier()
++                has_work = Vec(work_scratch_view.load())[0]
++                if has_work != fx.Int32(0):
++                    if const_expr(not direct_fixed_slot):
++                        comm_ops.fence_system_acquire()
++                    _do_scheduled_tile(work)
++                consumer_active = has_work != fx.Int32(0)
+ 
+     @flyc.jit
+     def launch(
+@@ -458,11 +1002,24 @@ def compile_mega_moe_stage1(
+         sorted_token_ids: fx.Tensor, expert_ids: fx.Tensor, num_valid_ids: fx.Tensor, out_scale: fx.Tensor,
+         tokens: fx.Int32, addr_disp: fx.Int64, i32_cur_tok: fx.Int32, addr_in_tok: fx.Int64,
+         addr_in_idx: fx.Int64, addr_in_wts: fx.Int64, addr_in_sc: fx.Int64, addr_parity: fx.Int64,
+-        addr_expected: fx.Int64, stream: fx.Stream,
++        addr_expected: fx.Int64,
++        s2_aq: fx.Int64, s2_ascale: fx.Int64, s2_bq: fx.Int64, s2_bscale: fx.Int64,
++        s2_eids: fx.Int64, s2_cumsum: fx.Int64, s2_max_expert_tiles: fx.Int64, s2_stids: fx.Int64,
++        s2_sweights: fx.Int64, s2_trb: fx.Int64, s2_p2p_comb_inp: fx.Int64, s2_ctr: fx.Int64,
++        i32_max_m_blocks: fx.Int32,
++        c_inp: fx.Int64, c_out: fx.Int64, c_tok_ready: fx.Int64, c_peer_ready: fx.Int64,
++        c_ctr: fx.Int64, c_mtile_ctr: fx.Int64,
++        stream: fx.Stream,
+     ):
+         kernel(
+             out, x, w, scale_x, scale_w, sorted_token_ids, expert_ids, num_valid_ids, out_scale, tokens,
+             addr_disp, i32_cur_tok, addr_in_tok, addr_in_idx, addr_in_wts, addr_in_sc, addr_parity, addr_expected,
++            s2_aq, s2_ascale, s2_bq, s2_bscale,
++            s2_eids, s2_cumsum, s2_max_expert_tiles, s2_stids,
++            s2_sweights, s2_trb, s2_p2p_comb_inp, s2_ctr,
++            i32_max_m_blocks,
++            c_inp, c_out, c_tok_ready, c_peer_ready,
++            c_ctr, c_mtile_ctr,
+             value_attrs={
+                 "rocdl.waves_per_eu": waves_per_eu_hint,
+                 "rocdl.flat_work_group_size": f"{TOTAL_THREADS},{TOTAL_THREADS}",
+@@ -480,7 +1037,19 @@ def run_mega_moe_stage1(out, x, w, scale_x, scale_w, sorted_token_ids, expert_id
+     mfma_amajor=False, swizzle_a=True, async_a_copy=False, num_dispatch_cu=32,
+     use_tile_resource=True, waves_per_eu_hint=2,
+     b_nt=-1, work_shards=None, external_grouping=None, external_counting=None,
+-    payload_chunk_rows=0, payload_tile_ready=False, swiglu_limit=0.0):
++    payload_chunk_rows=0, payload_tile_ready=False, swiglu_limit=0.0,
++    # --- terminal two-launch fusion: direct GEMM2/P2P scatter + combine ABI ---
++    fuse_all=False, fuse_combine=True,
++    s2_aq=0, s2_ascale=0, s2_bq=0, s2_bscale=0,
++    s2_eids=0, s2_cumsum=0, s2_max_expert_tiles=0, s2_stids=0,
++    s2_sweights=0, s2_trb=0, s2_p2p_comb_inp=0, s2_ctr=0,
++    i32_max_m_blocks=0,
++    c_inp=0, c_out=0, c_tok_ready=0, c_peer_ready=0,
++    c_ctr=0, c_mtile_ctr=0,
++    g2_block_m=32, g2_block_n=512, g2_block_k=256, g2_use_nt=True, g2_bhoist=True,
++    g2_ascale_pf=True, g2_bf16_lds=False, g2_p2p_quant_type="none", g2_recv_cap=0,
++    g2_comb_inp_nbytes=0, g2_chunk=16,
++    g2_stids_nbytes=0, g2_sweights_nbytes=0, g2_trb_nbytes=0):
+     launch = compile_mega_moe_stage1(
+         model_dim=model_dim, inter_dim=inter_dim, rank=rank, experts_per_rank=experts_per_rank,
+         fuse_npes=fuse_npes, fuse_topk=fuse_topk, fuse_cap=fuse_cap, fuse_mtpr=fuse_mtpr,
+@@ -493,10 +1062,24 @@ def run_mega_moe_stage1(out, x, w, scale_x, scale_w, sorted_token_ids, expert_id
+         external_counting=external_counting, payload_chunk_rows=payload_chunk_rows,
+         payload_tile_ready=payload_tile_ready,
+         swiglu_limit=swiglu_limit,
++        fuse_all=fuse_all, fuse_combine=fuse_combine,
++        g2_block_m=g2_block_m, g2_block_n=g2_block_n, g2_block_k=g2_block_k,
++        g2_use_nt=g2_use_nt, g2_bhoist=g2_bhoist, g2_ascale_pf=g2_ascale_pf, g2_bf16_lds=g2_bf16_lds,
++        g2_p2p_quant_type=g2_p2p_quant_type, g2_recv_cap=g2_recv_cap,
++        g2_comb_inp_nbytes=g2_comb_inp_nbytes, g2_chunk=g2_chunk,
++        g2_stids_nbytes=g2_stids_nbytes, g2_sweights_nbytes=g2_sweights_nbytes,
++        g2_trb_nbytes=g2_trb_nbytes,
+     )
+     _run_compiled(
+         launch, out, x, w, scale_x, scale_w, sorted_token_ids, expert_ids, num_valid_ids, out_scale,
+         tokens, addr_disp, i32_cur_tok, addr_in_tok, addr_in_idx, addr_in_wts, addr_in_sc,
+-        addr_parity, addr_expected, stream,
++        addr_parity, addr_expected,
++        s2_aq, s2_ascale, s2_bq, s2_bscale,
++        s2_eids, s2_cumsum, s2_max_expert_tiles, s2_stids,
++        s2_sweights, s2_trb, s2_p2p_comb_inp, s2_ctr,
++        i32_max_m_blocks,
++        c_inp, c_out, c_tok_ready, c_peer_ready,
++        c_ctr, c_mtile_ctr,
++        stream,
+     )
+ # fmt: on
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+index 7634d7f2..9dc6f666 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+@@ -11,6 +11,8 @@ from flydsl.runtime.device import get_rocm_arch
+ 
+ from aiter.ops.flydsl.kernels import buffer_ops
+ 
++from .. import communication_ops_utils as comm_ops
++
+ from ..mxfp4_gemm_common import _fabs_f32 as fabs_f32
+ from ..mxfp4_gemm_common import (
+     global_typed_ptr,
+@@ -29,6 +31,13 @@ from .gemm2 import (
+ 
+ _BUFFER_OFFSET_ABI_BYTES = 1 << 31
+ 
++# gfx95x system-scope write-through cache modifier for cross-rank P2P stores. The
++# fused two-launch path publishes token-ready flags AFTER these payload bytes, so
++# the payload stores must be system-visible (write-through) before the flag flips.
++# Bits: sc0(2) | sc1(1) | nt(16) — write-through carries the non-temporal (nt) bit so
++# the streamed P2P payload bypasses the L2 residency it will not reread on this rank.
++_P2P_CACHE_WT = 2 | 1 | 16
++
+ 
+ @flyc.jit
+ def _fp8_scale_for_leader(is_leader, local_max):
+@@ -49,12 +58,17 @@ def _fp8_scale_for_leader(is_leader, local_max):
+ # fmt: off
+ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM, BN, npes, topk,
+     log2_max_tok, mask_max_tok, recv_cap, comb_inp_nbytes, lds_packed_off, lds_weight_off,
+-    lds_peer_off, g2_bf16_lds=False, p2p_quant_type="none"):
++    lds_peer_off, g2_bf16_lds=False, p2p_quant_type="none", NW=4, p2p_write_through=False):
+ # fmt: on
+     """CShuffle one GEMM2 tile into weighted BF16 rows and scatter them to peers."""
++    # Write-through when the fused path publishes token-ready flags after payloads;
++    # the standalone/frozen path keeps cache_modifier=2 (byte-identical).
++    p2p_cache_modifier = _P2P_CACHE_WT if p2p_write_through else 2
++    # NW waves each own wave_n=BN//NW output columns and BM//NW epilogue rows.
++    # NW=4 reproduces the legacy four-wave partition byte-for-byte.
+     kMChunks = BM // 16
+-    numAccN = (BN // 4) // 16
+-    wave_n = BN // 4
++    wave_n = BN // NW
++    numAccN = wave_n // 16
+     lane_div_16 = lane // 16
+     lane_mod_16 = lane % 16
+     lds_base_fptr = lds_typed_ptr(lds_acc_base, T.f32)
+@@ -78,7 +92,7 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+             w_row = [
+                 fx.ptr_load(
+                     lds_typed_ptr(
+-                        fx.Int32(lds_weight_off) + (row_base + v) * fx.Int32(4),
++                        lds_acc_base + lds_weight_off + (row_base + v) * fx.Int32(4),
+                         T.f32,
+                         align=4,
+                     )
+@@ -97,15 +111,15 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+ 
+     fx.barrier()
+ 
+-    for row_iter in range_constexpr(BM // 4):
+-        row = wave + fx.Int32(row_iter * 4)
++    for row_iter in range_constexpr(BM // NW):
++        row = wave + fx.Int32(row_iter * NW)
+         row_byte_off = row * fx.Int32(4)
+         p = fx.ptr_load(
+-            lds_typed_ptr(fx.Int32(lds_packed_off) + row_byte_off, T.i32, align=4)
++            lds_typed_ptr(lds_acc_base + lds_packed_off + row_byte_off, T.i32, align=4)
+         )
+         if const_expr(not g2_bf16_lds):
+             weight = fx.ptr_load(
+-                lds_typed_ptr(fx.Int32(lds_weight_off) + row_byte_off, T.f32, align=4)
++                lds_typed_ptr(lds_acc_base + lds_weight_off + row_byte_off, T.f32, align=4)
+             )
+         p = rocdl.readfirstlane(T.i32, p.ir_value())
+         if const_expr(not g2_bf16_lds):
+@@ -118,7 +132,7 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+         dest_pe_safe = valid.select(dest_pe, fx.Int32(0))
+         peer_base = fx.ptr_load(
+             lds_typed_ptr(
+-                fx.Int32(lds_peer_off) + dest_pe_safe * fx.Int32(8),
++                lds_acc_base + lds_peer_off + dest_pe_safe * fx.Int32(8),
+                 T.i64,
+                 align=8,
+             )
+@@ -222,7 +236,7 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+                 rsrc_dst,
+                 payload_off,
+                 offset_is_bytes=True,
+-                cache_modifier=2,
++                cache_modifier=p2p_cache_modifier,
+             )
+ 
+             @flyc.jit
+@@ -240,7 +254,7 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+                         rsrc_dst,
+                         scale_off,
+                         offset_is_bytes=True,
+-                        cache_modifier=2,
++                        cache_modifier=p2p_cache_modifier,
+                     )
+ 
+             store_scale_if_leader()
+@@ -254,7 +268,7 @@ def p2p_scatter_epilog(lds_acc_base, accm, n_block_idx, wave, lane, *, N_OUT, BM
+                 rsrc_dst,
+                 off,
+                 offset_is_bytes=True,
+-                cache_modifier=2,
++                cache_modifier=p2p_cache_modifier,
+             )
+ 
+ 
+@@ -266,6 +280,328 @@ def _stage2_lds_bytes(BM, BN, BK, a_dtype, aStages, g2_bf16_lds=False):
+     return max(c_lds_bytes, aStages * slot_bytes)
+ 
+ 
++def derive_stage2_emit_constants(
++    *,
++    BM,
++    BN,
++    BK,
++    a_dtype,
++    g2_bf16_lds,
++    model_dim,
++    max_tok,
++    npes,
++    topk,
++    recv_cap,
++    comb_inp_nbytes,
++    rank,
++    experts,
++    p2p_quant_type,
++    publish_tok_ready=False,
++):
++    """Derive the compile-time slab / scatter constants for one Stage2 unit.
++
++    These are the exact constants the standalone Stage2 kernel and (later) the
++    fused Stage1 work loop both consume, so the shared body never recomputes an
++    approximate subset. Returns a plain dict captured by ``make_stage2_body_emitter``.
++    """
++    is_f8 = a_dtype == "fp8"
++    aStages = kStages + 1
++    KH_TILE_A = BK // (1 if is_f8 else 2)
++    compute_lds_bytes = _stage2_lds_bytes(BM, BN, BK, a_dtype, aStages, g2_bf16_lds)
++    lds_packed_off = compute_lds_bytes
++    lds_weight_off = lds_packed_off + BM * 4
++    lds_peer_off = lds_weight_off + BM * 4
++    lds_bytes = lds_peer_off + npes * 8
++    # Peer token-ready base table + a 4-byte tile-close broadcast slot only exist
++    # on the fused two-launch path. The standalone/frozen path keeps lds_bytes
++    # unchanged (publish_tok_ready=False) so its slab is byte-identical.
++    lds_ready_off = lds_bytes
++    if publish_tok_ready:
++        lds_bytes = lds_ready_off + npes * 8 + 64
++    _recv_cap = npes * max_tok if recv_cap is None else int(recv_cap)
++    _row_nbytes = (
++        model_dim + model_dim // 32
++        if p2p_quant_type == "fp8_blockwise_1x32"
++        else model_dim * 2
++    )
++    _comb_inp_nbytes = (
++        max_tok * topk * _row_nbytes if comb_inp_nbytes is None else int(comb_inp_nbytes)
++    )
++    log2_max_tok = max_tok.bit_length() - 1
++    mask_max_tok = max_tok - 1
++    return {
++        "is_f8": is_f8,
++        "aStages": aStages,
++        "KH_TILE_A": KH_TILE_A,
++        "lds_packed_off": lds_packed_off,
++        "lds_weight_off": lds_weight_off,
++        "lds_peer_off": lds_peer_off,
++        "lds_ready_off": lds_ready_off,
++        "lds_bytes": lds_bytes,
++        "recv_cap": _recv_cap,
++        "comb_inp_nbytes": _comb_inp_nbytes,
++        "N_OUT": model_dim,
++        "log2_max_tok": log2_max_tok,
++        "mask_max_tok": mask_max_tok,
++        "expert_offset": rank * experts,
++    }
++
++
++def make_stage2_body_emitter(
++    *,
++    consts,
++    BM,
++    BN,
++    BK,
++    SBM,
++    use_nt,
++    INTER_MAX,
++    a_dtype,
++    has_pad,
++    g2_bhoist,
++    g2_ascale_pf,
++    npes,
++    topk,
++    g2_bf16_lds,
++    p2p_quant_type,
++    publish_tok_ready=False,
++    p2p_write_through=False,
++    NW=4,
++):
++    """Host factory for the ONE shared Stage2 unit body.
++
++    Returns ``emit_stage2_body`` which accepts the complete dynamic tile arguments
++    as keywords and, inside, decorates a zero-argument ``_emit_stage2_body`` with
++    ``@flyc.jit`` — the source shape on which FlyDSL rewrites the dynamic branches.
++    The same emitter is called by the standalone Stage2 kernel below and, on a
++    later rung, by the fused Stage1 work loop. ``publish_tok_ready`` is False on
++    the standalone/frozen path so the body is byte-identical to the inline unit.
++    """
++    # NW is the native wave-count geometry lever (4 = legacy 4-wave partition, 8 =
++    # BN=512 8-wave). Reject anything else at compile time — a mismatched NW would
++    # silently mis-address the CShuffle bands.
++    if NW not in (4, 8):
++        raise AssertionError(f"Stage2 NW must be in {{4, 8}}, got {NW}")
++    # Token-ready publication reorders after the P2P payload store, so it is only
++    # correct when those payload stores are system write-through. Enforce the
++    # invariant at compile time (never a runtime switch).
++    assert not publish_tok_ready or p2p_write_through, (
++        "publish_tok_ready requires p2p_write_through"
++    )
++    is_f8 = consts["is_f8"]
++    aStages = consts["aStages"]
++    KH_TILE_A = consts["KH_TILE_A"]
++    lds_packed_off = consts["lds_packed_off"]
++    lds_weight_off = consts["lds_weight_off"]
++    lds_peer_off = consts["lds_peer_off"]
++    lds_ready_off = consts["lds_ready_off"]
++    recv_cap = consts["recv_cap"]
++    comb_inp_nbytes = consts["comb_inp_nbytes"]
++    N_OUT = consts["N_OUT"]
++    log2_max_tok = consts["log2_max_tok"]
++    mask_max_tok = consts["mask_max_tok"]
++    expert_offset = consts["expert_offset"]
++
++    # fmt: off
++    def emit_stage2_body(*, lds_base_i32, arg_aq, arg_ascale, arg_bq, arg_bscale, arg_eids,
++        trb_rsrc, r_stids, r_sweights, i32_max_m_blocks, i32_inter,
++        i32_hidden, i32_kpad, i32_npad, tx_i32, lane, wave, unit_bx, m_block_idx,
++        arg_p2p_tok_ready=None, arg_mtile_ctr=None, arg_p2p_peer_base=None):
++    # fmt: on
++
++        @flyc.jit
++        def _emit_stage2_body():
++            # Initial A-stage: this shared body OWNS its A tile LDS loads. Issue one
++            # pipelined A load per A-stage slot, forwarding the native wave count NW so the
++            # A partition matches the CShuffle band geometry (playbook: pass NW to EVERY
++            # issue_a_load_lds_dt call, including the initial A-stage). The fused Stage1 role
++            # no longer pre-issues these; the standalone Stage2 kernel keeps its own loader.
++            # is_f8 is a Python-level constexpr, so select the A K-byte stride with a trace-time
++            # ternary. A statement-level ``if is_f8:`` is rewritten by the FlyDSL AST rewriter into
++            # an scf_if branch dispatch whose assigned name stays local to the branch function and
++            # is undefined afterward; the standalone emitter avoids this the same way (single
++            # expression, no statement-if), so mirror it here.
++            _a_k_bytes = i32_inter if is_f8 else i32_inter // fx.Int32(2)
++            _a_m_row0 = m_block_idx * fx.Int32(BM)
++            for _a_slot in range_constexpr(aStages):
++                issue_a_load_lds_dt(
++                    arg_aq, lds_base_i32, _a_slot, _a_slot, _a_m_row0, wave, lane,
++                    is_f8, KH_TILE_A, _a_k_bytes, BM=BM, NW=NW,
++                )
++            fx.rocdl.sched_barrier(0)
++            # Fused path only: cache the peer token-ready base table in LDS so the
++            # tile-close publication reads one register-resident pointer per peer.
++            if const_expr(publish_tok_ready):
++                _r_tok_ready_tbl = buffer_ops.create_buffer_resource_from_addr(
++                    arg_p2p_tok_ready
++                )
++                if tx_i32 < fx.Int32(npes):
++                    ready_base = buffer_ops.buffer_load(
++                        _r_tok_ready_tbl, tx_i32, vec_width=1, dtype=fx.Int64
++                    )
++                    fx.ptr_store(
++                        ready_base,
++                        lds_typed_ptr(
++                            lds_base_i32
++                            + fx.Int32(lds_ready_off)
++                            + tx_i32 * fx.Int32(8),
++                            T.i64,
++                            align=8,
++                        ),
++                    )
++            if const_expr(arg_p2p_peer_base is not None):
++                # Shared metadata LDS: when the caller delegates peer-base staging to the
++                # ONE Stage2 body, cache the symmetric-heap comb_inp base table into the
++                # slab at lds_peer_off (one Int64 per peer) so p2p_scatter_epilog reads a
++                # register-resident base per destination. The fused Stage1 role stages its
++                # own peer table before the drain and passes None here (block folds out).
++                _r_peer_tbl = buffer_ops.create_buffer_resource_from_addr(
++                    arg_p2p_peer_base
++                )
++                if tx_i32 < fx.Int32(npes):
++                    _peer_base = buffer_ops.buffer_load(
++                        _r_peer_tbl, tx_i32, vec_width=1, dtype=fx.Int64
++                    )
++                    fx.ptr_store(
++                        _peer_base,
++                        lds_typed_ptr(
++                            lds_base_i32
++                            + fx.Int32(lds_peer_off)
++                            + tx_i32 * fx.Int32(8),
++                            T.i64,
++                            align=8,
++                        ),
++                    )
++            m_row = m_block_idx * fx.Int32(BM)
++            sort_block_idx = m_row // fx.Int32(SBM)
++            row_in_sort_block = m_row - sort_block_idx * fx.Int32(SBM)
++            srcmap_row_base = (
++                buffer_ops.buffer_load(trb_rsrc, sort_block_idx, vec_width=1, dtype=fx.Int32)
++                + row_in_sort_block
++            )
++            if tx_i32 < fx.Int32(BM):
++                sorted_pos = srcmap_row_base + tx_i32
++                packed = buffer_ops.buffer_load(
++                    r_stids, sorted_pos, vec_width=1, dtype=fx.Int32
++                )
++                weight = buffer_ops.buffer_load(
++                    r_sweights, sorted_pos, vec_width=1, dtype=fx.Float32
++                )
++                fx.ptr_store(
++                    packed,
++                    lds_typed_ptr(
++                        lds_base_i32 + fx.Int32(lds_packed_off) + tx_i32 * fx.Int32(4),
++                        T.i32,
++                        align=4,
++                    ),
++                )
++                fx.ptr_store(
++                    weight,
++                    lds_typed_ptr(
++                        lds_base_i32 + fx.Int32(lds_weight_off) + tx_i32 * fx.Int32(4),
++                        T.f32,
++                        align=4,
++                    ),
++                )
++            # fmt: off
++            accm_vecs, m_row, n_block_idx, _n_out_rt = gemm2_compute_v2(lds_base_i32, arg_ascale, arg_bq,
++                arg_bscale, arg_eids, arg_aq, i32_max_m_blocks, unit_bx, lane, wave, i32_inter, i32_hidden,
++                i32_kpad, i32_npad, BM=BM, BN=BN, BK=BK, use_nt=use_nt, INTER_MAX=INTER_MAX, aStages=aStages,
++                a_dtype=a_dtype, has_pad=has_pad, SBM=SBM, g2_bhoist=g2_bhoist, g2_ascale_pf=g2_ascale_pf,
++                expert_offset=expert_offset, NW=NW)
++            p2p_scatter_epilog(lds_base_i32, accm_vecs, n_block_idx, wave, lane, N_OUT=N_OUT,
++                BM=BM, BN=BN, npes=npes, topk=topk,
++                log2_max_tok=log2_max_tok, mask_max_tok=mask_max_tok, recv_cap=recv_cap,
++                comb_inp_nbytes=comb_inp_nbytes, lds_packed_off=lds_packed_off,
++                lds_weight_off=lds_weight_off, lds_peer_off=lds_peer_off, g2_bf16_lds=g2_bf16_lds,
++                p2p_quant_type=p2p_quant_type, NW=NW, p2p_write_through=p2p_write_through)
++            # fmt: on
++
++            @flyc.jit
++            def _publish_tok_ready():
++                num_n_blocks = fx.Int32(i32_hidden) // fx.Int32(BN)
++                # Tile-close protocol: every N-block of this m-tile bumps the
++                # per-m-tile arrival counter; the closer (the one observing the
++                # (num_n_blocks-1)th prior arrival) resets it and publishes one
++                # cross-rank system atomic per valid destination token.
++                fx.rocdl.s_waitcnt(0)
++                fx.barrier()
++                close_scratch = lds_typed_ptr(
++                    lds_base_i32
++                    + fx.Int32(lds_ready_off)
++                    + fx.Int32(npes * 8),
++                    T.i32,
++                    align=4,
++                )
++                if tx_i32 == fx.Int32(0):
++                    # Workgroup-scope release paired with the block barrier above:
++                    # the cross-rank payload bytes were already published SYSTEM-
++                    # visible by the P2P write-through (_P2P_CACHE_WT) stores, so the
++                    # per-m-tile tile-close arrival counter only needs a workgroup
++                    # release here, not a redundant system release, before the
++                    # agent-scope arrival RMW.
++                    comm_ops.fence_release(fx.rocdl.SyncScope.WorkgroupOneAs)
++                    prev = fx.Int32(
++                        comm_ops.atomic_add_agent(
++                            arg_mtile_ctr
++                            + fx.Int64(m_block_idx) * fx.Int64(4),
++                            fx.Int32(1),
++                        )
++                    )
++                    fx.ptr_store(prev, close_scratch)
++                fx.barrier()
++                prev = fx.ptr_load(close_scratch)
++                is_closer = prev == (num_n_blocks - fx.Int32(1))
++                if is_closer:
++                    if tx_i32 == fx.Int32(0):
++                        comm_ops.atomic_add_agent(
++                            arg_mtile_ctr
++                            + fx.Int64(m_block_idx) * fx.Int64(4),
++                            fx.Int32(0) - num_n_blocks,
++                        )
++                    if tx_i32 < fx.Int32(BM):
++                        packed = fx.ptr_load(
++                            lds_typed_ptr(
++                                lds_base_i32
++                                + fx.Int32(lds_packed_off)
++                                + tx_i32 * fx.Int32(4),
++                                T.i32,
++                                align=4,
++                            )
++                        )
++                        t = packed & fx.Int32(0x00FFFFFF)
++                        s = packed >> fx.Int32(24)
++                        dest_pe = t >> fx.Int32(log2_max_tok)
++                        dest_lid = t & fx.Int32(mask_max_tok)
++                        valid = (
++                            (t < fx.Int32(recv_cap))
++                            & (s < fx.Int32(topk))
++                            & (dest_pe < fx.Int32(npes))
++                        )
++                        dest_pe_safe = valid.select(dest_pe, fx.Int32(0))
++                        peer_ready = fx.ptr_load(
++                            lds_typed_ptr(
++                                lds_base_i32
++                                + fx.Int32(lds_ready_off)
++                                + dest_pe_safe * fx.Int32(8),
++                                T.i64,
++                                align=8,
++                            )
++                        )
++                        if valid:
++                            comm_ops.atomic_add_system(
++                                peer_ready + fx.Int64(dest_lid) * fx.Int64(4),
++                                fx.Int32(1),
++                            )
++
++            if const_expr(publish_tok_ready):
++                _publish_tok_ready()
++
++        _emit_stage2_body()
++
++    return emit_stage2_body
++
++
+ # fmt: off
+ def compile_mega_moe_stage2(*, model_dim: int, inter_dim: int, experts: int, topk: int, rank: int, npes: int,
+     max_tok: int, recv_cap: int | None = None, comb_inp_nbytes: int | None = None, BM: int = 32, BN: int = 256,
+@@ -297,27 +633,32 @@ def compile_mega_moe_stage2(*, model_dim: int, inter_dim: int, experts: int, top
+         raise AssertionError(f"persist=True requires cu_num>0, got {cu_num}")
+     if skew_cu and (not persist or not 0 < skew_cu < cu_num):
+         raise AssertionError(f"skew_cu={skew_cu} requires persist=True and 0<skew_cu<cu_num={cu_num}")
+-    log2_max_tok = max_tok.bit_length() - 1
+-    mask_max_tok = max_tok - 1
+-    N_OUT = model_dim
+     # The scatter path uses the f32 CShuffle slab rather than BF16 LDS.
+     g2_bhoist, g2_ascale_pf, g2_spart, g2_group_num, g2_m01, _g2_bf16_lds = _resolve_g2_knobs(
+         g2_bhoist, g2_ascale_pf, g2_spart, False, False
+     )
+-    is_f8 = a_dtype == "fp8"
+-    aStages = kStages + 1
+-    KH_TILE_A = BK // (1 if is_f8 else 2)
+-    compute_lds_bytes = _stage2_lds_bytes(BM, BN, BK, a_dtype, aStages, g2_bf16_lds)
+-    lds_packed_off = compute_lds_bytes
+-    lds_weight_off = lds_packed_off + BM * 4
+-    lds_peer_off = lds_weight_off + BM * 4
+-    lds_bytes = lds_peer_off + npes * 8
+-    _recv_cap = npes * max_tok if recv_cap is None else int(recv_cap)
+-    _row_nbytes = N_OUT + N_OUT // 32 if p2p_quant_type == "fp8_blockwise_1x32" else N_OUT * 2
+-    _comb_inp_nbytes = max_tok * topk * _row_nbytes if comb_inp_nbytes is None else int(comb_inp_nbytes)
++    # One derived constant set consumed by the shared Stage2 emitter (and, on a
++    # later rung, by the fused Stage1 work loop) so neither recomputes a subset.
++    _emit_consts = derive_stage2_emit_constants(
++        BM=BM, BN=BN, BK=BK, a_dtype=a_dtype, g2_bf16_lds=g2_bf16_lds, model_dim=model_dim,
++        max_tok=max_tok, npes=npes, topk=topk, recv_cap=recv_cap, comb_inp_nbytes=comb_inp_nbytes,
++        rank=rank, experts=experts, p2p_quant_type=p2p_quant_type,
++    )
++    is_f8 = _emit_consts["is_f8"]
++    KH_TILE_A = _emit_consts["KH_TILE_A"]
++    lds_peer_off = _emit_consts["lds_peer_off"]
++    lds_bytes = _emit_consts["lds_bytes"]
++    _comb_inp_nbytes = _emit_consts["comb_inp_nbytes"]
+     if not 0 < _comb_inp_nbytes < _BUFFER_OFFSET_ABI_BYTES:
+         raise ValueError("MegaMoE v2 stage2 P2P buffer exceeds the 32-bit buffer-resource ABI")
+-    _expert_offset = rank * experts
++
++    # Shared Stage2 unit body: nested @flyc.jit closure reused by both callers.
++    emit_stage2_body = make_stage2_body_emitter(
++        consts=_emit_consts, BM=BM, BN=BN, BK=BK, SBM=SBM, use_nt=use_nt, INTER_MAX=INTER_MAX,
++        a_dtype=a_dtype, has_pad=has_pad, g2_bhoist=g2_bhoist, g2_ascale_pf=g2_ascale_pf,
++        npes=npes, topk=topk, g2_bf16_lds=g2_bf16_lds, p2p_quant_type=p2p_quant_type,
++        publish_tok_ready=False,
++    )
+ 
+     @fx.struct
+     class SharedStorage:
+@@ -350,75 +691,28 @@ def compile_mega_moe_stage2(*, model_dim: int, inter_dim: int, experts: int, top
+ 
+         num_n_blocks = fx.Int32(i32_hidden) // fx.Int32(BN)
+         k_bytes = fx.Int32(i32_inter) // fx.Int32(1 if is_f8 else 2)
+-        # kernel-invariant scatter resources + peer-base table (loaded into registers once).
++        # kernel-invariant scatter resources. The symmetric-heap comb_inp peer-base table
++        # is staged into the LDS slab (lds_peer_off) by the ONE shared Stage2 body, which
++        # owns all metadata LDS; the standalone kernel delegates via arg_p2p_peer_base.
+         trb_rsrc = buffer_ops.create_buffer_resource_from_addr(arg_trb)
+         r_stids = buffer_ops.create_buffer_resource_from_addr(arg_stids)
+         r_sweights = buffer_ops.create_buffer_resource_from_addr(arg_sweights)
+-        _r_p2p_tbl = buffer_ops.create_buffer_resource_from_addr(arg_p2p_comb_inp)
+-        if tx_i32 < fx.Int32(npes):
+-            peer_base = buffer_ops.buffer_load(
+-                _r_p2p_tbl, tx_i32, vec_width=1, dtype=fx.Int64
+-            )
+-            fx.ptr_store(
+-                peer_base,
+-                lds_typed_ptr(
+-                    fx.Int32(lds_peer_off) + tx_i32 * fx.Int32(8),
+-                    T.i64,
+-                    align=8,
+-                ),
+-            )
+ 
+         def issue_all_a_loads(m_row0):
+             for slot in range_constexpr(kStages):
+                 issue_a_load_lds_dt(arg_aq, lds_base_i32, slot, slot, m_row0, wave, lane,
+-                    is_f8, KH_TILE_A, k_bytes, BM=BM)
++                    is_f8, KH_TILE_A, k_bytes, BM=BM, NW=4)
+ 
+         def run_unit(unit_bx, m_block_idx):
+-            # Map each Stage2 BM sub-tile to its Stage1 SBM metadata row.
+-            m_row = m_block_idx * fx.Int32(BM)
+-            sort_block_idx = m_row // fx.Int32(SBM)
+-            row_in_sort_block = m_row - sort_block_idx * fx.Int32(SBM)
+-            srcmap_row_base = (
+-                buffer_ops.buffer_load(trb_rsrc, sort_block_idx, vec_width=1, dtype=fx.Int32)
+-                + row_in_sort_block
++            # Thin caller into the ONE shared Stage2 unit body (nested @flyc.jit).
++            emit_stage2_body(
++                lds_base_i32=lds_base_i32, arg_aq=arg_aq, arg_ascale=arg_ascale, arg_bq=arg_bq,
++                arg_bscale=arg_bscale, arg_eids=arg_eids, trb_rsrc=trb_rsrc, r_stids=r_stids,
++                r_sweights=r_sweights, i32_max_m_blocks=i32_max_m_blocks, i32_inter=i32_inter,
++                i32_hidden=i32_hidden, i32_kpad=i32_kpad, i32_npad=i32_npad, tx_i32=tx_i32,
++                lane=lane, wave=wave, unit_bx=unit_bx, m_block_idx=m_block_idx,
++                arg_p2p_peer_base=arg_p2p_comb_inp,
+             )
+-            if tx_i32 < fx.Int32(BM):
+-                sorted_pos = srcmap_row_base + tx_i32
+-                packed = buffer_ops.buffer_load(
+-                    r_stids, sorted_pos, vec_width=1, dtype=fx.Int32
+-                )
+-                weight = buffer_ops.buffer_load(
+-                    r_sweights, sorted_pos, vec_width=1, dtype=fx.Float32
+-                )
+-                fx.ptr_store(
+-                    packed,
+-                    lds_typed_ptr(
+-                        fx.Int32(lds_packed_off) + tx_i32 * fx.Int32(4),
+-                        T.i32,
+-                        align=4,
+-                    ),
+-                )
+-                fx.ptr_store(
+-                    weight,
+-                    lds_typed_ptr(
+-                        fx.Int32(lds_weight_off) + tx_i32 * fx.Int32(4),
+-                        T.f32,
+-                        align=4,
+-                    ),
+-                )
+-            # fmt: off
+-            accm_vecs, m_row, n_block_idx, _n_out_rt = gemm2_compute_v2(lds_base_i32, arg_ascale, arg_bq,
+-                arg_bscale, arg_eids, arg_aq, i32_max_m_blocks, unit_bx, lane, wave, i32_inter, i32_hidden,
+-                i32_kpad, i32_npad, BM=BM, BN=BN, BK=BK, use_nt=use_nt, INTER_MAX=INTER_MAX, aStages=aStages,
+-                a_dtype=a_dtype, has_pad=has_pad, SBM=SBM, g2_bhoist=g2_bhoist, g2_ascale_pf=g2_ascale_pf,
+-                expert_offset=_expert_offset)
+-            p2p_scatter_epilog(lds_base_i32, accm_vecs, n_block_idx, wave, lane, N_OUT=N_OUT,
+-                BM=BM, BN=BN, npes=npes, topk=topk,
+-                log2_max_tok=log2_max_tok, mask_max_tok=mask_max_tok, recv_cap=_recv_cap,
+-                comb_inp_nbytes=_comb_inp_nbytes, lds_packed_off=lds_packed_off,
+-                lds_weight_off=lds_weight_off, lds_peer_off=lds_peer_off, g2_bf16_lds=g2_bf16_lds,
+-                p2p_quant_type=p2p_quant_type)
+-            # fmt: on
+ 
+         cumsum0 = global_typed_ptr(arg_cumsum, T.i32)[0]
+         total_m_blocks = (cumsum0 + fx.Int32(BM - 1)) // fx.Int32(BM)
+diff --git a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+index 721ad38a..e45bc8d3 100644
+--- a/aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
++++ b/aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+@@ -2,6 +2,10 @@
+ # Copyright (c) 2025 FlyDSL Project Contributors
+ """MegaMoE v2 fused dispatch, GEMM1, GEMM2, and combine implementation."""
+ 
++import os
++import sys
++from dataclasses import dataclass
++
+ import flydsl.expr as fx
+ import mori.shmem as ms
+ import torch
+@@ -22,6 +26,57 @@ from .quant import per_1x32_mx_quant
+ __all__ = ["MegaMoEV2"]
+ 
+ 
++def _env_flag(name: str, default: str) -> bool:
++    """Resolve a boolean campaign switch from the environment (default when unset)."""
++    return os.environ.get(name, default).strip() == "1"
++
++
++@dataclass(frozen=True, slots=True)
++class _M25Variant:
++    """Resolved+validated M2.5 activation state for one launch.
++
++    `mega` is True only when the complete fused topology is selected; the frozen
++    4-launch SCATTERED path is `mega=False`. Individual switch fields are kept so
++    downstream call sites never infer "MEGA" from FUSE_ALL alone (recipe section 1).
++    """
++
++    fuse_all: bool
++    fuse_combine: bool
++    fuse_quant: bool
++    publish_tok_ready: bool
++    p2p_write_through: bool
++    mega: bool
++
++
++def _m25_variant_enabled(config: MegaMoEConfig) -> _M25Variant:
++    """Resolve and validate the fused-path environment before launch.
++
++    Campaign activation is exactly ``AITER_MEGAMOE_FUSE_ALL=1``; with it set, the
++    fused topology is selected whenever ``stage1.num_waves % 4 == 0``.
++    ``AITER_MEGAMOE_FUSE_COMBINE`` defaults on (diagnostic opt-out only); quant
++    fusion stays off. ``publish_tok_ready`` follows fused combine and implies
++    ``p2p_write_through``. This helper is the single resolver so no independent
++    call site derives "MEGA" from ``FUSE_ALL`` alone.
++    """
++    fuse_all = _env_flag("AITER_MEGAMOE_FUSE_ALL", "0")
++    fuse_combine = _env_flag("AITER_MEGAMOE_FUSE_COMBINE", "1")
++    fuse_quant = _env_flag("AITER_MEGAMOE_FUSE_QUANT", "0")
++    num_waves = int(config.stage1.num_waves)
++    mega = fuse_all and (num_waves % 4 == 0)
++    publish_tok_ready = mega and fuse_combine
++    p2p_write_through = publish_tok_ready
++    if publish_tok_ready and not p2p_write_through:
++        raise AssertionError("publish_tok_ready implies p2p_write_through")
++    return _M25Variant(
++        fuse_all=fuse_all,
++        fuse_combine=fuse_combine,
++        fuse_quant=fuse_quant,
++        publish_tok_ready=publish_tok_ready,
++        p2p_write_through=p2p_write_through,
++        mega=mega,
++    )
++
++
+ class MegaMoEV2:
+     """Fused dispatch, GEMM1, GEMM2, and combine with one in-flight launch per instance."""
+ 
+@@ -102,6 +157,29 @@ class MegaMoEV2:
+         prows = ((a2rows + 255) // 256) * 256
+         pcols = (((inter_dim // 32) + 7) // 8) * 8
+         self._s1_osd = torch.zeros(prows * pcols + inter_dim, dtype=torch.uint8, device=self.dev)
++        # Terminal unified_gemm_drain (4->3) fused-drain counters (host-zeroed each launch):
++        # s2_ctr[0] = GEMM2 chunk claim head; s2_ctr[1 + tile] = GEMM1 m-tile done counter.
++        # One claim/done slot per routed m-tile (max(1, nvm)) plus a sharded-head band:
++        # G2_CHUNK(=16) claim heads for each of the (4-1) extra GEMM2 shards, plus the
++        # shared base head. Covers every sharded GEMM2 head the fused drain publishes into.
++        self._s1_s2ctr_len = max(1, self._s1_nvm) + 16 * (4 - 1) + 1
++        self._s1_s2ctr = torch.zeros(max(1, self._s1_nvm) + 16 * (4 - 1) + 1, dtype=torch.int32, device=self.dev)
++        # Combine third-queue (3->2) counters (host-zeroed each launch):
++        # c_ctr[0] = block-claim head; c_ctr[1] = monotone arrival epoch (bumped per launch).
++        # c_tok_ready[token] = cross-rank arrival count for the current epoch (peers bump it
++        # via the P2P scatter tok-ready publish); c_mtile_ctr = per-m-tile publish counter.
++        # Ownership of the fused-combine readiness/claim/generation state lives on comb_op
++        # (the symmetric-memory owner), NOT in a private Stage1 shadow: cross-rank token
++        # readiness must be a symmetric buffer peers can scatter into. The host retains only
++        # tensor handles for the dispatch-plan-phase reset; the device receives comb_op's
++        # direct _fx_* pointers.
++        self._s1_c_ctr = self.comb_op.fused_comb_ctr
++        self._s1_c_tok_ready_t = self.comb_op.shmem_fused_tok_ready
++        # Per-m-tile tile-close counter: one slot per routed m-tile (local per-rank; GEMM1
++        # publishes the close, the fused GEMM2 drain consumes it). Sized to cover every
++        # routed row's owning tile, device-zeroed on allocation (no host reset on launch).
++        self._s1_c_mtile_ctr = torch.zeros(max(1, self._s1_nvm), dtype=torch.int32, device=self.dev)
++        self._s1_c_epoch = 1
+         self._build_v2_disp_table()
+ 
+     def _allocate_dispatch_workspace(self, op, metadata_blocks):
+@@ -124,7 +202,7 @@ class MegaMoEV2:
+             "active_payload_blocks": torch.zeros(1, dtype=torch.int32, device=self.dev),
+             "payload_blocks_per_destination": torch.zeros(self.world_size, dtype=torch.int32, device=self.dev),
+             "payload_chunks_per_destination": torch.zeros(self.world_size, dtype=torch.int32, device=self.dev),
+-            "group_done": torch.zeros(1, dtype=torch.int32, device=self.dev),
++            "group_done": torch.zeros(self.world_size, dtype=torch.int32, device=self.dev),
+         }
+         workspace["bigcnt"] = op._sym((self.world_size * self.epr,), torch.int32)
+         workspace["count_done"] = op._sym((2 * self.world_size,), torch.int32)
+@@ -209,7 +287,87 @@ class MegaMoEV2:
+         self._active_config = config
+         return config
+ 
+-    def _run_fused_stage1(self, x, wts, scales, topk_ids, stream=None, config: Stage1Config | None = None):
++    def _fused_all_kwargs(self, cur_tok, op, full_config: MegaMoEConfig | None = None,
++                          variant: _M25Variant | None = None):
++        """Build the direct fused-ABI kwargs for the terminal two-launch path.
++
++        Fold GEMM2 + P2P scatter AND the combine reduction into the Stage1
++        persistent work loop: 12 Stage2 (GEMM2 + P2P scatter) device pointers,
++        ``i32_max_m_blocks``, and the 6 combine third-queue pointers plus the g2
++        tiling geometry. The per-launch fused-drain claim head and the combine
++        block-claim / arrival / per-m-tile counters are reset HERE, in the host
++        dispatch-plan phase, so no counter reset sits on the compute-launch path;
++        the combine arrival epoch is bumped monotone (c_ctr[1]).
++        """
++        comb_op = self.comb_op
++        stage2 = full_config.stage2 if full_config is not None else self._select_config(cur_tok).stage2
++        p2p_quant = full_config.p2p_quant if full_config is not None else self._select_config(cur_tok).p2p_quant
++        inv = self._g2_invariants_by_quant[p2p_quant]
++        # Selected Stage2 geometry drives the fused g2 tiling: the fused NW8 tile widens
++        # BN to block_n*(num_waves/4) and clamps BM so the Stage1 sort_block_m tiles it,
++        # rather than forcing an 8192-only constant. BM/BN/_g2_active_block_m are the
++        # selected-config source values a bucket change flows through.
++        BM = stage2.block_m
++        BN = stage2.block_n
++        _g2_active_block_m = stage2.block_m
++        _g2_nw = int(full_config.stage1.num_waves) if full_config is not None else 8
++        _g2_bm = _g2_active_block_m if (self.sort_block_m % _g2_active_block_m == 0) else self.sort_block_m
++        _g2_bn = BN * (_g2_nw // 4)
++        # Stage1 sort-block-m the fused drain tiles GEMM1 completion against, and the
++        # GEMM2 m-block count expressed in BM block-units (ceil-div of routed rows).
++        _g2_sbm = int(full_config.stage1.sort_block_m) if full_config is not None else self.sort_block_m
++        _g2_max_m_blocks = (self._s1_nvm + BM - 1) // BM
++        # No host counter reset and no host epoch bump on the compute-launch path: the
++        # fused-drain claim heads are device-zeroed at allocation, and the combine arrival
++        # generation (c_ctr[1]) is now owned + advanced on-device inside the third queue.
++        # Exact host-known byte extents of the GEMM2-role tables the fused drain reads
++        # via create_buffer_resource_from_addr. srcmap_em/wts_em are mori symmetric-heap
++        # tensors of num_valid_max elements; tile_row_base is a regular-heap tensor of
++        # max_blocks Int32. Binding each buffer resource to its real byte extent makes a
++        # wild (register-allocation-shifted) index clamp to 0 rather than fault at a high
++        # VA. Valid indices (0..N-1) are unaffected, so this is correctness-neutral.
++        _g2_stids_nbytes = op.srcmap_em.numel() * op.srcmap_em.element_size()
++        _g2_sweights_nbytes = op.wts_em.numel() * op.wts_em.element_size()
++        _g2_trb_nbytes = op.tile_row_base.numel() * op.tile_row_base.element_size()
++        return dict(
++            fuse_all=True,
++            # --- 12 Stage2 (GEMM2 + P2P scatter) device pointers ---
++            s2_aq=fx.Int64(self._s1_out.view(-1).data_ptr()),
++            s2_ascale=fx.Int64(self._s1_osd.data_ptr()),
++            s2_bq=fx.Int64(self.w2.data_ptr()),
++            s2_bscale=fx.Int64(self.w2_scale.data_ptr()),
++            s2_eids=fx.Int64(op.sorted_expert_ids.data_ptr()),
++            s2_cumsum=fx.Int64(op.num_valid.data_ptr()),
++            s2_max_expert_tiles=fx.Int64(
++                self._s1_dispatch_workspace["max_expert_tiles"].data_ptr()
++            ),
++            s2_stids=fx.Int64(op.srcmap_em.data_ptr()),
++            s2_sweights=fx.Int64(op.wts_em.data_ptr()),
++            s2_trb=fx.Int64(op.tile_row_base.data_ptr()),
++            s2_p2p_comb_inp=comb_op._fx_p2p_comb_inp,
++            s2_ctr=fx.Int64(self._s1_s2ctr.data_ptr()),
++            i32_max_m_blocks=fx.Int32(_g2_max_m_blocks),
++            fuse_combine=variant.fuse_combine if variant is not None else True,
++            # --- 6 combine third-queue device pointers ---
++            c_inp=comb_op._fx_comb_inp,
++            c_out=comb_op._fx_comb_out,
++            c_tok_ready=comb_op._fx_tok_ready,
++            c_peer_ready=comb_op._fx_p2p_tok_ready,
++            c_ctr=comb_op._fx_fused_comb_ctr,
++            c_mtile_ctr=fx.Int64(self._s1_c_mtile_ctr.data_ptr()),
++            g2_block_m=int(_g2_bm), g2_block_n=int(_g2_bn), g2_block_k=int(stage2.block_k),
++            g2_use_nt=bool(stage2.use_nt), g2_bhoist=bool(stage2.b_hoist),
++            g2_ascale_pf=bool(stage2.ascale_prefetch), g2_bf16_lds=bool(stage2.bf16_lds),
++            g2_p2p_quant_type=p2p_quant, g2_recv_cap=int(inv["recv_cap"]),
++            g2_comb_inp_nbytes=int(inv["comb_inp_nbytes"]), g2_chunk=16,
++            # Exact GEMM2-role table extents (symmetric srcmap_em/wts_em, regular trb).
++            g2_stids_nbytes=int(_g2_stids_nbytes),
++            g2_sweights_nbytes=int(_g2_sweights_nbytes),
++            g2_trb_nbytes=int(_g2_trb_nbytes),
++        )
++
++    def _run_fused_stage1(self, x, wts, scales, topk_ids, stream=None, config: Stage1Config | None = None,
++                          full_config: MegaMoEConfig | None = None, variant: _M25Variant | None = None):
+         if stream is None:
+             stream = fx.Stream(torch.cuda.current_stream())
+         cur_tok = int(x.shape[0])
+@@ -232,6 +390,16 @@ class MegaMoEV2:
+         if config is None:
+             config = self._select_config(cur_tok).stage1
+         op = self._s1_op
++        # Terminal two-launch fusion: when the fused topology is active, fold GEMM2 +
++        # P2P scatter AND the combine reduction into the Stage1 persistent work loop by
++        # threading the direct fused ABI (12 Stage2 pointers + i32_max_m_blocks + 6 combine
++        # pointers + g2 tiling). The fused kwargs -- and the per-launch dispatch-plan
++        # counter resets -- are built in _fused_all_kwargs, kept OFF this compute-launch
++        # path. FUSE_ALL=0 leaves _fused_kw empty so the Stage1 launch is the frozen
++        # SCATTERED path (every fused pointer defaults to 0).
++        _fused_kw = {}
++        if variant is not None and variant.mega:
++            _fused_kw = self._fused_all_kwargs(cur_tok, op, full_config, variant=variant)
+         # fmt: off
+         self._s1_mega(
+             self._s1_out, self._s1_rx, self._s1_w1, self._s1_scale_i32, self._s1_w1_scale,
+@@ -252,7 +420,7 @@ class MegaMoEV2:
+             work_shards=config.work_shards, external_grouping=config.external_grouping,
+             external_counting=config.external_counting, payload_chunk_rows=config.payload_chunk_rows,
+             payload_tile_ready=config.payload_tile_ready,
+-            swiglu_limit=self.swiglu_limit)
++            swiglu_limit=self.swiglu_limit, **_fused_kw)
+         # fmt: on
+         self._s1_active_tile_m = config.sort_block_m
+         return self._s1_active_tile_m
+@@ -262,11 +430,68 @@ class MegaMoEV2:
+ 
+     def _run_joint(self, x, scales, wts, topk_ids, run_tokens, stream, slice_output):
+         config = self._select_config(run_tokens)
+-        self._run_fused_stage1(x, wts, scales, topk_ids, stream=stream, config=config.stage1)
+-        return self._run_stage2(run_tokens, stream, slice_output, config)
++        # Resolve the two campaign switches once, here at the join point, so no call site
++        # infers the fused topology from FUSE_ALL alone. AITER_MEGAMOE_FUSE_ALL is the single
++        # activation (mega = it AND stage1.num_waves % 4 == 0); AITER_MEGAMOE_FUSE_COMBINE
++        # (fuse_comb, default on) is the diagnostic combine opt-out that decides whether the
++        # combine reduction folds in-kernel as the third queue or runs as its own launch.
++        fuse_all = _env_flag("AITER_MEGAMOE_FUSE_ALL", "0")
++        fuse_comb = _env_flag("AITER_MEGAMOE_FUSE_COMBINE", "1")
++        fuse_combine = fuse_comb
++        variant = _m25_variant_enabled(config)
++        self._active_variant = variant
++        self._emit_path_marker(variant)
++        self._run_fused_stage1(x, wts, scales, topk_ids, stream=stream, config=config.stage1,
++                               full_config=config, variant=variant)
++        if variant.mega:
++            # Two-launch fused topology under AITER_MEGAMOE_FUSE_ALL: GEMM2 + P2P scatter ran
++            # inside the single persistent Stage1 megakernel. When fuse_comb (== fuse_combine)
++            # is on the combine reduction folded in as the third queue, so there is NO separate
++            # Stage2 or combine launch and the result is the in-kernel combine output rows.
++            if fuse_comb and fuse_all:
++                out_tok = self._combine_output_view()
++                return out_tok[:run_tokens] if slice_output else out_tok
++            # fuse_comb off is the M2 diagnostic: GEMM1+GEMM2 fused, combine as its own launch.
++            out_tok = self._run_fused_combine_only(run_tokens, config, stream=stream)
++            return out_tok[:run_tokens] if slice_output else out_tok
++        return self._run_stage2(run_tokens, stream, slice_output, config, variant=variant)
+ 
+-    def _run_stage2(self, run_tokens, stream, slice_output, config: MegaMoEConfig):
+-        ret = self._run_fused_stage2(run_tokens, config, stream)
++    def _combine_output_view(self):
++        """View the combine third-queue output rows the fused megakernel wrote.
++
++        The in-kernel combine reduce stored each token's reduced BF16 row into the
++        combine op's symmetric ``shmem_comb_out_tok`` buffer; expose it with the same
++        shape the separate combine launch would have returned so callers are agnostic
++        to whether combine ran in-kernel (fused) or as its own launch (scattered)."""
++        cfg = self.comb_cfg
++        return (
++            self.comb_op.shmem_comb_out_tok.view(torch.int8)[: self.mtpr * cfg.combine_token_bytes]
++            .view(cfg.combine_dtype)
++            .view(self.mtpr, cfg.combine_token_view_dim)
++        )
++
++    def _emit_path_marker(self, variant: _M25Variant) -> None:
++        """Print exactly one ``[megamoe] path=MEGA|SCATTERED`` marker per process.
++
++        The marker is the observable that proves which topology this process ran.
++        FUSE_ALL default off resolves to SCATTERED, byte-identical to the frozen
++        4-launch path.
++        """
++        if getattr(self, "_m25_marker_printed", False):
++            return
++        self._m25_marker_printed = True
++        path = "MEGA" if variant.mega else "SCATTERED"
++        print(f"[megamoe] path={path}", file=sys.stderr, flush=True)
++
++    def _run_stage2(self, run_tokens, stream, slice_output, config: MegaMoEConfig,
++                    variant: _M25Variant | None = None):
++        if variant is not None and variant.mega:
++            # Terminal unified_gemm_drain (4->3): GEMM2 + P2P scatter were folded into the
++            # fused Stage1 work loop, so the separate GEMM2 launch is elided. Combine remains
++            # its own launch this rung (partial 4->3 fusion); run it directly.
++            ret = self._run_fused_combine_only(run_tokens, config, stream)
++        else:
++            ret = self._run_fused_stage2(run_tokens, config, stream)
+         out_tok = ret[0] if isinstance(ret, (tuple, list)) else ret
+         if out_tok is None:
+             cfg = self.comb_cfg
+@@ -360,3 +585,18 @@ class MegaMoEV2:
+             self._g2_combine_placeholder, None, None, cur_tok=run_tokens, enable_weights=False,
+             stage2_p2p_quant=p2p_quant,
+         )
++
++    def _run_fused_combine_only(self, run_tokens, config: MegaMoEConfig, stream=None):
++        """Terminal unified_gemm_drain (4->3): combine-only tail.
++
++        On the fused path GEMM2 + P2P scatter already ran inside the Stage1 work loop
++        (which scattered weighted partials into the P2P combine input), so only the
++        separate combine launch remains this rung.
++        """
++        comb_op = self.comb_op
++        p2p_quant = config.p2p_quant
++        self._g2_active_block_m = config.stage2.block_m
++        return comb_op.combine_no_stage1(
++            self._g2_combine_placeholder, None, None, cur_tok=run_tokens, enable_weights=False,
++            stage2_p2p_quant=p2p_quant,
++        )
