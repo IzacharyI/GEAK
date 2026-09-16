@@ -126,6 +126,49 @@ Standalone and fused callers must reuse the same Stage2 arithmetic and combine
 arithmetic authority. They may use different work distributors, but must not
 rederive row layouts, scale offsets or output partitioning independently.
 
+## Baseline math, ABI and state layout
+
+Reuse MegaMoEV2's existing numerical bodies:
+
+- keep the standalone BF16-to-MXFP8 `per_1x32` quantization launch;
+- reuse the existing GEMM1 MFMA, activation/scale layout and weight shuffle;
+- reuse the existing GEMM2 MFMA and weighted P2P scatter epilogue;
+- reuse combine's BF16 and block-FP8 decode/FP32-accumulate rules.
+
+The optimization is relocation and scheduling, not a new GEMM approximation.
+Do not change quant formats, scale grouping, expert indexing, top-k weights or
+accumulation dtype to obtain the launch reduction.
+
+The fused host ABI carries semantic groups rather than hidden table slots:
+
+- GEMM1 tensors and dispatch-plan state;
+- raw GEMM2 activation/scale/weight and route-table addresses;
+- selected BM/BN/BK, maximum m-block count and exact table capacities;
+- combine payload/output, token-ready, block-claim and tile-close state.
+
+All backing tensors remain strongly owned by the MegaMoEV2/operator instance
+through graph replay. Disabled optional roles may be zero only when compiled
+out; every active pointer must be nonzero and bound to the emitted argument
+with matching size/alignment.
+
+Minimum state capacities are derived from device indices:
+
+```text
+g1_ready entries       >= ceildiv(max_routed_rows, stage1_block_m)
+g2 tile-close entries  >= ceildiv(max_routed_rows, stage2_block_m)
+token_ready entries    >= max_tokens_per_rank
+peer pointer entries   =  world_size
+combine input rows     >= max(world_size * max_tokens_per_rank,
+                              max_tokens_per_rank * topk)
+combine output rows    >= max_tokens_per_rank
+```
+
+If G2 claim heads share an allocation with G1 completion counters, each shard
+starts on its own 64-byte cache line and the regions are disjoint. Route,
+weight, tile-row and peer tables carry their real byte capacities into local
+Stage2 resources so a malformed index cannot become an arbitrary symmetric-heap
+address.
+
 ## Scheduling blueprint
 
 The persistent grid is a CTA-local state machine:
@@ -151,6 +194,13 @@ The persistent grid is a CTA-local state machine:
 There is no grid-wide barrier between G1, G2 and combine. Progress comes from
 per-item readiness and monotone generations, allowing different CTAs to occupy
 different phases concurrently.
+
+A G2 work item is the linear pair
+`unit = m_block * stage2_n_blocks + n_block`. Sharded claim heads return unique
+chunks; the actual returned claim is bounds-checked again before any route or
+readiness access. A CTA never blocks on G2 while it owns an unexecuted G1
+stripe. Small-shape c1 has no carried chunk; c16 keeps only bounded continuation
+state in the outer loop rather than nesting the whole GEMM2 live range.
 
 ## Memory-order blueprint
 
@@ -204,15 +254,33 @@ group segment       = 32144 B
 kernarg segment     = 440 B
 VGPR                = 168
 SGPR                = 106
+VGPR spills         = 0
+SGPR spills         = 106
 private/scratch     = 0 B
 ```
 
-These are diagnostic anchors, not exact source-contract values. For every
-bucket, collect emitted group-segment, VGPR, SGPR, spills, scratch and occupancy.
-The hard requirements are: LDS within the gfx950 limit, no unexpected scratch,
-and at least one resident persistent workgroup per CU. Constructing Stage2
-descriptors in the outer Stage1 frame unnecessarily extends SGPR live ranges
-into combine and must be avoided.
+Measured 8192 final-path compiler anchors are:
+
+```text
+workgroup threads   = 512 (8 waves)
+group segment       = 160400 B
+kernarg segment     = 440 B
+VGPR                = 256
+SGPR                = 106
+VGPR spills         = 80
+SGPR spills         = 116
+private segment     = 316 B
+resident workgroups = 1 per CU
+```
+
+These are emitted-resource envelopes, not exact source-contract values. The
+large measured path has controlled spill/private storage, so a blanket
+zero-spill rule is wrong. For every bucket, collect group-segment, VGPR, SGPR,
+spill, private-segment and occupancy metadata. Require LDS within the gfx950
+limit, at least one resident workgroup per CU, and no unexplained growth beyond
+the corresponding measured envelope. Constructing Stage2 descriptors in the
+outer Stage1 frame unnecessarily extends SGPR live ranges into combine and must
+be avoided.
 
 ## Geometry and compile-time specialization
 
