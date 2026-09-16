@@ -79,11 +79,13 @@ ok(/commandment_materialized/.test(src) &&
    /commandment_current_identity/.test(src) &&
    /String\(res\.bench && res\.bench\.commandment_path \|\| ''\) === COMMANDMENT/.test(src),
   'a cache hit is rejected unless it materializes the current EVAL_DIR COMMANDMENT');
-ok(/atomically copy the cached `COMMANDMENT\.md`/.test(bench) &&
-   /verify the two byte hashes match/.test(bench) &&
-   /Never return a path to[\s\S]*an older run/.test(bench) &&
-   /contain no fixed candidate HEAD\/path/.test(bench),
-  'the cache loader copies and verifies the immutable contract for this run');
+ok(/tools\/rebase_commandment\.py/.test(bench) &&
+   /normalized[\s\S]*bytes are identical/.test(bench) &&
+   /rejects[\s\S]*fixed candidate paths/.test(bench) &&
+   /current path, never the cache or an older run/.test(bench),
+  'the cache loader permits only a normalized EVAL_DIR rebase');
+ok(/setup_ab_control_evidence_manifest\.json/.test(bench),
+  'cached calibration evidence is self-contained instead of pointing at an old run');
 
 console.log('\n# 6. every fast-test input the role declares is actually threaded (contract mirror)');
 for (const name of [

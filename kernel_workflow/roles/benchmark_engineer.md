@@ -593,16 +593,20 @@ Steps:
      and rebuild the full `PHASE=setup` Return JSON (below) into the `bench` field — including
      `positive_control` from a `setup_ab_control*.json` with `claim_complete:true`. This is the same
      reconstruction as `PHASE=recover`, from `CACHE_DIR` instead of `EVAL_DIR`. Before returning,
-     atomically copy the cached `COMMANDMENT.md` to the exact current
-     `EVAL_DIR/COMMANDMENT.md`, verify the two byte hashes match, and set
-     `commandment_materialized:true`. Set the returned
-     `bench.commandment_path` to that current path. Never return a path to
-     `CACHE_DIR` or an older run. Also set `commandment_current_identity:true`
-     only when the copied contents name this exact `EVAL_DIR`, contain no
-     different `geak_runs` EVAL_DIR, and contain no fixed candidate HEAD/path
-     from an older run (candidate locations in a reusable contract must remain
-     placeholders resolved by Verify). If any identity or hash check fails, set
-     both commandment booleans false and `key_valid:false`.
+     materialize a run-local contract with:
+     `python3 "$SKILL_DIR/tools/rebase_commandment.py" --source
+     "$CACHE_DIR/COMMANDMENT.md" --target "$EVAL_DIR/COMMANDMENT.md"
+     --target-eval "$EVAL_DIR"`. The tool permits exactly one transformation:
+     every cached EVAL_DIR occurrence becomes the current EVAL_DIR. It rejects
+     multiple/foreign run roots and fixed candidate paths and proves normalized
+     source/output bytes are identical. Set both commandment booleans true only
+     when it returns `materialized:true`; set `bench.commandment_path` to the
+     current path, never the cache or an older run. A raw byte-hash match is
+     neither required nor sufficient because the run-local path must change.
+     Rebase `positive_control.evidence_manifest` to
+     `CACHE_DIR/setup_ab_control_evidence_manifest.json`; that self-contained
+     copy must exist. Any failed tool/payload check makes this a cache MISS:
+     set both commandment booleans and `key_valid` false.
    - `profile`: read `CACHE_DIR/mega_analysis/*.json` (rank_records / xgmi / combine_wait) and rebuild
      the `mega_analysis` return shape into the `analysis` field (`bottleneck`, `top_opportunities`,
      `dispatch_count`, `path_marker`, `rank_max_ms`, `xgmi_amplification`, `combine_wait_p95_us`, …).
@@ -623,7 +627,8 @@ can reuse them. **NO GPU, NO lease** — copy files and write the key.
 
 1. `mkdir -p "$CACHE_DIR"`.
 2. Copy from `EVAL_DIR` into `CACHE_DIR`: `baseline_timing.json`, `COMMANDMENT.md`, every
-   `setup_ab_control*.json` (the completed positive control), and `MEGA_ANALYSIS_DIR/*.json`
+   `setup_ab_control*.json` (the completed positive control), its referenced evidence manifest as
+   `setup_ab_control_evidence_manifest.json`, and `MEGA_ANALYSIS_DIR/*.json`
    (rank_records / xgmi / combine_wait) into `CACHE_DIR/mega_analysis/`. Skip any that do not exist and
    note it — a partial publish is fine; the next load will treat a missing payload as a MISS.
 3. Compute the validity key EXACTLY as `PHASE=fast_test_load` defines it (`frozen_rev`, `bench_sha`,
