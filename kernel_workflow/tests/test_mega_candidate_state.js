@@ -138,6 +138,14 @@ ok(/megaForcedFallbackDirection\(megaCandidateRegistry, LADDER\)/.test(src) &&
    /forcedFallback \? \{ stop: false, directions: \[forcedFallback\] \}/.test(src) &&
    /a completed hardware failure cannot be re-planned as pending/.test(src),
   'an explicit persisted fallback bypasses contradictory Planner re-interpretation');
+ok(/const effectivePrior = existing \? megaEffectiveLaneCheckpoint\(existing\)/.test(src) &&
+   /AUTHORING_STRUCTURAL_EVIDENCE_HEAD:\s*effectivePrior &&/.test(src) &&
+   /PRIOR_CANDIDATE: priorForAgent/.test(src),
+  'Engineer handoff uses the effective working HEAD and structural certificate');
+ok(/structurallyReadyAuthoring/.test(src) &&
+   /!authorPreflightRequired && !sourceAdvancedThisTurn/.test(src) &&
+   /\(postAuthoringVerify \|\|/.test(src),
+  'an unchanged exact-head structural checkpoint reaches independent runtime Verify');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'

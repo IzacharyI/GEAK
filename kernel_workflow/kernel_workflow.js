@@ -6323,7 +6323,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const baseTree = megaBaseTree(baseCandidateId, source);
   const baseHead = megaBaseHead(baseCandidateId, source);
   const outDir = `${EVAL_DIR}/round_${currentRound}/candidate_${candidateId}`;
-  const priorForAgent = existing || null;
+  const effectivePrior = existing ? megaEffectiveLaneCheckpoint(existing) : null;
+  const priorForAgent = existing ? {
+    ...existing,
+    ...effectivePrior,
+    ...(effectivePrior.head !== existing.head ? {
+      verification_status: '', correctness: 'pending', gpu_executed: false,
+      activation_on_hardware: 'unknown', runtime_verified: false,
+      score_complete: false, absolute_score: null,
+    } : {}),
+  } : null;
   const candidateClaimsSkillTarget =
     candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
   const authorPreflightRequired = authoringContractNeedsPreflight(
@@ -6363,7 +6372,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
             authorPreflightRequired ? '1' : '0',
           AUTHORING_STRUCTURAL_EVIDENCE_HEAD:
-            existing && existing.structural_candidate_head || '',
+            effectivePrior && effectivePrior.structural_candidate_head || '',
           FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
           ...(MEGA_STRUCTURAL_ONLY ? {
@@ -6454,8 +6463,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
     if (recovered && recovered.claim_complete === true) eng = recovered;
   }
-  // The Engineer (and any recovery) consumed up to its configured budget of real wall time;
-  // charge it so the verify budget below and the loop dispatch deadline shrink deterministically.
   megaAdvanceMs(engineerBudgetS * 1000);
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
@@ -6621,14 +6628,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     ? String(existing.working_head || existing.head || '') : '';
   const sourceAdvancedThisTurn = existing
     ? expectedHead !== priorLaneHead : reportedChangedFiles.length > 0;
-  const postAuthoringVerify = !!(
+  const structurallyReadyAuthoring = !!(
     eng && String(eng.candidate_status || '') === 'authoring' &&
     eng.claim_complete === true && eng.build !== false &&
-    sourceAdvancedThisTurn && candidateClaimsSkillTarget &&
     structuralPassThisTurn && meta.checkpoint_complete &&
     meta.structural_candidate_head === expectedHead &&
     !!meta.structural_candidate_tree_digest
   );
+  const postAuthoringVerify = structurallyReadyAuthoring &&
+    ((sourceAdvancedThisTurn && candidateClaimsSkillTarget) ||
+      (!authorPreflightRequired && !sourceAdvancedThisTurn));
   const gpuWaitBudgetS = Math.max(30, Math.min(300, Math.floor(verifyBudgetS / 4)));
   const gpuRunBudgetS = Math.max(60, verifyBudgetS - gpuWaitBudgetS - 60);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
@@ -6713,8 +6722,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       }
     }
   }
-  // Charge the verify slice (only when Verify actually ran) so later turns and the closeout see
-  // the shared turn budget shrink as it is spent.
   if (shouldVerify) megaAdvanceMs(verifyBudgetS * 1000);
 
   let record = meta;
