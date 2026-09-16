@@ -420,6 +420,8 @@ if (STRICT_AUTONOMY && !(Number.isSafeInteger(launchTargetArg) && launchTargetAr
 }
 const LAUNCH_TARGET = Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0
   ? launchTargetArg : 2;
+const ALLOW_PARTIAL_FUSION =
+  String(A.allow_partial_fusion != null ? A.allow_partial_fusion : 'true') === 'true';
 if (PINNED_MEGA_SKILL &&
     EXPERT_SKILL_USAGE === 'candidate_validation') {
   const missing = [
@@ -433,6 +435,7 @@ if (PINNED_MEGA_SKILL &&
     [REQUIRED_REPLAYS >= 256, 'required_replays>=256'],
     [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
     [LAUNCH_TARGET === 2, 'launch_target=2'],
+    [!ALLOW_PARTIAL_FUSION, 'allow_partial_fusion=false'],
   ].filter(([ok]) => !ok).map(([, label]) => label);
   if (missing.length) {
     throw new Error(`pinned candidate_validation missing gates: ${missing.join(', ')}`);
@@ -911,7 +914,7 @@ function megaShapeFromTopology(topo) {
   };
 }
 
-function megaTopologyVerdict(direction, planIr) {
+function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
   const topo = direction && direction.target_topology;
   if (!topo || typeof topo !== 'object') {
     return { pass: false, reason: 'target_topology is missing' };
@@ -931,6 +934,11 @@ function megaTopologyVerdict(direction, planIr) {
   }
   const terminal = String(direction.step_role || 'terminal') === 'terminal';
   const planned = Number(planIr && planIr.target && planIr.target.launch_count);
+  if (terminal && Number.isFinite(planned) && launches !== planned &&
+      !allowPartialFusion) {
+    return { pass: false, reason:
+      `partial fusion is disabled: terminal declares ${launches} launches, target is ${planned}` };
+  }
   if (terminal && Number.isFinite(planned) && launches !== planned &&
       !String(direction.rung_deviation || '').trim()) {
     return { pass: false, reason:
@@ -3582,29 +3590,6 @@ function megaRegistryForSearch(registry) {
   });
 }
 
-function megaForcedFallbackDirection(registry, ladder) {
-  const owner = (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate)
-    .find((c) => c.gpu_executed &&
-      /fail|fault|crash|error/.test(c.verification_status.toLowerCase()) &&
-      /measured_partial_fallback/.test(c.next_blocker));
-  if (!owner) return null;
-  const rung = (Array.isArray(ladder) ? ladder : [])
-    .find((r) => String(r && r.id || '') === 'measured_partial_fallback');
-  if (!rung) throw new Error(
-    `candidate ${owner.id} requires measured_partial_fallback, but Analyze omitted that rung`);
-  return {
-    ...rung,
-    candidate_id: owner.id,
-    candidate_source: owner.source,
-    base_candidate_id: owner.base_id,
-    roadmap_rung: 'measured_partial_fallback',
-    gated_on: [],
-    prompt: `MANDATORY persisted handoff: continue existing ${owner.id} at HEAD ${owner.head}; ` +
-      `the prior full-target Verify already reached hardware and failed. Do not repeat its bisection ` +
-      `or reopen the full target. ${String(rung.prompt || '')}`,
-  };
-}
-
 function megaHistoryForSearch(sourceHistory, registry) {
   const h = sourceHistory || {};
   const searchRegistry = megaRegistryForSearch(registry)
@@ -6091,8 +6076,7 @@ function validMegaSearchDirection(direction) {
 
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
-  const forcedFallback = megaForcedFallbackDirection(megaCandidateRegistry, LADDER);
-  const plan = forcedFallback ? { stop: false, directions: [forcedFallback] } : await agentT(
+  const plan = await agentT(
     roleAgent('mega_search_lead', 'plan_round',
       'Choose one whole-kernel candidate direction. Expert knowledge guides the common candidate lifecycle; it never creates a reserved lane.', {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
@@ -6138,10 +6122,6 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       }),
     { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
       ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
-  if (forcedFallback) {
-    log(`Mega round ${currentRound}: enforcing persisted measured_partial_fallback for ` +
-      `${forcedFallback.candidate_id}; a completed hardware failure cannot be re-planned as pending.`);
-  }
   if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
     const wip = megaCandidateRegistry.find((c) =>
       c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));
@@ -6254,7 +6234,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const lg = roadmapLadderGate(LADDER, [d], LADDER_MEASURED);
   log(`Mega round ${currentRound}: ${lg.summary}`);
   if (lg.caveat) log(`Mega round ${currentRound}: ${lg.caveat}`);
-  const topologyVerdict = megaTopologyVerdict(d, analysis && analysis.mega_plan_ir);
+  const topologyVerdict = megaTopologyVerdict(
+    d, analysis && analysis.mega_plan_ir, ALLOW_PARTIAL_FUSION);
   if (!topologyVerdict.pass) {
     log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
     return {
@@ -6678,7 +6659,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
           RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
           REQUIRE_RESOURCE_VERIFY: '1',
-          SEARCH_ACCEPTS_PARTIAL_FUSION: '1',
+          SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION ? '1' : '0',
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
@@ -6732,7 +6713,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
       requiredAccuracyCases: [],
       requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
-      allowPartialFusion: true,
+      allowPartialFusion: ALLOW_PARTIAL_FUSION,
     });
     record.attempts = attempts;
     record.tree = tree;

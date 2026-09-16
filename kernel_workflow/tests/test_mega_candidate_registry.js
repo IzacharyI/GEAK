@@ -34,7 +34,7 @@ const api = new Function(`
     validMegaCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
     megaCandidateHardPass, selectMegaCandidate, selectMegaSearchParent,
     megaCalibrationClaimPass, pairedGuardReadout, megaCandidateFromVerification,
-    megaRegistryForSearch, megaForcedFallbackDirection,
+    megaRegistryForSearch,
   };
 `)();
 
@@ -273,30 +273,6 @@ console.log('\n# completed hardware failures remain authoritative');
   ok(planner.gpu_executed && planner.verification_status === 'correctness_failed' &&
      planner.notes.includes('nil-base'),
     'the next Planner receives the completed hardware failure verbatim');
-  const forced = api.megaForcedFallbackDirection([resumed], [{
-    id: 'measured_partial_fallback', candidate_id: 'new-duplicate',
-    gated_on: ['full_template_recorded_blocker'],
-    target_topology: { launch_count: 3 },
-    prompt: 'Run the complete three-launch operator.',
-  }]);
-  ok(forced.candidate_id === 'faulted' && forced.roadmap_rung ===
-     'measured_partial_fallback' && forced.gated_on.length === 0 &&
-     forced.target_topology.launch_count === 3,
-    'an explicit persisted fallback continues the failed lane and satisfies its recorded gate');
-  ok(forced.prompt.includes('Do not repeat its bisection'),
-    'the mandatory fallback cannot be reinterpreted as another full-target diagnosis');
-  ok(api.megaForcedFallbackDirection([
-    { ...resumed, next_blocker: 'perform a distinct repair' },
-  ], []) === null,
-  'a failed Verify without an explicit fallback handoff remains plannable');
-  let missingRungStopped = false;
-  try {
-    api.megaForcedFallbackDirection([resumed], []);
-  } catch (error) {
-    missingRungStopped = /Analyze omitted that rung/.test(String(error));
-  }
-  ok(missingRungStopped,
-    'an explicit fallback handoff fails closed when Analyze omitted its implementation template');
 }
 
 console.log('\n# calibration remains fail-closed');
