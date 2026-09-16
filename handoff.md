@@ -74,6 +74,11 @@ sha256: 167169c99e82afbb10c8e42f61b8f46761d4aae250615d25d6df769a916d9235
 The patch applies cleanly to `8775229e` and reproduces all nine changed FlyDSL
 source files byte-for-byte.
 
+Do not substitute the workflow-internal
+`cumulative_lane_r1_6b41e1d.patch` or a run-local `final_patch.diff`. Those
+patches are rooted at synthetic commit `cc77c22`, omit public-baseline deltas,
+and fail against public AITER in `mega_moe_stage2.py` and `mega_moe_v2.py`.
+
 Expert Skill v7:
 
 ```text
@@ -142,6 +147,21 @@ git merge-base --is-ancestor \
   d8a0fca8fa00a2202fe76b88d7399b4df4991b34 HEAD
 sha256sum aiter_8775229_to_6b41e1d.patch \
           mori_96ffa_rocm7_unbundle.patch
+```
+
+If the tagged handoff has not been pushed to GitHub, transfer it without any
+remote dependency:
+
+```bash
+# Source machine
+git -C /sgl-workspace/mega_test/GEAK bundle create \
+  /sgl-workspace/mega_test/GEAK-mega-v7-handoff.bundle \
+  refs/heads/mega refs/tags/mega-v7-handoff-20260916
+
+# Target machine
+git clone --branch mega-v7-handoff-20260916 \
+  GEAK-mega-v7-handoff.bundle "$ROOT/GEAK"
+git -C "$ROOT/GEAK" status --short
 ```
 
 Clone and patch AITER:
@@ -307,6 +327,10 @@ generic lifecycle, not this MegaMoE implementation.
 
 Only run this section on an eight-GPU `gfx950` node. Confirm every card has at
 least 150 GiB free before starting.
+
+There is no hardware result yet for candidate `6b41e1d`; its current authority
+is GPU-free structural verification only. The first `bs=128` run below is new
+evidence, not a confirmation of an already-tested candidate.
 
 Use explicit switches; they are read at import time:
 
