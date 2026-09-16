@@ -38,28 +38,19 @@ def test_repository_planner_extension_passes_generic_envelope():
     assert extension["candidate_templates"][0]["id"] == "full_persistent_pipeline"
     assert (
         extension["ir_bindings"]["schedule"]["policies"][
-            "completion_rmw_in_unified_loop"
+            "g1_completion"
         ]
-        == "forbidden_transitively"
+        == "stripe_system_atomic_threshold"
     )
     first_queue = next(
         queue for queue in extension["ir_bindings"]["queues"]
         if queue["id"] == "first_compute_queue"
     )
-    assert first_queue["claim_unit"] == "m_tile"
-    assert first_queue["chunk_policy"] == "one_m_tile_all_n_stripes"
-    assert any(
-        route["id"] == "repair_direct_abi"
-        for route in extension["failure_routes"]
-    )
-    dependency_route = next(
-        route for route in extension["failure_routes"]
-        if route["id"] == "repair_dependency_publication"
-    )
-    assert (
-        "g1_owned_mtile_completion"
-        in dependency_route["match"]["check_ids"]
-    )
+    assert first_queue["claim_unit"] == "stripe"
+    assert first_queue["work_domain"] == "g1_output_stripes"
+    assert [route["id"] for route in extension["failure_routes"]] == [
+        "repair_complete_persistent_pipeline"
+    ]
 
 
 def _write_fixture(tmp_path, extension):
@@ -131,9 +122,7 @@ def test_generated_index_exposes_planner_extension():
         if item["id"] == "megamoe_ep_mega_fusion"
     )
     assert entry["planner_extension_file"].endswith("/skill.md")
-    assert set(entry["embedded_components"]) == {
-        "planner_extension", "contract", "runtime_validation",
-    }
+    assert set(entry["embedded_components"]) == {"planner_extension", "contract"}
     assert entry["validation_status"] == "experimental"
     assert entry["auto_apply"] is False
 
@@ -158,7 +147,7 @@ def test_bundle_identity_is_path_independent_and_content_bound(tmp_path):
     text = copied_skill.read_text()
     copied_skill.write_text(text.replace(
         "preferred_template: full_persistent_pipeline",
-        "preferred_template: measured_partial_fallback",
+        "preferred_template: alternate_pipeline",
         1,
     ))
     _, copied_metadata, _, _ = MODULE.load("megamoe_ep_mega_fusion")

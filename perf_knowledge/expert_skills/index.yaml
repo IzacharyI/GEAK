@@ -80,17 +80,16 @@ skills:
 - id: megamoe_ep_mega_fusion
   file: skills/megamoe_ep_mega_fusion/skill.md
   scope: kernel
-  revision: mega-ep-fusion-v7
+  revision: ''
   playbook_file: skills/megamoe_ep_mega_fusion/skill.md
   planner_extension_file: skills/megamoe_ep_mega_fusion/skill.md
   contract_file: skills/megamoe_ep_mega_fusion/skill.md
   validation_file: skills/megamoe_ep_mega_fusion/skill.md
-  validation_schema: expert-skill-validation-v2
-  runtime_validation_file: skills/megamoe_ep_mega_fusion/skill.md
+  validation_schema: expert-skill-validation-v1
+  runtime_validation_file: ''
   embedded_components:
   - planner_extension
   - contract
-  - runtime_validation
   match:
     operator: moe_dispatch_combine
     arch_class:
@@ -115,7 +114,7 @@ skills:
       precision: a8w4
       graph: cuda_graph_captured
   expects:
-    isolated_speedup_min: 1.01
+    isolated_speedup_min: 1.03
     e2e_delta_min_pct: 1.0
     parity: required
   validation_status: experimental

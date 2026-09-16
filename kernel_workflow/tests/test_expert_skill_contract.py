@@ -106,53 +106,22 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     )
     contract = MODULE.load_contract(path)
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
-    checks = {item["id"]: item for item in contract["checks"]}
-    assert "host_ready_pointer_identity" in checks
-    assert "combine_transport_and_work_domain" in checks
-    assert "stage2_max_m_blocks_are_block_units" in checks
-    assert "stage2_counter_storage_covers_sharded_heads" in checks
-    assert "combine_queue_consumes_output_work_domain" in checks
-    assert "blockwise_fp8_reduce_is_decoded" in checks
-    assert "adaptive_combine_partition_bounds" in checks
-    assert "blockwise_fp8_row_layout_matches_producer" in checks
-    assert "blockwise_scale_never_uses_readiness_pointer" in checks
-    assert "combine_item_has_no_workgroup_barrier" in checks
-    assert "combine_generation_published_before_startup_gate" in checks
-    assert "g2_completion_and_heads_reset_before_plan" in checks
-    assert "g2_peek_bounds_dominate_completion_read" in checks
-    assert "unified_loop_starts_with_lds_hazard_barrier" in checks
-    assert "token_ready_payload_loads_are_system_scope" in checks
-    assert "standalone_combine_reaches_shared_reduce_helper" in checks
-    assert "g1_owned_mtile_completion" in checks
-    assert "fuse_combine_controls_token_publication" in checks
-    assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
-    assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
-    assert "combine_item_direct_jit_frame" in checks
-    assert "combine_item_has_no_extra_jit_wrapper" in checks
-    assert "combine_reducer_pressure_policy" in checks
-    assert "combine_item_has_no_redundant_system_acquire" in checks
-    assert "combine_output_uses_rank_local_cache" in checks
-    assert "stage2_write_through_includes_nt" in checks
-    assert "stage2_token_publication_uses_workgroup_release" in checks
-    assert "stage2_token_publication_avoids_system_release" in checks
-    assert "bucket_512_payload_chunk_rows" in checks
-    assert checks["stage2_max_m_blocks_are_block_units"]["kind"] == "assignment_value"
-    assert checks["g1_owned_mtile_completion"]["kind"] == "owned_completion_protocol"
-    assert checks["combine_generation_published_before_startup_gate"]["kind"] == "regex_sequence"
-    assert checks["combine_queue_rejects_routed_row_bound"]["match"] == "none"
-    assert len(checks["fixed_slot_group_done_capacity"]["patterns"]) == 1
-    consumed = checks["adaptive_combine_values_are_consumed"]["parameters"]
-    assert "hdim_per_warp" in consumed
-    assert "s3_total_work" in consumed
-    dependency = next(
-        item for item in contract["checks"]
-        if item["id"] == "chunk_all_dependencies"
-    )
-    assert any("_g2_run_unit" in pattern for pattern in dependency["patterns"])
-    assert all(item["id"] != "chunk_last_dependency" for item in contract["checks"])
+    assert not contract.get("revision")
+    assert {item["id"] for item in contract["checks"]} == {
+        "complete_host_path",
+        "host_specializes_g2_chunk",
+        "flat_stripe_completion",
+        "unified_g1_g2_loop",
+        "shared_stage2_body",
+        "progressive_token_readiness",
+        "combine_output_work_item",
+        "block_claimed_combine",
+        "p2p_visibility",
+        "bucket_512_payload_rows",
+    }
 
 
-def test_repository_tuple_patterns_match_ast_normalized_python():
+def test_compact_skill_contains_no_private_evidence_identifiers():
     path = (
         Path(__file__).resolve().parents[2]
         / "perf_knowledge"
@@ -161,56 +130,11 @@ def test_repository_tuple_patterns_match_ast_normalized_python():
         / "megamoe_ep_mega_fusion"
         / "skill.md"
     )
-    checks = {
-        item["id"]: item
-        for item in MODULE.load_contract(path)["checks"]
-    }
-    emitter_text = MODULE._active_code(ast.parse(
-        "def make_combine_reduce_emitter():\n"
-        "    return consts, _emit_item\n"
-    ))
-    return_pattern = checks["adaptive_combine_partition"]["patterns"][-1]
-    assert re.search(return_pattern, emitter_text)
-
-    queue_text = MODULE._active_code(ast.parse(
-        "def kernel():\n"
-        "    _c_consts, _c_emit = make_combine_reduce_emitter()\n"
-    ))
-    assign_pattern = checks["combine_queue_consumes_output_work_domain"]["patterns"][0]
-    assert re.search(assign_pattern, queue_text)
-
-
-def test_repository_combine_frame_rules_distinguish_direct_jit_from_wrapper():
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "perf_knowledge"
-        / "expert_skills"
-        / "skills"
-        / "megamoe_ep_mega_fusion"
-        / "skill.md"
-    )
-    checks = {
-        item["id"]: item
-        for item in MODULE.load_contract(path)["checks"]
-    }
-    direct = MODULE._active_code(ast.parse(
-        "@flyc.jit\n"
-        "def _emit_item(s3_work_idx):\n"
-        "    return s3_work_idx\n"
-    ))
-    wrapped = MODULE._active_code(ast.parse(
-        "def _emit_item(s3_work_idx):\n"
-        "    @flyc.jit\n"
-        "    def _emit_item_body():\n"
-        "        return s3_work_idx\n"
-        "    return _emit_item_body()\n"
-    ))
-    direct_pattern = checks["combine_item_direct_jit_frame"]["patterns"][0]
-    wrapper_pattern = checks["combine_item_has_no_extra_jit_wrapper"]["patterns"][0]
-    assert re.search(direct_pattern, direct)
-    assert not re.search(direct_pattern, wrapped)
-    assert not re.search(wrapper_pattern, direct)
-    assert re.search(wrapper_pattern, wrapped)
+    text = path.read_text()
+    assert "/sgl-workspace" not in text
+    assert "candidate_tree_sha256" not in text
+    assert "f33b628" not in text
+    assert "mega-ep-fusion-v" not in text
 
 
 def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
@@ -226,7 +150,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v7",
+        "expert_skill_revision": "",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "expert_skill_validation_status": "experimental",
@@ -283,6 +207,8 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
                 "carried_state": ["consumer_active", "g2_pend", "g2_next"],
             },
             "policies": {
+                    "combine_transition":
+                        "after_local_g1_g2_drain_without_grid_barrier",
                 "completion_publication_granularity": "per_m_tile",
                 "first_compute_claim_domain": "m_tile",
                 "first_compute_stripe_ownership": "all_n_tiles_per_claim",
@@ -323,7 +249,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     assert not errors
 
 
-def test_repository_plan_contract_rejects_flat_first_stage_claims():
+def test_repository_plan_contract_rejects_missing_combine_transition():
     path = (
         Path(__file__).resolve().parents[2]
         / "perf_knowledge"
@@ -336,7 +262,7 @@ def test_repository_plan_contract_rejects_flat_first_stage_claims():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v7",
+        "expert_skill_revision": "",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "expert_skill_validation_status": "experimental",
@@ -414,8 +340,7 @@ def test_repository_plan_contract_rejects_flat_first_stage_claims():
     }
     valid, errors, _ = MODULE.validate_plan(contract, plan)
     assert not valid
-    assert any("first_compute_queue_claim" in error for error in errors)
-    assert any("first_compute_queue_chunk" in error for error in errors)
+    assert any("combine_in_kernel" in error for error in errors)
 
 
 def test_generic_engine_contains_no_operator_specific_contract():

@@ -31,21 +31,59 @@ VALIDATE = _load_module("validate_skill", VALIDATE_PATH)
 SCAFFOLD = _load_module("scaffold_skill", SCAFFOLD_PATH)
 
 
-def _v6_validation():
+def _repository_validation():
     skill_path, metadata, _, _ = VALIDATE.load("megamoe_ep_mega_fusion")
     _, validation = VALIDATE.load_validation(skill_path, metadata)
     return validation
 
 
-def test_repository_v6_is_explicit_experimental_transfer():
+def _v2_validation():
+    return {
+        "schema_version": "expert-skill-validation-v2",
+        "skill_id": "sample",
+        "revision": "v2-test",
+        "status": "experimental",
+        "reference_evidence": {
+            "status": "measured",
+            "subject": {
+                "kind": "source_reference",
+                "revision": "reference",
+                "tree_sha256": "1" * 64,
+                "baseline_tree_sha256": "2" * 64,
+            },
+        },
+        "constraint_validation": {
+            "status": "static_validated",
+            "hardware_verified": False,
+            "subject": {
+                "skill_revision": "v2-test",
+                "contract_sha256": "3" * 64,
+                "planner_extension_sha256": "4" * 64,
+                "checker_sha256": "5" * 64,
+            },
+            "rules": {
+                "sample_rule": {"positive_repair": {"status": "pending"}},
+            },
+        },
+        "candidate_validation_policy": {
+            "required_gates": sorted(VALIDATE.V2_REQUIRED_CANDIDATE_GATES),
+        },
+        "usage": {
+            "auto_apply": False,
+            "explicit_pin_modes": ["authoring", "candidate_validation"],
+        },
+    }
+
+
+def test_repository_skill_is_one_compact_experimental_entry():
     skill_path, skill_metadata, body, _ = VALIDATE.load("megamoe_ep_mega_fusion")
     assert sorted(
         path.name for path in Path(skill_path).parent.iterdir()
         if path.is_file()
     ) == ["skill.md"]
-    validation = _v6_validation()
+    validation = _repository_validation()
     metadata = VALIDATE.validation_metadata(validation)
-    assert validation["schema_version"] == "expert-skill-validation-v2"
+    assert validation["schema_version"] == "expert-skill-validation-v1"
     assert metadata == {
         "validation_status": "experimental",
         "reference_evidence_status": "measured",
@@ -57,22 +95,16 @@ def test_repository_v6_is_explicit_experimental_transfer():
     assert VALIDATE.static_check(skill_path, skill_metadata, body) == []
 
 
-def test_measured_reference_shape_is_not_mislabeled_as_v6_transfer_rule():
-    validation = _v6_validation()
-    reference = validation["reference_evidence"]["mechanism_facts"]
-    transfer = validation["constraint_validation"]["rules"][
-        "g1_owned_mtile_completion"
-    ]["transfer_deviation"]
-    assert (
-        reference["completion_publication"]
-        == "per_stripe_system_atomic_in_unified_loop_tail"
-    )
-    assert transfer["from_reference"] == reference["completion_publication"]
-    assert transfer["to_experimental_rule"] == "one_m_tile_owner_system_store"
+def test_repository_skill_exposes_no_private_candidate_evidence():
+    skill_path, _, _, _ = VALIDATE.load("megamoe_ep_mega_fusion")
+    text = Path(skill_path).read_text()
+    assert "/sgl-workspace" not in text
+    assert "candidate_tree_sha256" not in text
+    assert "candidate_head" not in text
 
 
 def test_v2_cannot_claim_validated_with_pending_positive_repair():
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["status"] = "validated"
     validation["usage"]["auto_apply"] = True
     errors = VALIDATE.validation_errors({}, validation)
@@ -82,7 +114,7 @@ def test_v2_cannot_claim_validated_with_pending_positive_repair():
 
 
 def test_v2_cannot_promote_without_exact_candidate_gate_evidence():
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["status"] = "validated"
     validation["constraint_validation"]["status"] = "hardware_validated"
     validation["constraint_validation"]["hardware_verified"] = True
@@ -96,14 +128,14 @@ def test_v2_cannot_promote_without_exact_candidate_gate_evidence():
 
 
 def test_v2_validated_missing_auto_apply_defaults_false():
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["status"] = "validated"
     validation["usage"].pop("auto_apply")
     assert not VALIDATE.validation_metadata(validation)["auto_apply"]
 
 
 def test_experimental_v2_cannot_auto_apply():
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["usage"]["auto_apply"] = True
     errors = VALIDATE.validation_errors({}, validation)
     assert any("auto_apply" in error for error in errors)
@@ -123,7 +155,7 @@ def test_scaffold_indexes_experimental_without_auto_apply(tmp_path):
     skill = tmp_path / "skill.md"
     skill.write_text("---\nid: sample\n---\n")
     (tmp_path / "validation.yaml").write_text(
-        yaml.safe_dump(_v6_validation(), sort_keys=False)
+        yaml.safe_dump(_v2_validation(), sort_keys=False)
     )
     metadata = SCAFFOLD.validation_metadata(
         str(skill), {"validation_file": "validation.yaml"}
@@ -137,7 +169,7 @@ def test_scaffold_indexes_experimental_without_auto_apply(tmp_path):
 def test_scaffold_rejects_invalid_v2_promotion(tmp_path):
     skill = tmp_path / "skill.md"
     skill.write_text("---\nid: sample\n---\n")
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["status"] = "validated"
     validation["constraint_validation"]["status"] = "hardware_validated"
     validation["constraint_validation"]["hardware_verified"] = True
@@ -153,7 +185,7 @@ def test_scaffold_rejects_invalid_v2_promotion(tmp_path):
 
 
 def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
-    validation = _v6_validation()
+    validation = _v2_validation()
     validation["status"] = "validated"
     validation["constraint_validation"]["status"] = "hardware_validated"
     validation["constraint_validation"]["hardware_verified"] = True
@@ -187,7 +219,7 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
     subject = validation["constraint_validation"]["subject"]
     manifest = {
         "schema_version": "expert-skill-candidate-evidence-v1",
-        "skill_revision": "mega-ep-fusion-v7",
+        "skill_revision": "v2-test",
         "candidate_head": "a" * 40,
         "candidate_tree_sha256": "b" * 64,
         "contract_sha256": subject["contract_sha256"],
@@ -209,7 +241,7 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
         "gates": gates,
     }
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
+        {"revision": "v2-test"}, validation, str(tmp_path)
     )
     assert errors == []
     manifest["raw_evidence"] = {gate: "made-up" for gate in gates}
@@ -219,12 +251,12 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
         fake_raw
     ).hexdigest()
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
+        {"revision": "v2-test"}, validation, str(tmp_path)
     )
     assert any("raw evidence is not structured" in error for error in errors)
     validation["candidate_evidence"]["manifest_sha256"] = "c" * 64
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
+        {"revision": "v2-test"}, validation, str(tmp_path)
     )
     assert any("manifest_sha256" in error for error in errors)
 
