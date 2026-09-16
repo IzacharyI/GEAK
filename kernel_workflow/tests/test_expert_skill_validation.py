@@ -157,14 +157,12 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
     validation["status"] = "validated"
     validation["constraint_validation"]["status"] = "hardware_validated"
     validation["constraint_validation"]["hardware_verified"] = True
-    rule = validation["constraint_validation"]["rules"][
-        "g1_owned_mtile_completion"
-    ]
-    rule["positive_repair"] = {
-        "status": "validated",
-        "candidate_head": "a" * 40,
-        "candidate_tree_sha256": "b" * 64,
-    }
+    for rule in validation["constraint_validation"]["rules"].values():
+        rule["positive_repair"] = {
+            "status": "validated",
+            "candidate_head": "a" * 40,
+            "candidate_tree_sha256": "b" * 64,
+        }
     validation["usage"]["auto_apply"] = True
     gates = {
         gate: "pass"
@@ -189,7 +187,7 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
     subject = validation["constraint_validation"]["subject"]
     manifest = {
         "schema_version": "expert-skill-candidate-evidence-v1",
-        "skill_revision": "mega-ep-fusion-v6",
+        "skill_revision": "mega-ep-fusion-v7",
         "candidate_head": "a" * 40,
         "candidate_tree_sha256": "b" * 64,
         "contract_sha256": subject["contract_sha256"],
@@ -211,7 +209,7 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
         "gates": gates,
     }
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v6"}, validation, str(tmp_path)
+        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
     )
     assert errors == []
     manifest["raw_evidence"] = {gate: "made-up" for gate in gates}
@@ -221,12 +219,12 @@ def test_v2_promotion_reads_hashes_and_raw_gate_evidence(tmp_path):
         fake_raw
     ).hexdigest()
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v6"}, validation, str(tmp_path)
+        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
     )
     assert any("raw evidence is not structured" in error for error in errors)
     validation["candidate_evidence"]["manifest_sha256"] = "c" * 64
     errors = VALIDATE.validation_errors(
-        {"revision": "mega-ep-fusion-v6"}, validation, str(tmp_path)
+        {"revision": "mega-ep-fusion-v7"}, validation, str(tmp_path)
     )
     assert any("manifest_sha256" in error for error in errors)
 

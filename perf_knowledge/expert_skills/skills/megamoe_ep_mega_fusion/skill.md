@@ -3,7 +3,7 @@ id: megamoe_ep_mega_fusion
 title: 'MegaMoE EP8 persistent tile-pipeline playbook'
 kind: expert_skill
 mode: mega
-revision: mega-ep-fusion-v6
+revision: mega-ep-fusion-v7
 validation_schema: expert-skill-validation-v2
 constraint_profile: semantic_and_compiler_shape
 authors:
@@ -53,11 +53,12 @@ normative_scope: explicitly_pinned_authoring
 supersedes:
   - mega-ep-fusion-v4
   - mega-ep-fusion-v5
+  - mega-ep-fusion-v6
 embedded_components: [planner_extension, contract, runtime_validation]
 validation:
   schema_version: expert-skill-validation-v2
   skill_id: megamoe_ep_mega_fusion
-  revision: mega-ep-fusion-v6
+  revision: mega-ep-fusion-v7
   status: experimental
 
   reference_evidence:
@@ -88,9 +89,9 @@ validation:
     status: static_validated
     hardware_verified: false
     subject:
-      skill_revision: mega-ep-fusion-v6
-      contract_sha256: ceb77f405eca1c609941f84e1a32a92deca816e093ca168f34055cb82d7c5a2c
-      planner_extension_sha256: 535f60ded23fff7bc1346bebc11c9b5d0935671b252e35d7fc2616415d65c8b3
+      skill_revision: mega-ep-fusion-v7
+      contract_sha256: 05834114e29de6c6bec3a59211307177e75f913f7d34341efa87ea37ac5f3635
+      planner_extension_sha256: 8ac289067ea4caf8cf6efba6352881b1f91512366bfe7e2f68d5e7a2d6c617c4
       checker_sha256: c1d0c023e7444f70259c67a8c48a7dfb2e7baa9e6e929b6e754ebd69fb9bb2bc
     rules:
       g1_owned_mtile_completion:
@@ -113,11 +114,26 @@ validation:
             path_mega_markers: 8
             observed_sizes: [128, 8192]
             result: deterministic_all_rank_null_base_device_fault
-            interpretation: removing the completion RMW was insufficient; do not attribute the remaining fault without a new bisection
+            interpretation: removing the completion RMW was insufficient; the subsequent CUT0-CUT4 bisection proved this owner-store path clean and localized the residual fault to the folded combine item JIT frame
           required:
             - exact_head_independent_structure
             - on_card_jit
             - direct_ep8_accuracy
+      folded_combine_direct_jit_frame:
+        status: hardware_failed_localized
+        negative_observation:
+          evidence_id: folded-combine-extra-jit-frame-nil-fault-r1
+          candidate_shape: plain_emit_item_wrapping_zero_arg_nested_jit
+          result: deterministic_all_rank_null_base_device_fault
+        localization:
+          combine_body_skipped: pass
+          combine_claim_loop_without_emit: pass
+          combine_item_executed: fault
+        required_repair:
+          - direct_flyc_jit_on_emit_item
+          - no_zero_argument_nested_item_wrapper
+          - pressure_guarded_reducer_vectorization
+          - rank_local_output_cache_policy
 
   candidate_validation_policy:
     evidence_scope: exact_candidate_head_and_tree_digest
@@ -921,6 +937,15 @@ combine input/output, token-ready, peer-ready, claim/generation, and tile-close
 buffers needed by the fused call. Do not duplicate or simplify the arithmetic
 inside Stage1.
 
+The combine item itself is the FlyDSL frame boundary: decorate
+`_emit_item(s3_work_idx)` directly with `@flyc.jit`. Do not leave `_emit_item`
+as a plain Python wrapper around an additional zero-argument
+`@flyc.jit _emit_item_body`; that extra closure level can spill the
+system-scope readiness/output bases into an uninitialized frame slot and was
+localized on hardware as an all-rank nil-base fault. Construct the rank-local
+output buffer resource in the factory frame before `_emit_item`, and keep
+dynamic token/partition arithmetic in the directly decorated item.
+
 Build `_combine_transport_spec` with `enable_weights=false`,
 `fp8_direct_cast=false`, the selected transport mode, and the effective
 `max_recv`; then configure the shared combine-reduce emitter with:
@@ -960,6 +985,13 @@ s3_total_work   = cur_tok * warps_per_token
 
 Blockwise FP8 clamps `warps_per_token` to `hidden_dim / 32`; its
 `hdim_per_warp` is a rounded multiple of eight Int32 elements.
+
+Reducer unrolling is pressure-guarded, not selected from row divisibility
+alone. Use U1 for narrow slices, U4 only for wide 256-aligned slices, U2 for
+wide misaligned slices, and U1 for all remaining cases. Final combined output
+is rank-local: store it with the ordinary SLC policy. Per-token readiness
+already pairs with system-scope payload loads, so do not add a redundant
+system-acquire fence to every combine work item.
 
 Combine work items are per wave, but claims are per block:
 
@@ -1156,7 +1188,7 @@ later EP8 run passes those gates, record all of `hardware_verified`,
 ```expert-skill-planner-extension
 schema_version: expert-skill-planner-extension-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v6
+revision: mega-ep-fusion-v7
 plan_version: mega-plan-v2
 
 applicability:
@@ -1575,6 +1607,10 @@ ir_bindings:
       first_compute_stripe_ownership: all_n_tiles_per_claim
       completion_publication_operation: waitcnt_barrier_thread0_system_store_n_tiles
       completion_rmw_in_unified_loop: forbidden_transitively
+      combine_item_jit_frame: direct_decorated_item_no_extra_wrapper
+      combine_reducer_vectorization: pressure_guarded_u1_u2_u4
+      combine_payload_visibility: system_scope_loads_without_per_item_acquire
+      combine_output_cache: rank_local_slc
     parameters:
       combine_third_queue: true
       g2_chunk_large: 16
@@ -1599,6 +1635,12 @@ ir_bindings:
       rule: every workgroup barrier is reached uniformly, including continuation paths
     - id: owned_mtile_completion
       rule: one workgroup claims one m-tile, computes every N stripe, then thread 0 publishes stage1_n_tiles with an ordered system store; no completion-address RMW is reachable from the fused region
+    - id: direct_combine_item_jit_frame
+      rule: '@flyc.jit directly decorates _emit_item(s3_work_idx); no zero-argument nested item wrapper may carry readiness or output bases'
+    - id: pressure_guarded_combine_reducer
+      rule: reducer selects U1/U2/U4 from hdim_per_warp pressure and alignment; row divisibility alone cannot select U4
+    - id: minimal_combine_memory_scope
+      rule: token-ready payload loads are system-scope, final output stores are rank-local SLC, and no redundant per-item system acquire is issued
 
   evidence_requirements:
     activation: fused path marker from all eight ranks
@@ -1698,6 +1740,10 @@ failure_routes:
         - first_compute_stripe_ownership
         - completion_publication_operation
         - completion_rmw_in_unified_loop
+        - combine_item_jit_frame
+        - combine_reducer_vectorization
+        - combine_payload_visibility
+        - combine_output_cache
         - first_stage_domain_is_mtile
         - first_stage_domain_extent
         - first_stage_owned_stripes
@@ -1846,6 +1892,11 @@ failure_routes:
         - adaptive_combine_partition
         - adaptive_combine_partition_bounds
         - adaptive_combine_values_are_consumed
+        - combine_item_direct_jit_frame
+        - combine_item_has_no_extra_jit_wrapper
+        - combine_reducer_pressure_policy
+        - combine_item_has_no_redundant_system_acquire
+        - combine_output_uses_rank_local_cache
         - blockwise_fp8_reduce_is_decoded
         - blockwise_fp8_row_layout_matches_producer
         - blockwise_scale_never_uses_readiness_pointer
@@ -1857,7 +1908,11 @@ failure_routes:
         - combine_third_queue
         - combine_pointer_count
         - device_fuse_combine_guard
-    repair_intent: share the production reducer and claim output work once per block before wave-level partition
+        - stage2_write_through_includes_nt
+        - stage2_token_publication_uses_workgroup_release
+        - stage2_token_publication_avoids_system_release
+        - bucket_512_payload_chunk_rows
+    repair_intent: make the directly decorated combine item the sole JIT frame, pressure-guard reducer vectorization, minimize memory scope, and claim output work once per block
     checkpoint: output_reduce_queue
     focus_files:
       - aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
@@ -1905,6 +1960,10 @@ anti_patterns:
   - host reset of monotone cross-rank readiness
   - fixed large-shape tuning forced through every token bucket
   - performance measurement of an incomplete source checkpoint
+  - plain combine item wrapper around a zero-argument nested JIT body
+  - combine U4 selected from row divisibility without per-warp pressure gating
+  - per-item system acquire duplicated with system-scope payload loads
+  - write-through cache policy on the rank-local final combine output
 ```
 
 ## Embedded contract
@@ -1912,8 +1971,8 @@ anti_patterns:
 ```expert-skill-contract
 schema_version: expert-skill-contract-v1
 skill_id: megamoe_ep_mega_fusion
-revision: mega-ep-fusion-v6
-description: Declarative source and MegaPlanIR preflight for the experimental v6 transfer target.
+revision: mega-ep-fusion-v7
+description: Declarative source and MegaPlanIR preflight for the experimental v7 transfer target.
 
 source:
   include:
@@ -1967,7 +2026,7 @@ plan:
     - id: matched_skill_revision
       path: expert_skill_revision
       op: eq
-      value: mega-ep-fusion-v6
+      value: mega-ep-fusion-v7
     - id: matched_skill_id
       path: expert_skill_id
       op: eq
@@ -2081,6 +2140,22 @@ plan:
       path: schedule.policies.completion_rmw_in_unified_loop
       op: eq
       value: forbidden_transitively
+    - id: combine_item_jit_frame
+      path: schedule.policies.combine_item_jit_frame
+      op: eq
+      value: direct_decorated_item_no_extra_wrapper
+    - id: combine_reducer_vectorization
+      path: schedule.policies.combine_reducer_vectorization
+      op: eq
+      value: pressure_guarded_u1_u2_u4
+    - id: combine_payload_visibility
+      path: schedule.policies.combine_payload_visibility
+      op: eq
+      value: system_scope_loads_without_per_item_acquire
+    - id: combine_output_cache
+      path: schedule.policies.combine_output_cache
+      op: eq
+      value: rank_local_slc
     - id: first_stage_domain_is_mtile
       path: work_domains[id=first_stage_m_tiles].unit
       op: eq
@@ -2574,6 +2649,53 @@ checks:
       - 'part_id\s*=\s*s3_work_idx\s*%\s*warps_per_tok'
       - 'return\s*\(\s*consts,\s*_emit_item\s*\)'
 
+  - id: combine_item_direct_jit_frame
+    category: compiler
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - '@flyc\.jit\s+def _emit_item\(s3_work_idx\)'
+
+  - id: combine_item_has_no_extra_jit_wrapper
+    category: compiler
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    match: none
+    patterns:
+      - 'def _emit_item_body\('
+
+  - id: combine_reducer_pressure_policy
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - '_S3_WIDE_PATH_THRESHOLD_I32\s*<\s*hdim_per_warp'
+      - 'hdim_per_warp\s*%\s*256'
+      - '_accum_loop\(\s*eff_end,\s*4\s*\)'
+      - '_accum_loop\(\s*eff_end,\s*2\s*\)'
+      - '_accum_loop\(\s*eff_end,\s*1\s*\)'
+
+  - id: combine_item_has_no_redundant_system_acquire
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    match: none
+    patterns:
+      - 'fence_system_acquire\('
+
+  - id: combine_output_uses_rank_local_cache
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter
+    patterns:
+      - 'SLC_CACHE\s*=\s*_SLC_CACHE'
+      - 'kw\s*=\s*\{\s*[''"]cache_modifier[''"]\s*:\s*SLC_CACHE\s*\}'
+
   - id: adaptive_combine_partition_bounds
     category: correctness
     kind: regex
@@ -2711,6 +2833,31 @@ checks:
       - 'atomic_add_system'
       - 'arg_p2p_tok_ready'
 
+  - id: stage2_write_through_includes_nt
+    category: performance
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    target: '_P2P_CACHE_WT'
+    value: '2\s*\|\s*1\s*\|\s*16'
+
+  - id: stage2_token_publication_uses_workgroup_release
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter.emit_stage2_body._emit_stage2_body._publish_tok_ready
+    patterns:
+      - 'fence_release\('
+      - 'WorkgroupOneAs'
+
+  - id: stage2_token_publication_avoids_system_release
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter.emit_stage2_body._emit_stage2_body._publish_tok_ready
+    match: none
+    patterns:
+      - 'fence_system_release\('
+
   - id: stage2_metadata_lds_is_slab_relative
     category: correctness
     kind: regex
@@ -2766,6 +2913,14 @@ checks:
     scope: compile_mega_moe_stage1
     target: kernel_name
     value: '(?=[\s\S]*fused_g2_pref)(?=[\s\S]*fuse_combine)(?=[\s\S]*G2_CHUNK)'
+
+  - id: bucket_512_payload_chunk_rows
+    category: performance
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+    scope: _select_large_stage1
+    patterns:
+      - 'payload_chunk_rows\s*=\s*256\s*if\s*bucket\s*==\s*512\s*else\s*384'
 ```
 
 ## Embedded runtime validation

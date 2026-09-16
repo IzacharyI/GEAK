@@ -80,7 +80,7 @@ skills:
 - id: megamoe_ep_mega_fusion
   file: skills/megamoe_ep_mega_fusion/skill.md
   scope: kernel
-  revision: mega-ep-fusion-v6
+  revision: mega-ep-fusion-v7
   playbook_file: skills/megamoe_ep_mega_fusion/skill.md
   planner_extension_file: skills/megamoe_ep_mega_fusion/skill.md
   contract_file: skills/megamoe_ep_mega_fusion/skill.md

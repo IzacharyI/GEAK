@@ -127,6 +127,15 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert "fuse_combine_controls_token_publication" in checks
     assert "stage2_emitter_metadata_lds_is_slab_relative" in checks
     assert "fused_stage1_jit_identity_covers_runtime_shape" in checks
+    assert "combine_item_direct_jit_frame" in checks
+    assert "combine_item_has_no_extra_jit_wrapper" in checks
+    assert "combine_reducer_pressure_policy" in checks
+    assert "combine_item_has_no_redundant_system_acquire" in checks
+    assert "combine_output_uses_rank_local_cache" in checks
+    assert "stage2_write_through_includes_nt" in checks
+    assert "stage2_token_publication_uses_workgroup_release" in checks
+    assert "stage2_token_publication_avoids_system_release" in checks
+    assert "bucket_512_payload_chunk_rows" in checks
     assert checks["stage2_max_m_blocks_are_block_units"]["kind"] == "assignment_value"
     assert checks["g1_owned_mtile_completion"]["kind"] == "owned_completion_protocol"
     assert checks["combine_generation_published_before_startup_gate"]["kind"] == "regex_sequence"
@@ -184,7 +193,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v6",
+        "expert_skill_revision": "mega-ep-fusion-v7",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "expert_skill_validation_status": "experimental",
@@ -247,6 +256,13 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
                 "completion_publication_operation":
                     "waitcnt_barrier_thread0_system_store_n_tiles",
                 "completion_rmw_in_unified_loop": "forbidden_transitively",
+                "combine_item_jit_frame":
+                    "direct_decorated_item_no_extra_wrapper",
+                "combine_reducer_vectorization":
+                    "pressure_guarded_u1_u2_u4",
+                "combine_payload_visibility":
+                    "system_scope_loads_without_per_item_acquire",
+                "combine_output_cache": "rank_local_slc",
             },
             "parameters": {
                 "combine_third_queue": True,
@@ -287,7 +303,7 @@ def test_repository_plan_contract_rejects_flat_first_stage_claims():
     plan = {
         "plan_version": "mega-plan-v2",
         "expert_skill_id": "megamoe_ep_mega_fusion",
-        "expert_skill_revision": "mega-ep-fusion-v6",
+        "expert_skill_revision": "mega-ep-fusion-v7",
         "expert_skill_bundle_sha256": "bundle",
         "expert_skill_planner_extension_sha256": "planner",
         "expert_skill_validation_status": "experimental",
