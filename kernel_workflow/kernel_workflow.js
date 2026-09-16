@@ -2395,29 +2395,7 @@ if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
 }
 
 // <<REPLAY:analyze_resume_fallback>>
-// THE RESUMED WAVE THAT ANALYSED NOTHING.
-//
-// roles/tech_lead.md gives analyze a fast path when INCREMENTAL_RESUME is set: read the roadmap a
-// prior wave persisted instead of re-deriving it, and "do a full analysis only if no prior roadmap
-// exists". That last clause is the whole safety of the fast path, and it is unenforceable from here
-// -- workflow scripts have no filesystem, so this file cannot see whether EVAL_DIR/roadmap.md was
-// found or whether the phase quietly returned an empty shell.
-//
-// Wave 15 is what that costs. A fresh caller workspace has no prior wave roadmap, so the prior wave's
-// roadmap was not in it; analyze took the fast path, found nothing to read, and returned a valid
-// schema with no candidate_directions and no task_graph. Three rounds then ran with an empty ladder.
-// The engineers carried the D0..D3 rung ids forward from wave 14 by hand, out of their own memory,
-// and D2 went unspent for three waves because nothing on disk was tracking that it was owed. Round
-// 3's engineer eventually re-materialised roadmap.md himself, at 01:08, unprompted.
-//
-// The LADDER MISSING caveat below did fire -- every round, unchanged, changing nothing. A warning
-// that repeats and is never acted on is not a guard, it is a log line. So act on it here: an empty
-// ladder out of a RESUMED analyze is not a fact about the kernel, it is the fast path failing to
-// find its input, and the remedy is the one the role file already prescribes. Re-run once with the
-// resume flag off. One extra analyze call against three wasted rounds.
-//
-// Deliberately narrow: only when INCREMENTAL was on, only on an empty ladder (a resume with no
-// ladder is a contradiction in terms -- the ladder IS what is being resumed), and only once.
+// A resumed Analyze with no ladder did not resume anything; rerun it once without the fast path.
 function megaPlanIRVerdict(
   plan,
   expectedSkillRevision = '',
@@ -3604,6 +3582,29 @@ function megaRegistryForSearch(registry) {
   });
 }
 
+function megaForcedFallbackDirection(registry, ladder) {
+  const owner = (Array.isArray(registry) ? registry : []).map(normalizeMegaCandidate)
+    .find((c) => c.gpu_executed &&
+      /fail|fault|crash|error/.test(c.verification_status.toLowerCase()) &&
+      /measured_partial_fallback/.test(c.next_blocker));
+  if (!owner) return null;
+  const rung = (Array.isArray(ladder) ? ladder : [])
+    .find((r) => String(r && r.id || '') === 'measured_partial_fallback');
+  if (!rung) throw new Error(
+    `candidate ${owner.id} requires measured_partial_fallback, but Analyze omitted that rung`);
+  return {
+    ...rung,
+    candidate_id: owner.id,
+    candidate_source: owner.source,
+    base_candidate_id: owner.base_id,
+    roadmap_rung: 'measured_partial_fallback',
+    gated_on: [],
+    prompt: `MANDATORY persisted handoff: continue existing ${owner.id} at HEAD ${owner.head}; ` +
+      `the prior full-target Verify already reached hardware and failed. Do not repeat its bisection ` +
+      `or reopen the full target. ${String(rung.prompt || '')}`,
+  };
+}
+
 function megaHistoryForSearch(sourceHistory, registry) {
   const h = sourceHistory || {};
   const searchRegistry = megaRegistryForSearch(registry)
@@ -4024,7 +4025,8 @@ function megaCandidateFromVerification(meta, ver, opts) {
         v.candidate_head || meta && meta.head || '(missing)'}; correctness=${
         v.correctness || 'unknown'}, activation_on_hardware=${
         v.activation_on_hardware || 'unknown'}; evidence=${
-        v.evidence_manifest || '(missing)'}`
+        v.evidence_manifest || '(missing)'}; prior_handoff=${
+        meta && meta.next_blocker || '(none)'}`
       : String(meta && meta.next_blocker || ''),
     notes: v.claim_complete === true && v.notes ? String(v.notes) :
       String(meta && meta.notes || ''),
@@ -6089,7 +6091,8 @@ function validMegaSearchDirection(direction) {
 
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
-  const plan = await agentT(
+  const forcedFallback = megaForcedFallbackDirection(megaCandidateRegistry, LADDER);
+  const plan = forcedFallback ? { stop: false, directions: [forcedFallback] } : await agentT(
     roleAgent('mega_search_lead', 'plan_round',
       'Choose one whole-kernel candidate direction. Expert knowledge guides the common candidate lifecycle; it never creates a reserved lane.', {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
@@ -6135,6 +6138,10 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       }),
     { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
       ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+  if (forcedFallback) {
+    log(`Mega round ${currentRound}: enforcing persisted measured_partial_fallback for ` +
+      `${forcedFallback.candidate_id}; a completed hardware failure cannot be re-planned as pending.`);
+  }
   if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
     const wip = megaCandidateRegistry.find((c) =>
       c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));

@@ -21,6 +21,10 @@ provides one, `EXPERT_SKILL_PLANNER_EXTENSION` plus
 Analyze only frozen source, the fixed task, generic knowledge, and an explicitly
 injected matched Expert Skill. Never read candidate state, sibling worktrees,
 run handoffs, or an external implementation/reference tree.
+Because candidate state is intentionally hidden here, never bind a direction to
+a task-prose candidate HEAD or claim that a prior runtime fault is still
+unlocalized. Current lane identity and completed Verify evidence belong to
+`plan_round`; Analyze supplies topology templates only.
 
 1. Identify the operator entry, every on-path kernel/wrapper, current launch
    shape, synchronization edges, work domains, buffers, counters and score
@@ -212,6 +216,12 @@ digests listed for Analyze.
 
 Plan exactly one complete candidate direction:
 
+0. A complete persisted Verify outranks Analyze/task prose. If a registry row
+   has `gpu_executed:true`, a failed `verification_status`, and its
+   `next_blocker` explicitly requires `measured_partial_fallback`, that handoff
+   is settled: choose the fallback, continue the same candidate lane, treat its
+   recorded blocker gate as satisfied, and never repeat/re-litigate the failed
+   full-target bisection.
 1. Continue recoverable WIP before opening a duplicate lane.
 2. Consume `contract_failures` structurally. Order categories:
    `plan` → `correctness` → `abi` → `lifecycle` → `resource/compiler` →

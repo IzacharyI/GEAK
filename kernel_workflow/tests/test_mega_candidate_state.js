@@ -134,6 +134,10 @@ ok(/verification_status: String\(v\.status/.test(src) &&
 ok(/gpu_executed=true[\s\S]{0,180}runtime_verified=false/.test(lead) &&
    /candidates\/<id>\/candidate_result\.json/.test(lead),
   'state writer distinguishes on-card failure and mirrors the latest lane checkpoint');
+ok(/megaForcedFallbackDirection\(megaCandidateRegistry, LADDER\)/.test(src) &&
+   /forcedFallback \? \{ stop: false, directions: \[forcedFallback\] \}/.test(src) &&
+   /a completed hardware failure cannot be re-planned as pending/.test(src),
+  'an explicit persisted fallback bypasses contradictory Planner re-interpretation');
 
 console.log(failures === 0
   ? '\nPASS: Mega candidate lanes and calibration resume independently.'
