@@ -6052,8 +6052,9 @@ function freshMegaDirectionLeak(direction) {
 
 function freshMegaAuthorLeak(result) {
   const r = result || {};
-  const text = [r.notes, r.next_blocker].map((value) => String(value || '')).join('\n');
-  return /\b(?:reproduc(?:e|ed|ing)|cop(?:y|ied|ying)|reus(?:e|ed|ing))\b[\s\S]{0,128}\b(?:prior|previous|v\d+|candidate|lineage|plan|patch)\b/i
+  const text = [r.notes, r.next_blocker].map((value) => String(value || '')).join('\n')
+    .replace(/\bcop(?:y|ied|ying)\b[\s\S]{0,64}\bfrozen[_ -]?baseline\b/ig, '');
+  return /\b(?:reproduc(?:e|ed|ing)|cop(?:y|ied|ying)|reus(?:e|ed|ing))\b[\s\S]{0,128}\b(?:prior|previous|v\d+|candidate (?:source|lineage)|plan ?ir|patch)\b/i
     .test(text);
 }
 

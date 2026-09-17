@@ -101,6 +101,10 @@ ok(!freshMegaAuthorLeak({
   notes: 'Authored from the frozen baseline and current plan.',
 }),
   'fresh source authoring does not trigger the disclosure gate');
+ok(!freshMegaAuthorLeak({
+  notes: 'Lane setup copied frozen_baseline into candidate tree before authoring.',
+}),
+  'required frozen-baseline lane initialization is not mistaken for prior reuse');
 ok(/freshLane && freshMegaDirectionLeak\(raw\)/.test(src) &&
    /restored the ' \+\s*'clean Analyze direction from the frozen baseline/.test(src) &&
    /base_candidate_id: 'frozen_baseline'/.test(src),
