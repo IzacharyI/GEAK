@@ -1,19 +1,20 @@
 {
   "schema_version": "megamoe-source-shape-false-pass-regression-v1",
-  "candidate_head": "f87cc737fd3079fee6c46b739555cc9fb2987329",
-  "candidate_tree_digest": "21f65a790fb9e76fc8154479beb01b0bf88d122a0d76f88803de6033bcffba61",
-  "skill_bundle_sha256": "67dbcf490939c2a9f7faa58116fcbe1b52c5c322b489da95379ade31f441a6c9",
-  "planner_extension_sha256": "799b495d6fd37c039c78462a7e826c0aba61d47ee97f682b4e95a496a7fe87a9",
-  "contract_sha256": "168247765da9e5e08b0771c9e5ac422e364b75556e5379e95e3d757afd0f433d",
+  "candidate_head": "eec2b64ef27534da0c11c0a15038ae8d2022aca8",
+  "candidate_tree_digest": "05615d9173da140191b9bfaad472da674bfec9f7fdb458b1a5e062da9ef55b05",
+  "skill_bundle_sha256": "d0dd1a6d95e7b568072edb94ea751c1b75caf19095522cb6e45e833bcde1f581",
+  "planner_extension_sha256": "e549b92063b06f0a70eba29fa916eca375ad824122bff6fc10627285108fd332",
+  "contract_sha256": "b8326a0f2b2a9385506244b274f1d2910ae875f4f816c50938452a23aba5e234",
   "runtime_validation_sha256": "d486b8ece8397b55e9be708b347e125dc1b15b07ada8a5150e0bdb6b60717e34",
-  "required_check_count": 15,
-  "required_failure_count": 2,
+  "required_check_count": 16,
+  "required_failure_count": 1,
   "failed_required_checks": [
-    "fused_host_abi",
-    "selected_fused_host_bindings"
+    "fused_bundle_flow"
   ],
   "passing_required_checks": [
     "complete_host_path",
+    "fused_host_abi",
+    "selected_fused_host_bindings",
     "persistent_kernel_abi",
     "fused_launch_abi",
     "flat_stripe_completion",

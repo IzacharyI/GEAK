@@ -579,6 +579,78 @@ def _check_tuple_bindings(
     return _result(not failures, total, passed, failures, severity)
 
 
+def _check_bundle_flow(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Prove producer outputs populate a bundle expanded into the launch sink."""
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, 3, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    producer = str(rule.get("producer_call") or "")
+    outputs = [str(value) for value in rule.get("outputs") or []]
+    bundle = str(rule.get("bundle_target") or "")
+    sink = str(rule.get("sink_call") or "")
+    keys = {str(key): str(value) for key, value in (rule.get("keys") or {}).items()}
+    failures = []
+    passed = 0
+
+    producer_assignments = []
+    for item in ast.walk(node):
+        if not isinstance(item, ast.Assign) or not isinstance(item.value, ast.Call):
+            continue
+        if not re.fullmatch(producer, _call_name(item.value)) or len(item.targets) != 1:
+            continue
+        target = item.targets[0]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            producer_assignments.append([ast.unparse(value) for value in target.elts])
+    if outputs and outputs in producer_assignments:
+        passed += 1
+    else:
+        failures.append(f"producer {producer} does not unpack exactly into {outputs}")
+
+    bundle_values = None
+    for item in ast.walk(node):
+        if not isinstance(item, ast.Assign) or len(item.targets) != 1:
+            continue
+        if ast.unparse(item.targets[0]) != bundle or not isinstance(item.value, ast.Dict):
+            continue
+        bundle_values = {
+            str(key.value): ast.unparse(value)
+            for key, value in zip(item.value.keys, item.value.values)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+    bad_keys = [
+        f"{key}={('<missing>' if bundle_values is None else bundle_values.get(key, '<missing>'))}"
+        for key, value in keys.items()
+        if bundle_values is None or bundle_values.get(key) != value
+    ]
+    if not bad_keys:
+        passed += 1
+    else:
+        failures.append(f"bundle {bundle} has wrong producer bindings: {bad_keys}")
+
+    sink_expands = any(
+        isinstance(item, ast.Call)
+        and re.fullmatch(sink, _call_name(item))
+        and any(
+            keyword.arg is None and ast.unparse(keyword.value) == bundle
+            for keyword in item.keywords
+        )
+        for item in ast.walk(node)
+    )
+    if sink_expands:
+        passed += 1
+    else:
+        failures.append(f"sink {sink} does not expand **{bundle}")
+    return _result(not failures, 3, passed, failures, severity)
+
+
 def _check_call_arity(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -1894,6 +1966,7 @@ def evaluate_checks(
         "selected_branch_calls": _check_selected_branch_calls,
         "function_shape": _check_function_shape,
         "tuple_bindings": _check_tuple_bindings,
+        "bundle_flow": _check_bundle_flow,
         "call_arity": _check_call_arity,
         "nontrivial_function": _check_nontrivial_function,
         "forbid_methods": _check_forbid_methods,

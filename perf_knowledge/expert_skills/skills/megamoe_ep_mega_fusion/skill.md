@@ -863,6 +863,7 @@ failure_routes:
       check_ids:
         - complete_host_path
         - selected_fused_host_bindings
+        - fused_bundle_flow
         - fused_host_abi
         - persistent_kernel_abi
         - fused_launch_abi
@@ -930,7 +931,7 @@ plan:
 
 # These probes describe the validated profile's present adapter only. Paths
 # and symbols are not applicability gates. After Analyze selects this adapter
-# by semantic bindings and the workflow selects/pins the Skill, the fifteen
+# by semantic bindings and the workflow selects/pins the Skill, the sixteen
 # implementation checks are required evidence for a claimed-complete
 # structural checkpoint.
 checks:
@@ -976,6 +977,22 @@ checks:
     keywords:
       fused_config: '^config$'
       fuse_combine: '^fuse_comb$'
+
+  - id: fused_bundle_flow
+    category: abi
+    severity: required
+    kind: bundle_flow
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._run_fused_stage1
+    producer_call: _fused_all_kwargs
+    outputs: [_s2_spec, _s2_args, _c_spec, _c_args]
+    bundle_target: _fused_kw
+    keys:
+      fused_stage2: _s2_spec
+      fused_args: _s2_args
+      fused_combine: _c_spec
+      fused_combine_args: _c_args
+    sink_call: _s1_mega
 
   - id: persistent_kernel_abi
     category: abi

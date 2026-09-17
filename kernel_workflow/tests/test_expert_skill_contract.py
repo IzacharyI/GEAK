@@ -21,6 +21,7 @@ SPEC.loader.exec_module(MODULE)
 MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "complete_host_path",
     "selected_fused_host_bindings",
+    "fused_bundle_flow",
     "fused_host_abi",
     "persistent_kernel_abi",
     "fused_launch_abi",
@@ -130,6 +131,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert {item["id"] for item in contract["checks"]} == {
         "complete_host_path",
         "selected_fused_host_bindings",
+        "fused_bundle_flow",
         "fused_host_abi",
         "persistent_kernel_abi",
         "fused_launch_abi",
@@ -244,7 +246,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     contract_sha = hashlib.sha256(
         yaml.safe_dump(contract, sort_keys=True).encode()
     ).hexdigest()
-    assert fixture["candidate_head"] == "f87cc737fd3079fee6c46b739555cc9fb2987329"
+    assert fixture["candidate_head"] == "eec2b64ef27534da0c11c0a15038ae8d2022aca8"
     assert fixture["contract_sha256"] == contract_sha
     assert fixture["required_check_count"] == len(
         MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
@@ -257,7 +259,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 2
+    assert fixture["required_failure_count"] == 1
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1327,6 +1329,38 @@ def test_tuple_bindings_rejects_missing_duplicate_and_placeholder_sources():
     result = MODULE.evaluate_checks(
         contract, {"src/a.py": complete}
     )["host_bundle"]
+    assert result["pass"], result["failures"]
+
+
+def test_bundle_flow_requires_producer_outputs_at_launch_sink():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "flow",
+        "kind": "bundle_flow",
+        "file": "src/a.py",
+        "scope": "launch",
+        "producer_call": "build",
+        "outputs": ["spec", "args"],
+        "bundle_target": "kw",
+        "keys": {"fused_spec": "spec", "fused_args": "args"},
+        "sink_call": "invoke",
+    }]
+    dead = ast.parse(
+        "def launch():\n"
+        "    spec, args = build()\n"
+        "    self.saved = args\n"
+        "    invoke()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": dead})["flow"]
+    assert not result["pass"]
+
+    complete = ast.parse(
+        "def launch():\n"
+        "    spec, args = build()\n"
+        "    kw = {'fused_spec': spec, 'fused_args': args}\n"
+        "    invoke(**kw)\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["flow"]
     assert result["pass"], result["failures"]
 
 
