@@ -4705,18 +4705,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
   }),
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
-      // 7200s (120 min), not 4200s (70 min): a 70-min bound was observed too tight in production
-      // (wf_afc743de-008 / cont9, 2026-09-09). The baseline + 4-guard null arms + 3-run reliability +
-      // correctness alone consumed ~66 of the 70 min; the positive control had only just STARTED its
-      // cold JIT of the spin-dosed variant when the window expired, so it never produced a control
-      // pair and the whole wave died with validation_status:agent_timeout. The positive control is a
-      // one-time cold JIT (many null/control legs on the target guard, each potentially
-      // re-initializing a large communication heap, plus a distinct-ISA rebuild of the dosed
-      // variant), so it needs genuine headroom AFTER the baseline pre-work, not merely a few minutes.
-      // This phase runs before the candidate loop and does NOT draw from MEGA_CLOCK_MS (which bounds
-      // the loop's turn count), so a longer real wall here does not reduce the number of candidate
-      // rounds — it is free in candidate-budget terms. Even so, a timeout here now RECOVERS from disk
-      // (see below) instead of terminating the wave.
+      // Baseline/control setup has a separate production window and can recover artifacts on timeout.
       ? { timeout_ms: 7200000, timeout_marker: true, max_retries: 1 } : {}) });
 // A bench agent that dies without returning has usually NOT failed to measure — it has failed to
 // report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
