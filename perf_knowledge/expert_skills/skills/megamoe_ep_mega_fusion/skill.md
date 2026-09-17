@@ -868,13 +868,28 @@ failure_routes:
         - persistent_kernel_abi
         - fused_launch_abi
         - flat_stripe_completion
+        - g1_cache_builder_flow
+        - g1_cache_epilogue_flow
+        - g1_cache_store_sink
         - unified_g1_g2_loop
+        - g2_scheduler_cfg
+        - g2_skew_orientation
         - shared_stage2_body
         - nontrivial_stage2_body
+        - stage2_descriptor_flow
+        - stage2_standalone_shared_body
+        - stage2_nw8_geometry
         - combine_emitter_wired
         - p2p_visibility
+        - p2p_cache_selection
+        - p2p_cache_store_sink
+        - p2p_close_protocol
         - progressive_token_readiness
+        - generation_lifecycle
         - combine_output_work_item
+        - combine_launch_bindings
+        - combine_block_fp8_decode
+        - combine_u_selection
         - block_claimed_combine
         - bucket_512_payload_rows
     repair_intent: return required failures in category order to the same candidate lane, commit one coherent subset per turn, and continue its head lineage using Analyze-discovered bindings; never classify remaining work as dead_end or too-large-for-one-turn; applicability remains workflow-owned
@@ -898,6 +913,7 @@ skill_id: megamoe_ep_mega_fusion
 source:
   include:
     - '**/*moe*.py'
+    - '**/gemm*.py'
     - '**/*dispatch*combine*.py'
     - '**/*quant*.py'
 
@@ -931,7 +947,7 @@ plan:
 
 # These probes describe the validated profile's present adapter only. Paths
 # and symbols are not applicability gates. After Analyze selects this adapter
-# by semantic bindings and the workflow selects/pins the Skill, the sixteen
+# by semantic bindings and the workflow selects/pins the Skill, the thirty-one
 # implementation checks are required evidence for a claimed-complete
 # structural checkpoint.
 checks:
@@ -1035,6 +1051,35 @@ checks:
       - 'barrier\(\)'
       - 'atomic_add_system'
 
+  - id: g1_cache_builder_flow
+    category: correctness
+    severity: required
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    call: build_fused_gemm1
+    keywords:
+      out_cache_modifier: '^0 if S2 is None else _G1_OUT_WT$'
+
+  - id: g1_cache_epilogue_flow
+    category: correctness
+    severity: required
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/gemm1.py
+    scope: build_fused_gemm1
+    call: SiluQuantEpilogue
+    keywords:
+      out_cache_modifier: '^out_cache_modifier$'
+
+  - id: g1_cache_store_sink
+    category: correctness
+    severity: required
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/gemm_util.py
+    scope: SiluQuantEpilogue.store
+    patterns:
+      - 'cache_modifier\s*=\s*self\._out_cache_modifier'
+
   - id: unified_g1_g2_loop
     category: schedule
     severity: required
@@ -1062,6 +1107,52 @@ checks:
       - 'S2\[[''"]emit[''"]\]\('
       - 'consumer_active\s*=\s*kind\s*!=\s*fx\.Int32\(0\)'
 
+  - id: g2_scheduler_cfg
+    category: schedule
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - 'total_g2_pairs\s*='
+      - 'g2_chunk\s*=\s*fx\.Int32\(G2_CHUNK\)'
+      - 'total_g2_claims\s*=\s*ceildiv\(total_g2_pairs,\s*g2_chunk\)'
+      - 'def _g2_cid\(local\)'
+      - 'return work_shard\s*\+\s*local\s*\*\s*fx\.Int32\(WORK_SHARDS\)'
+      - 'def _g2_base\(claim\)'
+      - 'return claim\s*\*\s*g2_chunk'
+      - 'g2_pend\s*=\s*fx\.Int32\(0\)'
+      - 'g2_next\s*=\s*fx\.Int32\(0\)'
+      - 'if g2_pend\s*>\s*fx\.Int32\(0\):'
+      - 'kind\s*=\s*fx\.Int32\(2\)'
+      - 'unit\s*=\s*g2_next'
+      - 'g2_pend\s*=\s*g2_pend\s*-\s*fx\.Int32\(1\)'
+      - 'g2_next\s*=\s*g2_next\s*\+\s*fx\.Int32\(1\)'
+      - 'atomic_add_agent\(g2_head,\s*fx\.Int32\(0\)\)'
+      - 'done\s*>?=\s*n_tiles_i32'
+      - 'atomic_add_agent\(g2_head,\s*fx\.Int32\(1\)\)'
+      - 'mori_shmem\.int32_wait_until_greater_than\('
+      - 'atomic_add_agent\(\s*a_work_head\s*\+\s*fx\.Int64\(work_shard\)\s*\*\s*fx\.Int64\(64\)'
+      - 'if kind\s*==\s*fx\.Int32\(0\):'
+      - 'atomic_add_agent\(g2_head,\s*fx\.Int32\(1\)\)'
+      - 'mori_shmem\.int32_wait_until_greater_than\('
+      - 'g2_next\s*=\s*unit\s*\+\s*fx\.Int32\(1\)'
+      - 'g2_pend\s*=\s*g2_chunk\s*-\s*fx\.Int32\(1\)'
+      - 'if kind\s*==\s*fx\.Int32\(1\):'
+      - '_do_scheduled_tile\(unit\)'
+      - 'if kind\s*==\s*fx\.Int32\(2\):'
+      - 'S2\[[''"]emit[''"]\]\('
+
+  - id: g2_skew_orientation
+    category: schedule
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '\(_g2_bal_num,\s*_g2_bal_den\)\s*=\s*fused_g2_skew'
+      - '_g2_metiles\s*\*\s*fx\.Int32\(fz_epr\s*\*\s*fz_tile_m\s*\*\s*_g2_bal_den\)\s*>\s*num_valid\s*\*\s*fx\.Int32\(_g2_bal_num\)'
+
   - id: shared_stage2_body
     category: resource
     severity: required
@@ -1087,6 +1178,52 @@ checks:
       - gemm2_compute_v2
       - p2p_scatter_epilog
 
+  - id: stage2_descriptor_flow
+    category: correctness
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter.emit_stage2_body._emit_stage2_body
+    patterns:
+      - 'create_buffer_resource_from_addr\(arg_trb\)'
+      - 'create_buffer_resource_from_addr\(arg_stids\)'
+      - 'create_buffer_resource_from_addr\(arg_sweights\)'
+      - 'create_buffer_resource_from_addr\(arg_p2p_comb_inp\)'
+      - 'def issue_all_a_loads'
+      - 'issue_a_load_lds_dt\('
+      - 'gemm2_compute_v2\(\s*lds_base_i32,\s*arg_ascale,\s*arg_bq,\s*arg_bscale,\s*arg_eids,\s*arg_aq'
+      - 'p2p_scatter_epilog\(\s*lds_base_i32'
+      - 'p2p_write_through\s*=\s*p2p_write_through'
+      - 'NW\s*=\s*NW'
+
+  - id: stage2_standalone_shared_body
+    category: correctness
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: compile_mega_moe_stage2
+    patterns:
+      - 'emit_stage2_body\s*=\s*make_stage2_body_emitter\(\*\*consts\)'
+      - 'def kernel_epilog_v2'
+      - 'emit_stage2_body\('
+      - 'lds_slab\s*=\s*_slab'
+      - 'lds_byte_off\s*=\s*lds_off'
+      - 'arg_aq\s*=\s*arg_aq'
+      - 'arg_ascale\s*=\s*arg_ascale'
+      - 'arg_bq\s*=\s*arg_bq'
+      - 'arg_bscale\s*=\s*arg_bscale'
+
+  - id: stage2_nw8_geometry
+    category: compiler
+    severity: required
+    kind: regex
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: derive_stage2_emit_constants
+    patterns:
+      - 'NW\s+not\s+in\s+\(4,\s*8\)'
+      - 'BN\s*%\s*NW'
+      - 'BN\s*//\s*NW'
+
   - id: combine_emitter_wired
     category: correctness
     severity: required
@@ -1109,6 +1246,23 @@ checks:
       - 'if\s+_c_t\s*>=\s*i32_cur_tok'
       - 'tok_ready_epoch\s*=\s*c_epoch'
       - 'tok_ready_expected\s*=\s*fuse_topk'
+
+  - id: generation_lifecycle
+    category: lifecycle
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - '_c_rsrc\s*=\s*_make_buffer_from_addr\(c_ctr,\s*fx\.Int32\)'
+      - '_buffer_store\(_c_rsrc,\s*fx\.Int32\(0\),\s*fx\.Int32\(0\),\s*fx\.Int32\)'
+      - '_buffer_load\(_c_rsrc,\s*fx\.Int32\(1\),\s*fx\.Int32\)\s*\+\s*fx\.Int32\(1\)'
+      - 'c_epoch\s*=\s*_buffer_load\(\s*_make_buffer_from_addr\(c_ctr,\s*fx\.Int32\),\s*fx\.Int32\(1\)'
+      - '_c_rdy_rsrc\s*=\s*_make_buffer_from_addr\(c_tok_ready,\s*fx\.Int32\)'
+      - '_c_pad\s*=\s*fx\.Int32\(fz_k\)\s*\*\s*c_epoch'
+      - 'for _c_t in range\(tid,\s*fz_mtpr,\s*TOTAL_THREADS\):'
+      - 'if _c_t\s*>=\s*i32_cur_tok:'
+      - '_buffer_store\(_c_rdy_rsrc,\s*_c_t,\s*_c_pad,\s*fx\.Int32\)'
 
   - id: combine_output_work_item
     category: schedule
@@ -1133,6 +1287,61 @@ checks:
       - 'buffer_store'
       - '_accum_loop\(eff_end,\s*4\)'
       - '_accum_loop\(eff_end,\s*2\)'
+      - '_accum_loop\(eff_end,\s*1\)'
+
+  - id: combine_launch_bindings
+    category: correctness
+    severity: required
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    call: make_combine_reduce_emitter
+    keywords:
+      blockwise_fp8_transport: '^C.*blockwise.*$'
+      addr_shmem_tok: '^c_inp$'
+      addr_out_shmem_tok: '^c_out$'
+      nominal_warp_num: '^fx\.Int32.*launch_grid_x.*NUM_WAVES.*$'
+      tok_ready_addr: '^c_tok_ready$'
+      tok_ready_expected: '^fuse_topk$'
+      tok_ready_epoch: '^c_epoch$'
+
+  - id: combine_block_fp8_decode
+    category: correctness
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter._emit_item
+    patterns:
+      - 'expert_rsrcs\s*=\s*\[\]'
+      - 'expert_scale_rsrcs\s*=\s*\[\]'
+      - 'for k_slot in range_constexpr\(experts_per_token\):'
+      - 'create_buffer_resource_from_addr\(expert_tok_addr\)'
+      - 'create_buffer_resource_from_addr\(\s*expert_tok_addr\s*\+\s*fx\.Int64\(hidden_dim\)'
+      - 'def _accum_step'
+      - 'scale_idx\s*=\s*\(ec_abs\s*\+\s*u\s*\*\s*64\)\s*//\s*8'
+      - 'dtype\s*=\s*T\.i8'
+      - 'ds_bpermute\('
+      - 'sc_i32\s*<<\s*fx\.Int32\(23\)'
+      - 'fp32_acc\s*=\s*_zero_accum\(\)'
+      - '_to_accum\(vals\[u\]\[k_slot\]\)\s*\*\s*scales\[u\]\[k_slot\]'
+      - 'acc\s*=\s*_from_accum\(fp32_acc\)'
+      - 'buffer_store\(acc,\s*rsrc_out,\s*out_off'
+
+  - id: combine_u_selection
+    category: compiler
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter._emit_item
+    patterns:
+      - 'rem_hdim\s*=\s*n_elems\s*-\s*hdim_off'
+      - 'eff_end\s*=\s*\(rem_hdim\s*<\s*hdim_per_warp\)\.select\(rem_hdim,\s*hdim_per_warp\)'
+      - 'if _S3_WIDE_PATH_THRESHOLD_I32\s*<\s*hdim_per_warp:'
+      - 'if const_expr\(n_i32\s*%\s*256\s*==\s*0\):'
+      - 'if hdim_per_warp\s*%\s*256\s*<\s*1:'
+      - '_accum_loop\(eff_end,\s*4\)'
+      - '_accum_loop\(eff_end,\s*2\)'
+      - '_accum_loop\(eff_end,\s*1\)'
       - '_accum_loop\(eff_end,\s*1\)'
 
   - id: block_claimed_combine
@@ -1161,6 +1370,43 @@ checks:
       - 'atomic_add_agent\(\s*arg_mtile_ctr[\s\S]*fx\.Int32\(0\)\s*-\s*num_n_blocks'
       - 'if\s+tx_i32\s*<\s*fx\.Int32\(BM\)'
       - 'atomic_add_system\(\s*ready_base'
+
+  - id: p2p_cache_selection
+    category: correctness
+    severity: required
+    kind: assignment_value
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: p2p_scatter_epilog
+    target: p2p_cache_mod
+    value: '_P2P_CACHE_WT\s+if\s+p2p_write_through\s+else\s+_P2P_CACHE_NT'
+
+  - id: p2p_cache_store_sink
+    category: correctness
+    severity: required
+    kind: call_keywords
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: p2p_scatter_epilog
+    call: buffer_store
+    policy: every
+    keywords:
+      cache_modifier: '^p2p_cache_mod$'
+
+  - id: p2p_close_protocol
+    category: lifecycle
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter.emit_stage2_body._emit_stage2_body._publish_tok_ready
+    patterns:
+      - 'fence_release\(fx\.rocdl\.SyncScope\.WorkgroupOneAs\)'
+      - 'fx\.barrier\(\)'
+      - 'if tx_i32\s*==\s*fx\.Int32\(0\):'
+      - 'atomic_add_agent\(\s*arg_mtile_ctr\s*\+\s*fx\.Int64\(m_block_idx\)\s*\*\s*fx\.Int64\(4\),\s*fx\.Int32\(1\)'
+      - 'fx\.ptr_store\(prev,\s*_bcast\)'
+      - 'closes_tile\s*=\s*fx\.ptr_load\(_bcast\)\s*==\s*num_n_blocks\s*-\s*fx\.Int32\(1\)'
+      - 'atomic_add_agent\(\s*arg_mtile_ctr\s*\+\s*fx\.Int64\(m_block_idx\)\s*\*\s*fx\.Int64\(4\),\s*fx\.Int32\(0\)\s*-\s*num_n_blocks'
+      - 'if tx_i32\s*<\s*fx\.Int32\(BM\):'
+      - 'atomic_add_system\('
 
   - id: bucket_512_payload_rows
     category: plan
