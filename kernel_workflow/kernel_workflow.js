@@ -714,8 +714,15 @@ const MEGA_CANDIDATE_SCHEMA = obj({
   candidate_id: { type: 'string' },
   candidate_source: { type: 'string', enum: ['search', 'integrated'] },
   base_candidate_id: { type: 'string' },
-  candidate_status: { type: 'string', enum: ['authoring', 'runnable', 'scored', 'finalist', 'rejected'] },
-  claim_complete: { type: 'boolean' },
+  candidate_status: {
+    type: 'string',
+    enum: ['authoring', 'runnable', 'scored', 'finalist', 'rejected'],
+    description: 'A finalized GPU-free source checkpoint remains authoring until runtime verification.',
+  },
+  claim_complete: {
+    type: 'boolean',
+    description: 'True when this turn finalized its committed artifact, including a GPU-free static checkpoint; hardware gates are separate fields.',
+  },
   checkpoint_complete: { type: 'boolean' },
   structural_verified: { type: 'boolean' },
   runtime_verified: { type: 'boolean' },
@@ -1295,8 +1302,9 @@ const ANALYZE_SCHEMA = obj({
             kind: { type: 'string' },
             carried_state: { type: 'array', items: { type: 'string' } },
             queue_priority: { type: 'array', items: { type: 'string' } },
+            queue_selection: { type: 'string' },
             progress_invariants: { type: 'array', items: { type: 'string' } },
-          }, ['kind', 'carried_state', 'queue_priority', 'progress_invariants']),
+          }, ['kind', 'carried_state', 'progress_invariants']),
           policies: { type: 'object', additionalProperties: true },
           parameters: { type: 'object', additionalProperties: true },
         },
@@ -2536,6 +2544,10 @@ function megaPlanIRVerdict(
   }
   const primaryLoop = plan.schedule && plan.schedule.primary_loop || {};
   if (!String(primaryLoop.kind || '')) errors.push('schedule.primary_loop.kind missing');
+  if (!String(primaryLoop.queue_selection || '') &&
+      !(Array.isArray(primaryLoop.queue_priority) && primaryLoop.queue_priority.length)) {
+    errors.push('schedule.primary_loop requires queue_selection or queue_priority');
+  }
   for (const queue of Array.isArray(primaryLoop.queue_priority) ? primaryLoop.queue_priority : []) {
     if (!queues.has(String(queue))) errors.push(`primary loop references unknown queue ${queue}`);
   }
@@ -6412,7 +6424,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         ? `AUTHORING CONTRACT PREFLIGHT IS REQUIRED AND GPU IS UNAVAILABLE THIS TURN. ` +
           `The direction's request for on-card work is subordinate to this gate. Run the current ` +
           `Expert Skill contract without a reference, repair required failures in category order, ` +
-          `commit a coherent source checkpoint, and return candidate_status=authoring. Do not run ` +
+          `commit a coherent source checkpoint, and return claim_complete=true with ` +
+          `candidate_status=authoring; runtime_verified, gpu_executed, and score_complete remain ` +
+          `false separately. Do not run ` +
           `rocm-smi, torchrun, a benchmark, a correctness command, or any GPU runtime import. `
         : `The exact structural evidence HEAD is ${existing &&
             existing.structural_candidate_head || '(none)'}. Temporary compile-time diagnostic ` +

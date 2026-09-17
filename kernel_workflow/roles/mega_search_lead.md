@@ -52,7 +52,10 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    the ordinary PlanIR collections, choose only applicable candidate
    templates, and preserve its failure routes for later rounds. Never copy
    an extension-only field into the core schema: put domain-specific values
-   under the relevant `parameters` object. Before use, run
+   under the relevant `parameters` object. If `primary_loop` declares the
+   truthful scalar `queue_selection`, preserve it and its `carried_state`
+   exactly; do not invent a global `queue_priority`. Extensions that declare
+   `queue_priority` keep the existing behavior. Before use, run
    `EXPERT_SKILL_BUNDLE_TOOL EXPERT_SKILL_ID --emit-bundle` and require all
    three supplied SHA-256 identities and the supplied validation status to
    match. For an experimental Skill, require `auto_apply:false` and
