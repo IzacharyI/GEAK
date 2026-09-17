@@ -38,25 +38,7 @@ const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/
 
 const KERNEL_PATH_ORIG = A.kernel_path;
 const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
-// POSITIVE CONTROL — a known-good change with an ALREADY-MEASURED effect, run once during Benchmark
-// before any direction budget is spent. The null arm calibrates the NOISE floor; this calibrates the
-// DETECTION floor, and nothing else in the workflow does. Without it a 1.000x report is
-// unfalsifiable: "we found nothing" and "we cannot see anything" produce byte-identical output.
-// This is not hypothetical — a run reported 1.000x on a tree where a +4.71% win was on the table.
-//   {name, how, expected_pct_lo, expected_pct_hi, magnitude?, guard?, abort_on_fail?}
-// `how` is prose the benchmark engineer executes (usually "flip env X, everything else identical").
-// expected_pct_* bound the ALREADY-KNOWN delta; measuring outside that band means the harness is
-// lying, so by default the run ABORTS rather than spending directions on an instrument that cannot
-// read them. Set abort_on_fail:false to downgrade to a warning (use only when deliberately
-// re-calibrating the expected band itself).
-//
-// `magnitude` says what the band IS: 'recorded' (default) means someone has measured this effect and
-// the numbers are a fact, so reading under `lo` is the instrument's fault and aborts. 'constructed'
-// means the control is a synthetic injection (benchmark_engineer.md 5b) and the band is a TARGET a
-// knob was aimed at, never itself measured — there an under-read within a factor of two is a sizing
-// miss, tolerated as PASS (UNDERSHOOT) if the effect still clears the null spread and every pair
-// agrees in sign. Declare it truthfully: relabelling a recorded effect to clear the gate destroys the
-// only evidence the run has that its own numbers mean anything.
+// Positive control calibrates detection; the null arm calibrates noise.
 const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
   ? A.positive_control : null;
 const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
@@ -73,39 +55,7 @@ const DEEP_COST = (() => {
   const v = parseInt(A.deep_cost != null ? A.deep_cost : 2, 10);
   return Number.isFinite(v) && v >= 1 ? v : 2;
 })();
-// WHAT THIS WAVE IS FOR. Two values; the default is the historical behaviour.
-//
-//   'speedup'        (default) — the loop hunts a verified geomean win. Every rule below is unchanged.
-//   'working_kernel'           — the loop hunts ONE artifact that RUNS. Speed is not scored.
-//
-// The second mode exists because the first one cannot deliver a fused megakernel, and the reason is
-// arithmetic rather than judgement. Measured on wave 14: setup spends 57 GPU runs on the baseline and
-// the positive control before a single direction is dispatched (~35 s/run, 33 min, 2.2 leases at the
-// 900 s cap in scripts/gpu_group_lock.sh). A round then gets ONE lease — ~25 runs — split across the
-// round's directions. Four directions is therefore ~6 hardware iterations per direction per round,
-// and three rounds is ~18 for the whole wave. A cross-rank persistent kernel is not debuggable in 18
-// iterations; waves 3 and 4 got one onto hardware, spent their rounds bisecting an illegal access,
-// and the artifact was never picked up again.
-//
-// Three things have to change together, or changing any one of them does nothing:
-//
-//   1. ONE direction per round. Breadth buys nothing here: the directions contend for the same single
-//      8-GPU lease, so N directions is N-way queueing, not N-way throughput. Enforced below, not
-//      requested of the planner — the planner has produced 4-to-8-direction rounds under prose that
-//      already said leases are scarce.
-//   2. MAX_NO_IMPROVE cannot apply. A crash-debug round is non-improving BY CONSTRUCTION, so the
-//      default stop-after-2 kills this mode on round 3 no matter how large the budget is. This is the
-//      one that makes the other two pointless if it is missed.
-//   3. The commit gate cannot be MIN_IMPROVE. Nothing clears "2% faster than cumulative" while it
-//      still crashes, so nothing is committed, so round N+1 starts from the unfused tree and the
-//      carry-over failure that produced waves 3->6 is reproduced exactly. In this mode the round's
-//      candidate is committed on RUNNING — correctness pass, liveness not failing, activation
-//      confirmed — which is the objective itself.
-//
-// What does NOT change: the five acceptance conditions, the leak scan, rank-max, paired reps. This
-// mode sets the objective of one wave; it does not move the bar the wave is eventually judged
-// against. And it deliberately makes the wave's timing numbers WORSE than useless rather than
-// cheaper — see objectiveVerdict.
+// working_kernel preserves one runnable candidate across rounds; speedup keeps the normal score gate.
 const OBJECTIVE = (() => {
   const v = String(A.objective || 'speedup').trim();
   if (v !== 'speedup' && v !== 'working_kernel') {
