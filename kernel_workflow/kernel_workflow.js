@@ -2545,7 +2545,7 @@ function megaPlanIRVerdict(
   const primaryLoop = plan.schedule && plan.schedule.primary_loop || {};
   if (!String(primaryLoop.kind || '')) errors.push('schedule.primary_loop.kind missing');
   if (!String(primaryLoop.queue_selection || '') &&
-      !(Array.isArray(primaryLoop.queue_priority) && primaryLoop.queue_priority.length)) {
+      !Array.isArray(primaryLoop.queue_priority)) {
     errors.push('schedule.primary_loop requires queue_selection or queue_priority');
   }
   for (const queue of Array.isArray(primaryLoop.queue_priority) ? primaryLoop.queue_priority : []) {

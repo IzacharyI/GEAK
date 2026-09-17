@@ -65,8 +65,14 @@ ok(JSON.stringify(base.schedule.primary_loop.carried_state) === JSON.stringify(c
 const legacy = JSON.parse(JSON.stringify(base));
 delete legacy.schedule.primary_loop.queue_selection;
 legacy.schedule.primary_loop.queue_priority = ['work'];
+const legacyBytes = JSON.stringify(legacy);
 ok(megaPlanIRVerdict(legacy).pass,
   'legacy queue_priority plans continue to pass');
+ok(JSON.stringify(legacy) === legacyBytes,
+  'legacy queue_priority plans are not renamed or mutated');
+legacy.schedule.primary_loop.queue_priority = [];
+ok(megaPlanIRVerdict(legacy).pass,
+  'legacy empty queue_priority arrays retain their prior schema behavior');
 const missing = JSON.parse(JSON.stringify(base));
 delete missing.schedule.primary_loop.queue_selection;
 ok(!megaPlanIRVerdict(missing).pass,
