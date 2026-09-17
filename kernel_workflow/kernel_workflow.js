@@ -324,6 +324,9 @@ const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
 const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
   A.expert_skill_accuracy_cases || [],
 ));
+const FORBIDDEN_CANDIDATE_TREE_DIGESTS = new Set(argList(
+  A.forbidden_candidate_tree_digests || [],
+).filter(validSha256));
 const EXPERT_SKILL_ROLES = new Set([
   'tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'mega_search_lead',
 ]);
@@ -6047,6 +6050,13 @@ function freshMegaDirectionLeak(direction) {
   return externalArtifactPath || priorArtifactClaim;
 }
 
+function freshMegaAuthorLeak(result) {
+  const r = result || {};
+  const text = [r.notes, r.next_blocker].map((value) => String(value || '')).join('\n');
+  return /\b(?:reproduc(?:e|ed|ing)|cop(?:y|ied|ying)|reus(?:e|ed|ing))\b[\s\S]{0,128}\b(?:prior|previous|v\d+|candidate|lineage|plan|patch)\b/i
+    .test(text);
+}
+
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
   const plan = await agentT(
@@ -6452,6 +6462,13 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
     if (recovered && recovered.claim_complete === true) eng = recovered;
   }
+  if (!MEGA_RESUME_STATE && !existing && freshMegaAuthorLeak(eng)) {
+    return {
+      stop: true,
+      reason: `fresh candidate Author disclosed reuse of a prior candidate/plan; rejecting ${
+        candidateId} before structural Verify`,
+    };
+  }
   megaAdvanceMs(engineerBudgetS * 1000);
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
@@ -6549,6 +6566,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     const requiredIds = (structural && structural.failed_required_checks || []).map(String);
     const planErrors = (structural && structural.plan_consistency_errors || []).map(String);
     const inputErrors = (structural && structural.input_errors || []).map(String);
+    const forbiddenTreeReuse = !MEGA_RESUME_STATE && FORBIDDEN_CANDIDATE_TREE_DIGESTS.has(
+      String(structural && structural.candidate_tree_digest || '')
+    );
     const authoritativeIds = new Set([
       ...requiredIds, ...planErrors.map((error) => error.split(':', 1)[0]),
     ]);
@@ -6562,6 +6582,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       structural.plan_consistent === true &&
       structural.provenance_attestation_valid === true &&
       requiredIds.length === 0 && planErrors.length === 0 && inputErrors.length === 0 &&
+      !forbiddenTreeReuse &&
       structural.reference_copy_detected !== true &&
       structural.reference_copy_suspected !== true &&
       structuralIdentity.pass);
@@ -6572,6 +6593,14 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         category: 'plan',
         severity: 'required',
         messages: structuralIdentity.reasons,
+      });
+    }
+    if (forbiddenTreeReuse) {
+      structuralFailures.unshift({
+        id: 'fresh_candidate_tree_reuse',
+        category: 'plan',
+        severity: 'required',
+        messages: ['candidate tree digest matches a forbidden prior process artifact'],
       });
     }
     meta = normalizeMegaCandidate({
@@ -6596,7 +6625,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         ? [] : structuralFailures,
       next_blocker: structuralPass
         ? meta.next_blocker
-        : (!structuralIdentity.pass
+        : (forbiddenTreeReuse
+          ? 'fresh candidate tree exactly matches a forbidden prior process artifact'
+          : !structuralIdentity.pass
           ? `structural evidence identity failed: ${structuralIdentity.reasons.join('; ')}`
         : (structural && structural.next_blocker) ||
           'independent static structure contract did not pass'),

@@ -85,10 +85,30 @@ ok(!freshMegaDirectionLeak({
   prompt: 'Author the complete candidate from the frozen source and current MegaPlanIR.',
 }),
   'a clean frozen-baseline Analyze direction remains eligible');
+const authorLeakFn = src.match(
+  /function freshMegaAuthorLeak\(result\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+);
+if (!authorLeakFn) throw new Error('cannot lift freshMegaAuthorLeak');
+const freshMegaAuthorLeak = new Function(
+  `${authorLeakFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+   return freshMegaAuthorLeak;`,
+)();
+ok(freshMegaAuthorLeak({
+  notes: 'Reproduced the same-candidate v3 authored source and copied its plan IR.',
+}),
+  'fresh-state Author disclosure detects copied prior source and plan');
+ok(!freshMegaAuthorLeak({
+  notes: 'Authored from the frozen baseline and current plan.',
+}),
+  'fresh source authoring does not trigger the disclosure gate');
 ok(/freshLane && freshMegaDirectionLeak\(raw\)/.test(src) &&
    /restored the ' \+\s*'clean Analyze direction from the frozen baseline/.test(src) &&
    /base_candidate_id: 'frozen_baseline'/.test(src),
   'fresh runs programmatically replace contaminated Planner output before Author');
+ok(/fresh candidate Author disclosed reuse/.test(src) &&
+   /fresh_candidate_tree_reuse/.test(src) &&
+   /FORBIDDEN_CANDIDATE_TREE_DIGESTS\.has/.test(src),
+  'fresh Author disclosure and exact prior tree digest both block structural Verify');
 ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src),
   'all Mega candidates use the same authoring role');
 ok(/MEGA unified mode: Expert Skills are/.test(src),
