@@ -131,6 +131,21 @@ def test_contract_loader_rejects_invalid_schema(tmp_path):
         MODULE.load_contract(path)
 
 
+def test_source_collection_honors_declarative_exclusions(tmp_path):
+    root = tmp_path / "tree"
+    (root / "src").mkdir(parents=True)
+    (root / "3rdparty").mkdir()
+    (root / "src" / "gemm.py").write_text("def valid():\n    pass\n")
+    (root / "3rdparty" / "gemm.py").write_text("not valid python (\n")
+    contract = _contract()
+    contract["source"]["include"] = ["**/gemm.py"]
+    contract["source"]["exclude"] = ["3rdparty/**"]
+    files = MODULE.collect_files(root, contract)
+    assert set(files) == {"src/gemm.py"}
+    _, errors = MODULE._parse_files(files)
+    assert not errors
+
+
 def test_repository_megamoe_contract_is_declarative_and_generic():
     path = (
         Path(__file__).resolve().parents[2]
@@ -289,7 +304,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 16
+    assert fixture["required_failure_count"] == 25
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1423,6 +1438,242 @@ def test_nontrivial_function_rejects_identity_adapter():
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["body"]
     assert result["pass"], result["failures"]
+
+
+def _semantic_result(kind, source, relations, scope="kernel"):
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "semantic",
+        "kind": kind,
+        "file": "src/a.py",
+        "scope": scope,
+        "normalize_wrappers": ["I32"],
+        "relations": relations,
+    }]
+    return MODULE.evaluate_checks(
+        contract, {"src/a.py": ast.parse(source)}
+    )["semantic"]
+
+
+def test_structured_cfg_proves_state_transition_and_rejects_mutations():
+    source = (
+        "def kernel(active, pending, nxt, head, ready, g1_head):\n"
+        "    kind = I32(0)\n"
+        "    unit = I32(0)\n"
+        "    while active:\n"
+        "        kind = I32(0)\n"
+        "        if pending > I32(0):\n"
+        "            kind = I32(2)\n"
+        "            unit = nxt\n"
+        "            pending = pending - I32(1)\n"
+        "            nxt = nxt + I32(1)\n"
+        "        else:\n"
+        "            if peek(head) < ready:\n"
+        "                claim(head)\n"
+        "            if kind == I32(0):\n"
+        "                claim(g1_head)\n"
+        "                kind = I32(1)\n"
+        "        if kind == I32(1):\n"
+        "            run_g1(unit)\n"
+        "        if kind == I32(2):\n"
+        "            run_g2(unit)\n"
+        "        active = kind != I32(0)\n"
+    )
+    relations = [
+        {"id": "loop", "op": "count", "count": 1,
+         "select": {"node": "while", "test": "active"}},
+        {"id": "continuation", "op": "ordered", "selectors": [
+            {"node": "assign", "target": "kind", "value": "2",
+             "guard": "pending > 0"},
+            {"node": "assign", "target": "unit", "value": "nxt",
+             "guard": "pending > 0"},
+            {"node": "assign", "target": "pending", "value": "pending - 1",
+             "guard": "pending > 0"},
+            {"node": "assign", "target": "nxt", "value": r"nxt \+ 1",
+             "guard": "pending > 0"},
+        ]},
+        {"id": "no_claim", "op": "forbidden",
+         "region": {"node": "if", "test": "pending > 0"}, "region_arm": "body",
+         "select": {"node": "call", "call": "claim|wait"}},
+        {"id": "g1", "op": "guarded",
+         "subject": {"node": "call", "call": "run_g1"},
+         "guard": "kind == 1"},
+        {"id": "g2", "op": "guarded",
+         "subject": {"node": "call", "call": "run_g2"},
+         "guard": "kind == 2"},
+    ]
+    result = _semantic_result("structured_cfg", source, relations)
+    assert result["pass"], result["failures"]
+    mutations = [
+        ("            unit = nxt\n", "            claim(head)\n            unit = nxt\n"),
+        ("pending = pending - I32(1)", "pending = pending + I32(1)"),
+        ("        if kind == I32(2):\n", "        if kind == I32(1):\n"),
+    ]
+    for old, new in mutations:
+        mutated = _semantic_result(
+            "structured_cfg", source.replace(old, new, 1), relations
+        )
+        assert not mutated["pass"], (old, mutated["failures"])
+
+
+def test_shared_callable_proves_factory_identity_and_preload_dominance():
+    source = (
+        "def compile():\n"
+        "    consts = derive()\n"
+        "    emit = make_emitter(**consts)\n"
+        "    def kernel(x):\n"
+        "        preload(x)\n"
+        "        emit(x=x)\n"
+        "    return kernel\n"
+    )
+    relations = [
+        {"id": "identity", "op": "callable_identity",
+         "factory_call": {"node": "call", "call": "make_emitter"},
+         "consumers": [{"scope": "compile.kernel", "source": "emit",
+                        "call": {"node": "call", "call": "emit",
+                                 "keywords": {"x": "x"}}}]},
+        {"id": "constants", "op": "depends",
+         "sink": {"node": "call", "call": "make_emitter"},
+         "star_keyword": True, "source": "consts"},
+        {"id": "preload", "op": "all_precede",
+         "first": {"node": "call", "call": "preload"},
+         "second": {"node": "call", "call": "emit"}},
+    ]
+    result = _semantic_result("shared_callable", source, relations, "compile")
+    assert result["pass"], result["failures"]
+    for mutated_source in (
+        source.replace("emit(x=x)", "other(x=x)"),
+        source.replace("        preload(x)\n", ""),
+        source.replace("        preload(x)\n        emit(x=x)\n",
+                       "        emit(x=x)\n        preload(x)\n"),
+    ):
+        assert not _semantic_result(
+            "shared_callable", mutated_source, relations, "compile"
+        )["pass"]
+
+
+def test_collective_protocol_proves_owner_close_and_parallel_arrival():
+    source = (
+        "def publish(tid, ctr, block, nblocks, BM, ready, token):\n"
+        "    fence()\n"
+        "    barrier()\n"
+        "    if tid == I32(0):\n"
+        "        prev = atomic(ctr + block * I32(4), I32(1))\n"
+        "        store(prev, scratch)\n"
+        "    barrier()\n"
+        "    closes = load(scratch) == nblocks - I32(1)\n"
+        "    if closes:\n"
+        "        if tid == I32(0):\n"
+        "            atomic(ctr + block * I32(4), I32(0) - nblocks)\n"
+        "        if tid < I32(BM):\n"
+        "            atomic_system(ready + token * I32(4), I32(1))\n"
+    )
+    relations = [
+        {"id": "owner_add", "op": "guarded",
+         "subject": {"node": "call", "call": "atomic",
+                     "args": [r"ctr \+ block \* 4", "1"]},
+         "guard": "tid == 0"},
+        {"id": "same_address", "op": "same_argument",
+         "left": {"node": "call", "call": "atomic",
+                  "args": [r"ctr \+ block \* 4", "1"]},
+         "right": {"node": "call", "call": "atomic",
+                   "args": [r"ctr \+ block \* 4", "0 - nblocks"]}},
+        {"id": "close_guard", "op": "guarded",
+         "subject": {"node": "call", "call": "atomic_system"},
+         "guard": "closes"},
+        {"id": "parallel", "op": "guarded",
+         "subject": {"node": "call", "call": "atomic_system"},
+         "guard": "tid < BM"},
+        {"id": "no_loop", "op": "forbidden",
+         "region": {"node": "if", "test": "closes"}, "region_arm": "body",
+         "select": {"node": "for", "target": ".*", "iter": ".*BM.*"}},
+    ]
+    result = _semantic_result(
+        "collective_protocol", source, relations, "publish"
+    )
+    assert result["pass"], result["failures"]
+    mutations = [
+        source.replace("    if tid == I32(0):\n", "    if tid == I32(1):\n", 1),
+        source.replace("ctr + block * I32(4), I32(0) - nblocks",
+                       "ctr + (block + I32(1)) * I32(4), I32(0) - nblocks"),
+        source.replace("        if tid < I32(BM):\n",
+                       "        for row in range(BM):\n"),
+    ]
+    for mutated in mutations:
+        assert not _semantic_result(
+            "collective_protocol", mutated, relations, "publish"
+        )["pass"]
+
+
+def test_arithmetic_pipeline_proves_decode_scale_reduce_and_store():
+    source = (
+        "def reduce(inp, scales, out, lane):\n"
+        "    in_cache = I32(2 | 1 | 16)\n"
+        "    out_cache = I32(2)\n"
+        "    raw = load(inp, dtype='i32', cache=in_cache)\n"
+        "    scale_raw = load(scales, dtype='i8', cache=in_cache)\n"
+        "    scale_bits = broadcast(scale_raw, lane)\n"
+        "    scale = shift(scale_bits, I32(23))\n"
+        "    fp32 = decode_fp8(raw) * scale\n"
+        "    packed = to_bf16(fp32)\n"
+        "    store(out, packed, cache=out_cache)\n"
+    )
+    relations = [
+        {"id": "payload", "op": "count", "count": 1,
+         "select": {"node": "call", "call": "load",
+                    "keywords": {"dtype": "'i32'", "cache": "in_cache"}}},
+        {"id": "scale", "op": "count", "count": 1,
+         "select": {"node": "call", "call": "load",
+                    "keywords": {"dtype": "'i8'", "cache": "in_cache"}}},
+        {"id": "scale_bits", "op": "count", "count": 1,
+         "select": {"node": "assign", "target": "scale",
+                    "value": r"shift\(scale_bits, 23\)"}},
+        {"id": "pipeline", "op": "ordered", "selectors": [
+            {"node": "assign", "target": "raw"},
+            {"node": "assign", "target": "scale_raw"},
+            {"node": "assign", "target": "scale_bits"},
+            {"node": "assign", "target": "scale"},
+            {"node": "assign", "target": "fp32"},
+            {"node": "assign", "target": "packed"},
+            {"node": "call", "call": "store"},
+        ]},
+        {"id": "store", "op": "all_calls_match", "call": "store",
+         "args": ["out", "packed"], "keywords": {"cache": "out_cache"}},
+    ]
+    result = _semantic_result(
+        "arithmetic_pipeline", source, relations, "reduce"
+    )
+    assert result["pass"], result["failures"]
+    for mutated in (
+        source.replace("dtype='i8'", "dtype='i32'"),
+        source.replace("I32(23)", "I32(22)"),
+        source.replace("store(out, packed", "store(inp, packed"),
+    ):
+        assert not _semantic_result(
+            "arithmetic_pipeline", mutated, relations, "reduce"
+        )["pass"]
+
+
+def test_value_flow_fails_closed_on_ambiguous_or_dead_sources():
+    relations = [{
+        "id": "cache", "op": "depends",
+        "sink": {"node": "call", "call": "consume"},
+        "keyword": "cache", "source": "selected",
+    }]
+    good = (
+        "def kernel(selected):\n"
+        "    forwarded = selected\n"
+        "    consume(cache=forwarded)\n"
+    )
+    result = _semantic_result("value_flow", good, relations)
+    assert result["pass"], result["failures"]
+    ambiguous = good.replace(
+        "    consume(cache=forwarded)\n",
+        "    forwarded = other\n    consume(cache=forwarded)\n",
+    )
+    assert not _semantic_result("value_flow", ambiguous, relations)["pass"]
+    dead = good.replace("consume(cache=forwarded)", "consume(cache=other)")
+    assert not _semantic_result("value_flow", dead, relations)["pass"]
 
 
 def test_contract_score_denominator_is_stable_when_scope_is_missing(tmp_path):

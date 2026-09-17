@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import hashlib
 import io
 import json
@@ -67,11 +68,14 @@ def load_contract(path: Path) -> dict[str, Any]:
 
 def collect_files(root: Path, contract: dict[str, Any]) -> dict[str, Path]:
     source = contract.get("source") or {}
+    excluded = [str(value) for value in source.get("exclude") or []]
     files: dict[str, Path] = {}
     for pattern in source.get("include") or []:
         for path in sorted(root.glob(str(pattern))):
             if path.is_file():
-                files[path.relative_to(root).as_posix()] = path
+                name = path.relative_to(root).as_posix()
+                if not any(fnmatch.fnmatch(name, pattern) for pattern in excluded):
+                    files[name] = path
     return files
 
 
@@ -174,7 +178,7 @@ def _call_name(call: ast.Call) -> str:
         return func.id
     if isinstance(func, ast.Attribute):
         return func.attr
-    return ""
+    return ast.unparse(func)
 
 
 def _normalized_tokens(path: Path) -> tuple[str, ...]:
@@ -1954,6 +1958,670 @@ def _check_owned_completion_protocol(
     return _result(not failures, 9, passed, failures, severity)
 
 
+class _SemanticModel:
+    """Small fail-closed AST/structured-CFG/def-use model.
+
+    The model deliberately understands Python structure, not operator names.
+    Names, calls, expressions, and protocol facts are supplied by a contract.
+    """
+
+    def __init__(
+        self,
+        trees: dict[str, ast.AST],
+        wrappers: list[str] | None = None,
+    ) -> None:
+        self.trees = trees
+        self.wrappers = {
+            part
+            for value in wrappers or []
+            for part in (value, value.rsplit(".", 1)[-1])
+        }
+
+    def scope(self, file_name: str, scope: str | None) -> ast.AST | None:
+        return _scope_node(self.trees.get(file_name), scope)
+
+    def text(self, node: ast.AST) -> str:
+        copied = ast.parse(ast.unparse(node), mode="eval").body
+
+        class Strip(ast.NodeTransformer):
+            def __init__(self, wrappers: set[str]) -> None:
+                self.wrappers = wrappers
+
+            def visit_Call(self, item: ast.Call):  # noqa: N802
+                item = self.generic_visit(item)
+                if (
+                    _call_name(item) in self.wrappers
+                    and len(item.args) == 1
+                    and not item.keywords
+                ):
+                    return item.args[0]
+                return item
+
+        return ast.unparse(ast.fix_missing_locations(Strip(self.wrappers).visit(copied)))
+
+    def matches(self, node: ast.AST, pattern: Any, *, search: bool = False) -> bool:
+        value = self.text(node)
+        return bool(
+            re.search(str(pattern or ""), value)
+            if search
+            else re.fullmatch(str(pattern or ""), value)
+        )
+
+    @staticmethod
+    def _targets(node: ast.AST) -> list[ast.AST]:
+        if isinstance(node, ast.Assign):
+            return list(node.targets)
+        if isinstance(node, ast.AnnAssign):
+            return [node.target]
+        if isinstance(node, ast.AugAssign):
+            return [node.target]
+        if isinstance(node, ast.NamedExpr):
+            return [node.target]
+        return []
+
+    @staticmethod
+    def _value(node: ast.AST) -> ast.AST | None:
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            return node.value
+        if isinstance(node, ast.AugAssign):
+            return ast.BinOp(
+                left=node.target, op=node.op, right=node.value
+            )
+        return None
+
+    def parents(self, root: ast.AST) -> dict[ast.AST, ast.AST]:
+        return {
+            child: parent
+            for parent in ast.walk(root)
+            for child in ast.iter_child_nodes(parent)
+        }
+
+    def ancestors(self, root: ast.AST, node: ast.AST) -> list[ast.AST]:
+        parents = self.parents(root)
+        result: list[ast.AST] = []
+        while node in parents:
+            node = parents[node]
+            result.append(node)
+        return result
+
+    def _in_arm(
+        self, root: ast.AST, node: ast.AST, branch: ast.If, arm: str
+    ) -> bool:
+        parents = self.parents(root)
+        current = node
+        while current in parents and parents[current] is not branch:
+            current = parents[current]
+        return current in getattr(branch, arm, [])
+
+    def guarded(
+        self,
+        root: ast.AST,
+        node: ast.AST,
+        pattern: str,
+        arm: str = "body",
+    ) -> bool:
+        return any(
+            isinstance(parent, ast.If)
+            and self.matches(parent.test, pattern)
+            and self._in_arm(root, node, parent, arm)
+            for parent in self.ancestors(root, node)
+        )
+
+    def select(self, root: ast.AST, spec: dict[str, Any]) -> list[ast.AST]:
+        kind = str(spec.get("node") or "")
+        selected: list[ast.AST] = []
+        for item in ast.walk(root):
+            if kind == "function":
+                hit = isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                hit = hit and bool(
+                    re.fullmatch(str(spec.get("name") or ".*"), item.name)
+                )
+            elif kind == "while":
+                hit = isinstance(item, ast.While) and self.matches(
+                    item.test, spec.get("test")
+                )
+            elif kind == "if":
+                hit = isinstance(item, ast.If) and self.matches(
+                    item.test, spec.get("test")
+                )
+            elif kind == "for":
+                hit = (
+                    isinstance(item, ast.For)
+                    and self.matches(item.target, spec.get("target"))
+                    and self.matches(item.iter, spec.get("iter"))
+                )
+            elif kind == "assign":
+                hit = bool(self._targets(item)) and any(
+                    self.matches(target, spec.get("target"))
+                    for target in self._targets(item)
+                )
+                if hit and spec.get("value") is not None:
+                    value = self._value(item)
+                    hit = value is not None and self.matches(
+                        value, spec.get("value"), search=bool(spec.get("search"))
+                    )
+            elif kind == "call":
+                hit = isinstance(item, ast.Call) and bool(
+                    re.fullmatch(
+                        str(spec.get("call") or ".*"),
+                        _call_name(item),
+                    )
+                    or re.fullmatch(
+                        str(spec.get("call") or ".*"),
+                        ast.unparse(item.func),
+                    )
+                )
+                if hit and spec.get("args") is not None:
+                    patterns = list(spec.get("args") or [])
+                    hit = len(item.args) >= len(patterns) and all(
+                        self.matches(value, pattern)
+                        for value, pattern in zip(item.args, patterns)
+                    )
+                if hit and spec.get("keywords") is not None:
+                    values = {
+                        keyword.arg: keyword.value
+                        for keyword in item.keywords
+                        if keyword.arg is not None
+                    }
+                    hit = all(
+                        key in values and self.matches(values[key], pattern)
+                        for key, pattern in (spec.get("keywords") or {}).items()
+                    )
+            elif kind == "return":
+                hit = (
+                    isinstance(item, ast.Return)
+                    and item.value is not None
+                    and self.matches(item.value, spec.get("value"))
+                )
+            else:
+                hit = False
+            if hit and spec.get("guard") is not None:
+                hit = self.guarded(
+                    root,
+                    item,
+                    str(spec["guard"]),
+                    str(spec.get("guard_arm") or "body"),
+                )
+            if hit and spec.get("guards") is not None:
+                hit = all(
+                    self.guarded(
+                        root,
+                        item,
+                        str(guard.get("test") or ""),
+                        str(guard.get("arm") or "body"),
+                    )
+                    for guard in spec.get("guards") or []
+                )
+            if hit:
+                selected.append(item)
+        return selected
+
+    def definitions(
+        self, root: ast.AST, name: str, before: int | None = None
+    ) -> list[ast.AST]:
+        found = []
+        for item in ast.walk(root):
+            if before is not None and getattr(item, "lineno", 0) >= before:
+                continue
+            if any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in self._targets(item)
+            ):
+                found.append(item)
+        return found
+
+    def depends_on(
+        self,
+        root: ast.AST,
+        value: ast.AST,
+        source: str,
+        *,
+        before: int | None = None,
+        seen: set[str] | None = None,
+    ) -> bool:
+        """Conservative unique-definition def-use query."""
+        if self.matches(value, source) or re.search(source, self.text(value)):
+            return True
+        seen = set(seen or ())
+        for name in {
+            item.id for item in ast.walk(value) if isinstance(item, ast.Name)
+        }:
+            if name in seen:
+                continue
+            definitions = self.definitions(
+                root, name, before=before or getattr(value, "lineno", None)
+            )
+            if len(definitions) != 1:
+                continue
+            rhs = self._value(definitions[0])
+            if rhs is not None and self.depends_on(
+                root,
+                rhs,
+                source,
+                before=getattr(definitions[0], "lineno", None),
+                seen=seen | {name},
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def direct_statement_ancestor(root: ast.AST, node: ast.AST) -> ast.stmt | None:
+        parents = {
+            child: parent
+            for parent in ast.walk(root)
+            for child in ast.iter_child_nodes(parent)
+        }
+        current = node
+        while current in parents and current is not root:
+            if isinstance(current, ast.stmt):
+                return current
+            current = parents[current]
+        return current if isinstance(current, ast.stmt) else None
+
+    def structurally_precedes(
+        self, root: ast.AST, first: ast.AST, second: ast.AST
+    ) -> bool:
+        """Require lexical order on a common structured-CFG arm."""
+        parents = self.parents(root)
+
+        def chain(item: ast.AST) -> list[ast.AST]:
+            result = [item]
+            while item in parents:
+                item = parents[item]
+                result.append(item)
+            return result
+
+        left, right = chain(first), chain(second)
+        common = next((item for item in left if item in set(right)), None)
+        if common is None:
+            return False
+        l_child = next((item for item in left if parents.get(item) is common), None)
+        r_child = next((item for item in right if parents.get(item) is common), None)
+        for field in ("body", "orelse", "finalbody"):
+            arm = getattr(common, field, None)
+            if isinstance(arm, list) and l_child in arm and r_child in arm:
+                return arm.index(l_child) < arm.index(r_child)
+        return getattr(first, "lineno", 0) < getattr(second, "lineno", 0)
+
+
+def _semantic_relation_failures(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+) -> tuple[int, int, list[str]]:
+    """Evaluate declarative AST/CFG/def-use relations."""
+    model = _SemanticModel(
+        trees, [str(value) for value in rule.get("normalize_wrappers") or []]
+    )
+    default_file = str(rule.get("file") or "")
+    default_scope = str(rule.get("scope") or "")
+    relations = [item for item in rule.get("relations") or [] if isinstance(item, dict)]
+    failures: list[str] = []
+    passed = 0
+
+    def context(config: dict[str, Any]) -> tuple[ast.AST | None, str, str]:
+        file_name = str(config.get("file") or default_file)
+        scope = (
+            str(config.get("scope") or "")
+            if "scope" in config
+            else default_scope
+        )
+        return model.scope(file_name, scope), file_name, scope
+
+    def one(
+        root: ast.AST | None,
+        selector: dict[str, Any],
+        label: str,
+    ) -> ast.AST | None:
+        found = model.select(root, selector) if root is not None else []
+        if len(found) != 1:
+            failures.append(f"{label}: expected one node, found {len(found)}")
+            return None
+        return found[0]
+
+    for index, relation in enumerate(relations):
+        label = str(relation.get("id") or f"relation_{index + 1}")
+        kind = str(relation.get("op") or "")
+        root, file_name, scope = context(relation)
+        before_failures = len(failures)
+        if root is None:
+            failures.append(f"{label}: missing scope {file_name}:{scope}")
+        elif kind == "count":
+            found = model.select(root, relation.get("select") or {})
+            minimum = int(relation.get("min", relation.get("count", 1)))
+            maximum = int(relation.get("max", relation.get("count", minimum)))
+            if not minimum <= len(found) <= maximum:
+                failures.append(
+                    f"{label}: node count {len(found)} outside [{minimum},{maximum}]"
+                )
+        elif kind == "within_count":
+            region = one(root, relation.get("region") or {}, f"{label}.region")
+            if region is not None:
+                selected_region: ast.AST = region
+                if isinstance(region, ast.If) and relation.get("region_arm"):
+                    selected_region = ast.Module(
+                        body=list(getattr(region, str(relation["region_arm"]))),
+                        type_ignores=[],
+                    )
+                found = model.select(selected_region, relation.get("select") or {})
+                minimum = int(relation.get("min", relation.get("count", 1)))
+                maximum = int(relation.get("max", relation.get("count", minimum)))
+                if not minimum <= len(found) <= maximum:
+                    failures.append(
+                        f"{label}: nested node count {len(found)} outside "
+                        f"[{minimum},{maximum}]"
+                    )
+        elif kind == "ordered":
+            nodes = [
+                one(root, selector, f"{label}[{part}]")
+                for part, selector in enumerate(relation.get("selectors") or [])
+            ]
+            if all(nodes) and not all(
+                model.structurally_precedes(root, left, right)
+                for left, right in zip(nodes, nodes[1:])
+            ):
+                failures.append(f"{label}: nodes do not dominate in declared order")
+        elif kind == "all_precede":
+            first = model.select(root, relation.get("first") or {})
+            second = model.select(root, relation.get("second") or {})
+            if not first or not second:
+                failures.append(
+                    f"{label}: missing predecessor ({len(first)}) or sink ({len(second)})"
+                )
+            elif not all(
+                any(model.structurally_precedes(root, before, after) for before in first)
+                for after in second
+            ):
+                failures.append(f"{label}: a sink is not dominated by a predecessor")
+        elif kind == "guarded":
+            subjects = model.select(root, relation.get("subject") or {})
+            if not subjects:
+                failures.append(f"{label}: no subject nodes")
+            elif not all(
+                model.guarded(
+                    root,
+                    item,
+                    str(relation.get("guard") or ""),
+                    str(relation.get("arm") or "body"),
+                )
+                for item in subjects
+            ):
+                failures.append(f"{label}: not every subject is in the selected branch")
+        elif kind == "enclosed_by":
+            subjects = model.select(root, relation.get("subject") or {})
+            containers = model.select(root, relation.get("container") or {})
+            if not subjects or not containers:
+                failures.append(
+                    f"{label}: missing subjects ({len(subjects)}) or "
+                    f"containers ({len(containers)})"
+                )
+            elif not all(
+                any(container in model.ancestors(root, item) for container in containers)
+                for item in subjects
+            ):
+                failures.append(f"{label}: a subject escapes its required container")
+        elif kind == "forbidden":
+            region = one(root, relation.get("region") or {}, f"{label}.region")
+            if region is not None:
+                selected_region: ast.AST = region
+                if isinstance(region, ast.If) and relation.get("region_arm"):
+                    selected_region = ast.Module(
+                        body=list(
+                            getattr(region, str(relation.get("region_arm")))
+                        ),
+                        type_ignores=[],
+                    )
+                found = model.select(selected_region, relation.get("select") or {})
+                if found:
+                    failures.append(f"{label}: found {len(found)} forbidden node(s)")
+        elif kind == "forbidden_each":
+            regions = model.select(root, relation.get("regions") or {})
+            if not regions:
+                failures.append(f"{label}: no selected regions")
+            for region in regions:
+                selected_region: ast.AST = region
+                if isinstance(region, ast.If):
+                    selected_region = ast.Module(
+                        body=list(
+                            getattr(region, str(relation.get("region_arm") or "body"))
+                        ),
+                        type_ignores=[],
+                    )
+                found = model.select(selected_region, relation.get("select") or {})
+                if found:
+                    failures.append(
+                        f"{label}: region line {getattr(region, 'lineno', 0)} "
+                        f"has {len(found)} forbidden node(s)"
+                    )
+        elif kind == "depends":
+            sink = one(root, relation.get("sink") or {}, f"{label}.sink")
+            value: ast.AST | None = None
+            if isinstance(sink, ast.Call):
+                if "arg" in relation:
+                    arg = int(relation["arg"])
+                    value = sink.args[arg] if arg < len(sink.args) else None
+                else:
+                    keyword = str(relation.get("keyword") or "")
+                    if relation.get("star_keyword"):
+                        value = next(
+                            (item.value for item in sink.keywords if item.arg is None),
+                            None,
+                        )
+                    else:
+                        value = next(
+                            (
+                                item.value for item in sink.keywords
+                                if item.arg == keyword
+                            ),
+                            None,
+                        )
+            elif sink is not None:
+                value = model._value(sink)
+            if value is None or not model.depends_on(
+                root,
+                value,
+                str(relation.get("source") or ""),
+                before=getattr(sink, "lineno", None) if sink else None,
+            ):
+                failures.append(f"{label}: sink does not depend on declared source")
+        elif kind == "same_value":
+            left = one(root, relation.get("left") or {}, f"{label}.left")
+            right = one(root, relation.get("right") or {}, f"{label}.right")
+            if left is not None and right is not None:
+                left_value = model._value(left) or left
+                right_value = model._value(right) or right
+                if model.text(left_value) != model.text(right_value):
+                    failures.append(f"{label}: selected expressions differ")
+        elif kind == "same_argument":
+            left = one(root, relation.get("left") or {}, f"{label}.left")
+            right = one(root, relation.get("right") or {}, f"{label}.right")
+            position = int(relation.get("arg", 0))
+            if isinstance(left, ast.Call) and isinstance(right, ast.Call):
+                if (
+                    len(left.args) <= position
+                    or len(right.args) <= position
+                    or model.text(left.args[position]) != model.text(right.args[position])
+                ):
+                    failures.append(f"{label}: selected call arguments differ")
+        elif kind == "different_value":
+            left = one(root, relation.get("left") or {}, f"{label}.left")
+            right = one(root, relation.get("right") or {}, f"{label}.right")
+            if left is not None and right is not None:
+                left_value = model._value(left) or left
+                right_value = model._value(right) or right
+                if model.text(left_value) == model.text(right_value):
+                    failures.append(f"{label}: selected expressions unexpectedly match")
+        elif kind == "different_call_values":
+            call = one(root, relation.get("call") or {}, f"{label}.call")
+            if isinstance(call, ast.Call):
+                values = {
+                    keyword.arg: model.text(keyword.value)
+                    for keyword in call.keywords
+                    if keyword.arg is not None
+                }
+                keys = [str(value) for value in relation.get("keywords") or []]
+                selected = [values.get(key) for key in keys]
+                if None in selected or len(set(selected)) != len(selected):
+                    failures.append(
+                        f"{label}: keyword values are missing or aliased: {selected}"
+                    )
+        elif kind == "all_calls_match":
+            calls = model.select(
+                root, {"node": "call", "call": relation.get("call") or ".*"}
+            )
+            minimum = int(relation.get("min", 1))
+            bad: list[str] = []
+            for call in calls:
+                assert isinstance(call, ast.Call)
+                values = {
+                    keyword.arg: keyword.value
+                    for keyword in call.keywords
+                    if keyword.arg is not None
+                }
+                for key, pattern in (relation.get("keywords") or {}).items():
+                    if key not in values or not model.matches(values[key], pattern):
+                        bad.append(f"line {getattr(call, 'lineno', 0)}: {key}")
+                for position, pattern in enumerate(relation.get("args") or []):
+                    if position >= len(call.args) or not model.matches(
+                        call.args[position], pattern
+                    ):
+                        bad.append(f"line {getattr(call, 'lineno', 0)}: arg {position}")
+            if len(calls) < minimum or bad:
+                failures.append(
+                    f"{label}: found {len(calls)} calls (minimum {minimum}); "
+                    f"mismatches={bad}"
+                )
+        elif kind == "all_assignments_classified":
+            assignments = model.select(root, relation.get("assignments") or {})
+            classifiers = list(relation.get("classifiers") or [])
+            if not assignments:
+                failures.append(f"{label}: no assignments to classify")
+            for assignment in assignments:
+                if not any(
+                    model.guarded(
+                        root,
+                        assignment,
+                        str(classifier.get("guard") or ""),
+                        str(classifier.get("arm") or "body"),
+                    )
+                    for classifier in classifiers
+                ):
+                    failures.append(
+                        f"{label}: assignment line {getattr(assignment, 'lineno', 0)} "
+                        "is unclassified"
+                    )
+        elif kind == "all_nodes_classified":
+            nodes = model.select(root, relation.get("nodes") or {})
+            classifiers = list(relation.get("classifiers") or [])
+            if not nodes:
+                failures.append(f"{label}: no nodes to classify")
+            for item in nodes:
+                if not any(
+                    model.guarded(
+                        root,
+                        item,
+                        str(classifier.get("guard") or ""),
+                        str(classifier.get("arm") or "body"),
+                    )
+                    for classifier in classifiers
+                ):
+                    failures.append(
+                        f"{label}: node line {getattr(item, 'lineno', 0)} is unclassified"
+                    )
+        elif kind == "callable_identity":
+            factory = one(
+                root,
+                relation.get("factory_call") or {},
+                f"{label}.factory_call",
+            )
+            produced = ""
+            statement = (
+                model.direct_statement_ancestor(root, factory)
+                if factory is not None else None
+            )
+            if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+                produced = ast.unparse(statement.targets[0])
+            if not produced:
+                failures.append(f"{label}: factory result is not uniquely bound")
+            for consumer in relation.get("consumers") or []:
+                croot, cfile, cscope = context(consumer)
+                calls = (
+                    model.select(croot, consumer.get("call") or {})
+                    if croot is not None else []
+                )
+                if len(calls) != 1:
+                    failures.append(
+                        f"{label}: consumer {cfile}:{cscope} found {len(calls)} calls"
+                    )
+                    continue
+                source = str(consumer.get("source") or produced)
+                if source and not (
+                    re.search(source, ast.unparse(calls[0].func))
+                    or model.depends_on(
+                        croot,
+                        calls[0].func,
+                        source,
+                        before=getattr(calls[0], "lineno", None),
+                    )
+                ):
+                    failures.append(
+                        f"{label}: consumer {cfile}:{cscope} does not use factory identity"
+                    )
+        elif kind == "branch_calls":
+            branch = one(root, relation.get("branch") or {}, f"{label}.branch")
+            if isinstance(branch, ast.If):
+                expected = [
+                    str(value) for value in relation.get("body_calls") or []
+                ]
+                body_text = ast.Module(body=branch.body, type_ignores=[])
+                calls = [
+                    model.text(item.args[int(relation.get("arg", 1))])
+                    for item in ast.walk(body_text)
+                    if isinstance(item, ast.Call)
+                    and re.fullmatch(
+                        str(relation.get("call") or ".*"), _call_name(item)
+                    )
+                    and len(item.args) > int(relation.get("arg", 1))
+                ]
+                if sorted(calls) != sorted(expected):
+                    failures.append(
+                        f"{label}: selected branch calls {calls}, expected {expected}"
+                    )
+        else:
+            failures.append(f"{label}: unsupported semantic relation op {kind!r}")
+        if len(failures) == before_failures:
+            passed += 1
+    return max(1, len(relations)), passed, failures
+
+
+def _check_semantic_relations(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    total, passed, failures = _semantic_relation_failures(rule, trees)
+    return _result(not failures, total, passed, failures, severity)
+
+
+def _check_structured_cfg(rule, trees, severity):
+    return _check_semantic_relations(rule, trees, severity)
+
+
+def _check_value_flow(rule, trees, severity):
+    return _check_semantic_relations(rule, trees, severity)
+
+
+def _check_shared_callable(rule, trees, severity):
+    return _check_semantic_relations(rule, trees, severity)
+
+
+def _check_collective_protocol(rule, trees, severity):
+    return _check_semantic_relations(rule, trees, severity)
+
+
+def _check_arithmetic_pipeline(rule, trees, severity):
+    return _check_semantic_relations(rule, trees, severity)
+
+
 def evaluate_checks(
     contract: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -1974,6 +2642,11 @@ def evaluate_checks(
         "parameter_loads": _check_parameter_loads,
         "publication_placement": _check_publication_placement,
         "owned_completion_protocol": _check_owned_completion_protocol,
+        "structured_cfg": _check_structured_cfg,
+        "value_flow": _check_value_flow,
+        "shared_callable": _check_shared_callable,
+        "collective_protocol": _check_collective_protocol,
+        "arithmetic_pipeline": _check_arithmetic_pipeline,
     }
     for rule in contract.get("checks") or []:
         check_id = str(rule["id"])
