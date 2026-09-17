@@ -28,7 +28,7 @@ const ok = (value, message) => {
   else { console.error('  FAIL:', message); failures++; }
 };
 
-console.log('\n# the experimental transfer is explicit and fail-closed');
+console.log('\n# the experimental transfer is explicit and workflow-owned');
 ok(/role: experimental_authoring_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
   'skill declares explicitly pinned constraints inside the common Mega lifecycle');
@@ -39,19 +39,19 @@ ok(/embedded_components: \[planner_extension, contract, runtime_validation\]/.te
   'one skill file embeds human, machine, evidence, and runtime components');
 ok(/normative: true/.test(playbook) &&
    /normative_scope: explicitly_pinned_authoring/.test(playbook) &&
-   /does not create a reproduction mode,[\s\S]{0,80}reserved lane/.test(playbook),
+   /does not create a reproduction mode,[\s\S]{0,120}reserved candidate source/.test(playbook),
   'normative implementation constraints do not create a reproduction sub-mode');
 ok(/schema_version: expert-skill-contract-v1/.test(contract) &&
-   /host_ready_pointer_identity/.test(contract) &&
-   /combine_transport_and_work_domain/.test(contract) &&
-   /g1_owned_mtile_completion/.test(contract) &&
-   /kind: owned_completion_protocol/.test(contract),
-  'the generic checker receives declarative Skill invariants');
-ok(/schema_version: expert-skill-validation-v2/.test(validation) &&
+   /unified_semantic_loop/.test(contract) &&
+   /direct_runtime_combine_item/.test(contract) &&
+   /names_are_normative: false/.test(contract) &&
+   /severity: advisory/.test(contract),
+  'the generic checker receives semantic claims plus non-normative adapter hints');
+ok(/schema_version: expert-skill-validation-v1/.test(validation) &&
    /status: experimental/.test(validation) &&
    /auto_apply: false/.test(validation),
   'reference evidence, transfer status, and auto-application are separate');
-ok(/CTA.*local shard drains[\s\S]*without a global stage barrier/i.test(skill),
+ok(/G1 and G2 are chosen inside the same loop[\s\S]*no grid barrier/i.test(skill),
   'expert knowledge carries the tile-pipeline mechanism, not merely launch fusion');
 
 console.log('\n# runtime uses the same roles and candidate source');
@@ -107,6 +107,6 @@ ok(/IMPORT_IDENTITY_VOID/.test(engineer) &&
   'author, verifier and final arbiter reject installed/global module resolution');
 
 console.log(failures === 0
-  ? '\nPASS: experimental transfer knowledge is explicit and fail-closed.'
+  ? '\nPASS: experimental transfer knowledge is explicit and workflow-owned.'
   : `\nFAIL: ${failures} assertion(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

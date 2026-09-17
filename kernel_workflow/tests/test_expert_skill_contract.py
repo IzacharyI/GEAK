@@ -222,6 +222,10 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
                 "combine_payload_visibility":
                     "system_scope_loads_without_per_item_acquire",
                 "combine_output_cache": "rank_local_slc",
+                "scheduler_semantics":
+                    "continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16",
+                "combine_semantics":
+                    "runtime_p_direct_per_wave_wait_block_claim_one_system19_u1_u2_u4",
             },
             "parameters": {
                 "combine_third_queue": True,

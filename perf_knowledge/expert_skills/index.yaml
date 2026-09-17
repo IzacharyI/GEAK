@@ -85,11 +85,12 @@ skills:
   planner_extension_file: skills/megamoe_ep_mega_fusion/skill.md
   contract_file: skills/megamoe_ep_mega_fusion/skill.md
   validation_file: skills/megamoe_ep_mega_fusion/skill.md
-  validation_schema: expert-skill-validation-v1
-  runtime_validation_file: ''
+  validation_schema: ''
+  runtime_validation_file: skills/megamoe_ep_mega_fusion/skill.md
   embedded_components:
   - planner_extension
   - contract
+  - runtime_validation
   match:
     operator: moe_dispatch_combine
     arch_class:
@@ -112,7 +113,6 @@ skills:
       parallel: EP8
       arch: gfx950
       precision: a8w4
-      graph: cuda_graph_captured
   expects:
     isolated_speedup_min: 1.03
     e2e_delta_min_pct: 1.0

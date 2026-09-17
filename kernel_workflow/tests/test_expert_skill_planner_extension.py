@@ -122,7 +122,11 @@ def test_generated_index_exposes_planner_extension():
         if item["id"] == "megamoe_ep_mega_fusion"
     )
     assert entry["planner_extension_file"].endswith("/skill.md")
-    assert set(entry["embedded_components"]) == {"planner_extension", "contract"}
+    assert set(entry["embedded_components"]) == {
+        "planner_extension",
+        "contract",
+        "runtime_validation",
+    }
     assert entry["validation_status"] == "experimental"
     assert entry["auto_apply"] is False
 
