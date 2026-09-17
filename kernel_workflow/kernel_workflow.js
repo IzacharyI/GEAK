@@ -6085,6 +6085,18 @@ function validMegaSearchDirection(direction) {
   return true;
 }
 
+function freshMegaDirectionLeak(direction) {
+  const d = direction || {};
+  const text = [
+    d.title, d.prompt, d.fills_hole, d.enables,
+  ].map((value) => String(value || '')).join('\n');
+  const externalArtifactPath = /(?:^|[\s"'`])\/[^\s"'`]*(?:geak_state|geak_runs)\//i.test(text);
+  const priorArtifactClaim =
+    /\b(?:continue|resume|reconcile|existing|prior|stale)\b[\s\S]{0,96}\b(?:candidate|lane|checkpoint|head|state|revision)\b/i
+      .test(text);
+  return externalArtifactPath || priorArtifactClaim;
+}
+
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
   const plan = await agentT(
@@ -6166,6 +6178,25 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     };
   }
   let raw = plan.directions[0];
+  const freshLane = !MEGA_RESUME_STATE && megaCandidateRegistry.length === 0;
+  if (freshLane && freshMegaDirectionLeak(raw)) {
+    const requestedId = String(raw && (raw.candidate_id || raw.id) || '');
+    const analyzed = LADDER.find((rung) =>
+      String(rung && (rung.candidate_id || rung.id) || '') === requestedId
+    ) || LADDER[0];
+    if (!analyzed || freshMegaDirectionLeak(analyzed)) {
+      log('Mega fresh-state plan rejected: Planner referenced prior/external candidate artifacts ' +
+        'and no clean Analyze direction is available.');
+      return null;
+    }
+    log('Mega fresh-state plan ignored a prior/external candidate reference and restored the ' +
+      'clean Analyze direction from the frozen baseline.');
+    raw = {
+      ...analyzed,
+      candidate_source: 'search',
+      base_candidate_id: 'frozen_baseline',
+    };
+  }
   if (!validMegaSearchDirection(raw)) {
     log(`Mega search plan rejected diagnostic-only direction ` +
       `${String(raw.candidate_id || raw.id || raw.title || '(unnamed)')}; a search budget unit must ` +

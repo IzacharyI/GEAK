@@ -69,6 +69,26 @@ ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(src),
 ok(!/if \(USE_EXPERT_SKILLS && \(!MEGA_SEARCH_ENABLED/.test(src) &&
    !/megaSkillLaneDue\(megaCandidateRegistry, currentRound/.test(src),
   'candidate dispatch never branches into a reproduction schedule');
+const leakFn = src.match(
+  /function freshMegaDirectionLeak\(direction\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+);
+if (!leakFn) throw new Error('cannot lift freshMegaDirectionLeak');
+const freshMegaDirectionLeak = new Function(
+  `${leakFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+   return freshMegaDirectionLeak;`,
+)();
+ok(freshMegaDirectionLeak({
+  prompt: 'CONTINUE the existing candidate lane at /tmp/geak_state/old/candidates/x',
+}),
+  'fresh-state planner contamination detects an external prior lane');
+ok(!freshMegaDirectionLeak({
+  prompt: 'Author the complete candidate from the frozen source and current MegaPlanIR.',
+}),
+  'a clean frozen-baseline Analyze direction remains eligible');
+ok(/freshLane && freshMegaDirectionLeak\(raw\)/.test(src) &&
+   /restored the ' \+\s*'clean Analyze direction from the frozen baseline/.test(src) &&
+   /base_candidate_id: 'frozen_baseline'/.test(src),
+  'fresh runs programmatically replace contaminated Planner output before Author');
 ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src),
   'all Mega candidates use the same authoring role');
 ok(/MEGA unified mode: Expert Skills are/.test(src),
