@@ -51,6 +51,32 @@ def test_repository_planner_extension_passes_generic_envelope():
     assert [route["id"] for route in extension["failure_routes"]] == [
         "repair_complete_persistent_pipeline"
     ]
+    selection = extension["selection_policy"]
+    assert selection["intermediate_wip"] == {
+        "lane": "same_candidate_required",
+        "commit_each_turn": True,
+        "candidate_status": "authoring",
+        "claim_complete_for_committed_turn_artifact": True,
+        "runtime_flags": False,
+        "benchmark_or_promote_before_required_checks_pass": False,
+        "continue_head_lineage": True,
+    }
+    assert selection["required_failure_order"] == [
+        "plan",
+        "correctness",
+        "abi",
+        "lifecycle",
+        "resource",
+        "compiler",
+        "schedule",
+        "performance",
+    ]
+    route = extension["failure_routes"][0]
+    assert route["topology"] == "full_persistent_pipeline"
+    assert route["terminal_when"] == "all_required_checks_pass"
+    assert "same candidate lane" in route["repair_intent"]
+    assert "dead_end" in route["repair_intent"]
+    assert "too-large-for-one-turn" in route["repair_intent"]
 
 
 def _write_fixture(tmp_path, extension):

@@ -1,0 +1,28 @@
+{
+  "schema_version": "megamoe-void-preflight-regression-v1",
+  "candidate_head": "4d7806db89328f1fac2e4e24d9251e5917152159",
+  "candidate_tree_digest": "10e399ab0e51a6f5b15f9e2d965851cfd97e0f898c9461379641eba3b7cc9a8d",
+  "skill_bundle_sha256": "19201da9db2a301ce03eb6602277b00579cb6c09df472347aa1f4d40226eef93",
+  "planner_extension_sha256": "26aadf68c711bd6af43711690d876d328e6e6b38642f509687297a708f6f69e7",
+  "contract_sha256": "2a63ff03fd81ed9ed4ecea7bdc84674fe0c036701f45debd86ae7d5cef5a6aed",
+  "runtime_validation_sha256": "d486b8ece8397b55e9be708b347e125dc1b15b07ada8a5150e0bdb6b60717e34",
+  "required_check_count": 9,
+  "required_failure_count": 8,
+  "failed_required_checks": [
+    "complete_host_path",
+    "flat_stripe_completion",
+    "unified_g1_g2_loop",
+    "shared_stage2_body",
+    "progressive_token_readiness",
+    "combine_output_work_item",
+    "block_claimed_combine",
+    "p2p_visibility"
+  ],
+  "passing_required_checks": [
+    "bucket_512_payload_rows"
+  ],
+  "identity_mismatch_failures": [],
+  "plan_consistency_errors": [],
+  "structural_compatible": false,
+  "verdict": "incomplete"
+}

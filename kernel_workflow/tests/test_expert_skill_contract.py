@@ -1,7 +1,9 @@
 """Generic declarative Expert Skill contract tests."""
 
 import ast
+import hashlib
 import importlib.util
+import json
 import os
 import re
 from pathlib import Path
@@ -15,6 +17,18 @@ SPEC = importlib.util.spec_from_file_location("expert_skill_contract", TOOL)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+
+MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
+    "complete_host_path",
+    "flat_stripe_completion",
+    "unified_g1_g2_loop",
+    "shared_stage2_body",
+    "p2p_visibility",
+    "progressive_token_readiness",
+    "combine_output_work_item",
+    "block_claimed_combine",
+    "bucket_512_payload_rows",
+}
 
 
 def _contract():
@@ -119,6 +133,122 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         "p2p_visibility",
         "bucket_512_payload_rows",
     }
+
+
+def test_repository_megamoe_contract_requires_selected_implementation_semantics():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "skill.md"
+    )
+    contract = MODULE.load_contract(path)
+    checks = {item["id"]: item for item in contract["checks"]}
+    required = {
+        check_id
+        for check_id, check in checks.items()
+        if check.get("severity", "required") == "required"
+    }
+    assert required == MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
+    assert checks["host_specializes_g2_chunk"]["severity"] == "advisory"
+    assert contract["activation"] == {
+        "scope": "post_selection_claimed_complete_structural_checkpoint",
+        "requires_selected_or_pinned_skill": True,
+        "required_checks_define_claimed_implementation_completeness": True,
+    }
+    assert contract["binding_policy"]["applicability_owner"] == "workflow"
+    assert (
+        contract["binding_policy"]["adapter_selection"]
+        == "analyze_discovered_semantic_bindings"
+    )
+
+
+def test_missing_selected_megamoe_implementation_fails_structural_checkpoint(tmp_path):
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "skill.md"
+    )
+    contract = MODULE.load_contract(path)
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    for root in (baseline, candidate):
+        source = root / "adapter_moe.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("def unrelated():\n    return None\n")
+    plan = {
+        "plan_version": "mega-plan-v2",
+        "target": {"launch_count": 2},
+        "resources": {"arch": "gfx950"},
+        "schedule": {"policies": {
+            "combine_transition":
+                "after_local_g1_g2_drain_without_grid_barrier",
+            "scheduler_semantics":
+                "continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16",
+            "combine_semantics":
+                "runtime_p_direct_per_wave_wait_block_claim_one_system19_u1_u2_u4",
+        }},
+    }
+    result = MODULE.evaluate(
+        contract,
+        baseline,
+        candidate,
+        None,
+        _manifest(contract, candidate),
+        plan,
+    )
+    assert not result["input_errors"]
+    assert not result["plan_consistency_errors"]
+    assert result["failed_required_checks"] == [
+        item["id"]
+        for item in contract["checks"]
+        if item["id"] in MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
+    ]
+    assert not result["structural_compatible"]
+    assert result["verdict"] == "incomplete"
+
+
+def test_void_preflight_fixture_matches_current_contract_identity():
+    fixture = json.loads(
+        (
+            Path(__file__).with_name("fixtures")
+            / "megamoe_ep_mega_fusion_void_preflight.json"
+        ).read_text()
+    )
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "skill.md"
+    )
+    contract = MODULE.load_contract(path)
+    contract_sha = hashlib.sha256(
+        yaml.safe_dump(contract, sort_keys=True).encode()
+    ).hexdigest()
+    assert fixture["candidate_head"] == "4d7806db89328f1fac2e4e24d9251e5917152159"
+    assert fixture["contract_sha256"] == contract_sha
+    assert fixture["required_check_count"] == len(
+        MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
+    )
+    assert (
+        set(fixture["failed_required_checks"])
+        | set(fixture["passing_required_checks"])
+        == MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
+    )
+    assert fixture["required_failure_count"] == len(
+        fixture["failed_required_checks"]
+    )
+    assert fixture["required_failure_count"] == 8
+    assert fixture["identity_mismatch_failures"] == []
+    assert fixture["structural_compatible"] is False
+    assert fixture["verdict"] == "incomplete"
 
 
 def test_compact_skill_contains_no_private_evidence_identifiers():

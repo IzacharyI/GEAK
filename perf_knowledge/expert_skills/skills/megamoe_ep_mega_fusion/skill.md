@@ -611,13 +611,19 @@ Run one normal `mode=mega` lane:
    replacements to Planner; the workflow owns applicability selection.
 2. Lower the one topology and the exact configuration/state-machine rules
    above. Do not create alternative schedules or tuning branches.
-3. Continue the same candidate until every production region and function
-   boundary coexists. Intermediate checkpoints are not separate candidates.
-4. Run the GPU-free contract after the workflow selects this guidance. Its two
-   semantic assertions report failure when the claimed implementation is
-   sequential G1/G2 or uses host-specialized or block-polled Combine geometry.
-   The contract validates claims; it does not decide applicability. A
-   structural pass makes no runtime claim.
+3. Intermediate WIP commits are permitted and required in the same lane. Each
+   authoring turn closes a coherent subset of required failures, commits that
+   checkpoint, and continues the same candidate/head lineage. For that
+   committed-turn artifact set `candidate_status=authoring`,
+   `claim_complete=true`, and every runtime/correctness/performance flag false
+   or pending. Never benchmark or promote it until all required implementation
+   checks pass; a WIP checkpoint is not a separate candidate or topology.
+4. Run the GPU-free contract after the workflow selects this guidance. Its
+   required implementation checks reject any claimed-complete checkpoint
+   missing the complete host path, flat stripe publication, unified G1/G2
+   loop, shared Stage2 body, P2P visibility, progressive readiness, Combine
+   item, block-claimed Combine, or bucket rule. The contract validates claims;
+   it does not decide applicability. A structural pass makes no runtime claim.
 5. In the later hardware phase, compile the exact artifacts, inspect resources,
    validate bs=128, then 512 and 8192, and use the same operator instance for a
    smaller-to-larger graph-generation check with route mutation.
@@ -715,6 +721,23 @@ selection_policy:
   continue_existing_lane_first: true
   preferred_template: full_persistent_pipeline
   do_not_measure_partial_source: true
+  intermediate_wip:
+    lane: same_candidate_required
+    commit_each_turn: true
+    candidate_status: authoring
+    claim_complete_for_committed_turn_artifact: true
+    runtime_flags: false
+    benchmark_or_promote_before_required_checks_pass: false
+    continue_head_lineage: true
+  required_failure_order:
+    - plan
+    - correctness
+    - abi
+    - lifecycle
+    - resource
+    - compiler
+    - schedule
+    - performance
 
 ir_bindings:
   target:
@@ -836,9 +859,21 @@ candidate_templates:
 failure_routes:
   - id: repair_complete_persistent_pipeline
     match:
-      categories: [plan, correctness, lifecycle, compiler, resource, performance]
-    repair_intent: report failed semantic claims and repair the same complete two-launch candidate using Analyze-discovered bindings; applicability remains workflow-owned
+      categories: [plan, correctness, abi, lifecycle, resource, compiler, schedule, performance]
+      check_ids:
+        - complete_host_path
+        - flat_stripe_completion
+        - unified_g1_g2_loop
+        - shared_stage2_body
+        - p2p_visibility
+        - progressive_token_readiness
+        - combine_output_work_item
+        - block_claimed_combine
+        - bucket_512_payload_rows
+    repair_intent: return required failures in category order to the same candidate lane, commit one coherent subset per turn, and continue its head lineage using Analyze-discovered bindings; never classify remaining work as dead_end or too-large-for-one-turn; applicability remains workflow-owned
     checkpoint: complete_persistent_pipeline
+    topology: full_persistent_pipeline
+    terminal_when: all_required_checks_pass
     focus_roles:
       - host_selection_and_state
       - first_expert_compute
@@ -863,7 +898,16 @@ binding_policy:
   authority: analyze
   names_are_normative: false
   source_checks_are_profile_adapter_hints: true
-  adapter_hint_failures_block_compatibility: false
+  adapter_hint_failures_block_applicability: false
+  adapter_scope: validated_megamoe_ep8_gfx950_profile_only
+  adapter_selection: analyze_discovered_semantic_bindings
+  applicability_owner: workflow
+  applicability_failures_block_compatibility: false
+
+activation:
+  scope: post_selection_claimed_complete_structural_checkpoint
+  requires_selected_or_pinned_skill: true
+  required_checks_define_claimed_implementation_completeness: true
 
 provenance:
   require_manifest: true
@@ -878,13 +922,15 @@ plan:
     - {id: unified_semantic_loop, path: schedule.policies.scheduler_semantics, op: eq, value: continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16}
     - {id: direct_runtime_combine_item, path: schedule.policies.combine_semantics, op: eq, value: runtime_p_direct_per_wave_wait_block_claim_one_system19_u1_u2_u4}
 
-# These probes describe the validated profile's present adapter only. They are
-# advisory evidence after Analyze binds semantic roles; paths and symbols are
-# not applicability gates or normative source requirements.
+# These probes describe the validated profile's present adapter only. Paths
+# and symbols are not applicability gates. After Analyze selects this adapter
+# by semantic bindings and the workflow selects/pins the Skill, the nine
+# implementation checks are required evidence for a claimed-complete
+# structural checkpoint.
 checks:
   - id: complete_host_path
-    category: profile_adapter_hint
-    severity: advisory
+    category: plan
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._run_joint
@@ -905,8 +951,8 @@ checks:
       - '[''"]16[''"]\s+if\s+cur_tok\s*>=\s*4096\s+else\s+[''"]1[''"]'
 
   - id: flat_stripe_completion
-    category: profile_adapter_hint
-    severity: advisory
+    category: correctness
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -919,8 +965,8 @@ checks:
       - 'atomic_add_system'
 
   - id: unified_g1_g2_loop
-    category: profile_adapter_hint
-    severity: advisory
+    category: schedule
+    severity: required
     kind: regex_sequence
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -946,8 +992,8 @@ checks:
       - 'consumer_active\s*=\s*kind\s*!=\s*fx\.Int32\(0\)'
 
   - id: shared_stage2_body
-    category: profile_adapter_hint
-    severity: advisory
+    category: resource
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
     scope: make_stage2_body_emitter
@@ -959,8 +1005,8 @@ checks:
       - 'lds_byte_off'
 
   - id: progressive_token_readiness
-    category: profile_adapter_hint
-    severity: advisory
+    category: lifecycle
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -972,8 +1018,8 @@ checks:
       - 'tok_ready_expected\s*=\s*fuse_topk'
 
   - id: combine_output_work_item
-    category: profile_adapter_hint
-    severity: advisory
+    category: schedule
+    severity: required
     kind: regex_sequence
     file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
     scope: make_combine_reduce_emitter
@@ -997,8 +1043,8 @@ checks:
       - '_accum_loop\(eff_end,\s*1\)'
 
   - id: block_claimed_combine
-    category: profile_adapter_hint
-    severity: advisory
+    category: schedule
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1.kernel
@@ -1010,8 +1056,8 @@ checks:
       - '_c_emit\(_c_item\)'
 
   - id: p2p_visibility
-    category: profile_adapter_hint
-    severity: advisory
+    category: correctness
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
     patterns:
@@ -1024,8 +1070,8 @@ checks:
       - 'atomic_add_system\(\s*ready_base'
 
   - id: bucket_512_payload_rows
-    category: profile_adapter_hint
-    severity: advisory
+    category: plan
+    severity: required
     kind: regex
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
     patterns:
