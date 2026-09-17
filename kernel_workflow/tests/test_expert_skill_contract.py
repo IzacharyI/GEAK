@@ -20,9 +20,14 @@ SPEC.loader.exec_module(MODULE)
 
 MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "complete_host_path",
+    "fused_host_abi",
+    "persistent_kernel_abi",
+    "fused_launch_abi",
     "flat_stripe_completion",
     "unified_g1_g2_loop",
     "shared_stage2_body",
+    "nontrivial_stage2_body",
+    "combine_emitter_wired",
     "p2p_visibility",
     "progressive_token_readiness",
     "combine_output_work_item",
@@ -123,10 +128,15 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert not contract.get("revision")
     assert {item["id"] for item in contract["checks"]} == {
         "complete_host_path",
+        "fused_host_abi",
+        "persistent_kernel_abi",
+        "fused_launch_abi",
         "host_specializes_g2_chunk",
         "flat_stripe_completion",
         "unified_g1_g2_loop",
         "shared_stage2_body",
+        "nontrivial_stage2_body",
+        "combine_emitter_wired",
         "progressive_token_readiness",
         "combine_output_work_item",
         "block_claimed_combine",
@@ -213,11 +223,11 @@ def test_missing_selected_megamoe_implementation_fails_structural_checkpoint(tmp
     assert result["verdict"] == "incomplete"
 
 
-def test_void_preflight_fixture_matches_current_contract_identity():
+def test_false_pass_fixture_matches_current_contract_identity():
     fixture = json.loads(
         (
             Path(__file__).with_name("fixtures")
-            / "megamoe_ep_mega_fusion_void_preflight.json"
+            / "megamoe_ep_mega_fusion_false_pass.json"
         ).read_text()
     )
     path = (
@@ -232,7 +242,7 @@ def test_void_preflight_fixture_matches_current_contract_identity():
     contract_sha = hashlib.sha256(
         yaml.safe_dump(contract, sort_keys=True).encode()
     ).hexdigest()
-    assert fixture["candidate_head"] == "4d7806db89328f1fac2e4e24d9251e5917152159"
+    assert fixture["candidate_head"] == "8dcc479ae9dc2b6792d4259d9cd3acf0038d2fad"
     assert fixture["contract_sha256"] == contract_sha
     assert fixture["required_check_count"] == len(
         MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
@@ -245,7 +255,7 @@ def test_void_preflight_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 8
+    assert fixture["required_failure_count"] == 6
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1198,6 +1208,120 @@ def test_call_keyword_identity_rejects_payload_pointer_as_ready_pointer(tmp_path
     assert not result["checks"]["ready_identity"]["pass"]
     assert result["contract_failures"][0]["category"] == "abi"
     assert "peer_ready" in result["next_blocker"]
+
+
+def test_selected_branch_calls_rejects_direct_unfused_tail():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "host_path",
+        "kind": "selected_branch_calls",
+        "file": "src/a.py",
+        "scope": "run",
+        "condition": "fused",
+        "required_calls": ["persistent"],
+        "forbidden_calls": ["standalone"],
+        "require_return": True,
+    }]
+    unsafe = ast.parse(
+        "def run(fused):\n"
+        "    if fused:\n"
+        "        persistent()\n"
+        "        output = standalone()\n"
+        "        return output\n"
+        "    return standalone()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": unsafe})["host_path"]
+    assert not result["pass"]
+    assert any("forbidden standalone" in failure for failure in result["failures"])
+
+    safe = ast.parse(
+        "def run(fused, debug):\n"
+        "    if fused:\n"
+        "        persistent()\n"
+        "        if debug:\n"
+        "            standalone()\n"
+        "        return output\n"
+        "    return standalone()\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": safe})["host_path"]
+    assert result["pass"], result["failures"]
+
+
+def test_function_shape_requires_wide_consumed_abi():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "abi",
+        "kind": "function_shape",
+        "file": "src/a.py",
+        "scope": "kernel",
+        "min_parameters": 3,
+        "min_loaded_parameters": 3,
+    }]
+    narrow = ast.parse("def kernel(a, b):\n    return a + b\n")
+    result = MODULE.evaluate_checks(contract, {"src/a.py": narrow})["abi"]
+    assert not result["pass"]
+
+    dead = ast.parse("def kernel(a, b, c):\n    return a + b\n")
+    result = MODULE.evaluate_checks(contract, {"src/a.py": dead})["abi"]
+    assert not result["pass"]
+
+    complete = ast.parse("def kernel(a, b, c):\n    return a + b + c\n")
+    result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["abi"]
+    assert result["pass"], result["failures"]
+
+
+def test_call_arity_requires_forwarded_expansions():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "forwarding",
+        "kind": "call_arity",
+        "file": "src/a.py",
+        "scope": "launch",
+        "call": "invoke",
+        "min_arguments": 4,
+        "min_starred": 2,
+    }]
+    narrow = ast.parse("def launch(a, rest):\n    invoke(a, *rest)\n")
+    result = MODULE.evaluate_checks(contract, {"src/a.py": narrow})["forwarding"]
+    assert not result["pass"]
+
+    complete = ast.parse(
+        "def launch(a, b, left, right):\n"
+        "    invoke(a, b, *left, *right)\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["forwarding"]
+    assert result["pass"], result["failures"]
+
+
+def test_nontrivial_function_rejects_identity_adapter():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "body",
+        "kind": "nontrivial_function",
+        "file": "src/a.py",
+        "scope": "build.emit",
+        "min_statements": 3,
+        "required_calls": ["compute", "publish"],
+    }]
+    identity = ast.parse(
+        "def build():\n"
+        "    def emit(item):\n"
+        "        return item\n"
+        "    return emit\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": identity})["body"]
+    assert not result["pass"]
+
+    complete = ast.parse(
+        "def build():\n"
+        "    def emit(item):\n"
+        "        value = compute(item)\n"
+        "        publish(value)\n"
+        "        return value\n"
+        "    return emit\n"
+    )
+    result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["body"]
+    assert result["pass"], result["failures"]
 
 
 def test_contract_score_denominator_is_stable_when_scope_is_missing(tmp_path):

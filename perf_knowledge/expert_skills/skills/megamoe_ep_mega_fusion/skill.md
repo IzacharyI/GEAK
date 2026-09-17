@@ -862,9 +862,14 @@ failure_routes:
       categories: [plan, correctness, abi, lifecycle, resource, compiler, schedule, performance]
       check_ids:
         - complete_host_path
+        - fused_host_abi
+        - persistent_kernel_abi
+        - fused_launch_abi
         - flat_stripe_completion
         - unified_g1_g2_loop
         - shared_stage2_body
+        - nontrivial_stage2_body
+        - combine_emitter_wired
         - p2p_visibility
         - progressive_token_readiness
         - combine_output_work_item
@@ -924,23 +929,55 @@ plan:
 
 # These probes describe the validated profile's present adapter only. Paths
 # and symbols are not applicability gates. After Analyze selects this adapter
-# by semantic bindings and the workflow selects/pins the Skill, the nine
+# by semantic bindings and the workflow selects/pins the Skill, the fourteen
 # implementation checks are required evidence for a claimed-complete
 # structural checkpoint.
 checks:
   - id: complete_host_path
     category: plan
     severity: required
-    kind: regex
+    kind: selected_branch_calls
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._run_joint
-    patterns:
-      - 'AITER_MEGAMOE_FUSE_ALL[''"]\)\s*==\s*[''"]1'
-      - 'self\.quantize'
-      - '_run_fused_stage1'
-      - 'AITER_MEGAMOE_FUSE_COMBINE[''"],\s*[''"]1[''"]\)\s*==\s*[''"]1'
-      - 'out_tok'
-      - 'return\s+out_tok'
+    condition: '^(?:mega|.*AITER_MEGAMOE_FUSE_ALL.*)$'
+    arm: body
+    required_calls: ['_run_fused_stage1']
+    forbidden_calls:
+      - '_run_stage2'
+      - '_run_fused_stage2'
+      - 'run_mega_moe_stage2'
+      - 'combine_no_stage1'
+    require_return: true
+
+  - id: fused_host_abi
+    category: abi
+    severity: required
+    kind: parameter_loads
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+    scope: MegaMoEV2._run_fused_stage1
+    parameters:
+      - [fused_config]
+      - [fuse_combine]
+    min_loads: 1
+
+  - id: persistent_kernel_abi
+    category: abi
+    severity: required
+    kind: function_shape
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    min_parameters: 38
+    min_loaded_parameters: 38
+
+  - id: fused_launch_abi
+    category: abi
+    severity: required
+    kind: call_arity
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: run_mega_moe_stage1
+    call: _run_compiled
+    min_arguments: 22
+    min_starred: 2
 
   - id: host_specializes_g2_chunk
     category: profile_adapter_hint
@@ -1003,6 +1040,28 @@ checks:
       - 'p2p_scatter_epilog\('
       - 'lds_slab'
       - 'lds_byte_off'
+
+  - id: nontrivial_stage2_body
+    category: correctness
+    severity: required
+    kind: nontrivial_function
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+    scope: make_stage2_body_emitter.emit_stage2_body
+    min_statements: 8
+    allow_no_return: true
+    required_calls:
+      - gemm2_compute_v2
+      - p2p_scatter_epilog
+
+  - id: combine_emitter_wired
+    category: correctness
+    severity: required
+    kind: regex_sequence
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    patterns:
+      - 'make_combine_reduce_emitter\('
+      - '_c_emit\('
 
   - id: progressive_token_readiness
     category: lifecycle

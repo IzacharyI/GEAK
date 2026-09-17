@@ -1,0 +1,33 @@
+{
+  "schema_version": "megamoe-source-shape-false-pass-regression-v1",
+  "candidate_head": "8dcc479ae9dc2b6792d4259d9cd3acf0038d2fad",
+  "candidate_tree_digest": "0eda42ccda6cf3ac289a9e98c383dad1576746025e8f614f048cfb51e2fb0e0d",
+  "skill_bundle_sha256": "bb7c73a3a53fafbfc3d1e5c4bd63f188048ea11fa3365127eaad6cab75234204",
+  "planner_extension_sha256": "9a28f2f27914f49eb22aace460c20ec20c36c108aba0cd549f7fd1e977d9e4be",
+  "contract_sha256": "b8b7a3ea33872b117bb0b33cd8a5d77687c8e67773a3719caeb8219dbb98b867",
+  "runtime_validation_sha256": "d486b8ece8397b55e9be708b347e125dc1b15b07ada8a5150e0bdb6b60717e34",
+  "required_check_count": 14,
+  "required_failure_count": 6,
+  "failed_required_checks": [
+    "complete_host_path",
+    "fused_host_abi",
+    "persistent_kernel_abi",
+    "fused_launch_abi",
+    "nontrivial_stage2_body",
+    "combine_emitter_wired"
+  ],
+  "passing_required_checks": [
+    "flat_stripe_completion",
+    "unified_g1_g2_loop",
+    "shared_stage2_body",
+    "progressive_token_readiness",
+    "combine_output_work_item",
+    "block_claimed_combine",
+    "p2p_visibility",
+    "bucket_512_payload_rows"
+  ],
+  "identity_mismatch_failures": [],
+  "plan_consistency_errors": [],
+  "structural_compatible": false,
+  "verdict": "incomplete"
+}

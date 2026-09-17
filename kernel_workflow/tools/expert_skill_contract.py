@@ -365,6 +365,281 @@ def _check_call_keywords(
     return _result(False, 1, 0, [f"unsupported call policy: {policy}"], severity)
 
 
+def _check_selected_branch_calls(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Check calls made directly by one selected control-flow branch.
+
+    Calls nested under another branch or loop are deliberately excluded. This
+    lets a contract distinguish an active fused arm from diagnostic fallbacks
+    retained below it without treating mere token presence as reachability.
+    """
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    required = [str(value) for value in rule.get("required_calls") or []]
+    forbidden = [str(value) for value in rule.get("forbidden_calls") or []]
+    require_return = bool(rule.get("require_return", False))
+    total = max(1, len(required) + len(forbidden) + int(require_return))
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, total, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    condition = str(rule.get("condition") or "")
+    arm = str(rule.get("arm") or "body")
+    if not condition or arm not in {"body", "orelse"}:
+        return _result(
+            False, total, 0,
+            ["selected_branch_calls requires condition and arm=body|orelse"],
+            severity,
+        )
+    branches = [
+        item for item in ast.walk(node)
+        if isinstance(item, ast.If) and re.search(condition, ast.unparse(item.test))
+    ]
+    if len(branches) != 1:
+        return _result(
+            False, total, 0,
+            [f"expected one branch matching {condition!r}, found {len(branches)}"],
+            severity,
+        )
+    statements = getattr(branches[0], arm)
+
+    class DirectVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.calls: list[ast.Call] = []
+
+        def visit_Call(self, item: ast.Call) -> None:
+            self.calls.append(item)
+            self.generic_visit(item)
+
+        def visit_If(self, item: ast.If) -> None:
+            return
+
+        def visit_For(self, item: ast.For) -> None:
+            return
+
+        visit_AsyncFor = visit_For
+
+        def visit_While(self, item: ast.While) -> None:
+            return
+
+        def visit_Try(self, item: ast.Try) -> None:
+            return
+
+        def visit_With(self, item: ast.With) -> None:
+            return
+
+        visit_AsyncWith = visit_With
+
+        def visit_Match(self, item: ast.Match) -> None:
+            return
+
+        def visit_FunctionDef(self, item: ast.FunctionDef) -> None:
+            return
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+        visit_Lambda = visit_FunctionDef
+
+    visitor = DirectVisitor()
+    for statement in statements:
+        visitor.visit(statement)
+    call_names = [_call_name(call) for call in visitor.calls]
+    failures = [
+        f"selected branch has no direct call matching {pattern}"
+        for pattern in required
+        if not any(re.fullmatch(pattern, called) for called in call_names)
+    ]
+    failures.extend(
+        f"selected branch directly calls forbidden {called}"
+        for called in call_names
+        if any(re.fullmatch(pattern, called) for pattern in forbidden)
+    )
+    direct_return = any(isinstance(statement, ast.Return) for statement in statements)
+    if require_return and not direct_return:
+        failures.append("selected branch has no direct return")
+    failed_required = sum(
+        not any(re.fullmatch(pattern, called) for called in call_names)
+        for pattern in required
+    )
+    failed_forbidden = sum(
+        any(re.fullmatch(pattern, called) for called in call_names)
+        for pattern in forbidden
+    )
+    passed = total - failed_required - failed_forbidden - int(
+        require_return and not direct_return
+    )
+    return _result(not failures, total, passed, failures, severity)
+
+
+def _check_function_shape(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Require a callable ABI of sufficient width whose parameters are consumed."""
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, 2, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    parameters = [
+        argument.arg
+        for argument in (
+            list(node.args.posonlyargs)
+            + list(node.args.args)
+            + list(node.args.kwonlyargs)
+        )
+    ]
+    if node.args.vararg:
+        parameters.append(node.args.vararg.arg)
+    if node.args.kwarg:
+        parameters.append(node.args.kwarg.arg)
+    ignored = {str(value) for value in rule.get("ignore_parameters") or ["self"]}
+    considered = [parameter for parameter in parameters if parameter not in ignored]
+    loaded = {
+        item.id
+        for item in ast.walk(node)
+        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
+    }
+    minimum_parameters = int(rule.get("min_parameters") or 0)
+    minimum_loaded = int(rule.get("min_loaded_parameters") or 0)
+    failures = []
+    if len(considered) < minimum_parameters:
+        failures.append(
+            f"function has {len(considered)} parameters, requires {minimum_parameters}"
+        )
+    loaded_count = len(set(considered) & loaded)
+    if loaded_count < minimum_loaded:
+        failures.append(
+            f"function loads {loaded_count} parameters, requires {minimum_loaded}"
+        )
+    return _result(
+        not failures, 2,
+        int(len(considered) >= minimum_parameters) + int(loaded_count >= minimum_loaded),
+        failures, severity,
+    )
+
+
+def _check_call_arity(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Require a selected call to forward a minimum ABI, including expansions."""
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    if node is None:
+        return _result(
+            False, 2, 0, [f"missing file/scope: {name}:{scope}"], severity
+        )
+    call_pattern = str(rule.get("call") or "")
+    calls = [
+        item for item in ast.walk(node)
+        if isinstance(item, ast.Call) and re.fullmatch(call_pattern, _call_name(item))
+    ]
+    if len(calls) != 1:
+        return _result(
+            False, 2, 0,
+            [f"expected one call matching {call_pattern!r}, found {len(calls)}"],
+            severity,
+        )
+    call = calls[0]
+    minimum_arguments = int(rule.get("min_arguments") or 0)
+    minimum_starred = int(rule.get("min_starred") or 0)
+    argument_count = len(call.args) + len(call.keywords)
+    starred_count = sum(isinstance(argument, ast.Starred) for argument in call.args)
+    starred_count += sum(keyword.arg is None for keyword in call.keywords)
+    failures = []
+    if argument_count < minimum_arguments:
+        failures.append(
+            f"call forwards {argument_count} argument nodes, requires {minimum_arguments}"
+        )
+    if starred_count < minimum_starred:
+        failures.append(
+            f"call has {starred_count} argument expansion(s), requires {minimum_starred}"
+        )
+    return _result(
+        not failures, 2,
+        int(argument_count >= minimum_arguments) + int(starred_count >= minimum_starred),
+        failures, severity,
+    )
+
+
+def _check_nontrivial_function(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Reject identity adapters and require the declared numerical callees."""
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    required_calls = [str(value) for value in rule.get("required_calls") or []]
+    total = max(1, len(required_calls) + 2)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, total, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    minimum_statements = int(rule.get("min_statements") or 2)
+    statements = [
+        item for item in ast.walk(node)
+        if isinstance(item, ast.stmt)
+        and not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    calls = [
+        _call_name(item) for item in ast.walk(node) if isinstance(item, ast.Call)
+    ]
+    parameters = {
+        argument.arg
+        for argument in (
+            list(node.args.posonlyargs)
+            + list(node.args.args)
+            + list(node.args.kwonlyargs)
+        )
+    }
+
+    def is_identity_return(item: ast.Return) -> bool:
+        value = item.value
+        if value is None or isinstance(value, ast.Constant):
+            return True
+        values = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
+        return bool(values) and all(
+            isinstance(element, ast.Name) and element.id in parameters
+            for element in values
+        )
+
+    returns = [item for item in ast.walk(node) if isinstance(item, ast.Return)]
+    non_identity = (
+        (not returns and bool(rule.get("allow_no_return", False)))
+        or any(not is_identity_return(item) for item in returns)
+    )
+    failures = []
+    if len(statements) < minimum_statements:
+        failures.append(
+            f"function has {len(statements)} executable statements, requires {minimum_statements}"
+        )
+    if not non_identity:
+        failures.append("function only returns None/constants/input identities")
+    for pattern in required_calls:
+        if not any(re.fullmatch(pattern, called) for called in calls):
+            failures.append(f"function has no call matching {pattern}")
+    passed = (
+        int(len(statements) >= minimum_statements)
+        + int(non_identity)
+        + sum(
+            any(re.fullmatch(pattern, called) for called in calls)
+            for pattern in required_calls
+        )
+    )
+    return _result(not failures, total, passed, failures, severity)
+
+
 def _check_forbid_methods(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -1562,6 +1837,10 @@ def evaluate_checks(
         "regex": _check_regex,
         "regex_sequence": _check_regex_sequence,
         "call_keywords": _check_call_keywords,
+        "selected_branch_calls": _check_selected_branch_calls,
+        "function_shape": _check_function_shape,
+        "call_arity": _check_call_arity,
+        "nontrivial_function": _check_nontrivial_function,
         "forbid_methods": _check_forbid_methods,
         "assignment_value": _check_assignment_value,
         "parameter_loads": _check_parameter_loads,
