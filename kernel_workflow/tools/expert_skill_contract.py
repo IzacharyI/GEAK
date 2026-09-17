@@ -525,6 +525,60 @@ def _check_function_shape(
     )
 
 
+def _check_tuple_bindings(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    severity: str,
+) -> dict[str, Any]:
+    """Require host argument bundles to contain distinct, non-placeholder sources."""
+    name = str(rule.get("file") or "")
+    scope = str(rule.get("scope") or "")
+    node = _scope_node(trees.get(name), scope)
+    bindings = [item for item in rule.get("bindings") or [] if isinstance(item, dict)]
+    total = max(1, len(bindings) * 3)
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _result(
+            False, total, 0, [f"missing function scope: {name}:{scope}"], severity
+        )
+    tuples: dict[str, list[str]] = {}
+    for item in ast.walk(node):
+        if not isinstance(item, ast.Assign) or not isinstance(item.value, (ast.Tuple, ast.List)):
+            continue
+        values = [ast.unparse(value) for value in item.value.elts]
+        for target in item.targets:
+            tuples[ast.unparse(target)] = values
+    failures = []
+    passed = 0
+    for binding in bindings:
+        target = str(binding.get("target") or "")
+        values = tuples.get(target)
+        minimum = int(binding.get("min_elements") or 1)
+        minimum_distinct = int(binding.get("min_distinct") or minimum)
+        forbidden = [str(value) for value in binding.get("forbidden") or []]
+        if values is None or len(values) < minimum:
+            failures.append(
+                f"{target} has {0 if values is None else len(values)} elements, requires {minimum}"
+            )
+        else:
+            passed += 1
+        if values is None or len(set(values)) < minimum_distinct:
+            failures.append(
+                f"{target} has {0 if values is None else len(set(values))} distinct sources, "
+                f"requires {minimum_distinct}"
+            )
+        else:
+            passed += 1
+        placeholders = [
+            value for value in (values or [])
+            if any(re.fullmatch(pattern, value) for pattern in forbidden)
+        ]
+        if placeholders:
+            failures.append(f"{target} contains placeholder sources: {placeholders}")
+        else:
+            passed += 1
+    return _result(not failures, total, passed, failures, severity)
+
+
 def _check_call_arity(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -1839,6 +1893,7 @@ def evaluate_checks(
         "call_keywords": _check_call_keywords,
         "selected_branch_calls": _check_selected_branch_calls,
         "function_shape": _check_function_shape,
+        "tuple_bindings": _check_tuple_bindings,
         "call_arity": _check_call_arity,
         "nontrivial_function": _check_nontrivial_function,
         "forbid_methods": _check_forbid_methods,

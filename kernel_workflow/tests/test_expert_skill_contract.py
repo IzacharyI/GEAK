@@ -20,6 +20,7 @@ SPEC.loader.exec_module(MODULE)
 
 MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "complete_host_path",
+    "selected_fused_host_bindings",
     "fused_host_abi",
     "persistent_kernel_abi",
     "fused_launch_abi",
@@ -128,6 +129,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
     assert not contract.get("revision")
     assert {item["id"] for item in contract["checks"]} == {
         "complete_host_path",
+        "selected_fused_host_bindings",
         "fused_host_abi",
         "persistent_kernel_abi",
         "fused_launch_abi",
@@ -242,7 +244,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     contract_sha = hashlib.sha256(
         yaml.safe_dump(contract, sort_keys=True).encode()
     ).hexdigest()
-    assert fixture["candidate_head"] == "8dcc479ae9dc2b6792d4259d9cd3acf0038d2fad"
+    assert fixture["candidate_head"] == "f87cc737fd3079fee6c46b739555cc9fb2987329"
     assert fixture["contract_sha256"] == contract_sha
     assert fixture["required_check_count"] == len(
         MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
@@ -255,7 +257,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 6
+    assert fixture["required_failure_count"] == 2
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1290,6 +1292,41 @@ def test_call_arity_requires_forwarded_expansions():
         "    invoke(a, b, *left, *right)\n"
     )
     result = MODULE.evaluate_checks(contract, {"src/a.py": complete})["forwarding"]
+    assert result["pass"], result["failures"]
+
+
+def test_tuple_bindings_rejects_missing_duplicate_and_placeholder_sources():
+    contract = _contract()
+    contract["checks"] = [{
+        "id": "host_bundle",
+        "kind": "tuple_bindings",
+        "file": "src/a.py",
+        "scope": "wire",
+        "bindings": [{
+            "target": "args",
+            "min_elements": 3,
+            "min_distinct": 3,
+            "forbidden": ["None", "0"],
+        }],
+    }]
+    placeholder = ast.parse(
+        "def wire(a):\n"
+        "    args = (a, a, None)\n"
+        "    return args\n"
+    )
+    result = MODULE.evaluate_checks(
+        contract, {"src/a.py": placeholder}
+    )["host_bundle"]
+    assert not result["pass"]
+
+    complete = ast.parse(
+        "def wire(a, b, c):\n"
+        "    args = (a, b, c)\n"
+        "    return args\n"
+    )
+    result = MODULE.evaluate_checks(
+        contract, {"src/a.py": complete}
+    )["host_bundle"]
     assert result["pass"], result["failures"]
 
 
