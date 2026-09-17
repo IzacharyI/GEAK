@@ -72,25 +72,37 @@ Implement one coherent final target, not a sequence of intermediate stages:
   one stripe, retires its stores, reaches a block barrier, then one lane
   system-atomically increments the owning m-tile completion counter.
 - GEMM2 consumes a tile only after the corresponding GEMM1 counter reaches the
-  number of N stripes. GEMM1 and ready GEMM2 work share one CTA-local loop; no
-  grid-wide GEMM1 drain is allowed.
+  number of N stripes. GEMM1 and ready GEMM2 work share one CTA-local loop.
+  G1 stays first by default: only `ticket % 6 == 0` may preempt it with ready
+  G2 work, and only when
+  `max_expert_tiles * experts_per_rank * tile_m > valid_rows * 5 / 4`.
+  No grid-wide GEMM1 drain is allowed.
 - Keep Stage2 constants under one derivation authority and keep route, weight,
   peer and readiness buffer resources local to the shared Stage2 body. Do not
   carry those descriptors through the outer persistent Stage1 frame.
 - Specialize G2 claim size before compilation: chunk 1 below 4096 tokens and
-  chunk 16 at 4096 or above. Large-shape claim sharding and route-gated
-  preemption are tuning anchors, not separate candidate directions.
+  chunk 16 at 4096 or above. Claims are contiguous:
+  `claim_id = shard + local_claim * shards`, `base = claim_id * chunk`.
+  Check readiness once at the last in-range unit and carry only `next` and
+  `remaining`; an unready head is pending work, never a drained queue.
 - P2P payload and scale stores become system-visible before publication.
-  Tile-close publication occurs once per accepted routed row.
+  Token readiness exists only when combine is in-kernel. Each G2 m-block closes
+  locally with one agent add per N stripe; its closing CTA emits one remote
+  arrival per accepted routed row.
 - Token readiness is monotone and generation-qualified. A token is ready after
   exactly top-k arrivals; omitted tokens are advanced so later graph replays
   cannot wait on a stale generation.
 - After a CTA has drained its local GEMM work, it irreversibly enters a
   block-claimed combine loop. There is no grid barrier. One block claim feeds
   one output item per wave.
-- A combine item maps `(output_token, hidden_partition)`, waits for the token
+- Derive combine partitions as
+  `P = min(ceildiv(grid_waves, run_tokens), hidden_i32 / 8)`. A combine item
+  maps `(output_token, partition)`, waits independently for that token
   generation, reads every top-k payload slot, accumulates in FP32, bounds its
-  tail, and stores the final BF16 row with a rank-local cache policy.
+  tail, and stores BF16 with a rank-local cache policy. At 8192 tokens,
+  `grid_waves=2048`, `hidden_i32=1792`, therefore `P=1`, reduction width
+  `U=4`, total work is 8192 items, and an NW8 block handles eight distinct
+  tokens rather than eight partitions of one token.
 - Put every compile-affecting topology or bucket choice in the JIT identity.
 
 The active target excludes optional M3 quant ingress, wait instrumentation,
@@ -109,8 +121,8 @@ Keep these responsibilities separate even if local symbol names differ:
   addresses and scalar capacities; it does not construct device buffer
   resources.
 - `compile_mega_moe_stage1` owns the persistent kernel, shared-storage layout,
-  startup roles, unified G1/G2 work loop and the irreversible transition into
-  combine.
+  startup roles, route-gated unified G1/G2 work loop and the irreversible
+  transition into combine.
 - `build_fused_gemm1` emits exactly one claimed GEMM1 output stripe. It does not
   own global queue progression or the completion threshold.
 - `make_stage2_body_emitter` derives and validates Stage2 constants once, then
@@ -118,9 +130,10 @@ Keep these responsibilities separate even if local symbol names differ:
   readiness buffer resources are constructed inside this body so their SGPR
   lifetime ends with the Stage2 unit.
 - `make_combine_reduce_emitter` emits exactly one
-  `(output_token,hidden_partition)` item. The caller owns block-level claiming;
-  the item owns the token wait, all top-k payload reads, FP32 reduction and
-  bounded BF16 output store.
+  `(output_token,partition)` item. The caller derives `P` and `U`, owns
+  block-level claiming, and assigns distinct tokens to waves when `P=1`; the
+  item owns its token wait, all top-k payload reads, FP32 reduction and bounded
+  BF16 output store.
 
 Standalone and fused callers must reuse the same Stage2 arithmetic and combine
 arithmetic authority. They may use different work distributors, but must not
@@ -184,9 +197,11 @@ The persistent grid is a CTA-local state machine:
 5. A G2 unit may execute only when its required G1 completion counter has
    reached `n_stripes`. Bounds must dominate every readiness read.
 6. Route-gated non-destructive peeking may pull ready G2 work between G1
-   stripes, but a non-preempting producer cohort must always remain.
-7. A CTA exits the G1/G2 loop only when its local queues are drained. It never
-   returns to GEMM work after entering combine.
+   stripes only for the `ticket % 6 == 0` cohort and only when the 5/4
+   expert-tile skew predicate is true. Every other CTA remains G1-first.
+7. A CTA exits the G1/G2 loop only when its local G1 work is exhausted and
+   every valid G2 chunk is claimed or owned. An unready G2 head is pending, not
+   drained. It never returns to GEMM work after entering combine.
 8. The combine loop begins with a block barrier, lets one lane claim a block of
    output items, publishes the claim through LDS, executes another block
    barrier, then assigns one item to each wave.
@@ -196,23 +211,29 @@ per-item readiness and monotone generations, allowing different CTAs to occupy
 different phases concurrently.
 
 A G2 work item is the linear pair
-`unit = m_block * stage2_n_blocks + n_block`. Sharded claim heads return unique
-chunks; the actual returned claim is bounds-checked again before any route or
-readiness access. A CTA never blocks on G2 while it owns an unexecuted G1
-stripe. Small-shape c1 has no carried chunk; c16 keeps only bounded continuation
-state in the outer loop rather than nesting the whole GEMM2 live range.
+`unit = m_block * stage2_n_blocks + n_block`. Sharded heads return
+`claim_id = shard + local_claim * shards`; each claim owns the contiguous range
+starting at `claim_id * chunk`. The last in-range unit is bounds-checked and
+readiness-tested once before the chunk executes. A CTA never blocks on G2 while
+it owns an unexecuted G1 stripe. Small-shape c1 has no carried chunk; c16 carries
+only the two block-uniform scalars `next` and `remaining`, never the GEMM2 live
+range.
 
 ## Memory-order blueprint
 
 - G1 activation and scale stores use the gfx950 system-visible write-through
-  policy. Publication follows store retirement and a block barrier.
+  policy. Publication order is write-through stores, `s_waitcnt(0)`, a uniform
+  block barrier, then the system completion atomic. Do not add a post-atomic
+  full-L2 release.
 - G1 completion is a per-stripe system atomic; GEMM2 waits for the exact
   `n_stripes` threshold.
-- A Stage2 tile closes only after every N stripe for its m-block has completed.
-  The closing CTA publishes one token-ready arrival for each accepted route.
+- Compile token readiness only when combine is in-kernel. A G2 m-block closes
+  in rank-local state with one agent add per N stripe. The closing CTA
+  self-clears that generation and publishes one remote token arrival for each
+  accepted route.
 - P2P payload and block-FP8 scale stores are write-through before token-ready
-  publication. The consumer uses system-visible payload loads or an equivalent
-  acquire protocol.
+  publication. Combine uses system-scope streaming payload loads; do not replace
+  this with a per-token full-L2 invalidate.
 - Token-ready counters are monotone across graph replays. The expected value is
   `topk * generation`; do not clear a counter while peers may already publish
   the next generation.
@@ -293,7 +314,10 @@ be avoided.
 - Large-path G1 claim shards are 1 for buckets up to 32, 8 at bucket 2048 and
   4 otherwise. Fixed-slot tuning may use 8.
 - Route-gated G2 preemption uses the measured interval 6 and skew ratio 5/4 as
-  starting anchors, then requires same-machine measurement.
+  exact scheduling gates, then requires same-machine measurement.
+- Derive combine partitions from nominal grid waves. At 8192 tokens the
+  required large-shape geometry is `P=1`, `U=4`, 8192 total items and eight
+  distinct tokens per NW8 block claim.
 - Bucket 512 uses `payload_chunk_rows=256`; other large buckets use 384.
 - Every value affecting NW, BN/BM/BK, chunking, preemption, transport format,
   combine presence or LDS layout is part of the JIT/cache identity.
@@ -400,7 +424,7 @@ ir_bindings:
     - {id: routed_rows, unit: routed_row, extent: num_valid, index_type: i32}
     - {id: g1_output_stripes, unit: m_tile_n_stripe, extent: g1_m_tiles * g1_n_stripes, index_type: i32}
     - {id: g2_output_tiles, unit: m_block_n_block, extent: g2_m_blocks * g2_n_blocks, index_type: i32}
-    - {id: combine_items, unit: output_token_partition, extent: run_tokens * warps_per_token, index_type: i32}
+    - {id: combine_items, unit: output_token_partition, extent: run_tokens * combine_partitions, index_type: i32}
   regions:
     - {id: input_quantize, role: producer, work_domain: input_tokens}
     - {id: dispatch_plan, role: producer, work_domain: routed_rows}
@@ -414,15 +438,19 @@ ir_bindings:
   schedule:
     primary_loop:
       kind: unified_g1_g2_then_combine
-      carried_state: [bounded_g2_continuation]
-      queue_priority: [second_compute_queue, first_compute_queue]
+      carried_state: [g2_next, g2_remaining]
+      queue_selection: route_gated_g2_preempt_else_g1
     policies:
       g1_completion: stripe_system_atomic_threshold
-      g2_chunk: host_specialized_1_or_16
+      g1_store_visibility: write_through_then_wait_barrier_atomic
+      g2_preempt_cohort: ticket_mod_6
+      g2_preempt_skew: expert_tile_capacity_gt_valid_rows_times_5_over_4
+      g2_chunk: contiguous_host_specialized_1_or_16
       stage2_resources: local_to_shared_body
       combine_transition: after_local_g1_g2_drain_without_grid_barrier
-      combine_claim: one_block_claim_then_one_item_per_wave
-      token_readiness: monotone_topk_generation
+      combine_claim: one_block_claim_then_distinct_token_per_wave_at_p1
+      combine_partitions: min_ceildiv_grid_waves_tokens_hidden_i32_div_8
+      token_readiness: combine_only_local_mblock_close_remote_row_arrival
   evidence_requirements:
     activation: path=MEGA on all eight ranks
     accuracy: relL2 below 0.10 at 128, 512 and 8192
@@ -454,6 +482,11 @@ candidate_templates:
       parameters:
         quantization_remains_separate: true
         combine_is_in_kernel: true
+        g2_preempt_modulus: 6
+        g2_preempt_skew_ratio: 5/4
+        g2_chunks_are_contiguous: true
+        combine_8192_partitions: 1
+        combine_8192_reduce_u: 4
     checkpoints:
       - complete_host_path
       - complete_persistent_pipeline
@@ -541,6 +574,11 @@ checks:
       - 'while consumer_active'
       - '_do_scheduled_tile'
       - '(?:emit_stage2_body|S2\[[''"]emit[''"]\])'
+      - '(?:ticket|cta_ticket)\s*%\s*(?:fx\.Int32\()?6'
+      - '(?:max_expert_tiles|expert_tile_capacity).*(?:5\s*/\s*4|5.*valid.*4)'
+      - '(?:claim_id|chunk_claim).*(?:local_claim|claim_local).*(?:shards|WORK_SHARDS)'
+      - '(?:base|chunk_base).*(?:claim_id|chunk_claim).*(?:chunk|G2_CHUNK)'
+      - '(?:unready|not_ready|pending).*(?:drain|drained|pending)'
 
   - id: shared_stage2_body
     category: compiler
@@ -566,9 +604,12 @@ checks:
     category: correctness
     kind: regex
     file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
-    scope: make_combine_reduce_emitter
     patterns:
-      - 'warps_per_tok'
+      - '(?:grid_waves|nominal_grid_waves)'
+      - '(?:partitions_per_token|combine_partitions).*(?:min|minimum)'
+      - '(?:hidden_i32|n_i32).*(?:/\s*8|//\s*8)'
+      - '(?:reduce_u|reduction_width|combine_u).*(?:=\s*4|8192)'
+      - '(?:total_items|total_combine_work).*(?:run_tokens|tokens).*(?:partitions_per_token|combine_partitions)'
       - 'def _emit_item\(s3_work_idx\)'
       - 'for k_slot in range_constexpr\((?:experts_per_token|TOPK)\)'
       - 'tok_id\s*\*\s*(?:experts_per_token|TOPK)\s*\+\s*k_slot'
