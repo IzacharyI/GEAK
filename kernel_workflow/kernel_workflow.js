@@ -6327,13 +6327,18 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       contract: EXPERT_SKILL_CONTRACT_SHA256,
     }
   );
+  const stagedGpuAuthoring = authorPreflightRequired && !MEGA_STRUCTURAL_ONLY &&
+    EXPERT_SKILL_USAGE === 'candidate_validation';
   if (authorPreflightRequired) {
     log(`Mega round ${currentRound}: full-target candidate ${candidateId} has no current exact-HEAD ` +
-      `structural pass; authoring is GPU-forbidden until independent contract verification.`);
+      `structural pass; ${stagedGpuAuthoring
+        ? 'staged GPU construction/JIT smoke is allowed, but promotion remains blocked'
+        : 'authoring is GPU-forbidden until independent contract verification'}.`);
   }
   let eng = null;
   let laneWriterTimedOut = false;
-  const authorGpuProhibited = authorPreflightRequired || MEGA_STRUCTURAL_ONLY;
+  const authorGpuProhibited = MEGA_STRUCTURAL_ONLY ||
+    (authorPreflightRequired && !stagedGpuAuthoring);
   const role = 'engineer';
   const roleFile = 'engineer.md';
   eng = await agentT(
@@ -6356,6 +6361,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             ? '0' : String(GPU_RESOURCE.gpusPerJob),
           AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
             authorPreflightRequired ? '1' : '0',
+          STAGED_GPU_AUTHORING: stagedGpuAuthoring ? '1' : '0',
           AUTHORING_STRUCTURAL_EVIDENCE_HEAD:
             effectivePrior && effectivePrior.structural_candidate_head || '',
           FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
@@ -6387,7 +6393,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
         }) +
-      `\n\n${authorPreflightRequired
+      `\n\n${authorPreflightRequired && !stagedGpuAuthoring
         ? `AUTHORING CONTRACT PREFLIGHT IS REQUIRED AND GPU IS UNAVAILABLE THIS TURN. ` +
           `The direction's request for on-card work is subordinate to this gate. Run the current ` +
           `Expert Skill contract without a reference, repair required failures in category order, ` +
@@ -6395,6 +6401,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           `candidate_status=authoring; runtime_verified, gpu_executed, and score_complete remain ` +
           `false separately. Do not run ` +
           `rocm-smi, torchrun, a benchmark, a correctness command, or any GPU runtime import. `
+        : stagedGpuAuthoring
+        ? `STAGED GPU AUTHORING IS ENABLED. Implement a dependency-closed next kernel stage; an ` +
+          `unchanged-HEAD evidence re-seal is not progress while required source checks remain. ` +
+          `Use the supplied EP8 lease for the earliest construction/JIT/small-correctness smoke, ` +
+          `fix concrete failures in this same turn when safe, and commit the stage. Do not run full ` +
+          `performance or claim runtime completion until the full structural contract passes. `
         : `The exact structural evidence HEAD is ${existing &&
             existing.structural_candidate_head || '(none)'}. Temporary compile-time diagnostic ` +
           `instrumentation may run only for bisection, earns no candidate evidence, and must be ` +

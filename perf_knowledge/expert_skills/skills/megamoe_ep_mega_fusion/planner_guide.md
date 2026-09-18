@@ -13,6 +13,10 @@ lane and exact working HEAD.
 - Never propose an alternate schedule or partial-fusion fallback.
 - Never restate the full implementation contract in the Author prompt.
 - Choose the earliest unresolved evidence boundary, not a broad rewrite.
+- An unchanged-HEAD evidence re-seal may repair identity once, but cannot consume
+  another round while required source checks remain.
+- When no on-card blocker exists because preflight is incomplete, route the next
+  dependency-closed source batch instead of waiting for Verify.
 
 ## Blocker order
 

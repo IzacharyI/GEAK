@@ -9,8 +9,18 @@ Fix the earliest concrete blocker returned by Verify, commit it, and return the
 same lane for independent verification. Preserve working numerical bodies and
 already-passing evidence. Do not write token-shaped stubs for contract checks.
 
+If preflight still has source failures and no GPU blocker exists, implement the
+next dependency-closed batch in this order: Host/ABI → G1 cache/publication →
+shared Stage2+P2P → unified G1/G2 scheduler → Combine+generation. Re-sealing an
+unchanged HEAD twice is not progress.
+
 After a source edit, CPU checks are preflight only. The next independent Verify
 must execute the exact HEAD on eight GPUs.
+
+When the prompt supplies `STAGED_GPU_AUTHORING=1`, the Author may run the
+earliest construction/JIT/small-correctness smoke before the full source
+contract passes. This is development evidence only; final correctness,
+liveness and performance remain independently verified.
 
 ## Runtime progression
 

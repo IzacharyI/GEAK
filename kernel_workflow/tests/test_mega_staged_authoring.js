@@ -76,10 +76,13 @@ ok(!/role = source === 'validated_skill' \? 'mega_engineer'/.test(wf) &&
 ok(!/id: MEGA_SKILL_CANDIDATE_ID, source: 'validated_skill'/.test(wf),
   'no reserved reproduction lane is registered');
 ok(/authoringContractNeedsPreflight/.test(wf) &&
+   /const stagedGpuAuthoring/.test(wf) &&
+   /STAGED_GPU_AUTHORING/.test(wf) &&
    /STRUCTURAL_PREFLIGHT_REQUIRED_NO_GPU/.test(wf) &&
    /AUTHORING_CONTRACT_PREFLIGHT_REQUIRED/.test(wf),
-  'a full-target author receives no GPU until exact-HEAD structural verification');
-ok(/fail-closed GPU prohibition/.test(engineer) &&
+  'candidate validation permits staged GPU smoke while structural-only remains GPU-forbidden');
+ok(/fail-closed GPU prohibition unless/.test(engineer) &&
+   /earliest construction\/JIT\/small-correctness smoke/.test(engineer) &&
    /temporary compile-time[\s\S]*earns no correctness\/performance credit/.test(engineer) &&
    /Once you apply a production fix[\s\S]*GPU authorization is revoked/.test(engineer),
   'Engineer may bisect reversibly but cannot use stale evidence after a production fix');

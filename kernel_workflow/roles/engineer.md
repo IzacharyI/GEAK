@@ -56,6 +56,11 @@ commit, manifest and `candidate_result.json` are final, set it true with
 false only when the turn or a referenced artifact is interrupted/partial.
 Missing measurements are null/pending, never zero.
 
+If required source checks remain, an unchanged-HEAD evidence re-seal is not
+progress and must not consume the turn. Implement the next dependency-closed
+batch. Use this order: Host/ABI → G1 cache/publication → shared Stage2+P2P →
+unified G1/G2 scheduler → Combine+generation → full contract.
+
 For a Mega candidate, treat `MEGA_PLAN_IR` as the source-authoring contract:
 map every queue/event/ABI/resource lifetime and source-shape constraint to a
 reachable implementation before inventing an equivalent form. Use
@@ -63,9 +68,11 @@ reachable implementation before inventing an equivalent form. Use
 headroom. Record any evidence-backed deviation explicitly in the result; an
 undeclared deviation is a structural failure, not Engineer discretion.
 
-For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` is a
-fail-closed GPU prohibition for the entire turn. `GPU_ID` is intentionally not
-a device in that state. Run the current contract against `CANDIDATE_TREE`,
+For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` blocks
+promotion. It is a fail-closed GPU prohibition unless
+`STAGED_GPU_AUTHORING=1`. In staged mode, use the supplied device only for the
+earliest construction/JIT/small-correctness smoke of a dependency-closed source
+stage; partial source never earns runtime or score evidence. Run the current contract against `CANDIDATE_TREE`,
 `FROZEN_KERNEL_PATH`, and the supplied `MEGA_PLAN_IR` without any reference
 tree. Repair required failures in this order:
 `plan → correctness → abi → lifecycle → resource/compiler → schedule →
@@ -73,8 +80,9 @@ performance`. Commit a coherent source checkpoint and return
 `candidate_status:"authoring"` with the exact structured
 `contract_failures`: preserve every failing contract check ID as its own entry
 with the tool's category/severity/messages; never collapse them into a summary
-ID or prose. Do not run `rocm-smi`, import a GPU runtime, acquire a lease, or
-execute correctness/benchmark commands. `claim_complete:true` is valid for
+ID or prose. Unless staged mode is enabled, do not run `rocm-smi`, import a GPU
+runtime, acquire a lease, or execute correctness/benchmark commands.
+`claim_complete:true` is valid for
 that finalized static checkpoint and lets independent structural Verify
 populate the next round.
 
