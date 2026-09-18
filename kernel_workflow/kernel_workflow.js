@@ -6290,9 +6290,11 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         `Engineer was started`,
     };
   }
+  const gpuCandidateDevelopment = !MEGA_STRUCTURAL_ONLY &&
+    EXPERT_SKILL_USAGE === 'candidate_validation';
   const engineerBudgetS = MEGA_PRODUCTION
     ? Math.max(240, Math.min(
-      Math.floor(turnBudgetS * 0.60),
+      Math.floor(turnBudgetS * (gpuCandidateDevelopment ? 0.85 : 0.60)),
       Math.floor(availableAfterPrepS - 360)))
     : MEGA_CANDIDATE_TIMEOUT_S;
   const commandBudgetS = Math.max(180, engineerBudgetS - 60);
@@ -6327,8 +6329,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       contract: EXPERT_SKILL_CONTRACT_SHA256,
     }
   );
-  const stagedGpuAuthoring = authorPreflightRequired && !MEGA_STRUCTURAL_ONLY &&
-    EXPERT_SKILL_USAGE === 'candidate_validation';
+  const stagedGpuAuthoring = authorPreflightRequired && gpuCandidateDevelopment;
   if (authorPreflightRequired) {
     log(`Mega round ${currentRound}: full-target candidate ${candidateId} has no current exact-HEAD ` +
       `structural pass; ${stagedGpuAuthoring
@@ -6405,7 +6406,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         ? `STAGED GPU AUTHORING IS ENABLED. Implement a dependency-closed next kernel stage; an ` +
           `unchanged-HEAD evidence re-seal is not progress while required source checks remain. ` +
           `Use the supplied EP8 lease for the earliest construction/JIT/small-correctness smoke, ` +
-          `fix concrete failures in this same turn when safe, and commit the stage. Do not run full ` +
+          `fix concrete failures repeatedly in this same turn when safe, and commit the stage. While ` +
+          `the lease is available, do not return with only scaffolding, planning, or a re-seal: return ` +
+          `after a real smoke result or a concrete bounded failure. Do not run full ` +
           `performance or claim runtime completion until the full structural contract passes. `
         : `The exact structural evidence HEAD is ${existing &&
             existing.structural_candidate_head || '(none)'}. Temporary compile-time diagnostic ` +

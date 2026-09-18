@@ -22,6 +22,11 @@ earliest construction/JIT/small-correctness smoke before the full source
 contract passes. This is development evidence only; final correctness,
 liveness and performance remain independently verified.
 
+Do not scaffold-and-bail. While the EP8 lease is available, keep the same turn
+open across write → trace/JIT → smoke → traceback-guided repair. Return only
+after the staged implementation produces a real smoke result or a concrete
+bounded failure that requires the next turn.
+
 ## Runtime progression
 
 1. Host construction must create every Stage2/Combine buffer and pointer table.
