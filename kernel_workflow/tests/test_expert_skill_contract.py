@@ -243,7 +243,10 @@ def test_missing_selected_megamoe_implementation_fails_structural_checkpoint(tmp
     plan = {
         "plan_version": "mega-plan-v2",
         "target": {"launch_count": 2},
-        "resources": {"arch": "gfx950"},
+        "resources": {
+            "arch": "gfx950",
+            "local_memory": {"total_bytes": 160400, "limit_bytes": 163840},
+        },
         "schedule": {"policies": {
             "combine_transition":
                 "after_local_g1_g2_drain_without_grid_barrier",
@@ -291,7 +294,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     contract_sha = hashlib.sha256(
         yaml.safe_dump(contract, sort_keys=True).encode()
     ).hexdigest()
-    assert fixture["candidate_head"] == "eec2b64ef27534da0c11c0a15038ae8d2022aca8"
+    assert fixture["candidate_head"] == "fc99dd09b1873d6a048283a6fc519a40776527f7"
     assert fixture["contract_sha256"] == contract_sha
     assert fixture["required_check_count"] == len(
         MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
@@ -304,7 +307,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 25
+    assert fixture["required_failure_count"] == 15
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1674,6 +1677,238 @@ def test_value_flow_fails_closed_on_ambiguous_or_dead_sources():
     assert not _semantic_result("value_flow", ambiguous, relations)["pass"]
     dead = good.replace("consume(cache=forwarded)", "consume(cache=other)")
     assert not _semantic_result("value_flow", dead, relations)["pass"]
+
+
+def test_interprocedural_parameter_and_starred_abi_flow_rejects_discards():
+    source = (
+        "def run(fused_stage2, fused_args, fused_combine, "
+        "fused_combine_args, fused_quant_args):\n"
+        "    launch = compile_kernel(fused_stage2=fused_stage2, "
+        "fused_combine=fused_combine)\n"
+        "    fa = tuple(fused_args)\n"
+        "    ca = tuple(fused_combine_args)\n"
+        "    qa = tuple(fused_quant_args)\n"
+        "    _run_compiled(launch, *fa, *ca, *qa)\n"
+    )
+    relations = [
+        {"id": "used", "op": "parameters_used",
+         "parameters": ["fused_.*"], "min_parameters": 5},
+        {"id": "spec", "op": "depends",
+         "sink": {"node": "call", "call": "compile_kernel"},
+         "keyword": "fused_stage2", "source": "fused_stage2"},
+        {"id": "combine", "op": "depends",
+         "sink": {"node": "call", "call": "compile_kernel"},
+         "keyword": "fused_combine", "source": "fused_combine"},
+        {"id": "runtime", "op": "depends",
+         "sink": {"node": "call", "call": "_run_compiled"},
+         "star_arg": 0, "source": "fused_args"},
+        {"id": "abi_order", "op": "starred_arguments",
+         "call": {"node": "call", "call": "_run_compiled"},
+         "values": ["fa", "ca", "qa"]},
+    ]
+    result = _semantic_result("value_flow", source, relations, "run")
+    assert result["pass"], result["failures"]
+    mutations = [
+        source.replace("fused_stage2=fused_stage2",
+                       "fused_stage2=None"),
+        source.replace("    fa = tuple(fused_args)\n", ""),
+        source.replace("*fa, *ca, *qa", "*ca, *fa, *qa"),
+        source.replace("fused_combine=fused_combine",
+                       "fused_combine=None"),
+    ]
+    for mutated in mutations:
+        assert not _semantic_result(
+            "value_flow", mutated, relations, "run"
+        )["pass"]
+
+
+def test_tuple_and_mapping_provenance_reject_aliases_and_placeholders():
+    source = (
+        "def host(a, b, c, bm, bn):\n"
+        "    roots = (a, b, c)\n"
+        "    spec = dict(BM=bm, BN=bn, ready=True)\n"
+        "    return roots, spec\n"
+    )
+    relations = [
+        {"id": "roots", "op": "tuple_elements", "target": "roots",
+         "length": 3, "min_distinct": 3, "values": ["a", "b", "c"]},
+        {"id": "spec", "op": "mapping_entries",
+         "mapping": {"node": "assign", "target": "spec"},
+         "entries": {"BM": "bm", "BN": "bn", "ready": "True"},
+         "forbidden": ["0", "None"]},
+    ]
+    result = _semantic_result("value_flow", source, relations, "host")
+    assert result["pass"], result["failures"]
+    for mutated in (
+        source.replace("roots = (a, b, c)", "roots = (a, a, c)"),
+        source.replace("BN=bn", "BN=0"),
+        source.replace("ready=True", "ready=None"),
+    ):
+        assert not _semantic_result(
+            "value_flow", mutated, relations, "host"
+        )["pass"]
+
+
+def test_active_callable_and_decorator_checks_reject_dead_or_unrewritten_body():
+    source = (
+        "def compile_body(consts):\n"
+        "    emit = make_emitter(**consts)\n"
+        "    @jit\n"
+        "    def item(x):\n"
+        "        emit(x)\n"
+        "    return item\n"
+    )
+    relations = [
+        {"id": "factory", "op": "callable_identity", "active": True,
+         "factory_call": {"node": "call", "call": "make_emitter",
+                          "arg_count": 0, "star_keywords": 1},
+         "consumers": [{"scope": "compile_body.item", "active": True,
+                        "source": "emit",
+                        "call": {"node": "call", "call": "emit"}}]},
+        {"id": "decorated", "op": "count", "count": 1,
+         "select": {"node": "function", "name": "item",
+                    "decorators": ["jit"]}},
+    ]
+    result = _semantic_result(
+        "shared_callable", source, relations, "compile_body"
+    )
+    assert result["pass"], result["failures"]
+    dead = source.replace(
+        "    emit = make_emitter(**consts)\n",
+        "    if False:\n        emit = make_emitter(**consts)\n",
+    )
+    assert not _semantic_result(
+        "shared_callable", dead, relations, "compile_body"
+    )["pass"]
+    wrapped_dead = dead.replace("if False:", "if const_expr(False):")
+    assert not _semantic_result(
+        "shared_callable", wrapped_dead, relations, "compile_body"
+    )["pass"]
+    assert not _semantic_result(
+        "shared_callable", source.replace("    @jit\n", ""),
+        relations, "compile_body",
+    )["pass"]
+    assert not _semantic_result(
+        "shared_callable",
+        source.replace("make_emitter(**consts)", "make_emitter(0, **consts)"),
+        relations, "compile_body",
+    )["pass"]
+
+
+def test_exclusive_effect_and_unguarded_fallback_reject_v10_shapes():
+    source = (
+        "def kernel(diag, ready, pref):\n"
+        "    if diag:\n"
+        "        waitcnt()\n"
+        "        barrier()\n"
+        "        publish(ready)\n"
+        "    else:\n"
+        "        publish(ready)\n"
+        "    if idle:\n"
+        "        claim(ready)\n"
+    )
+    relations = [
+        {"id": "once", "op": "exclusive_effect",
+         "select": {"node": "call", "call": "publish"}},
+        {"id": "fallback", "op": "not_guarded",
+         "subject": {"node": "call", "call": "claim", "guard": "idle"},
+         "guard": "pref"},
+    ]
+    result = _semantic_result("structured_cfg", source, relations)
+    assert result["pass"], result["failures"]
+    sequential = source.replace(
+        "    else:\n        publish(ready)\n",
+        "    publish(ready)\n",
+    )
+    guarded = source.replace(
+        "    if idle:\n        claim(ready)\n",
+        "    if idle:\n        if pref:\n            claim(ready)\n",
+    )
+    assert not _semantic_result(
+        "structured_cfg", sequential, relations
+    )["pass"]
+    assert not _semantic_result(
+        "structured_cfg", guarded, relations
+    )["pass"]
+
+
+def test_per_row_address_def_use_rejects_uniform_arrival_address():
+    source = (
+        "def close(tx, packed_base, ready_table):\n"
+        "    meta = load(packed_base + tx * 4)\n"
+        "    peer = meta >> 24\n"
+        "    token = meta & 255\n"
+        "    ready = load(ready_table + peer * 8)\n"
+        "    atomic(ready + token * 4, 1)\n"
+    )
+    relations = [{
+        "id": "row", "op": "depends",
+        "sink": {"node": "call", "call": "atomic"},
+        "arg": 0, "source": "tx",
+    }]
+    result = _semantic_result(
+        "collective_protocol", source, relations, "close"
+    )
+    assert result["pass"], result["failures"]
+    uniform = source.replace("packed_base + tx * 4", "packed_base")
+    assert not _semantic_result(
+        "collective_protocol", uniform, relations, "close"
+    )["pass"]
+
+
+def test_group_segment_plan_relation_rejects_limit_overflow():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+        / "skill.md"
+    )
+    contract = MODULE.load_contract(path)
+    plan = {
+        "plan_version": "mega-plan-v2",
+        "target": {"launch_count": 2},
+        "resources": {
+            "arch": "gfx950",
+            "local_memory": {"total_bytes": 163841, "limit_bytes": 163840},
+        },
+        "schedule": {"policies": {
+            "combine_transition":
+                "after_local_g1_g2_drain_without_grid_barrier",
+            "scheduler_semantics":
+                "continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16",
+            "combine_semantics":
+                "runtime_p_direct_per_wave_wait_block_claim_one_system19_u1_u2_u4",
+        }},
+    }
+    valid, errors, _ = MODULE.validate_plan(contract, plan)
+    assert not valid
+    assert any("group_segment_within_gfx950" in error for error in errors)
+
+
+def test_constant_return_abstract_interpretation_checks_profile_branch():
+    source = (
+        "def choose(bucket, width):\n"
+        "    if bucket <= 2048:\n"
+        "        bm, nw = 32, 4\n"
+        "    else:\n"
+        "        bm, nw = 64, 8\n"
+        "    bn = 512 if width >= 4096 else 256\n"
+        "    return Config(BM=bm, BN=bn, NW=nw)\n"
+    )
+    relations = [{
+        "id": "profile", "op": "constant_return",
+        "inputs": {"bucket": 8192, "width": 7168},
+        "call": "Config",
+        "keywords": {"BM": 64, "BN": 512, "NW": 8},
+    }]
+    result = _semantic_result("value_flow", source, relations, "choose")
+    assert result["pass"], result["failures"]
+    mutated = source.replace("bm, nw = 64, 8", "bm, nw = 32, 4")
+    assert not _semantic_result(
+        "value_flow", mutated, relations, "choose"
+    )["pass"]
 
 
 def test_contract_score_denominator_is_stable_when_scope_is_missing(tmp_path):

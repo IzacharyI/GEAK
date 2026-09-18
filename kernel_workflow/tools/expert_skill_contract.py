@@ -94,15 +94,31 @@ def tree_digest(files: dict[str, Path]) -> str:
 
 
 class _RemoveStaticDeadCode(ast.NodeTransformer):
+    @staticmethod
+    def _static_bool(node: ast.AST) -> bool | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+            return node.value
+        if (
+            isinstance(node, ast.Call)
+            and _call_name(node) == "const_expr"
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, bool)
+        ):
+            return node.args[0].value
+        return None
+
     def visit_If(self, node: ast.If):  # noqa: N802
         node = self.generic_visit(node)
-        if isinstance(node.test, ast.Constant) and isinstance(node.test.value, bool):
-            return node.body if node.test.value else node.orelse
+        selected = self._static_bool(node.test)
+        if selected is not None:
+            return node.body if selected else node.orelse
         return node
 
     def visit_While(self, node: ast.While):  # noqa: N802
         node = self.generic_visit(node)
-        if isinstance(node.test, ast.Constant) and node.test.value is False:
+        if self._static_bool(node.test) is False:
             return node.orelse
         return node
 
@@ -2076,12 +2092,22 @@ class _SemanticModel:
                 hit = hit and bool(
                     re.fullmatch(str(spec.get("name") or ".*"), item.name)
                 )
+                if hit and spec.get("decorators") is not None:
+                    decorators = [ast.unparse(value) for value in item.decorator_list]
+                    hit = all(
+                        any(re.fullmatch(str(pattern), value) for value in decorators)
+                        for pattern in spec.get("decorators") or []
+                    )
             elif kind == "while":
                 hit = isinstance(item, ast.While) and self.matches(
                     item.test, spec.get("test")
                 )
             elif kind == "if":
                 hit = isinstance(item, ast.If) and self.matches(
+                    item.test, spec.get("test")
+                )
+            elif kind == "assert":
+                hit = isinstance(item, ast.Assert) and self.matches(
                     item.test, spec.get("test")
                 )
             elif kind == "for":
@@ -2117,6 +2143,8 @@ class _SemanticModel:
                         self.matches(value, pattern)
                         for value, pattern in zip(item.args, patterns)
                     )
+                if hit and spec.get("arg_count") is not None:
+                    hit = len(item.args) == int(spec["arg_count"])
                 if hit and spec.get("keywords") is not None:
                     values = {
                         keyword.arg: keyword.value
@@ -2126,6 +2154,11 @@ class _SemanticModel:
                     hit = all(
                         key in values and self.matches(values[key], pattern)
                         for key, pattern in (spec.get("keywords") or {}).items()
+                    )
+                if hit and spec.get("star_keywords") is not None:
+                    hit = (
+                        sum(keyword.arg is None for keyword in item.keywords)
+                        == int(spec["star_keywords"])
                     )
             elif kind == "return":
                 hit = (
@@ -2244,6 +2277,131 @@ class _SemanticModel:
         return getattr(first, "lineno", 0) < getattr(second, "lineno", 0)
 
 
+_CONST_UNKNOWN = object()
+
+
+def _constant_expr(node: ast.AST, environment: dict[str, Any]) -> Any:
+    """Evaluate a deliberately small, side-effect-free Python expression subset."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return environment.get(node.id, _CONST_UNKNOWN)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        values = [_constant_expr(value, environment) for value in node.elts]
+        return (
+            _CONST_UNKNOWN
+            if any(value is _CONST_UNKNOWN for value in values)
+            else tuple(values)
+        )
+    if isinstance(node, ast.UnaryOp):
+        value = _constant_expr(node.operand, environment)
+        if value is _CONST_UNKNOWN:
+            return value
+        if isinstance(node.op, ast.Not):
+            return not value
+        if isinstance(node.op, ast.USub):
+            return -value
+        if isinstance(node.op, ast.UAdd):
+            return +value
+        return _CONST_UNKNOWN
+    if isinstance(node, ast.BinOp):
+        left = _constant_expr(node.left, environment)
+        right = _constant_expr(node.right, environment)
+        if left is _CONST_UNKNOWN or right is _CONST_UNKNOWN:
+            return _CONST_UNKNOWN
+        operations = {
+            ast.Add: lambda: left + right,
+            ast.Sub: lambda: left - right,
+            ast.Mult: lambda: left * right,
+            ast.FloorDiv: lambda: left // right,
+            ast.Mod: lambda: left % right,
+            ast.BitAnd: lambda: left & right,
+            ast.BitOr: lambda: left | right,
+        }
+        operation = operations.get(type(node.op))
+        try:
+            return operation() if operation else _CONST_UNKNOWN
+        except (TypeError, ValueError, ZeroDivisionError):
+            return _CONST_UNKNOWN
+    if isinstance(node, ast.BoolOp):
+        values = [_constant_expr(value, environment) for value in node.values]
+        if any(value is _CONST_UNKNOWN for value in values):
+            return _CONST_UNKNOWN
+        return (
+            all(values) if isinstance(node.op, ast.And) else any(values)
+        )
+    if isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1:
+        left = _constant_expr(node.left, environment)
+        right = _constant_expr(node.comparators[0], environment)
+        if left is _CONST_UNKNOWN or right is _CONST_UNKNOWN:
+            return _CONST_UNKNOWN
+        comparisons = {
+            ast.Eq: lambda: left == right,
+            ast.NotEq: lambda: left != right,
+            ast.Lt: lambda: left < right,
+            ast.LtE: lambda: left <= right,
+            ast.Gt: lambda: left > right,
+            ast.GtE: lambda: left >= right,
+            ast.In: lambda: left in right,
+            ast.NotIn: lambda: left not in right,
+        }
+        comparison = comparisons.get(type(node.ops[0]))
+        try:
+            return comparison() if comparison else _CONST_UNKNOWN
+        except TypeError:
+            return _CONST_UNKNOWN
+    if isinstance(node, ast.IfExp):
+        test = _constant_expr(node.test, environment)
+        if test is _CONST_UNKNOWN:
+            return test
+        return _constant_expr(node.body if test else node.orelse, environment)
+    return _CONST_UNKNOWN
+
+
+def _constant_function_return(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    inputs: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    environment = dict(inputs)
+
+    def bind(target: ast.AST, value: Any) -> None:
+        if isinstance(target, ast.Name):
+            environment[target.id] = value
+        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, tuple):
+            if len(target.elts) == len(value):
+                for child, child_value in zip(target.elts, value):
+                    bind(child, child_value)
+
+    def execute(statements: list[ast.stmt]) -> ast.Return | None:
+        for statement in statements:
+            if isinstance(statement, ast.Assign):
+                value = _constant_expr(statement.value, environment)
+                for target in statement.targets:
+                    bind(target, value)
+            elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+                bind(statement.target, _constant_expr(statement.value, environment))
+            elif isinstance(statement, ast.If):
+                test = _constant_expr(statement.test, environment)
+                if test is _CONST_UNKNOWN:
+                    return None
+                returned = execute(statement.body if test else statement.orelse)
+                if returned is not None:
+                    return returned
+            elif isinstance(statement, ast.Return):
+                return statement
+        return None
+
+    returned = execute(function.body)
+    if returned is None or not isinstance(returned.value, ast.Call):
+        return None
+    values = {
+        str(keyword.arg): _constant_expr(keyword.value, environment)
+        for keyword in returned.value.keywords
+        if keyword.arg is not None
+    }
+    return _call_name(returned.value), values
+
+
 def _semantic_relation_failures(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -2265,7 +2423,14 @@ def _semantic_relation_failures(
             if "scope" in config
             else default_scope
         )
-        return model.scope(file_name, scope), file_name, scope
+        root = model.scope(file_name, scope)
+        if root is not None and config.get("active"):
+            parsed = ast.parse(_active_code(root))
+            if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                root = parsed.body[0] if parsed.body else None
+            else:
+                root = parsed
+        return root, file_name, scope
 
     def one(
         root: ast.AST | None,
@@ -2293,6 +2458,28 @@ def _semantic_relation_failures(
                 failures.append(
                     f"{label}: node count {len(found)} outside [{minimum},{maximum}]"
                 )
+        elif kind == "constant_return":
+            if not isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                failures.append(f"{label}: selected scope is not a function")
+            else:
+                evaluated = _constant_function_return(
+                    root, dict(relation.get("inputs") or {})
+                )
+                expected_call = str(relation.get("call") or "")
+                expected = dict(relation.get("keywords") or {})
+                if evaluated is None:
+                    failures.append(f"{label}: constant path is ambiguous")
+                else:
+                    called, values = evaluated
+                    bad = [
+                        key for key, value in expected.items()
+                        if values.get(str(key), _CONST_UNKNOWN) != value
+                    ]
+                    if (expected_call and not re.fullmatch(expected_call, called)) or bad:
+                        failures.append(
+                            f"{label}: return={called} values={values}, "
+                            f"wrong={bad}"
+                        )
         elif kind == "within_count":
             region = one(root, relation.get("region") or {}, f"{label}.region")
             if region is not None:
@@ -2346,6 +2533,20 @@ def _semantic_relation_failures(
                 for item in subjects
             ):
                 failures.append(f"{label}: not every subject is in the selected branch")
+        elif kind == "not_guarded":
+            subjects = model.select(root, relation.get("subject") or {})
+            if not subjects:
+                failures.append(f"{label}: no subject nodes")
+            elif any(
+                model.guarded(
+                    root,
+                    item,
+                    str(relation.get("guard") or ""),
+                    str(relation.get("arm") or "body"),
+                )
+                for item in subjects
+            ):
+                failures.append(f"{label}: a subject is under the forbidden branch")
         elif kind == "enclosed_by":
             subjects = model.select(root, relation.get("subject") or {})
             containers = model.select(root, relation.get("container") or {})
@@ -2399,6 +2600,13 @@ def _semantic_relation_failures(
                 if "arg" in relation:
                     arg = int(relation["arg"])
                     value = sink.args[arg] if arg < len(sink.args) else None
+                elif "star_arg" in relation:
+                    starred = [
+                        item.value for item in sink.args
+                        if isinstance(item, ast.Starred)
+                    ]
+                    position = int(relation["star_arg"])
+                    value = starred[position] if position < len(starred) else None
                 else:
                     keyword = str(relation.get("keyword") or "")
                     if relation.get("star_keyword"):
@@ -2489,6 +2697,147 @@ def _semantic_relation_failures(
                 failures.append(
                     f"{label}: found {len(calls)} calls (minimum {minimum}); "
                     f"mismatches={bad}"
+                )
+        elif kind == "parameters_used":
+            if not isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                failures.append(f"{label}: selected scope is not a function")
+            else:
+                patterns = [
+                    str(value) for value in relation.get("parameters") or [".*"]
+                ]
+                parameters = [
+                    argument.arg
+                    for argument in (
+                        list(root.args.posonlyargs)
+                        + list(root.args.args)
+                        + list(root.args.kwonlyargs)
+                    )
+                    if any(re.fullmatch(pattern, argument.arg) for pattern in patterns)
+                ]
+                loads = {
+                    item.id
+                    for item in ast.walk(root)
+                    if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
+                }
+                missing = [value for value in parameters if value not in loads]
+                minimum = int(relation.get("min_parameters", 1))
+                if len(parameters) < minimum or missing:
+                    failures.append(
+                        f"{label}: matched={parameters}, unused={missing}, "
+                        f"minimum={minimum}"
+                    )
+        elif kind == "tuple_elements":
+            target = str(relation.get("target") or "")
+            candidates = model.select(
+                root, {"node": "assign", "target": target}
+            )
+            values: list[ast.AST] | None = None
+            if len(candidates) == 1:
+                rhs = model._value(candidates[0])
+                if isinstance(rhs, (ast.Tuple, ast.List)):
+                    values = list(rhs.elts)
+            expected = [str(value) for value in relation.get("values") or []]
+            if values is None:
+                failures.append(f"{label}: tuple {target!r} is missing or ambiguous")
+            else:
+                exact_length = int(relation.get("length", len(expected) or len(values)))
+                bad = [
+                    position
+                    for position, pattern in enumerate(expected)
+                    if position >= len(values)
+                    or not model.matches(values[position], pattern)
+                ]
+                rendered = [model.text(value) for value in values]
+                minimum_distinct = int(
+                    relation.get("min_distinct", exact_length)
+                )
+                if (
+                    len(values) != exact_length
+                    or bad
+                    or len(set(rendered)) < minimum_distinct
+                ):
+                    failures.append(
+                        f"{label}: length={len(values)}/{exact_length}, "
+                        f"bad_positions={bad}, distinct={len(set(rendered))}/"
+                        f"{minimum_distinct}"
+                    )
+        elif kind == "mapping_entries":
+            selected = one(
+                root, relation.get("mapping") or {}, f"{label}.mapping"
+            )
+            rhs = model._value(selected) if selected is not None else None
+            entries: dict[str, ast.AST] = {}
+            if isinstance(rhs, ast.Dict):
+                entries = {
+                    str(key.value): value
+                    for key, value in zip(rhs.keys, rhs.values)
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+            elif isinstance(rhs, ast.Call) and _call_name(rhs) == "dict":
+                entries = {
+                    str(item.arg): item.value
+                    for item in rhs.keywords
+                    if item.arg is not None
+                }
+            expected = {
+                str(key): str(value)
+                for key, value in (relation.get("entries") or {}).items()
+            }
+            bad = [
+                key for key, pattern in expected.items()
+                if key not in entries or not model.matches(entries[key], pattern)
+            ]
+            forbidden = [str(value) for value in relation.get("forbidden") or []]
+            invalid = [
+                key for key, value in entries.items()
+                if any(model.matches(value, pattern) for pattern in forbidden)
+            ]
+            if bad or invalid:
+                failures.append(
+                    f"{label}: wrong entries={bad}, forbidden entries={invalid}"
+                )
+        elif kind == "starred_arguments":
+            call = one(root, relation.get("call") or {}, f"{label}.call")
+            if isinstance(call, ast.Call):
+                actual = [
+                    model.text(item.value)
+                    for item in call.args if isinstance(item, ast.Starred)
+                ]
+                expected = [str(value) for value in relation.get("values") or []]
+                if len(actual) != len(expected) or any(
+                    not re.fullmatch(pattern, value)
+                    for pattern, value in zip(expected, actual)
+                ):
+                    failures.append(
+                        f"{label}: starred arguments {actual} != {expected}"
+                    )
+        elif kind == "exclusive_effect":
+            nodes = model.select(root, relation.get("select") or {})
+            if len(nodes) == 1:
+                pass
+            elif len(nodes) == 2:
+                left_ifs = [
+                    item for item in model.ancestors(root, nodes[0])
+                    if isinstance(item, ast.If)
+                ]
+                common = next(
+                    (
+                        item for item in left_ifs
+                        if item in model.ancestors(root, nodes[1])
+                    ),
+                    None,
+                )
+                if common is None or (
+                    model._in_arm(root, nodes[0], common, "body")
+                    == model._in_arm(root, nodes[1], common, "body")
+                ):
+                    failures.append(
+                        f"{label}: effects are not mutually exclusive"
+                    )
+            else:
+                failures.append(
+                    f"{label}: expected one effect or one exclusive pair, "
+                    f"found {len(nodes)}"
                 )
         elif kind == "all_assignments_classified":
             assignments = model.select(root, relation.get("assignments") or {})

@@ -951,6 +951,7 @@ plan:
     - {id: combine_in_kernel, path: schedule.policies.combine_transition, op: eq, value: after_local_g1_g2_drain_without_grid_barrier}
     - {id: unified_semantic_loop, path: schedule.policies.scheduler_semantics, op: eq, value: continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16}
     - {id: direct_runtime_combine_item, path: schedule.policies.combine_semantics, op: eq, value: runtime_p_direct_per_wave_wait_block_claim_one_system19_u1_u2_u4}
+    - {id: group_segment_within_gfx950, left: {path: resources.local_memory.total_bytes}, op: lte, right: {path: resources.local_memory.limit_bytes}}
 
 # These probes describe the validated profile's present adapter only. Paths
 # and symbols are not applicability gates. After Analyze selects this adapter
@@ -977,18 +978,103 @@ checks:
   - id: fused_host_abi
     category: abi
     severity: required
-    kind: tuple_bindings
+    kind: value_flow
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     scope: MegaMoEV2._fused_all_kwargs
-    bindings:
-      - target: args
-        min_elements: 13
+    normalize_wrappers: [fx.Int32, fx.Int64]
+    relations:
+      - id: exact_stage2_runtime_roots
+        op: tuple_elements
+        target: args
+        length: 13
         min_distinct: 13
-        forbidden: ['None', '0', 'fx\.Int(?:32|64)\(0\)']
-      - target: c_args
-        min_elements: 7
+        values:
+          - self\._s1_out\.view\(-1\)\.data_ptr\(\)
+          - self\._s1_osd\.data_ptr\(\)
+          - self\.w2\.data_ptr\(\)
+          - self\.w2_scale\.data_ptr\(\)
+          - op\.sorted_expert_ids\.data_ptr\(\)
+          - op\.num_valid\.data_ptr\(\)
+          - 'self\._s1_dispatch_workspace\[[''"]max_expert_tiles[''"]\]\.data_ptr\(\)'
+          - op\.srcmap_em\.data_ptr\(\)
+          - op\.wts_em\.data_ptr\(\)
+          - op\.tile_row_base\.data_ptr\(\)
+          - comb_op\._fx_p2p_comb_inp
+          - self\._fx_fused_mtile_ctr
+          - max_m_blocks
+      - id: exact_combine_runtime_roots
+        op: tuple_elements
+        target: c_args
+        length: 7
         min_distinct: 7
-        forbidden: ['None', '0', 'fx\.Int(?:32|64)\(0\)']
+        values:
+          - comb_op\._fx_comb_inp
+          - comb_op\._fx_comb_out
+          - comb_op\._fx_tok_ready
+          - self\._fx_fused_comb_ctr
+          - comb_op\._fx_p2p_tok_ready
+          - self\._fx_fused_comb_mtile_ctr
+          - self\._fx_fused_comb_wait_stats
+      - id: correct_max_m_blocks
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: max_m_blocks
+          value: '\(self\._s1_nvm \+ stage2\.block_m - 1\) // stage2\.block_m'
+      - id: stage2_spec_is_authoritative
+        op: mapping_entries
+        mapping: {node: assign, target: s2_spec}
+        entries:
+          BM: stage2\.block_m
+          BN: stage2\.block_n
+          BK: stage2\.block_k
+          SBM: config\.stage1\.sort_block_m
+          publish_tok_ready: bool\(fuse_combine\)
+      - id: combine_control_allocated
+        op: count
+        scope: MegaMoEV2._build_fused_stage2
+        count: 1
+        select:
+          node: assign
+          target: self\._fused_comb_ctr
+          value: 'torch\.zeros\(4, dtype=torch\.int32, device=dev\)'
+      - id: g2_activation_arena_allocated
+        op: count
+        scope: MegaMoEV2._build_fused_stage1
+        count: 1
+        select:
+          node: assign
+          target: self\._s1_out
+          value: torch\.zeros
+          search: true
+      - id: g2_scale_arena_allocated
+        op: count
+        scope: MegaMoEV2._build_fused_stage1
+        count: 1
+        select:
+          node: assign
+          target: self\._s1_osd
+          value: torch\.zeros
+          search: true
+      - id: g1_completion_allocated
+        op: count
+        scope: MegaMoEV2._build_fused_stage2
+        count: 1
+        select:
+          node: assign
+          target: self\._fused_mtile_ctr
+          value: torch\.zeros
+          search: true
+      - id: g2_close_allocated
+        op: count
+        scope: MegaMoEV2._build_fused_stage2
+        count: 1
+        select:
+          node: assign
+          target: self\._fused_comb_mtile_ctr
+          value: torch\.zeros
+          search: true
 
   - id: selected_fused_host_bindings
     category: abi
@@ -1029,12 +1115,43 @@ checks:
   - id: fused_launch_abi
     category: abi
     severity: required
-    kind: call_arity
+    kind: value_flow
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: run_mega_moe_stage1
-    call: _run_compiled
-    min_arguments: 22
-    min_starred: 2
+    relations:
+      - id: all_fused_parameters_consumed
+        op: parameters_used
+        parameters: ['fused_.*']
+        min_parameters: 9
+      - id: stage2_spec_reaches_compile
+        op: depends
+        sink: {node: call, call: compile_mega_moe_stage1}
+        keyword: fused_stage2
+        source: fused_stage2
+      - id: combine_spec_reaches_compile
+        op: depends
+        sink: {node: call, call: compile_mega_moe_stage1}
+        keyword: fused_combine
+        source: fused_combine
+      - id: runtime_chunk_reaches_compile
+        op: depends
+        sink: {node: call, call: compile_mega_moe_stage1}
+        keyword: fused_g2_chunk
+        source: fused_g2_chunk
+      - id: stage2_abi_reaches_launch
+        op: depends
+        sink: {node: call, call: _run_compiled}
+        star_arg: 0
+        source: fused_args
+      - id: combine_abi_reaches_launch
+        op: depends
+        sink: {node: call, call: _run_compiled}
+        star_arg: 1
+        source: fused_combine_args
+      - id: launch_abi_group_order
+        op: starred_arguments
+        call: {node: call, call: _run_compiled}
+        values: [fa, ca, qa]
 
   - id: host_specializes_g2_chunk
     category: profile_adapter_hint
@@ -1056,13 +1173,18 @@ checks:
         op: count
         count: 1
         select: {node: call, call: _do_scheduled_tile, args: ['unit'], guard: 'kind == 1'}
-      - id: completion_is_per_mtile
-        op: count
-        count: 2
+      - id: completion_is_exactly_once
+        op: exclusive_effect
         select:
           node: call
           call: atomic_add_system
           args: ['g2_ctr_i64 \+ unit // n_tiles_i32 \* 4', '1']
+      - id: shipped_completion_release_order
+        op: ordered
+        selectors:
+          - {node: call, call: s_waitcnt, args: ['0'], guard: 'const_expr\(not fused_diag_nopub\)'}
+          - {node: call, call: barrier, guard: 'const_expr\(not fused_diag_nopub\)'}
+          - {node: call, call: atomic_add_system, args: ['g2_ctr_i64 \+ unit // n_tiles_i32 \* 4', '1'], guard: 'const_expr\(not fused_diag_nopub\)'}
       - id: completion_follows_g1
         op: all_precede
         first: {node: call, call: _do_scheduled_tile, args: ['unit']}
@@ -1185,6 +1307,14 @@ checks:
           node: assign
           target: total_g2_claims
           value: ceildiv\(total_g2_pairs, g2_chunk\)
+      - id: compile_chunk_from_runtime_parameter
+        op: count
+        scope: compile_mega_moe_stage1
+        count: 1
+        select:
+          node: assign
+          target: G2_CHUNK
+          value: max\(1, int\(fused_g2_chunk\)\)
       - id: c1_c16_host_mapping
         op: count
         file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
@@ -1201,6 +1331,13 @@ checks:
         select:
           node: return
           value: work_shard \+ local \* WORK_SHARDS
+      - id: sharded_head_address
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: g2_head
+          value: 's2_ctr \+ i32_s2_maxmb \* 4 \+ work_shard \* 64'
       - id: contiguous_chunk_base
         op: count
         count: 1
@@ -1217,6 +1354,16 @@ checks:
         region: {node: if, test: 'g2_pend > 0'}
         region_arm: body
         select: {node: call, call: 'atomic_add_agent|int32_wait_until_greater_than'}
+      - id: continuation_seed_only_after_claim
+        op: guarded
+        subject: {node: assign, target: g2_next, value: 'unit \+ 1'}
+        guard: g2_pend > 0
+        arm: orelse
+      - id: continuation_count_seed_only_after_claim
+        op: guarded
+        subject: {node: assign, target: g2_pend, value: 'g2_chunk - 1'}
+        guard: g2_pend > 0
+        arm: orelse
       - id: preemption_peek_before_claim
         op: ordered
         selectors:
@@ -1228,6 +1375,14 @@ checks:
             guards:
               - {test: 'done >= n_tiles_i32'}
               - {test: '_g2_cid\(got\) < total_g2_claims'}
+      - id: readiness_reads_g1_completion
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: done
+          value: 'atomic_add_agent\(g2_ctr_i64 \+ _g2_tile_of\(_pl\) \* 4, 0\)'
+          search: true
       - id: g1_claim_then_execute
         op: ordered
         selectors:
@@ -1244,6 +1399,10 @@ checks:
           - {node: assign, target: kind, value: '1'}
           - {node: call, call: atomic_add_agent, args: [g2_head, '1'], guard: 'kind == 0'}
           - {node: call, call: int32_wait_until_greater_than, guard: 'kind == 0'}
+      - id: balanced_fallback_always_claims
+        op: not_guarded
+        subject: {node: call, call: atomic_add_agent, args: [g2_head, '1'], guard: 'kind == 0'}
+        guard: g2_pref and kind == 0
       - id: chunk_seed_after_claim
         op: ordered
         selectors:
@@ -1257,6 +1416,21 @@ checks:
           - {guard: 'g2_pend > 0'}
           - {guard: 'done >= n_tiles_i32'}
           - {guard: '_g2_cid\(got\) < total_g2_claims'}
+      - id: native_stage2_m_extent
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: total_m_blocks2
+          value: 'ceildiv\(num_valid, S2\[[''"]BM[''"]\]\)'
+      - id: native_stage2_n_extent
+        op: count
+        count: 1
+        select: {node: assign, target: s2_num_n, value: 'S2\[[''"]num_n[''"]\]'}
+      - id: native_stage2_halves
+        op: count
+        count: 1
+        select: {node: assign, target: s2_halves, value: 'S2\[[''"]halves[''"]\]'}
       - id: no_g2_effect_holds_g1
         op: forbidden_each
         regions: {node: if, test: 'kind == 1'}
@@ -1302,15 +1476,26 @@ checks:
     kind: shared_callable
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
     scope: compile_mega_moe_stage1
+    normalize_wrappers: [fx.Int32, fx.Int64]
     relations:
       - id: persistent_factory_dataflow
         op: callable_identity
-        factory_call: {node: call, call: make_stage2_body_emitter}
+        factory_call: {node: call, call: make_stage2_body_emitter, arg_count: 0, star_keywords: 1}
         consumers:
           - file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
             scope: compile_mega_moe_stage1.kernel
             source: 'S2\[[''"]emit[''"]\]'
-            call: {node: call, call: 'S2\[[''"]emit[''"]\]'}
+            call:
+              node: call
+              call: 'S2\[[''"]emit[''"]\]'
+              keywords:
+                arg_aq: s2_aq
+                arg_ascale: s2_ascale
+                arg_bq: s2_bq
+                arg_bscale: s2_bscale
+                i32_max_m_blocks: i32_s2_maxmb
+                lds_slab: _s2_slab
+                lds_byte_off: '_half \* S2\[[''"]slab[''"]\]'
       - id: authoritative_constants_to_factory
         op: depends
         sink: {node: call, call: make_stage2_body_emitter}
@@ -1320,6 +1505,35 @@ checks:
         op: depends
         sink: {node: assign, target: S2, value: emit_stage2_body, search: true}
         source: emit_stage2_body
+      - id: stage2_geometry_reaches_jit_identity
+        op: depends
+        sink: {node: assign, target: kernel_name}
+        source: 'S2\[[''"](?:halves|BM|BN)[''"]\]'
+      - id: combine_presence_reaches_jit_identity
+        op: depends
+        sink: {node: assign, target: kernel_name}
+        source: fused_combine
+      - id: lds_pool_covers_stage2
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: lds_pool_bytes
+          value: 'max\(lds_pool_bytes, S2_SLAB \* S2_HALVES\)'
+      - id: native_nw8_selected
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: _s2_nw
+          value: NUM_WAVES if fused_s2_nw8 else 4
+      - id: native_bn_widening
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: 's2_kw\[[''"]BN[''"]\]'
+          value: 'int\(s2_kw\.get\([''"]BN[''"], 256\)\) \* \(NUM_WAVES // 4\)'
 
   - id: nontrivial_stage2_body
     category: correctness
@@ -1345,6 +1559,49 @@ checks:
       - {id: token_resource, op: count, count: 1, select: {node: call, call: create_buffer_resource_from_addr, args: [arg_stids]}}
       - {id: weight_resource, op: count, count: 1, select: {node: call, call: create_buffer_resource_from_addr, args: [arg_sweights]}}
       - {id: peer_resource, op: count, count: 1, select: {node: call, call: create_buffer_resource_from_addr, args: [arg_p2p_comb_inp]}}
+      - id: shared_body_is_rewritten
+        op: count
+        scope: make_stage2_body_emitter.emit_stage2_body
+        count: 1
+        select: {node: function, name: _emit_stage2_body, decorators: ['flyc\.jit']}
+      - id: slab_pointer_base
+        op: count
+        scope: make_stage2_body_emitter.emit_stage2_body
+        count: 1
+        select:
+          node: assign
+          target: _lds_base_i32
+          value: 'fx\.ptrtoint\(_slab\.buf\.ptr\)'
+          search: true
+      - id: slab_offset_applied
+        op: count
+        scope: make_stage2_body_emitter.emit_stage2_body
+        count: 1
+        select:
+          node: assign
+          target: _lds_base_i32
+          value: '_lds_base_i32 \+ lds_byte_off'
+      - id: peer_base_populates_lds
+        op: count
+        count: 1
+        select:
+          node: call
+          call: ptr_store
+          args: [peer_base, 'lds_typed_ptr\(_lds_base_i32 \+ lds_peer_off \+ tx_i32 \* 8, T\.i64, align=8\)']
+      - id: sorted_route_populates_lds
+        op: count
+        count: 1
+        select:
+          node: call
+          call: ptr_store
+          args: [packed, 'lds_typed_ptr\(lds_base_i32 \+ lds_packed_off \+ tx_i32 \* 4, T\.i32, align=4\)']
+      - id: route_weight_populates_lds
+        op: count
+        count: 1
+        select:
+          node: call
+          call: ptr_store
+          args: [weight, 'lds_typed_ptr\(lds_base_i32 \+ lds_weight_off \+ tx_i32 \* 4, T\.f32, align=4\)']
       - id: every_compute_preloaded
         op: all_precede
         first: {node: call, call: issue_all_a_loads}
@@ -1375,9 +1632,11 @@ checks:
     relations:
       - id: standalone_factory_identity
         op: callable_identity
+        active: true
         factory_call: {node: call, call: make_stage2_body_emitter}
         consumers:
           - scope: compile_mega_moe_stage2.kernel_epilog_v2
+            active: true
             source: emit_stage2_body
             call:
               node: call
@@ -1385,6 +1644,7 @@ checks:
               keywords: {lds_slab: _slab, lds_byte_off: lds_off, arg_aq: arg_aq, arg_ascale: arg_ascale, arg_bq: arg_bq, arg_bscale: arg_bscale}
       - id: standalone_constants_to_factory
         op: depends
+        active: true
         sink: {node: call, call: make_stage2_body_emitter}
         star_keyword: true
         source: consts
@@ -1398,6 +1658,69 @@ checks:
     relations:
       - {id: nw_domain, op: count, count: 1, select: {node: if, test: 'NW not in \(4, 8\)'}}
       - {id: nonzero_divisible_geometry, op: count, count: 1, select: {node: if, test: 'BN % NW or BN // NW % 16 or BM % NW'}}
+      - id: authoritative_nonzero_offsets
+        op: mapping_entries
+        mapping: {node: assign, target: consts}
+        entries:
+          BM: BM
+          BN: BN
+          BK: BK
+          NW: NW
+          INTER_MAX: INTER_MAX
+          lds_packed_off: lds_packed_off
+          lds_weight_off: lds_weight_off
+          lds_peer_off: lds_peer_off
+          lds_ready_off: lds_ready_off
+          _recv_cap: _recv_cap
+          _comb_inp_nbytes: _comb_inp_nbytes
+        forbidden: ['0', 'None']
+      - id: inter_extent_nonzero_contract
+        op: count
+        count: 1
+        select:
+          node: assert
+          test: 'INTER_MAX % BK == 0'
+      - id: route_capacity_derived
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: _recv_cap
+          value: 'npes \* max_tok if recv_cap is None else int\(recv_cap\)'
+      - id: p2p_buffer_positive_bounded
+        op: count
+        count: 1
+        select:
+          node: if
+          test: 'not 0 < _comb_inp_nbytes < _BUFFER_OFFSET_ABI_BYTES'
+      - id: packed_offset_from_compute_slab
+        op: count
+        count: 1
+        select: {node: assign, target: lds_packed_off, value: compute_lds_bytes}
+      - id: peer_offset_after_metadata
+        op: count
+        count: 1
+        select: {node: assign, target: lds_peer_off, value: 'lds_weight_off \+ BM \* 4'}
+      - id: profile_large_stage1_geometry
+        op: constant_return
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+        scope: _select_large_stage1
+        inputs: {bucket: 8192, experts_per_rank: 48, inter_dim: 3072}
+        call: Stage1Config
+        keywords: {sort_block_m: 128, tile_n: 512, num_waves: 8}
+      - id: profile_large_stage2_geometry
+        op: constant_return
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+        scope: _select_large_stage2
+        inputs: {bucket: 8192, sort_block_m: 128, model_dim: 7168}
+        call: Stage2Config
+        keywords: {block_m: 64, block_n: 256, persist: true}
+      - id: profile_stage2_block_k
+        op: count
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py
+        scope: ''
+        count: 1
+        select: {node: assign, target: block_k, value: '256'}
       - id: wave_n_propagation
         op: count
         scope: p2p_scatter_epilog
@@ -1413,7 +1736,11 @@ checks:
     relations:
       - id: combine_factory_identity
         op: callable_identity
-        factory_call: {node: call, call: make_combine_reduce_emitter}
+        factory_call:
+          node: call
+          call: make_combine_reduce_emitter
+          arg_count: 1
+          args: ['C\[[''"]spec[''"]\]']
         consumers:
           - scope: compile_mega_moe_stage1.kernel
             source: _c_emit
@@ -1422,6 +1749,13 @@ checks:
         op: depends
         sink: {node: assign, target: _c_total}
         source: _c_consts
+      - id: returned_extent_is_total_work
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: _c_total
+          value: '_c_consts\[[''"]s3_total_work[''"]\]'
 
   - id: progressive_token_readiness
     category: lifecycle
@@ -1435,6 +1769,13 @@ checks:
         op: count
         count: 1
         select: {node: assign, target: _c_pad, value: fz_k \* c_epoch}
+      - id: epoch_reads_combine_generation
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: c_epoch
+          value: '_buffer_load\(_make_buffer_from_addr\(c_ctr, fx\.Int32\), 1, fx\.Int32, cache_modifier=_SC0_CACHE\)'
       - id: omitted_range_only
         op: guarded
         subject: {node: call, call: _buffer_store, args: [_c_rdy_rsrc, _c_t, _c_pad]}
@@ -1466,6 +1807,13 @@ checks:
           node: call
           call: _buffer_store
           args: [_c_rsrc, '1', '_buffer_load\(_c_rsrc, 1, fx.Int32\) \+ 1', fx.Int32]
+      - id: combine_generation_resource
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: _c_rsrc
+          value: '_make_buffer_from_addr\(c_ctr, fx\.Int32\)'
       - id: generation_owner_only
         op: guarded
         subject:
@@ -1485,6 +1833,13 @@ checks:
         op: all_precede
         first: {node: call, call: _buffer_store, args: [_c_rdy_rsrc, _c_t, _c_pad]}
         second: {node: call, call: emit_dispatch_plan}
+      - id: generation_before_plan_ready
+        op: all_precede
+        first:
+          node: call
+          call: _buffer_store
+          args: [_c_rsrc, '1', '_buffer_load\(_c_rsrc, 1, fx.Int32\) \+ 1', fx.Int32]
+        second: {node: call, call: emit_dispatch_plan}
 
   - id: combine_output_work_item
     category: schedule
@@ -1500,6 +1855,18 @@ checks:
       - {id: total_items, op: count, count: 1, select: {node: assign, target: s3_total_work, value: cur_rank_num_token \* warps_per_tok}}
       - {id: bounded_tail, op: count, count: 1, select: {node: assign, target: eff_end, value: '\(rem_hdim < hdim_per_warp\)\.select\(rem_hdim, hdim_per_warp\)'}}
       - {id: generation_wait_target, op: count, count: 1, select: {node: assign, target: _tok_ready_target, value: tok_ready_expected \* tok_ready_epoch}}
+      - id: rewritten_dynamic_item
+        op: count
+        count: 1
+        select: {node: function, name: _emit_item, decorators: ['flyc\.jit']}
+      - id: block_fp8_row_bytes
+        op: count
+        scope: _combine_transport_spec
+        count: 1
+        select:
+          node: assign
+          target: nbytes
+          value: 'hidden_dim \+ hidden_dim // 32'
 
   - id: combine_launch_bindings
     category: correctness
@@ -1515,6 +1882,8 @@ checks:
         select:
           node: call
           call: make_combine_reduce_emitter
+          arg_count: 1
+          args: ['C\[[''"]spec[''"]\]']
           keywords:
             blockwise_fp8_transport: 'C\[[''"]blockwise[''"]\]'
             addr_shmem_tok: c_inp
@@ -1523,6 +1892,15 @@ checks:
             tok_ready_addr: c_tok_ready
             tok_ready_expected: fuse_topk
             tok_ready_epoch: c_epoch
+      - id: output_resource_from_real_root
+        op: count
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+        scope: make_combine_reduce_emitter
+        count: 1
+        select:
+          node: call
+          call: create_buffer_resource_from_addr
+          args: [addr_out_shmem_tok]
       - id: input_output_are_distinct
         op: different_call_values
         call: {node: call, call: make_combine_reduce_emitter}
@@ -1618,6 +1996,13 @@ checks:
         op: guarded
         subject: {node: call, call: _c_emit, args: [_c_item]}
         guard: _c_item < _c_total
+      - id: termination_uses_total_items
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: comb_active
+          value: _c_base < _c_total
 
   - id: p2p_visibility
     category: correctness
@@ -1694,6 +2079,13 @@ checks:
           - {node: call, call: atomic_add_agent, args: ['arg_mtile_ctr \+ m_block_idx \* 4', '1']}
           - {node: call, call: ptr_store, args: [prev, _bcast]}
           - {node: assign, target: closes_tile, value: 'fx\.ptr_load\(_bcast\) == num_n_blocks - 1'}
+      - id: close_broadcast_has_dedicated_offset
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: _bcast
+          value: 'lds_typed_ptr\(lds_base_i32 \+ lds_ready_off \+ npes \* 8, T\.i32, align=4\)'
       - id: closer_test
         op: count
         count: 1
@@ -1739,6 +2131,26 @@ checks:
         sink: {node: call, call: atomic_add_system}
         arg: 0
         source: mt_lid
+      - id: per_row_packed_route_load
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: pk_meta
+          value: 'fx\.ptr_load\(lds_typed_ptr\(lds_base_i32 \+ lds_packed_off \+ tx_i32 \* 4, T\.i32, align=4\)\)'
+      - id: peer_decoded_from_row
+        op: count
+        count: 1
+        select: {node: assign, target: mt_pe, value: mt_t >> log2_max_tok}
+      - id: token_decoded_from_row
+        op: count
+        count: 1
+        select: {node: assign, target: mt_lid, value: 'mt_t & mask_max_tok'}
+      - id: distinct_row_arrival_address
+        op: depends
+        sink: {node: call, call: atomic_add_system}
+        arg: 0
+        source: tx_i32
 
   - id: bucket_512_payload_rows
     category: plan
