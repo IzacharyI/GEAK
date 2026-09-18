@@ -2166,6 +2166,10 @@ class _SemanticModel:
                     and item.value is not None
                     and self.matches(item.value, spec.get("value"))
                 )
+            elif kind == "attribute":
+                hit = isinstance(item, ast.Attribute) and self.matches(
+                    item, spec.get("value")
+                )
             else:
                 hit = False
             if hit and spec.get("guard") is not None:
@@ -2293,6 +2297,21 @@ def _constant_expr(node: ast.AST, environment: dict[str, Any]) -> Any:
             if any(value is _CONST_UNKNOWN for value in values)
             else tuple(values)
         )
+    if isinstance(node, ast.Dict):
+        keys = [_constant_expr(value, environment) for value in node.keys]
+        values = [_constant_expr(value, environment) for value in node.values]
+        if any(value is _CONST_UNKNOWN for value in [*keys, *values]):
+            return _CONST_UNKNOWN
+        return dict(zip(keys, values))
+    if isinstance(node, ast.Subscript):
+        value = _constant_expr(node.value, environment)
+        index = _constant_expr(node.slice, environment)
+        if value is _CONST_UNKNOWN or index is _CONST_UNKNOWN:
+            return _CONST_UNKNOWN
+        try:
+            return value[index]
+        except (KeyError, IndexError, TypeError):
+            return _CONST_UNKNOWN
     if isinstance(node, ast.UnaryOp):
         value = _constant_expr(node.operand, environment)
         if value is _CONST_UNKNOWN:
@@ -2355,7 +2374,184 @@ def _constant_expr(node: ast.AST, environment: dict[str, Any]) -> Any:
         if test is _CONST_UNKNOWN:
             return test
         return _constant_expr(node.body if test else node.orelse, environment)
+    if isinstance(node, ast.Call):
+        called = _call_name(node)
+        args = [_constant_expr(value, environment) for value in node.args]
+        if any(value is _CONST_UNKNOWN for value in args):
+            return _CONST_UNKNOWN
+        functions = {
+            "int": int,
+            "bool": bool,
+            "tuple": tuple,
+            "max": max,
+            "min": min,
+            "len": len,
+        }
+        function = functions.get(called)
+        if function is None:
+            return _CONST_UNKNOWN
+        try:
+            return function(*args)
+        except (TypeError, ValueError):
+            return _CONST_UNKNOWN
     return _CONST_UNKNOWN
+
+
+def _is_statically_hashable(
+    model: _SemanticModel,
+    root: ast.AST,
+    node: ast.AST,
+    before: int | None = None,
+    seen: set[str] | None = None,
+) -> bool:
+    if isinstance(node, ast.Constant):
+        try:
+            hash(node.value)
+            return True
+        except TypeError:
+            return False
+    if isinstance(node, ast.Tuple):
+        return all(
+            _is_statically_hashable(model, root, value, before, seen)
+            for value in node.elts
+        )
+    if isinstance(node, ast.IfExp):
+        return _is_statically_hashable(
+            model, root, node.body, before, seen
+        ) and _is_statically_hashable(model, root, node.orelse, before, seen)
+    if isinstance(node, ast.Name):
+        seen = set(seen or ())
+        if node.id in seen:
+            return False
+        definitions = model.definitions(root, node.id, before=before)
+        if len(definitions) != 1:
+            return False
+        value = model._value(definitions[0])
+        return value is not None and _is_statically_hashable(
+            model,
+            root,
+            value,
+            getattr(definitions[0], "lineno", None),
+            seen | {node.id},
+        )
+    if isinstance(node, ast.Call):
+        called = _call_name(node)
+        if called in {"int", "bool", "str", "float"}:
+            return True
+        if called == "tuple" and len(node.args) == 1:
+            argument = node.args[0]
+            if (
+                isinstance(argument, ast.Call)
+                and _call_name(argument) == "sorted"
+                and len(argument.args) == 1
+                and isinstance(argument.args[0], ast.Call)
+                and isinstance(argument.args[0].func, ast.Attribute)
+                and argument.args[0].func.attr == "items"
+            ):
+                return True
+            return _is_statically_hashable(model, root, argument, before, seen)
+    return False
+
+
+def _definite_self_attributes(
+    tree: ast.AST,
+    class_name: str,
+    entry_name: str,
+) -> set[str]:
+    functions = _qualified_function_nodes(tree)
+    class_functions = {
+        name.rsplit(".", 1)[-1]: node
+        for name, node in functions.items()
+        if name.startswith(f"{class_name}.")
+        and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    visiting: set[str] = set()
+
+    def analyze(name: str) -> set[str]:
+        if name in visiting or name not in class_functions:
+            return set()
+        visiting.add(name)
+        function = class_functions[name]
+
+        mappings: dict[str, set[str]] = {}
+        for statement in function.body:
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and isinstance(statement.value, ast.Dict)
+            ):
+                mappings[statement.targets[0].id] = {
+                    str(key.value)
+                    for key in statement.value.keys
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
+                }
+
+        def sequence(statements: list[ast.stmt], incoming: set[str]) -> set[str]:
+            definite = set(incoming)
+            for statement in statements:
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    targets = (
+                        statement.targets
+                        if isinstance(statement, ast.Assign)
+                        else [statement.target]
+                    )
+                    definite.update(
+                        target.attr
+                        for target in targets
+                        if isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "self"
+                    )
+                elif isinstance(statement, ast.If):
+                    body = sequence(statement.body, definite)
+                    other = sequence(statement.orelse, definite)
+                    definite = body & other
+                elif isinstance(statement, ast.For):
+                    mapping_name = (
+                        statement.iter.func.value.id
+                        if isinstance(statement.iter, ast.Call)
+                        and isinstance(statement.iter.func, ast.Attribute)
+                        and statement.iter.func.attr == "items"
+                        and isinstance(statement.iter.func.value, ast.Name)
+                        else ""
+                    )
+                    has_dynamic_setattr = any(
+                        isinstance(item, ast.Call)
+                        and _call_name(item) == "setattr"
+                        and len(item.args) >= 2
+                        and isinstance(item.args[0], ast.Name)
+                        and item.args[0].id == "self"
+                        for item in ast.walk(statement)
+                    )
+                    if has_dynamic_setattr:
+                        definite.update(mappings.get(mapping_name, set()))
+                elif isinstance(statement, ast.Expr) and isinstance(
+                    statement.value, ast.Call
+                ):
+                    call = statement.value
+                    if (
+                        isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == "self"
+                    ):
+                        definite.update(analyze(call.func.attr))
+                    elif (
+                        _call_name(call) == "setattr"
+                        and len(call.args) >= 2
+                        and isinstance(call.args[0], ast.Name)
+                        and call.args[0].id == "self"
+                        and isinstance(call.args[1], ast.Constant)
+                        and isinstance(call.args[1].value, str)
+                    ):
+                        definite.add(call.args[1].value)
+            return definite
+
+        result = sequence(function.body, set())
+        visiting.remove(name)
+        return result
+
+    return analyze(entry_name)
 
 
 def _constant_function_return(
@@ -2480,6 +2676,62 @@ def _semantic_relation_failures(
                             f"{label}: return={called} values={values}, "
                             f"wrong={bad}"
                         )
+        elif kind == "profile_value":
+            selected = one(
+                root, relation.get("select") or {}, f"{label}.value"
+            )
+            value = model._value(selected) if selected is not None else None
+            actual = (
+                _constant_expr(value, dict(relation.get("inputs") or {}))
+                if value is not None
+                else _CONST_UNKNOWN
+            )
+            expected = relation.get("value", _CONST_UNKNOWN)
+            maximum = relation.get("max", _CONST_UNKNOWN)
+            if (
+                actual is _CONST_UNKNOWN
+                or (expected is not _CONST_UNKNOWN and actual != expected)
+                or (
+                    maximum is not _CONST_UNKNOWN
+                    and (not isinstance(actual, (int, float)) or actual > maximum)
+                )
+            ):
+                failures.append(
+                    f"{label}: profile value={actual!r}, "
+                    f"expected={expected!r}, max={maximum!r}"
+                )
+        elif kind == "profile_group_segment":
+            inputs = dict(relation.get("inputs") or {})
+
+            def selected_value(key: str) -> Any:
+                selected = one(
+                    root,
+                    relation.get(key) or {},
+                    f"{label}.{key}",
+                )
+                value = model._value(selected) if selected is not None else None
+                return (
+                    _constant_expr(value, inputs)
+                    if value is not None else _CONST_UNKNOWN
+                )
+
+            base = selected_value("base")
+            role = selected_value("role")
+            additive = selected_value("additive")
+            halves = int(relation.get("role_multiplier", 1))
+            limit = int(relation.get("limit", 0))
+            if any(
+                value is _CONST_UNKNOWN for value in (base, role, additive)
+            ):
+                failures.append(f"{label}: profile components are ambiguous")
+            else:
+                total = max(base, role * halves) + additive
+                expected = relation.get("expected")
+                if total > limit or (expected is not None and total != int(expected)):
+                    failures.append(
+                        f"{label}: group_segment={total}, expected={expected}, "
+                        f"limit={limit}"
+                    )
         elif kind == "within_count":
             region = one(root, relation.get("region") or {}, f"{label}.region")
             if region is not None:
@@ -2507,6 +2759,18 @@ def _semantic_relation_failures(
                 for left, right in zip(nodes, nodes[1:])
             ):
                 failures.append(f"{label}: nodes do not dominate in declared order")
+        elif kind == "body_prefix":
+            region = one(root, relation.get("region") or {}, f"{label}.region")
+            body = getattr(region, "body", None) if region is not None else None
+            expected = relation.get("select") or {}
+            if not isinstance(body, list) or not body:
+                failures.append(f"{label}: selected region has no body")
+            elif not model.select(
+                ast.Module(body=[body[0]], type_ignores=[]), expected
+            ):
+                failures.append(
+                    f"{label}: first statement does not match required prefix"
+                )
         elif kind == "all_precede":
             first = model.select(root, relation.get("first") or {})
             second = model.select(root, relation.get("second") or {})
@@ -2560,6 +2824,24 @@ def _semantic_relation_failures(
                 for item in subjects
             ):
                 failures.append(f"{label}: a subject escapes its required container")
+        elif kind == "ancestor_count":
+            subjects = model.select(root, relation.get("subject") or {})
+            containers = model.select(root, relation.get("container") or {})
+            expected = int(relation.get("count", 1))
+            bad = [
+                getattr(item, "lineno", 0)
+                for item in subjects
+                if sum(
+                    container in model.ancestors(root, item)
+                    for container in containers
+                )
+                != expected
+            ]
+            if not subjects or bad:
+                failures.append(
+                    f"{label}: subjects={len(subjects)}, bad_lines={bad}, "
+                    f"expected_ancestors={expected}"
+                )
         elif kind == "forbidden":
             region = one(root, relation.get("region") or {}, f"{label}.region")
             if region is not None:
@@ -2726,6 +3008,66 @@ def _semantic_relation_failures(
                         f"{label}: matched={parameters}, unused={missing}, "
                         f"minimum={minimum}"
                     )
+        elif kind == "function_parameters":
+            function = one(
+                root, relation.get("function") or {}, f"{label}.function"
+            )
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parameters = [
+                    argument.arg
+                    for argument in (
+                        list(function.args.posonlyargs)
+                        + list(function.args.args)
+                        + list(function.args.kwonlyargs)
+                    )
+                ]
+                required = [str(value) for value in relation.get("required") or []]
+                forbidden = [str(value) for value in relation.get("forbidden") or []]
+                missing = [
+                    pattern for pattern in required
+                    if not any(re.fullmatch(pattern, value) for value in parameters)
+                ]
+                invalid = [
+                    value for value in parameters
+                    if any(re.fullmatch(pattern, value) for pattern in forbidden)
+                ]
+                if missing or invalid:
+                    failures.append(
+                        f"{label}: missing={missing}, forbidden={invalid}"
+                    )
+        elif kind == "definite_attributes":
+            tree = model.trees.get(file_name)
+            class_name = str(relation.get("class") or "")
+            entry = str(relation.get("entry") or "__init__")
+            required = [str(value) for value in relation.get("attributes") or []]
+            definite = (
+                _definite_self_attributes(tree, class_name, entry)
+                if tree is not None else set()
+            )
+            missing = [value for value in required if value not in definite]
+            if missing:
+                failures.append(
+                    f"{label}: attributes not definitely initialized: {missing}"
+                )
+        elif kind == "cached_call_hashable":
+            call = one(root, relation.get("call") or {}, f"{label}.call")
+            bad: list[str] = []
+            if isinstance(call, ast.Call):
+                values = {
+                    keyword.arg: keyword.value
+                    for keyword in call.keywords
+                    if keyword.arg is not None
+                }
+                for keyword in relation.get("keywords") or []:
+                    value = values.get(str(keyword))
+                    if value is None or not _is_statically_hashable(
+                        model, root, value, getattr(call, "lineno", None)
+                    ):
+                        bad.append(str(keyword))
+            if bad:
+                failures.append(
+                    f"{label}: cached call has non-canonical values: {bad}"
+                )
         elif kind == "tuple_elements":
             target = str(relation.get("target") or "")
             candidates = model.select(
@@ -2876,6 +3218,28 @@ def _semantic_relation_failures(
                     failures.append(
                         f"{label}: node line {getattr(item, 'lineno', 0)} is unclassified"
                     )
+        elif kind == "branch_partition":
+            nodes = model.select(root, relation.get("nodes") or {})
+            if not nodes:
+                failures.append(f"{label}: no branch nodes")
+            signatures: list[tuple[tuple[str, str], ...]] = []
+            for item in nodes:
+                guards = [
+                    (
+                        model.text(parent.test),
+                        "body" if model._in_arm(root, item, parent, "body") else "orelse",
+                    )
+                    for parent in model.ancestors(root, item)
+                    if isinstance(parent, ast.If)
+                ]
+                if not guards:
+                    failures.append(
+                        f"{label}: node line {getattr(item, 'lineno', 0)} "
+                        "is unconditional"
+                    )
+                signatures.append(tuple(sorted(guards)))
+            if len(signatures) != len(set(signatures)):
+                failures.append(f"{label}: duplicate branch path")
         elif kind == "callable_identity":
             factory = one(
                 root,

@@ -294,7 +294,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     contract_sha = hashlib.sha256(
         yaml.safe_dump(contract, sort_keys=True).encode()
     ).hexdigest()
-    assert fixture["candidate_head"] == "fc99dd09b1873d6a048283a6fc519a40776527f7"
+    assert fixture["candidate_head"] == "08f0c3a9b974103f9fcde000925436d5bd640f82"
     assert fixture["contract_sha256"] == contract_sha
     assert fixture["required_check_count"] == len(
         MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS
@@ -307,7 +307,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 15
+    assert fixture["required_failure_count"] == 10
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -1908,6 +1908,196 @@ def test_constant_return_abstract_interpretation_checks_profile_branch():
     mutated = source.replace("bm, nw = 64, 8", "bm, nw = 32, 4")
     assert not _semantic_result(
         "value_flow", mutated, relations, "choose"
+    )["pass"]
+
+
+def test_definite_attribute_initialization_follows_builds_and_dynamic_maps():
+    source = (
+        "class Owner:\n"
+        "    def __init__(self):\n"
+        "        self._build()\n"
+        "        sources = {'peer': storage, 'ready': counters}\n"
+        "        for name, value in sources.items():\n"
+        "            setattr(self, name, value)\n"
+        "    def _build(self):\n"
+        "        self.output = allocate()\n"
+    )
+    relations = [{
+        "id": "attrs", "op": "definite_attributes",
+        "class": "Owner", "entry": "__init__",
+        "attributes": ["output", "peer", "ready"],
+    }]
+    result = _semantic_result(
+        "value_flow", source, relations, "Owner.__init__"
+    )
+    assert result["pass"], result["failures"]
+    missing = source.replace("'ready': counters", "'other': counters")
+    assert not _semantic_result(
+        "value_flow", missing, relations, "Owner.__init__"
+    )["pass"]
+    conditional = source.replace(
+        "        self._build()\n",
+        "        if enabled:\n            self._build()\n",
+    )
+    assert not _semantic_result(
+        "value_flow", conditional, relations, "Owner.__init__"
+    )["pass"]
+
+
+def test_cached_call_hashability_requires_canonical_immutable_specs():
+    source = (
+        "@cache\n"
+        "def compile_kernel(spec):\n"
+        "    return spec\n"
+        "def run(spec):\n"
+        "    canonical = None if spec is None else "
+        "tuple(sorted(dict(spec).items()))\n"
+        "    return compile_kernel(spec=canonical)\n"
+    )
+    relations = [{
+        "id": "hashable", "op": "cached_call_hashable",
+        "call": {"node": "call", "call": "compile_kernel"},
+        "keywords": ["spec"],
+    }]
+    result = _semantic_result("value_flow", source, relations, "run")
+    assert result["pass"], result["failures"]
+    raw = source.replace("spec=canonical", "spec=spec")
+    assert not _semantic_result(
+        "value_flow", raw, relations, "run"
+    )["pass"]
+    mutable = source.replace(
+        "None if spec is None else tuple(sorted(dict(spec).items()))",
+        "[]",
+    )
+    assert not _semantic_result(
+        "value_flow", mutable, relations, "run"
+    )["pass"]
+
+
+def test_profile_group_segment_uses_max_lifetimes_and_limit():
+    source = (
+        "def compile_shape():\n"
+        "    pool = max(2 * a_bytes, c_bytes)\n"
+        "    slab = ready_off + peer_bytes\n"
+        "    scales = scale_bytes\n"
+        "    return pool\n"
+    )
+    relations = [{
+        "id": "lds", "op": "profile_group_segment",
+        "inputs": {
+            "a_bytes": 32768,
+            "c_bytes": 131072,
+            "ready_off": 131648,
+            "peer_bytes": 80,
+            "scale_bytes": 28672,
+        },
+        "base": {"node": "assign", "target": "pool"},
+        "role": {"node": "assign", "target": "slab"},
+        "additive": {"node": "assign", "target": "scales"},
+        "role_multiplier": 1,
+        "expected": 160400,
+        "limit": 163840,
+    }]
+    result = _semantic_result(
+        "value_flow", source, relations, "compile_shape"
+    )
+    assert result["pass"], result["failures"]
+    oversized = source.replace(
+        "ready_off + peer_bytes", "ready_off + peer_bytes + 32768"
+    )
+    assert not _semantic_result(
+        "value_flow", oversized, relations, "compile_shape"
+    )["pass"]
+    additive_lifetimes = source.replace(
+        "max(2 * a_bytes, c_bytes)", "2 * a_bytes + c_bytes"
+    )
+    assert not _semantic_result(
+        "value_flow", additive_lifetimes, relations, "compile_shape"
+    )["pass"]
+
+
+def test_loop_prefix_and_helper_effect_relations_reject_noops():
+    source = (
+        "def kernel(active):\n"
+        "    while active:\n"
+        "        barrier()\n"
+        "        step()\n"
+        "    def helper(unit):\n"
+        "        compute(unit)\n"
+    )
+    relations = [
+        {"id": "prefix", "op": "body_prefix",
+         "region": {"node": "while", "test": "active"},
+         "select": {"node": "call", "call": "barrier"}},
+        {"id": "effect", "op": "within_count",
+         "region": {"node": "function", "name": "helper"},
+         "count": 1, "select": {"node": "call", "call": "compute"}},
+        {"id": "abi", "op": "function_parameters",
+         "function": {"node": "function", "name": "helper"},
+         "required": ["unit"], "forbidden": ["accumulator"]},
+    ]
+    result = _semantic_result("structured_cfg", source, relations)
+    assert result["pass"], result["failures"]
+    no_barrier = source.replace("        barrier()\n", "")
+    assert not _semantic_result(
+        "structured_cfg", no_barrier, relations
+    )["pass"]
+    identity = source.replace("        compute(unit)\n", "        return unit\n")
+    assert not _semantic_result(
+        "structured_cfg", identity, relations
+    )["pass"]
+    free_value = source.replace("def helper(unit):", "def helper(unit, accumulator):")
+    assert not _semantic_result(
+        "structured_cfg", free_value, relations
+    )["pass"]
+
+
+def test_topk_ancestor_and_branch_partition_reject_squared_or_duplicate_paths():
+    source = (
+        "def reduce(end, U, K, wide):\n"
+        "    for u in range(U):\n"
+        "        for k in range(K):\n"
+        "            acc = acc + vals[u][k]\n"
+        "    if wide:\n"
+        "        loop(end, 4)\n"
+        "    else:\n"
+        "        loop(end, 1)\n"
+    )
+    relations = [
+        {"id": "one_k", "op": "ancestor_count",
+         "subject": {"node": "assign", "target": "acc"},
+         "container": {"node": "for", "target": "k", "iter": "range\\(K\\)"},
+         "count": 1},
+        {"id": "paths", "op": "branch_partition",
+         "nodes": {"node": "call", "call": "loop"}},
+    ]
+    result = _semantic_result(
+        "arithmetic_pipeline", source, relations, "reduce"
+    )
+    assert result["pass"], result["failures"]
+    squared = source.replace(
+        "            acc = acc + vals[u][k]\n",
+        "            for k2 in range(K):\n"
+        "                acc = acc + vals[u][k]\n",
+    ).replace(
+        '"container": {"node": "for", "target": "k",',
+        '"container": {"node": "for", "target": "k|k2",',
+    )
+    squared_relations = [dict(value) for value in relations]
+    squared_relations[0] = {
+        **relations[0],
+        "container": {"node": "for", "target": "k|k2", "iter": r"range\(K\)"},
+    }
+    assert not _semantic_result(
+        "arithmetic_pipeline", squared, squared_relations, "reduce"
+    )["pass"]
+    duplicate = source + "\n"
+    duplicate = duplicate.replace(
+        "    else:\n        loop(end, 1)\n",
+        "    else:\n        loop(end, 1)\n    loop(end, 1)\n",
+    )
+    assert not _semantic_result(
+        "arithmetic_pipeline", duplicate, relations, "reduce"
     )["pass"]
 
 

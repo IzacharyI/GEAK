@@ -1075,6 +1075,31 @@ checks:
           target: self\._fused_comb_mtile_ctr
           value: torch\.zeros
           search: true
+      - id: combine_receiver_attributes_exist
+        op: definite_attributes
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+        scope: FlyDSLDispatchCombineIntraNodeOp.__init__
+        class: FlyDSLDispatchCombineIntraNodeOp
+        attributes:
+          - _fx_comb_inp
+          - _fx_comb_out
+          - _fx_tok_ready
+          - _fx_p2p_tok_ready
+          - _fx_p2p_comb_inp
+      - id: output_pointer_storage_provenance
+        op: mapping_entries
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+        scope: FlyDSLDispatchCombineIntraNodeOp.__init__
+        mapping: {node: assign, target: _fx_srcs}
+        entries:
+          _fx_comb_out: self\.shmem_comb_out_tok
+      - id: returned_output_uses_kernel_root
+        op: count
+        scope: MegaMoEV2._run_joint
+        count: 1
+        select:
+          node: attribute
+          value: self\.comb_op\.shmem_comb_out_tok
 
   - id: selected_fused_host_bindings
     category: abi
@@ -1152,6 +1177,18 @@ checks:
         op: starred_arguments
         call: {node: call, call: _run_compiled}
         values: [fa, ca, qa]
+      - id: cached_specs_are_hashable
+        op: cached_call_hashable
+        call: {node: call, call: compile_mega_moe_stage1}
+        keywords: [fused_stage2, fused_combine]
+      - id: compile_target_is_cached
+        op: count
+        scope: compile_mega_moe_stage1
+        count: 1
+        select:
+          node: function
+          name: compile_mega_moe_stage1
+          decorators: ['functools\.cache']
 
   - id: host_specializes_g2_chunk
     category: profile_adapter_hint
@@ -1375,6 +1412,21 @@ checks:
             guards:
               - {test: 'done >= n_tiles_i32'}
               - {test: '_g2_cid\(got\) < total_g2_claims'}
+      - id: preemption_cohort_and_skew
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: g2_pref
+          value: 'const_expr\(fused_g2_pref > 0\) and ticket % max\(1, fused_g2_pref\) == 0 and _g2_skewed'
+      - id: readiness_dominates_preempt_claim
+        op: guarded
+        subject:
+          node: call
+          call: atomic_add_agent
+          args: [g2_head, '1']
+          guard: 'g2_pref and kind == 0'
+        guard: done >= n_tiles_i32
       - id: readiness_reads_g1_completion
         op: count
         count: 1
@@ -1403,6 +1455,20 @@ checks:
         op: not_guarded
         subject: {node: call, call: atomic_add_agent, args: [g2_head, '1'], guard: 'kind == 0'}
         guard: g2_pref and kind == 0
+      - id: claim_bound_dominates_wait
+        op: guarded
+        subject:
+          node: call
+          call: int32_wait_until_greater_than
+          args: ['g2_ctr_i64 \+ _g2_tile_of\(_cl\) \* 4']
+        guard: '_g2_cid\(got\) < total_g2_claims'
+      - id: last_chunk_is_clamped
+        op: count
+        count: 2
+        select:
+          node: assign
+          target: _cl
+          value: total_g2_pairs - 1
       - id: chunk_seed_after_claim
         op: ordered
         selectors:
@@ -1431,6 +1497,16 @@ checks:
         op: count
         count: 1
         select: {node: assign, target: s2_halves, value: 'S2\[[''"]halves[''"]\]'}
+      - id: g2_to_g1_owner_mapping
+        op: count
+        count: 1
+        select:
+          node: return
+          value: 'pair \* s2_halves // s2_num_n \* s2_bm_i32 // sbm_i32'
+      - id: continuation_loop_barrier
+        op: body_prefix
+        region: {node: while, test: consumer_active, guard: 'const_expr\(S2 is None\)', guard_arm: orelse}
+        select: {node: call, call: barrier}
       - id: no_g2_effect_holds_g1
         op: forbidden_each
         regions: {node: if, test: 'kind == 1'}
@@ -1520,6 +1596,33 @@ checks:
           node: assign
           target: lds_pool_bytes
           value: 'max\(lds_pool_bytes, S2_SLAB \* S2_HALVES\)'
+      - id: fixed_profile_group_segment
+        op: profile_group_segment
+        inputs:
+          a_lds_size: 32768
+          cs_size: 32768
+          sort_block_m: 128
+          model_dim: 7168
+          fz_mtpr: 8192
+          s2_consts:
+            lds_ready_off: 131648
+            npes: 8
+            publish_tok_ready: true
+        base:
+          node: assign
+          target: lds_pool_bytes
+          value: 'max\(2 \* a_lds_size, cs_size \* 4\)'
+        role:
+          node: assign
+          target: S2_SLAB
+          value: 's2_consts\[[''"]lds_ready_off[''"]\] \+'
+          search: true
+        additive:
+          node: assign
+          target: n_scale_bytes
+        role_multiplier: 1
+        expected: 160400
+        limit: 163840
       - id: native_nw8_selected
         op: count
         count: 1
@@ -1564,6 +1667,30 @@ checks:
         scope: make_stage2_body_emitter.emit_stage2_body
         count: 1
         select: {node: function, name: _emit_stage2_body, decorators: ['flyc\.jit']}
+      - id: outer_emitter_executes_body
+        op: count
+        scope: make_stage2_body_emitter.emit_stage2_body
+        count: 1
+        select: {node: call, call: _emit_stage2_body, arg_count: 0}
+      - id: preload_helper_has_effect
+        op: within_count
+        region: {node: function, name: issue_all_a_loads}
+        count: 1
+        select: {node: call, call: issue_a_load_lds_dt}
+      - id: unit_helper_executes_gemm
+        op: within_count
+        region: {node: function, name: run_unit}
+        count: 1
+        select: {node: call, call: gemm2_compute_v2}
+      - id: numerical_values_not_free_parameters
+        op: function_parameters
+        function: {node: function, name: _emit_stage2_body}
+        forbidden:
+          - accm_vecs
+          - n_block_idx
+          - peer_base
+          - packed
+          - weight
       - id: slab_pointer_base
         op: count
         scope: make_stage2_body_emitter.emit_stage2_body
@@ -1621,7 +1748,27 @@ checks:
           node: call
           call: p2p_scatter_epilog
           args: [lds_base_i32, accm_vecs, n_block_idx, wave, lane]
-          keywords: {p2p_write_through: p2p_write_through, NW: NW}
+          keywords:
+            N_OUT: N_OUT
+            BM: BM
+            BN: BN
+            npes: npes
+            topk: topk
+            log2_max_tok: log2_max_tok
+            mask_max_tok: mask_max_tok
+            recv_cap: _recv_cap
+            comb_inp_nbytes: _comb_inp_nbytes
+            lds_packed_off: lds_packed_off
+            lds_weight_off: lds_weight_off
+            lds_peer_off: lds_peer_off
+            p2p_write_through: p2p_write_through
+            NW: NW
+      - id: gemm2_signature_accepts_nw
+        op: parameters_used
+        file: aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+        scope: gemm2_compute_v2
+        parameters: [NW]
+        min_parameters: 1
 
   - id: stage2_standalone_shared_body
     category: correctness
@@ -1840,6 +1987,40 @@ checks:
           call: _buffer_store
           args: [_c_rsrc, '1', '_buffer_load\(_c_rsrc, 1, fx.Int32\) \+ 1', fx.Int32]
         second: {node: call, call: emit_dispatch_plan}
+      - id: generation_dominates_epoch_load
+        op: all_precede
+        first:
+          node: call
+          call: _buffer_store
+          args: [_c_rsrc, '1', '_buffer_load\(_c_rsrc, 1, fx.Int32\) \+ 1', fx.Int32]
+        second:
+          node: assign
+          target: c_epoch
+          value: '_buffer_load\(_make_buffer_from_addr\(c_ctr, fx\.Int32\), 1, fx\.Int32, cache_modifier=_SC0_CACHE\)'
+      - id: monotone_arrival_storage_exists
+        op: count
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+        scope: FlyDSLDispatchCombineIntraNodeOp._alloc_buffers
+        count: 1
+        select:
+          node: assign
+          target: self\.shmem_tok_ready
+          value: 'mori_shmem_create_tensor\(\(mt \+ 8,\), torch\.int32\)'
+      - id: peer_table_distinct_from_arrivals
+        op: mapping_entries
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+        scope: FlyDSLDispatchCombineIntraNodeOp.__init__
+        mapping: {node: assign, target: _fx_srcs}
+        entries:
+          _fx_tok_ready: self\.shmem_tok_ready
+          _fx_p2p_tok_ready: self\._p2p_tok_ready
+      - id: peer_table_built_from_arrivals
+        op: mapping_entries
+        file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_op.py
+        scope: FlyDSLDispatchCombineIntraNodeOp.__init__
+        mapping: {node: assign, target: _p2p_srcs}
+        entries:
+          _p2p_tok_ready: self\.shmem_tok_ready
 
   - id: combine_output_work_item
     category: schedule
@@ -1850,8 +2031,22 @@ checks:
     normalize_wrappers: [fx.Int32, fx.Int64]
     relations:
       - {id: nominal_grid_waves, op: count, count: 1, select: {node: assign, target: global_warp_num, value: nominal_warp_num}}
+      - id: all_numerical_symbols_captured
+        op: count
+        count: 4
+        select:
+          node: assign
+          target: '_maybe_load|_zero_accum|_to_accum|_from_accum'
+          value: 'maybe_load|spec\.(?:zero_accum|to_accum|from_accum)'
       - {id: system19_load_cache, op: count, count: 1, select: {node: assign, target: IN_CACHE, value: '_SLC_CACHE \| 1 \| 16 if tok_ready_addr is not None else _SLC_CACHE'}}
       - {id: runtime_partition_cap, op: count, count: 1, select: {node: assign, target: warps_per_tok, value: '\(warps_per_tok > scale_blocks\)\.select\(scale_blocks, warps_per_tok\)'}}
+      - id: runtime_partition_from_grid
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: warps_per_tok
+          value: '\(global_warp_num \+ safe_token_count - 1\) // safe_token_count'
       - {id: total_items, op: count, count: 1, select: {node: assign, target: s3_total_work, value: cur_rank_num_token \* warps_per_tok}}
       - {id: bounded_tail, op: count, count: 1, select: {node: assign, target: eff_end, value: '\(rem_hdim < hdim_per_warp\)\.select\(rem_hdim, hdim_per_warp\)'}}
       - {id: generation_wait_target, op: count, count: 1, select: {node: assign, target: _tok_ready_target, value: tok_ready_expected \* tok_ready_epoch}}
@@ -1916,6 +2111,34 @@ checks:
     relations:
       - {id: payload_resource, op: count, count: 1, select: {node: call, call: create_buffer_resource_from_addr, args: [expert_tok_addr]}}
       - {id: scale_resource, op: count, count: 1, select: {node: call, call: create_buffer_resource_from_addr, args: ['expert_tok_addr \+ hidden_dim']}}
+      - id: nested_payload_container
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: vals
+          value: '\[\[\] for _ in range\(U\)\]'
+      - id: nested_scale_container
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: scales
+          value: '\[\[\] for _ in range\(U\)\]'
+      - id: token_topk_slot_address
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: slot_idx
+          value: 'tok_id \* experts_per_token \+ k_slot'
+      - id: row_byte_stride
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: expert_tok_off
+          value: 'slot_idx \* nbytes'
       - id: i32_payload_load_policy
         op: count
         count: 1
@@ -1953,6 +2176,17 @@ checks:
           node: for
           target: k_slot
           iter: range_constexpr\(experts_per_token\)
+      - id: exactly_one_topk_axis
+        op: ancestor_count
+        subject:
+          node: assign
+          target: fp32_acc
+          value: 'fp32_acc \+ _to_accum\(vals\[u\]\[k_slot\]\) \* scales\[u\]\[k_slot\]'
+        container:
+          node: for
+          target: 'u|k_slot'
+          iter: range_constexpr\(experts_per_token\)
+        count: 1
       - {id: bf16_pack, op: count, count: 1, select: {node: assign, target: acc, value: _from_accum\(fp32_acc\)}}
       - {id: cache2_definition, op: count, scope: '', count: 1, select: {node: assign, target: _SLC_CACHE, value: '2'}}
       - {id: cache2_output_policy, op: count, count: 1, select: {node: assign, target: kw, value: '\{[''"]cache_modifier[''"]: SLC_CACHE\}'}}
@@ -1979,6 +2213,12 @@ checks:
         scope: make_combine_reduce_emitter._emit_item._accum_loop
         count: 1
         select: {node: call, call: _accum_step, args: ['hdim_off \+ ec', '1']}
+      - id: main_u_paths_are_partitioned
+        op: branch_partition
+        nodes:
+          node: call
+          call: _accum_loop
+          args: [eff_end, '1|2|4']
 
   - id: block_claimed_combine
     category: schedule
@@ -2126,6 +2366,14 @@ checks:
         op: depends
         sink: {node: assign, target: ready_base}
         source: mt_pe
+      - id: peer_address_loaded_from_table
+        op: count
+        count: 1
+        select:
+          node: assign
+          target: ready_base
+          value: 'fx\.ptr_load\(lds_typed_ptr\(lds_ready_off \+ mt_pe \* 8, T\.i64, align=8\)\)'
+          search: true
       - id: token_address_from_metadata
         op: depends
         sink: {node: call, call: atomic_add_system}
@@ -2151,6 +2399,13 @@ checks:
         sink: {node: call, call: atomic_add_system}
         arg: 0
         source: tx_i32
+      - id: arrival_uses_loaded_peer_and_token
+        op: count
+        count: 1
+        select:
+          node: call
+          call: atomic_add_system
+          args: ['ready_base \+ mt_lid \* 4', '1']
 
   - id: bucket_512_payload_rows
     category: plan
