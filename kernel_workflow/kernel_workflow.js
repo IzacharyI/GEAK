@@ -38,7 +38,7 @@ const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/
 
 const KERNEL_PATH_ORIG = A.kernel_path;
 const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
-// Positive control calibrates detection; the null arm calibrates noise.
+// Positive control calibrates detection; without it 1.000x is unfalsifiable. Null calibrates noise.
 const POSITIVE_CONTROL = (A.positive_control && typeof A.positive_control === 'object')
   ? A.positive_control : null;
 const PC_ABORT = POSITIVE_CONTROL ? (A.positive_control.abort_on_fail !== false) : false;
@@ -1558,6 +1558,10 @@ const ENG_SCHEMA = obj({
 const VERIFY_SCHEMA = obj({
   status: { type: 'string' }, correctness: { type: 'string' },
   claim_complete: { type: 'boolean' }, attempt_id: { type: 'string' },
+  timeout_recovery_safe: { type: 'boolean' },
+  active_gpu_processes: { type: 'number' },
+  lane_lock_free: { type: 'boolean' },
+  evidence_complete: { type: 'boolean' },
   evidence_manifest: { type: 'string' }, candidate_id: { type: 'string' },
   candidate_source: { type: 'string' }, candidate_tree: { type: 'string' },
   candidate_head: { type: 'string' },
@@ -1907,30 +1911,7 @@ const VALIDATE_SCHEMA = obj({
 const cfg = (o) => Object.entries(o).map(([k, v]) =>
   `- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
 
-// --- Hung-agent guard ------------------------------------------------------
-// An agent LLM call that HANGS (no response, no terminal error) blocks a
-// parallel()/pipeline() round-barrier forever (observed: engineer agents frozen
-// mid-turn wedged the whole optimize round for >30min). The harness resolves
-// terminal API errors to null but NOT an indefinite hang. So bound every agent()
-// call: if it has not returned after AGENT_TIMEOUT_MS, resolve it to null (which
-// every .filter(Boolean)/null-check downstream already tolerates) and let the
-// round proceed. VERY generous default (60min): a true hang never returns, so this only fires on a
-// hang, NEVER on a legitimately-long agent. Inner agents include benchmark/profile/verify that build
-// (hipcc/ninja) and run benches — minutes, well under 60min — plus the LLM-heavy optimize engineers
-// (the ones observed hanging). A too-short bound would kill legit long agents (e.g. a slow rocprof or
-// build), so keep it large. Cache keys (prompt, opts) are unchanged so resume still works. Falls back
-// to raw agent() if setTimeout is unavailable. args.agent_timeout_ms=0 disables.
-// API-FAULT TOLERANCE: a transient API failure (gateway 4xx/5xx, rate-limit, dropped connection, the
-// model API going down mid-run) must NOT crash the whole workflow. agentT retries the call up to
-// AGENT_RETRIES times on a thrown API/agent error, then resolves to null (every .filter(Boolean)/
-// null-check downstream — incl. the Director validate + final report — already degrades on null rather
-// than exiting). A timeout (hang) resolves null immediately and is NOT retried (a real hang would just
-// burn another full timeout window). args.agent_retries tunes the count. If the failure is PERSISTENT
-// (e.g. an auth/header requirement the client doesn't send), retries are exhausted then the run
-// degrades — re-run with Workflow({resumeFromRunId}) once the client/API is fixed; cached agent results
-// make resume cheap.
-// A call may set orchestration-only `timeout_ms`; agentT strips it before invoking agent(), so the
-// agent API/cache key remains unchanged while production Mega turns can use a tighter bound.
+// Bound hung calls and retry transient API failures. Timeout recovery is phase-owned.
 const AGENT_TIMEOUT_MS = parseInt(A.agent_timeout_ms != null ? A.agent_timeout_ms : 3600000, 10);
 const AGENT_RETRIES = Math.max(1, parseInt(A.agent_retries != null ? A.agent_retries : 4, 10));
 async function agentT(p, o) {
@@ -6058,6 +6039,13 @@ function freshMegaAuthorLeak(result) {
     .test(text);
 }
 
+function safeVerifyTimeoutRecovery(result) {
+  const r = result || {};
+  return r.timeout_recovery_safe === true &&
+    Number(r.active_gpu_processes || 0) === 0 &&
+    r.lane_lock_free === true;
+}
+
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
   const plan = await agentT(
@@ -6668,70 +6656,73 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (postAuthoringVerify ||
       ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
   if (shouldVerify) {
+    const verifyInputs = {
+      CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+      CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+      CANDIDATE_IMPORT_MODULES,
+      EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
+      EXPERT_SKILL_CONTRACT_TOOL,
+      EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+      LANE_LOCK: laneLock,
+      GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
+      GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
+      BASE_CANDIDATE_ID: baseCandidateId,
+      CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
+      VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
+      VERIFY_TIMEOUT_S: verifyBudgetS,
+      GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+      BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+      VERIFY_TIER: 'score',
+      MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
+      SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
+      TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
+      TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+      REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
+      REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
+      REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
+      REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
+      ACCURACY_METRIC, ACCURACY_THRESHOLD,
+      MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
+      RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
+      REQUIRE_RESOURCE_VERIFY: '1',
+      SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION ? '1' : '0',
+      ...(USE_EXPERT_SKILLS ? {
+        EXPERT_SKILL_ID,
+        EXPERT_SKILL_REVISION,
+        EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
+        EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+        EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+        EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+        EXPERT_SKILL_ACCURACY_CASES,
+        EXPERT_SKILL_SOURCE_FILES,
+      } : {}),
+      GRAPH_CONTRACT_TOOL,
+      GRAPH_CONTRACT_REPLAYS: 30,
+      ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
+    };
     ver = await agentT(
       roleAgent('verify_engineer', 'verify',
-        'Independently verify and score this whole-tree mega candidate against the frozen baseline.', {
-          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
-          CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
-          CANDIDATE_IMPORT_MODULES,
-          EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
-          EXPERT_SKILL_CONTRACT_TOOL,
-          EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-          LANE_LOCK: laneLock,
-          GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
-          GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
-          BASE_CANDIDATE_ID: baseCandidateId,
-          CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
-          VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
-          VERIFY_TIMEOUT_S: verifyBudgetS,
-          GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
-          BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-          VERIFY_TIER: 'score',
-          MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
-          SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
-          TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
-          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-          REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
-          REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
-          REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
-          REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
-          ACCURACY_METRIC, ACCURACY_THRESHOLD,
-          MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
-          RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
-          REQUIRE_RESOURCE_VERIFY: '1',
-          SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION ? '1' : '0',
-          ...(USE_EXPERT_SKILLS ? {
-            EXPERT_SKILL_ID,
-            EXPERT_SKILL_REVISION,
-            EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
-            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
-            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
-            EXPERT_SKILL_ACCURACY_CASES,
-            EXPERT_SKILL_SOURCE_FILES,
-          } : {}),
-          GRAPH_CONTRACT_TOOL,
-          GRAPH_CONTRACT_REPLAYS: 30,
-          ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
-        }),
+        'Independently verify and score this whole-tree mega candidate against the frozen baseline.',
+        verifyInputs),
       { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: VERIFY_SCHEMA,
         timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
     if (ver && ver.__agent_timed_out) {
-      megaUnsafeTimeout = ver;
       verifierTimedOut = true;
       log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} exceeded its ` +
-        `deadline. Stopping this invocation so its still-running EP8 work cannot overlap another candidate.`);
+        `deadline. Checking process quiescence and on-disk evidence before one safe retry.`);
       ver = null;
     }
-    if (!verifierTimedOut && (!ver || ver.claim_complete !== true)) {
+    if (!ver || ver.claim_complete !== true) {
       const recoveryBudgetS = MEGA_PRODUCTION
         ? Math.max(0, Math.floor(turnBudgetS - (megaNowMs() - turnStartedMs) / 1000 - 60))
         : 300;
       if (recoveryBudgetS >= 30) {
         const recoveredVer = await agentT(
           roleAgent('verify_engineer', 'recover',
-            `RECOVER ONLY the completed verification for candidate ${candidateId}, attempt ${attemptId}, ` +
-            `from ${outDir}/verify. Do not run a GPU command, take a lease, apply a patch, or edit source.`, {
+            `RECOVER verification for candidate ${candidateId}, attempt ${attemptId}. Do not run a GPU ` +
+            `command or edit source. If the prior Verify timed out, check twice at least 10s apart that ` +
+            `no matching GPU/torchrun/lease process remains and the lane lock is free. Set ` +
+            `timeout_recovery_safe=true only then; report active_gpu_processes and evidence_complete.`, {
               VERIFY_DIR: `${outDir}/verify`, CANDIDATE_ID: candidateId,
               CANDIDATE_SOURCE: source, CANDIDATE_TREE: tree,
               EXPECTED_HEAD: expectedHead, ATTEMPT_ID: attemptId,
@@ -6739,7 +6730,38 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             }),
           { phase: 'Verify', label: `mega:verify-recover:${candidateId}`, schema: VERIFY_SCHEMA,
             timeout_ms: Math.min(120, recoveryBudgetS) * 1000, max_retries: 1 });
-        if (recoveredVer && recoveredVer.claim_complete === true) ver = recoveredVer;
+        if (recoveredVer && recoveredVer.claim_complete === true) {
+          ver = recoveredVer;
+          verifierTimedOut = false;
+        } else if (verifierTimedOut && safeVerifyTimeoutRecovery(recoveredVer)) {
+          const retryBudgetS = Math.max(300, Math.min(1800, MEGA_FINAL_RESERVE_S));
+          const retry = await agentT(
+            roleAgent('verify_engineer', 'verify',
+              'TIMEOUT RECOVERY: verify the same exact HEAD read-only. Run only the earliest unresolved ' +
+              'GPU stage (construction/JIT, then the smallest correctness smoke) and return its concrete ' +
+              'result; do not run the full score suite unless the smoke is already cached.', {
+                ...verifyInputs,
+                VERIFY_DIR: `${outDir}/verify_timeout_retry`,
+                VERIFY_TIER: 'timeout_recovery_smoke',
+                GPU_WAIT_TIMEOUT_S: Math.min(120, gpuWaitBudgetS),
+                GPU_RUN_TIMEOUT_S: Math.min(600, gpuRunBudgetS),
+                VERIFY_TIMEOUT_S: retryBudgetS,
+                REQUIRED_REPLAYS: 1,
+                REQUIRED_PAIRS: 1,
+                TIMEOUT_RECOVERY_ATTEMPT: '1',
+              }),
+            { phase: 'Verify', label: `mega:verify-timeout-retry:${candidateId}`,
+              schema: VERIFY_SCHEMA, timeout_ms: retryBudgetS * 1000,
+              timeout_marker: true, max_retries: 1 });
+          if (retry && retry.claim_complete === true) {
+            ver = retry;
+            verifierTimedOut = false;
+          } else {
+            megaUnsafeTimeout = retry || { label: `mega:verify-timeout-retry:${candidateId}` };
+          }
+        } else if (verifierTimedOut) {
+          megaUnsafeTimeout = { label: `mega:verify:${candidateId}` };
+        }
       }
     }
   }

@@ -190,6 +190,30 @@ ok(/const MEGA_STRUCTURAL_ONLY = MODE === 'mega'/.test(src) &&
    /!MEGA_STRUCTURAL_ONLY/.test(src) &&
    /structural-only acceptance reached/.test(src),
   'structural-only mode forbids runtime Verify and stops on a complete source contract');
+const timeoutSafeFn = src.match(
+  /function safeVerifyTimeoutRecovery\(result\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+);
+if (!timeoutSafeFn) throw new Error('cannot lift safeVerifyTimeoutRecovery');
+const safeVerifyTimeoutRecovery = new Function(
+  `${timeoutSafeFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+   return safeVerifyTimeoutRecovery;`,
+)();
+ok(/check twice at least 10s apart/.test(src) &&
+   safeVerifyTimeoutRecovery({
+     timeout_recovery_safe: true, active_gpu_processes: 0, lane_lock_free: true,
+   }) &&
+   !safeVerifyTimeoutRecovery({
+     timeout_recovery_safe: true, active_gpu_processes: 1, lane_lock_free: true,
+   }) &&
+   !safeVerifyTimeoutRecovery({
+     timeout_recovery_safe: true, active_gpu_processes: 0, lane_lock_free: false,
+   }),
+  'timed-out Verify retries only after process and lane quiescence');
+ok(/verify_timeout_retry/.test(src) &&
+   /VERIFY_TIER: 'timeout_recovery_smoke'/.test(src) &&
+   /TIMEOUT_RECOVERY_ATTEMPT: '1'/.test(src) &&
+   /max_retries: 1/.test(src),
+  'timeout recovery uses one isolated same-HEAD smoke retry');
 ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY/.test(src) &&
    /const benchCache = noGpuFrontMatter \? null/.test(src) &&
    /const bench = noGpuFrontMatter \? structuralBench/.test(src) &&

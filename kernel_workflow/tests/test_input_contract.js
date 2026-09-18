@@ -72,6 +72,19 @@ for (const m of src.matchAll(/roleAgent\(\s*'([a-z_]+)',\s*'([a-z_]+)'/g)) {
   if (!passedByRole.has(role)) passedByRole.set(role, new Set());
   for (const k of keys) passedByRole.get(role).add(k);
 }
+// Mega runtime Verify shares one input object with its timeout-recovery retry.
+{
+  const start = src.indexOf('const verifyInputs = {');
+  const end = src.indexOf('\n    };', start);
+  const seg = src.slice(start, end);
+  const keys = new Set([...seg.matchAll(KEY_RE)].map((match) => match[1]));
+  const prior = passedByPhase.get('verify_engineer:verify') || new Set();
+  for (const key of keys) prior.add(key);
+  passedByPhase.set('verify_engineer:verify', prior);
+  if (!passedByRole.has('verify_engineer')) passedByRole.set('verify_engineer', new Set());
+  for (const key of keys) passedByRole.get('verify_engineer').add(key);
+  megaRuntimeVerifyKeys = keys;
+}
 // engineer/deep_engineer's OPTIMIZE dispatch is a hand-built prompt, not a roleAgent call. Attribute
 // its cfg keys to both roles, or their Inputs sections are checked against the recover phase's four
 // keys and the test either cries wolf or (worse) gets an exemption written for it.
@@ -132,13 +145,6 @@ ok([...passedByPhase.values()].every((s) => s.has('SKILL_DIR')),
 ok(passedByPhase.get('verify_engineer:verify').has('BASELINE_PER_CASE')
    && passedByPhase.get('verify_engineer:verify').has('PATCH'),
    'and consecutive shorthand keys are both seen (the lookahead does its job)');
-{
-  const at = src.indexOf('Independently verify and score this whole-tree mega candidate');
-  const start = src.lastIndexOf("roleAgent('verify_engineer', 'verify'", at);
-  const seg = src.slice(start, at + 2600);
-  megaRuntimeVerifyKeys = new Set([...seg.matchAll(KEY_RE)].map((match) => match[1]));
-}
-
 // --- names a role file may declare without the harness passing them ----------------------------
 const EXEMPT = new Map(Object.entries({
   HIP_VISIBLE_DEVICES: 'environment variable the agent sets itself, not an input',
