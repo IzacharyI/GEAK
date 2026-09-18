@@ -42,6 +42,11 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   semantic/compiler-shape constraints, but the lane remains ordinary
   `search`/`integrated`.
 
+When `EXPERT_SKILL_PLANNER_EXTENSION` ends in `author_guide.md`, it is the
+compact Author projection. Read that guide and the current GPU/contract failure
+only. Do not read or restate the full Skill contract; invoke
+`EXPERT_SKILL_CONTRACT_TOOL` against `EXPERT_SKILL_CONTRACT` as a verifier.
+
 In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
 can be optimized later, but it is never a final result. Finalists require absolute speedup greater
 than 1.0 versus the frozen baseline. `claim_complete` describes this turn's

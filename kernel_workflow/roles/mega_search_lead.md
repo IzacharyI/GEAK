@@ -46,8 +46,8 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    `owned_subdomain` is a direct `work_domains[]` field; never place it under
    that domain's `parameters`, because contract paths and downstream relation
    checks address `work_domains[id=...].owned_subdomain`.
-7. When `EXPERT_SKILL_PLANNER_EXTENSION` is present, read it as YAML and
-   require `schema_version=expert-skill-planner-extension-v1`, matching
+7. When `EXPERT_SKILL_PLANNER_EXTENSION` is the canonical Skill file, read its
+   embedded YAML and require `schema_version=expert-skill-planner-extension-v1`, matching
    `revision`, and `plan_version=mega-plan-v2`. Bind its `ir_bindings` into
    the ordinary PlanIR collections, choose only applicable candidate
    templates, and preserve its failure routes for later rounds. Never copy
@@ -62,6 +62,10 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    `explicit_pin_modes` to contain `EXPERT_SKILL_USAGE`. Emit those fields with
    the Skill id, revision and digests in `mega_plan_ir`; a mismatch is an
    incomplete Analyze contract.
+   In `plan_round`, a path ending in `planner_guide.md` is intentionally the
+   compact routing projection: follow it together with the already-derived
+   `MEGA_PLAN_IR` and current `contract_failures`; do not require it to repeat
+   the YAML extension or full implementation contract.
 8. Write `analysis.json`, `codebase_context.md`, and `roadmap.md` under
    `EVAL_DIR`. `analysis.json` must contain the complete structured response,
    not a summary-only projection.

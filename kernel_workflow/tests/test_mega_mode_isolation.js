@@ -18,7 +18,7 @@ const ok = (value, message) => {
 };
 
 const fn = src.match(
-  /function expertSkillsBlock\(role\) \{[\s\S]*?\n\}\n\nfunction analysisSkillBlock/,
+  /function expertSkillsBlock\(role, phase\) \{[\s\S]*?\n\}\n\nfunction analysisSkillBlock/,
 );
 if (!fn) throw new Error('cannot lift expertSkillsBlock');
 const functionText = fn[0].replace(/\n\nfunction analysisSkillBlock$/, '');
@@ -33,6 +33,10 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
   const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
     '/skills/skills/megamoe_ep_mega_fusion/skill.md';
+  const EXPERT_SKILL_PLANNER_GUIDE_FILE =
+    '/skills/skills/megamoe_ep_mega_fusion/planner_guide.md';
+  const EXPERT_SKILL_AUTHOR_GUIDE_FILE =
+    '/skills/skills/megamoe_ep_mega_fusion/author_guide.md';
   const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
   const EXPERT_SKILL_REVISION = 'v1';
   const EXPERT_SKILL_BUNDLE_TOOL = '/skills/_contribute/validate_skill.py';
@@ -51,16 +55,19 @@ const makeBlock = (enabled) => new Function(`
 
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
-ok(enabled('mega_search_lead').includes('skill.md') &&
-   enabled('mega_search_lead').includes('machine-readable Planner Extension') &&
-   enabled('mega_search_lead').includes('structural contract'),
-  'the common Mega planner receives the single embedded Skill when enabled');
-ok(enabled('engineer').includes('EXPERIMENTAL TRANSFER, EXPLICIT PIN'),
-  'the common Engineer receives the explicitly pinned transfer knowledge');
-ok(/Candidate source remains search\/integrated/.test(enabled('engineer')),
+ok(enabled('mega_search_lead', 'analyze').includes('skill.md') &&
+   enabled('mega_search_lead', 'analyze').includes('canonical Planner Extension'),
+  'Mega Analyze receives the canonical Skill extension');
+ok(enabled('mega_search_lead', 'plan_round').includes('planner_guide.md') &&
+   !enabled('mega_search_lead', 'plan_round').includes('skill.md once'),
+  'round Planner receives only the compact routing guide');
+ok(enabled('engineer', 'optimize').includes('author_guide.md') &&
+   enabled('engineer', 'optimize').includes('independent Verify owns it'),
+  'Author receives only the compact implementation guide');
+ok(/Candidate source remains search\/integrated/.test(enabled('engineer', 'optimize')),
   'skill injection cannot create a reproduction candidate source');
 const disabled = makeBlock(false);
-ok(disabled('mega_search_lead') === '' && disabled('engineer') === '',
+ok(disabled('mega_search_lead', 'plan_round') === '' && disabled('engineer', 'optimize') === '',
   'with Expert Skills off the same roles receive no matched fusion knowledge');
 
 console.log('\n# no reproduction scheduler or reserved skill lane');

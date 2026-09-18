@@ -245,6 +245,8 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
 const PINNED_MEGA_SKILL = MODE === 'mega' && !!EXPERT_SKILL_DIR;
+const EXPERT_SKILL_PLANNER_GUIDE_FILE = `${EXPERT_SKILL_DIR}/planner_guide.md`;
+const EXPERT_SKILL_AUTHOR_GUIDE_FILE = `${EXPERT_SKILL_DIR}/author_guide.md`;
 const EXPERT_SKILL_BUNDLE_TOOL = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`
   : String(A.expert_skill_bundle_tool || `${EXPERT_SKILLS_DIR}/_contribute/validate_skill.py`);
@@ -1955,35 +1957,32 @@ async function agentT(p, o) {
 }
 
 // Add Skill context only to roles that consume it.
-function expertSkillsBlock(role) {
+function expertSkillsBlock(role, phase) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
   if (MODE === 'mega' && EXPERT_SKILL_DIR) {
     if (!['mega_search_lead', 'engineer', 'deep_engineer'].includes(role)) return '';
+    const guide = role === 'mega_search_lead'
+      ? (phase === 'analyze' ? `${EXPERT_SKILL_DIR}/skill.md`
+        : EXPERT_SKILL_PLANNER_GUIDE_FILE)
+      : EXPERT_SKILL_AUTHOR_GUIDE_FILE;
     return `\n\n## MEGA EXPERT SKILL — ${
       EXPERT_SKILL_VALIDATION_STATUS === 'experimental'
         ? 'EXPERIMENTAL TRANSFER, EXPLICIT PIN' : 'VALIDATED PRIOR'
     }\n` +
-      `Read ${EXPERT_SKILL_DIR}/skill.md once; it contains the detailed playbook, ` +
-      `machine-readable Planner Extension, structural contract, validation evidence, and runtime ` +
-      `validator. validation_status=${EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, ` +
-      `usage=${EXPERT_SKILL_USAGE || 'legacy'}. Use them while still performing the ordinary ` +
-      `tile-task-graph analysis, candidate planning, source authoring, and measurement loop. They do not ` +
-      `create a reproduction lane or special candidate source, and they do not override current ` +
-      `source constraints or measured results. When the skill match and baseline revision apply, its ` +
-      `MUST/MUST NOT semantic and compiler-shape rules override generic knowledge and role improvisation. ` +
-      `Candidate source remains search/integrated.` +
+      `Read ${guide}. ${
+        role === 'mega_search_lead' && phase === 'analyze'
+          ? 'Use its canonical Planner Extension to derive MegaPlanIR.'
+          : 'Do not read or restate the full Skill contract; independent Verify owns it.'
+      } ` +
+      `independent Verify owns it. validation_status=${
+        EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, usage=${
+        EXPERT_SKILL_USAGE || 'legacy'}. Candidate source remains search/integrated.` +
       (role === 'mega_search_lead' && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
         ? ` Before using the Skill, run python ${EXPERT_SKILL_BUNDLE_TOOL} ${EXPERT_SKILL_ID} ` +
           `--emit-bundle and require bundle_sha256=${EXPERT_SKILL_BUNDLE_SHA256}, ` +
           `planner_extension_sha256=${EXPERT_SKILL_PLANNER_EXTENSION_SHA256}, and ` +
           `contract_sha256=${EXPERT_SKILL_CONTRACT_SHA256}. A mismatch is a RunContract failure, ` +
           `not a reason to reinterpret stale knowledge.`
-        : '') +
-      (role === 'engineer'
-        ? ` The playbook is a pinned mechanism prior, not a request to repeatedly ` +
-          `redesign its scaffolding. Time-box helper refactors to the first quarter of the turn; then wire ` +
-          `the next unresolved tile-pipeline edge into the real caller and run the earliest meaningful ` +
-          `compile/on-card smoke. A turn that only rearranges an unused emitter has not advanced the candidate.`
         : '');
   }
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
@@ -2033,7 +2032,7 @@ Do all filesystem/shell work yourself (Bash/Read/Write). ${intro}
 ${cfg(inputs)}
 
 Return ONLY the structured JSON the role file specifies (a StructuredOutput tool is forced).`;
-  return base + expertSkillsBlock(role) + analysisSkillBlock(role, phase);
+  return base + expertSkillsBlock(role, phase) + analysisSkillBlock(role, phase);
 }
 
 // ===========================================================================
@@ -6075,7 +6074,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         ...(analysis && analysis.mega_plan_ir
           ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
         ...(USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
-          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_GUIDE_FILE,
           EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
           EXPERT_SKILL_BUNDLE_TOOL,
@@ -6370,9 +6369,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
-            EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
-            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
-            EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_AUTHOR_GUIDE_FILE,
+            EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_AUTHOR_GUIDE_FILE,
             EXPERT_SKILL_BUNDLE_SHA256,
             EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
             EXPERT_SKILL_CONTRACT_SHA256,
