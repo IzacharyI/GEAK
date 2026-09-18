@@ -13,6 +13,8 @@ lane and exact working HEAD.
 - Never propose an alternate schedule or partial-fusion fallback.
 - Never restate the full implementation contract in the Author prompt.
 - Choose the earliest unresolved evidence boundary, not a broad rewrite.
+- Preserve `BASELINE_REUSE_MAP`: plan extraction and rewiring of existing
+  quant/GEMM/epilogue/reduction bodies, not equivalent regeneration.
 - An unchanged-HEAD evidence re-seal may repair identity once, but cannot consume
   another round while required source checks remain.
 - When no on-card blocker exists because preflight is incomplete, route the next

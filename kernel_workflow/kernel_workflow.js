@@ -994,44 +994,17 @@ const ANALYZE_SCHEMA = obj({
   // instead of re-navigating the whole base. Empty string / [] / null when no card applies.
   kk_operator: { type: ['string', 'null'] }, kk_language: { type: ['string', 'null'] },
   kk_refs: { type: 'array', items: { type: 'string' } },
-  // PRIOR ART IN-TREE: directions that are ALREADY IMPLEMENTED somewhere reachable (a sibling branch,
-  // a worktree, an env-gated opt-in path in this very file) — even if not enabled in the tree under
-  // optimization. Measuring an existing switch costs one A/B; re-deriving it costs a round and
-  // usually fails. A run once optimized a tree from which ~1000 lines of already-written, already-
-  // measured (+4.71%) fusion were absent, never noticed, and reported 1.000x.
-  //   [{direction, implemented_at, how_to_enable, measured_effect, in_baseline}]
+  baseline_reuse_map: { type: 'array', items: obj({
+    role: { type: 'string' },
+    file: { type: 'string' },
+    symbol: { type: 'string' },
+    kind: { type: 'string' },
+    action: { type: 'string', enum: ['keep', 'extract_shared', 'rewire', 'extend'] },
+    target_role: { type: 'string' },
+    proof: { type: 'string' },
+  }, ['role', 'file', 'symbol', 'action']) },
   prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
-  // TILE-LEVEL DEPENDENCY GRAPH. Required when args.require_task_graph is set (see the gate below
-  // the Analyze call); optional otherwise, because a single-op elementwise kernel has no interesting
-  // graph and demanding one would only produce a filled-in form.
-  //
-  // Why this is an ARTIFACT and not prose. An Analyze phase that writes "the stages are serialized,
-  // so fuse them" has restated the launch count, not analysed a dependency. The difference is not
-  // stylistic: only the graph can say which orderings the DATA requires versus which are artifacts
-  // of the current code, what the critical path is (the floor on any schedule — a proposal claiming
-  // more than measured_e2e minus critical_path_us is arithmetically wrong), and which nodes have
-  // slack (optimizing those changes nothing). None of that is answerable at kernel granularity, and
-  // a run that cannot produce the graph has not done the analysis whatever prose it returns.
-  //
-  //   {nodes:      [{id, stage, tile, duration_us, source}],   // source: profile|derived|assumed
-  //    edges:      [{from, to, scope, enforced_by, bytes}],
-  //                //   scope:       register|lds|l2|hbm|cross_die|cross_rank
-  //                //   enforced_by: launch_boundary|barrier|fence_flag|none_needed
-  //    critical_path: [nodeId], critical_path_us, measured_e2e_us,
-  //    zero_slack_nodes: [nodeId], false_edges: [{from,to,why}],
-  //    unknowns:   [{what, why, what_would_settle_it}]}
-  //
-  // `unknowns` is load-bearing and not a confession: an edge whose scope could not be determined is
-  // a FACT, and an estimate presented as a measurement is not. A short honest graph outranks a
-  // complete invented one, and `source: 'assumed'` on every node is itself the finding.
-  // See knowledge/tile_task_graph.md for the derivation method.
-  //
-  // The fields taskGraphGate READS are declared below rather than left to the comment above.
-  // `additionalProperties: true` keeps the rest of the documented shape legal, but a field the gate
-  // counts must be named in the schema: with the whole object opaque, a graph that calls the
-  // enforcement column anything other than `enforced_by` validates, and the gate then reports
-  // "0 edges enforced only by a launch boundary" — which reads as the finding "nothing to unfuse"
-  // when the truth is "the column was never filled in". Those two must not look alike.
+  // Fine-grained dependency graph; taskGraphGate owns semantic validation.
   task_graph: {
     type: ['object', 'null'],
     additionalProperties: true,
@@ -1299,7 +1272,7 @@ const MEGA_ANALYZE_SCHEMA = {
   required: [...new Set([
     ...(ANALYZE_SCHEMA.required || []),
     'modifiable_files', 'candidate_directions', 'prior_art',
-    'task_graph', 'resource_timeline', 'mega_plan_ir',
+    'baseline_reuse_map', 'task_graph', 'resource_timeline', 'mega_plan_ir',
   ])],
 };
 
@@ -6073,6 +6046,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
           ? { RESOURCE_TIMELINE: analysis.resource_timeline } : {}),
         ...(analysis && analysis.mega_plan_ir
           ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
+        BASELINE_REUSE_MAP: analysis && analysis.baseline_reuse_map || [],
         ...(USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
           EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_GUIDE_FILE,
           EXPERT_SKILL_ID,
@@ -6391,6 +6365,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           TASK_GRAPH: analysis && analysis.task_graph || {},
           RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
+          BASELINE_REUSE_MAP: analysis && analysis.baseline_reuse_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
         }) +

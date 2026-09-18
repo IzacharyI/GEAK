@@ -3,6 +3,12 @@
 Continue the current `full_persistent_pipeline` lane. The frozen baseline is only
 the root commit; never recreate the lane or inspect external implementations.
 
+Treat `BASELINE_REUSE_MAP` as the implementation starting point. Keep the
+existing quant and GEMM1 bodies; extract the existing standalone GEMM2/P2P and
+Combine numerical bodies into shared callables, then rewire them into the
+persistent grid. Do not regenerate arithmetic that already exists in the
+supplied baseline.
+
 ## Development rule
 
 Fix the earliest concrete blocker returned by Verify, commit it, and return the
