@@ -994,15 +994,22 @@ const ANALYZE_SCHEMA = obj({
   // instead of re-navigating the whole base. Empty string / [] / null when no card applies.
   kk_operator: { type: ['string', 'null'] }, kk_language: { type: ['string', 'null'] },
   kk_refs: { type: 'array', items: { type: 'string' } },
-  baseline_reuse_map: { type: 'array', items: obj({
+  baseline_operator_map: { type: 'array', items: obj({
     role: { type: 'string' },
     file: { type: 'string' },
     symbol: { type: 'string' },
     kind: { type: 'string' },
-    action: { type: 'string', enum: ['keep', 'extract_shared', 'rewire', 'extend'] },
+    semantics: { type: 'string' },
+    inputs: { type: 'array', items: { type: 'string' } },
+    outputs: { type: 'array', items: { type: 'string' } },
+    layout: { type: 'string' },
+    synchronization: { type: 'string' },
+    action: { type: 'string', enum: [
+      'reuse', 'extract_shared', 'inline', 'rewrite_equivalent', 'rewire', 'extend',
+    ] },
     target_role: { type: 'string' },
     proof: { type: 'string' },
-  }, ['role', 'file', 'symbol', 'action']) },
+  }, ['role', 'file', 'symbol', 'semantics']) },
   prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
   // Fine-grained dependency graph; taskGraphGate owns semantic validation.
   task_graph: {
@@ -1272,7 +1279,7 @@ const MEGA_ANALYZE_SCHEMA = {
   required: [...new Set([
     ...(ANALYZE_SCHEMA.required || []),
     'modifiable_files', 'candidate_directions', 'prior_art',
-    'baseline_reuse_map', 'task_graph', 'resource_timeline', 'mega_plan_ir',
+    'baseline_operator_map', 'task_graph', 'resource_timeline', 'mega_plan_ir',
   ])],
 };
 
@@ -6046,7 +6053,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
           ? { RESOURCE_TIMELINE: analysis.resource_timeline } : {}),
         ...(analysis && analysis.mega_plan_ir
           ? { MEGA_PLAN_IR: analysis.mega_plan_ir } : {}),
-        BASELINE_REUSE_MAP: analysis && analysis.baseline_reuse_map || [],
+        BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
         ...(USE_EXPERT_SKILLS && EXPERT_SKILL_PLANNER_EXTENSION_FILE ? {
           EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_GUIDE_FILE,
           EXPERT_SKILL_ID,
@@ -6365,7 +6372,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           TASK_GRAPH: analysis && analysis.task_graph || {},
           RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
           MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
-          BASELINE_REUSE_MAP: analysis && analysis.baseline_reuse_map || [],
+          BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
         }) +

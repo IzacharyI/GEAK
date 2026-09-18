@@ -36,10 +36,11 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    consumer can start from item-level readiness without assuming that sharing a
    compute engine makes overlap impossible.
 4. Map the complete modifiable production-source set. Emit
-   `baseline_reuse_map`: bind each semantic role to the supplied baseline's
-   actual file+symbol and choose `keep`, `extract_shared`, `rewire`, or `extend`.
-   Existing numerical bodies are implementation inputs, not prior art. Prefer
-   extraction and rewiring over regenerating equivalent GEMM/quant/reduction code.
+   `baseline_operator_map`: bind each semantic role to the supplied baseline's
+   actual file+symbol, inputs/outputs, math, layout, and synchronization.
+   Existing kernels are implementation references, not mandatory call sites.
+   For each fused region choose `reuse`, `extract_shared`, `inline`,
+   `rewrite_equivalent`, `rewire`, or `extend` according to the target schedule.
 5. Produce complete runnable candidate directions. Full and profitable partial
    fusion are both legal; diagnostics are controls inside a candidate turn, not
    candidate outputs.
@@ -84,12 +85,17 @@ Return the ordinary analysis schema with this lowerable IR shape:
   "modifiable_files": ["on-path production source"],
   "bottleneck_guess": "memory|compute|latency|overhead|unknown",
   "roadmap_summary": "source-derived summary",
-  "baseline_reuse_map": [{
+  "baseline_operator_map": [{
     "role": "semantic role",
     "file": "baseline-relative production file",
     "symbol": "source-defined function/class method",
     "kind": "host|kernel|numerical_body|epilogue|state",
-    "action": "keep|extract_shared|rewire|extend",
+    "semantics": "math, quantization and routing behavior",
+    "inputs": ["typed/layout input"],
+    "outputs": ["typed/layout output"],
+    "layout": "memory/layout contract",
+    "synchronization": "ordering/publication contract",
+    "action": "reuse|extract_shared|inline|rewrite_equivalent|rewire|extend",
     "target_role": "role that will call the reused body",
     "proof": "source signature/dataflow evidence"
   }],
@@ -238,7 +244,7 @@ Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,
 `CURRENT_BEST_PER_CASE`, `HISTORY`, `MEGA_CANDIDATE_REGISTRY`,
 `MEASUREMENT_CALIBRATION`, `ROADMAP_LADDER`, `OPEN_RUNGS`, `TASK_GRAPH`,
 `RESOURCE_TIMELINE`, `MEGA_PLAN_IR`, guards, score configuration, and optional
-`STRUCTURAL_ONLY`, plus `BASELINE_REUSE_MAP`. A Skill-enabled run may additionally provide
+`STRUCTURAL_ONLY`, plus `BASELINE_OPERATOR_MAP`. A Skill-enabled run may additionally provide
 `EXPERT_SKILL_PLANNER_EXTENSION`, Skill identity, and the bundle/component
 digests listed for Analyze.
 
@@ -251,9 +257,11 @@ Plan exactly one complete candidate direction:
    `failure_routes` entry exists in the Planner Extension, use its
    `repair_intent`, checkpoint, focus files and proof requirement; do not
    replace the structured route with a prose guess.
-3. Derive implementation from the task graph and MegaPlanIR. Preserve
-   `BASELINE_REUSE_MAP`: route extraction/rewiring of supplied baseline bodies,
-   never equivalent numerical regeneration. A matched Skill is an
+3. Derive implementation from the task graph and MegaPlanIR. Consume
+   `BASELINE_OPERATOR_MAP`: use the supplied implementations as concrete
+   references and choose reuse, extraction, inlining, or equivalent rewriting
+   to fit the fused schedule. Preserve observable math, dtype/layout and routing
+   semantics unless current-run correctness validates an intentional change. A matched Skill is an
    evidence-qualified prior at its declared validation status, not a special lane.
 4. Preserve the operator-neutral `target_topology` fields. A partial terminal
    must declare `rung_deviation`; it remains a complete runnable operator.

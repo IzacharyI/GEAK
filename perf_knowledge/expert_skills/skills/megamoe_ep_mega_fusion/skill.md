@@ -203,8 +203,8 @@ Keep these responsibilities separate regardless of source organization:
   progression and completion publication belong to the persistent scheduler.
 - One derivation authority validates every dependent-GEMM tile, scale,
   transport, LDS and bounds constant. One single-unit role emits exactly one
-  `(m_block,n_block)` unit. Standalone and persistent work distributors call
-  that same numerical body and P2P epilogue.
+  `(m_block,n_block)` unit. Standalone and persistent work distributors may
+  share, inline, or equivalently lower the body and P2P epilogue.
 - The dependent-GEMM role constructs route, weight, expert, peer and readiness
   resources inside the single-unit frame. Every LDS address is relative to a
   caller-supplied slab base.
@@ -214,27 +214,27 @@ Keep these responsibilities separate regardless of source organization:
   remain inside that decorated item frame. The scheduler owns only block
   claims.
 
-Reuse the supplied baseline's semantically equivalent numerical bodies after
-verifying these contracts. Scheduling relocation must preserve their
-quantization, scale layout, expert indexing, activation, weighting and
-accumulation semantics.
+Treat the supplied baseline's numerical bodies as concrete implementation
+references after verifying these contracts. Reuse, extract, inline, or rewrite
+them to fit the fused schedule while preserving quantization, scale layout,
+expert indexing, activation, weighting and accumulation semantics.
 
 Do not copy any external implementation tree; source authoring remains
 independent and the reference is calibration-only evidence.
 
 ## Baseline math, ABI and state layout
 
-Reuse the supplied baseline's semantically equivalent numerical bodies after
-verifying their dataflow and type contracts:
+Analyze the supplied baseline's numerical bodies and use them as implementation
+references after verifying their dataflow and type contracts:
 
 - keep the standalone BF16-to-MXFP8 `per_1x32` quantization launch;
-- reuse the existing GEMM1 MFMA, activation/scale layout and weight shuffle;
-- reuse the existing GEMM2 MFMA and weighted P2P scatter epilogue;
-- reuse combine's BF16 and block-FP8 decode/FP32-accumulate rules.
+- preserve GEMM1 math, activation/scale layout and weight shuffle;
+- preserve GEMM2 math and weighted P2P scatter semantics;
+- preserve Combine BF16 and block-FP8 decode/FP32-accumulate behavior.
 
-The optimization is relocation and scheduling, not a new GEMM approximation.
-Do not change quant formats, scale grouping, expert indexing, top-k weights or
-accumulation dtype to obtain the launch reduction.
+The implementation form is open; the observable operator contract is not.
+Do not silently change quant formats, scale grouping, expert indexing, top-k
+weights or accumulation dtype to obtain the launch reduction.
 
 ### Canonical configuration
 

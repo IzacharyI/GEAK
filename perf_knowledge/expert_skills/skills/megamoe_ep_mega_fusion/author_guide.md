@@ -3,11 +3,11 @@
 Continue the current `full_persistent_pipeline` lane. The frozen baseline is only
 the root commit; never recreate the lane or inspect external implementations.
 
-Treat `BASELINE_REUSE_MAP` as the implementation starting point. Keep the
-existing quant and GEMM1 bodies; extract the existing standalone GEMM2/P2P and
-Combine numerical bodies into shared callables, then rewire them into the
-persistent grid. Do not regenerate arithmetic that already exists in the
-supplied baseline.
+Treat `BASELINE_OPERATOR_MAP` and the supplied baseline kernels as concrete
+implementation references. For each region, choose reuse, extraction, inlining,
+or equivalent rewriting to fit the persistent schedule. Function identity is
+not required. Preserve observable math, quantization, dtype/layout, routing and
+top-k behavior unless a deliberate change passes current-run correctness.
 
 ## Development rule
 
