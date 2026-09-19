@@ -69,6 +69,10 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   harness failure.
 - A GPU timeout may be a deadlock. Use the saved process/log classification; do not
   call it an agent failure without checking the GPU command.
+- Once the same HEAD has produced the same device-sync hang twice, do not rerun the
+  uninstrumented command. Add bounded device-side waits and/or per-protocol progress
+  counters, dump the first unmet generation/address after a short timeout, then run
+  only bs=128 until it produces relL2 or a new bounded failure.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 
