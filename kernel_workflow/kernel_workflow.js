@@ -1009,7 +1009,7 @@ const ANALYZE_SCHEMA = obj({
     ] },
     target_role: { type: 'string' },
     proof: { type: 'string' },
-  }, ['role', 'file', 'symbol', 'semantics']) },
+  }, ['role', 'file', 'symbol', 'semantics', 'action']) },
   prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
   // Fine-grained dependency graph; taskGraphGate owns semantic validation.
   task_graph: {
@@ -2605,6 +2605,21 @@ function analyzeResumeDegenerate(
     }
   }
 }
+function applyBaselineOperatorMap(value) {
+  if (!value || !Array.isArray(value.baseline_operator_map)) return value;
+  const editable = [...new Set(value.baseline_operator_map
+    .filter((row) => row && row.file && row.action !== 'reuse')
+    .map((row) => String(row.file)))];
+  value.modifiable_files = [...new Set([...(value.modifiable_files || []), ...editable])];
+  for (const direction of (value.candidate_directions || [])) {
+    direction.focus_files = [...new Set([...(direction.focus_files || []), ...editable])];
+  }
+  if (editable.length) {
+    log(`Baseline operator map added ${editable.length} transformation file(s) to author scope.`);
+  }
+  return value;
+}
+if (MODE === 'mega') analysis = applyBaselineOperatorMap(analysis);
 log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 
 // ---------------------------------------------------------------------------------------------

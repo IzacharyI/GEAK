@@ -145,6 +145,11 @@ ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*'candidate_directions'[\s\S]*'task_grap
   'Mega Analyze cannot return roadmap prose while omitting its structured pipeline artifacts');
 ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*candidate_directions:[\s\S]*'candidate_id'[\s\S]*'target_topology'/.test(src),
   'Mega Analyze preserves Skill candidate identity and topology through StructuredOutput');
+ok(/baseline_operator_map/.test(src) &&
+   /function applyBaselineOperatorMap/.test(src) &&
+   /direction\.focus_files = \[\.\.\.new Set/.test(src) &&
+   /value\.modifiable_files = \[\.\.\.new Set/.test(src),
+  'Analyze-discovered baseline transformations automatically enter Author scope');
 ok(/'task_graph', 'resource_timeline', 'mega_plan_ir'/.test(src) &&
    /required mega_plan_ir invalid/.test(src),
   'Mega Analyze requires a lowerable typed plan, not only a roadmap');
