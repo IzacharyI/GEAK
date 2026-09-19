@@ -299,6 +299,10 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    `speedup_weighted = Σ_i weight_i / Σ_i (weight_i / speedup_i)` using each case's `weight` from
    `baseline_per_case` — that is the PRIMARY number you optimize toward; the geomean is secondary.
 5. **Save every buildable, correctness-passing patch, regardless of speed:**
+   First remove generated build/JIT artifacts from the index and ignore them:
+   `.flydsl_cache*`, `.torch_ext`, `build/`, generated lock/pickle/binary files.
+   Prefer `OUTPUT_DIR/cache` for runtime caches. Fail closed if `git diff --cached
+   --name-only` contains any generated artifact.
    `cd $KERNEL_PATH && git add -A && git diff HEAD > $OUTPUT_DIR/best_patch.diff`.
    Your workspace is a fresh one-commit git repo created when it was copied, so HEAD *is* the
    baseline you started from. Stage first: a plain `git diff` omits files you CREATED, and a patch
