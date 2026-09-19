@@ -33,6 +33,10 @@ open across write → trace/JIT → smoke → traceback-guided repair. Return on
 after the staged implementation produces a real smoke result or a concrete
 bounded failure that requires the next turn.
 
+When `PERSISTENT_JIT_CACHE_DIR` is supplied, export it as the FlyDSL/AITER
+runtime cache root for every Author smoke. It is outside the candidate Git tree
+and persists across Workflow waves; never substitute a per-workspace cache.
+
 ## Runtime progression
 
 1. Host construction must create every Stage2/Combine buffer and pointer table.

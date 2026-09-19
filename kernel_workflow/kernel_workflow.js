@@ -6304,6 +6304,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const baseTree = megaBaseTree(baseCandidateId, source);
   const baseHead = megaBaseHead(baseCandidateId, source);
   const outDir = `${EVAL_DIR}/round_${currentRound}/candidate_${candidateId}`;
+  const persistentJitCache = STATE_DIR
+    ? `${STATE_DIR}/jit_cache/${candidateId}` : `${outDir}/jit_cache`;
   const effectivePrior = existing ? megaEffectiveLaneCheckpoint(existing) : null;
   const priorForAgent = existing ? {
     ...existing,
@@ -6348,6 +6350,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_IMPORT_MODULES,
           LANE_MANIFEST: laneManifest, LANE_LOCK: laneLock,
           CANDIDATE_TIMEOUT_S: commandBudgetS,
+          PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
           SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
           KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
           GPU_ID: authorGpuProhibited
@@ -6669,6 +6672,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     const verifyInputs = {
       CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
       CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+      PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
       CANDIDATE_IMPORT_MODULES,
       EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
       EXPERT_SKILL_CONTRACT_TOOL,

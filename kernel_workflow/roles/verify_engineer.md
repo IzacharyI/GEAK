@@ -172,6 +172,11 @@ denominator.
      git apply "$PATCH" || { echo "PATCH_APPLY_FAILED"; }
    fi
    export PYTHONPATH="$WS${PYTHONPATH:+:$PYTHONPATH}"
+   if [ -n "${PERSISTENT_JIT_CACHE_DIR:-}" ]; then
+     mkdir -p "$PERSISTENT_JIT_CACHE_DIR"
+     export FLYDSL_RUNTIME_CACHE_DIR="$PERSISTENT_JIT_CACHE_DIR"
+     export AITER_JIT_DIR="$PERSISTENT_JIT_CACHE_DIR/aiter"
+   fi
    ```
    (Use `$WS` as your verify workspace for all subsequent commands.)
    If the patch fails to apply → return `status:"apply_failed"`, `verified_geomean:0`.
