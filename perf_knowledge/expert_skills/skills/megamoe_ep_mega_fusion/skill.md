@@ -186,6 +186,33 @@ The second launch is one CTA-local state machine:
   `b*cta_waves+w`. Each item waits independently in lane zero, reads all top-k
   direct slots with cache bits `19`, reduces in FP32, and stores BF16 with
   rank-local `nt` cache bits `2`.
+- Producer and consumer share ONE token index. The scattered payload slot and
+  the published arrival row both decode from the sorted-meta token field:
+  payload at `dest_lid*topk + k`, arrival at `dest_lid`. Combine reads
+  `tok_id*topk + k` and waits on arrival counter `tok_id` for
+  `tok_id in [0,run_tokens)`. Therefore the sorted-meta `dest_lid` MUST equal the
+  owner's dense token id — this is the `MTPR*topk` (`[owner_tok][topk]`) layout,
+  NOT the `world_size*MTPR` (`src_rank*MTPR + slot`) layout a standalone combine
+  uses; do not import that remap here. A permuted `dest_lid` corrupts payload and
+  arrival together: every off-token reads wrong data (relL2 -> nan) and its
+  counter never reaches `topk*generation`, so Combine waits forever. This is not
+  catchable structurally — it is a numerical co-indexing invariant, verify it
+  on-card at bs=128.
+- Producer scatter and Combine decode MUST agree on the P2P payload format, and
+  BOTH must be derived from ONE source — the selected bucket's `p2p_quant`. The
+  producer writes either `none` -> BF16 rows (`hidden*2` bytes/token) or
+  `fp8_blockwise_1x32` -> MXFP8 payload + one E8M0 byte per 32-value block
+  (`hidden + hidden/32` bytes/token). The Combine consumer's blockwise-decode
+  flag AND its per-token `nbytes` stride MUST resolve to that SAME `p2p_quant`;
+  neither end may hardcode the format. If the fused arm enables fp8 on the
+  producer it must thread the identical flag to Combine, and if it leaves the
+  producer at `none` the Combine decode must be BF16 too. A hardcoded blockwise
+  decode over a `none` (BF16) producer scatter reads E8M0 scale bytes out of BF16
+  payload -> inf/nan on essentially every token, and the `hidden*2` vs
+  `hidden+hidden/32` stride disagreement mis-strides the whole payload slab. This
+  fault is unconditional (all bs), first-order ABOVE the co-indexing invariant
+  above, and not structurally catchable — verify the producer emit and the
+  Combine emit resolve the SAME `p2p_quant` at bs=128.
 
 Timed builds fix native Stage2 geometry, G2 cadence, cache policies, readiness,
 and Combine geometry to the rules below. Every non-target launch topology,
