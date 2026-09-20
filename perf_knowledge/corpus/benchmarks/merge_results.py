@@ -5,9 +5,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
+
+
+CORPUS_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_AXES = CORPUS_DIR / "performance_axes" / "gemm.yaml"
+NORMALIZER_PATH = CORPUS_DIR / "_normalize_performance_decisions.py"
+NORMALIZER_SPEC = importlib.util.spec_from_file_location(
+    "normalize_performance_decisions", NORMALIZER_PATH,
+)
+NORMALIZER = importlib.util.module_from_spec(NORMALIZER_SPEC)
+NORMALIZER_SPEC.loader.exec_module(NORMALIZER)
 
 
 def stable_id(payload: dict[str, Any]) -> str:
@@ -24,7 +35,7 @@ def load_result(path: Path):
     return data
 
 
-def flatten(path: Path, result: dict[str, Any]):
+def flatten(path: Path, result: dict[str, Any], axes: dict[str, Any]):
     legacy_run_id = "legacy_" + hashlib.sha256(
         json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:16]
@@ -46,7 +57,11 @@ def flatten(path: Path, result: dict[str, Any]):
     }
     context_fingerprint = stable_id(comparable_context).replace("measure_", "context_", 1)
     rows = []
-    for implementation in result["implementations"]:
+    for raw_implementation in result["implementations"]:
+        implementation = dict(raw_implementation)
+        implementation["performance_decisions"] = NORMALIZER.normalize_implementation(
+            implementation, axes,
+        )
         identity = {
             "run_id": context["run_id"],
             "seed": context["seed"],
@@ -63,14 +78,16 @@ def flatten(path: Path, result: dict[str, Any]):
     return rows
 
 
-def merge(paths):
+def merge(paths, axes_path=DEFAULT_AXES):
+    axes = NORMALIZER.load_yaml(Path(axes_path))
+    NORMALIZER.validate_schema(axes)
     records = {}
     errors = []
     for raw in paths:
         path = Path(raw).resolve()
         try:
             result = load_result(path)
-            for row in flatten(path, result):
+            for row in flatten(path, result, axes):
                 existing = records.get(row["measurement_id"])
                 if existing and existing["implementation"] != row["implementation"]:
                     errors.append({
@@ -98,8 +115,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", action="append", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--axes", type=Path, default=DEFAULT_AXES)
     args = parser.parse_args(argv)
-    result = merge(args.input)
+    result = merge(args.input, args.axes)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0 if not result["errors"] else 1

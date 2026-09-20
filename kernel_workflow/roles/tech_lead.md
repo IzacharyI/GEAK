@@ -139,7 +139,16 @@ analysis below exactly as before.)
      to write the target — without this the engineer re-implements the new backend blind.
    - **Corpus decisions:** read `corpus/catalog.yaml` and match `kk_operator` against each family's
      `id`/`patterns`. Include the matched family's `decision_document` in `kk_refs`; do not hard-code
-     GEMM in new consumers. When enough context is known, use `corpus/_select_candidates.py` to
+     GEMM in new consumers. Also read the family's `performance_axes`: it is the shared model for
+     comparing FlyDSL/Triton/CK/ASM decisions such as tile, split-K, pipeline and layout. Compare
+     canonical components, but retain each backend's original field and completeness. A CK template
+     family, Triton `tl.dot` and an ASM object name can answer the same compute question without being
+     the same instruction; an opaque field is missing evidence, not permission to guess. Apply
+     `hard_constraint` axes before spending a round, keep `search_space` separate from measured
+     preference, and carry the published cross-axis `dependencies` into each direction rather than
+     changing one member of a coupled bundle blindly. Do not compare historical measurements unless
+     every available required `comparison_context` field matches. When enough context is known, use
+     `corpus/_select_candidates.py` to
      separate eligible, deferred and rejected cards. If `MEASURED_DECISION_OUTCOMES` is non-empty,
      pass it as `--outcomes`, and pass `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`; only
      same-language/gfx/version compatible single-ref directions may
@@ -162,7 +171,9 @@ analysis below exactly as before.)
      `corpus/benchmarks/select_implementations.py` using the exact suite/gfx/dtype/shape and
      `ACTIVE_FLYDSL_VERSION`, plus the frozen baseline and current AITER commit/Torch/HIP versions
      (or an exact context fingerprint). Missing environment identity means no prior, not a fuzzy
-     match. A returned Top-K bundle is a concrete seed/rewrite candidate, not proof
+     match. Read each returned implementation's `performance_decisions` vector to compare the
+     backend-neutral axes; use its `source_fields` to recover the exact spelling before assigning
+     work. A returned Top-K bundle is a concrete seed/rewrite candidate, not proof
      that one API caused its total speedup. Revalidate it through this run's oracle and frozen baseline.
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).

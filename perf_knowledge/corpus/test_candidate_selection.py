@@ -21,7 +21,8 @@ def test_catalog_paths_exist_and_family_names_are_unique():
         seen.update(names)
         for field in (
             "source_evidence", "tuned_evidence", "decisions", "source_document",
-            "decision_document", "benchmark_manifest",
+            "decision_document", "benchmark_manifest", "performance_axes",
+            "performance_normalizer",
         ):
             assert (HERE / family[field]).is_file(), (family["id"], field, family[field])
 
@@ -43,6 +44,11 @@ def test_gfx_constraint_and_eligible_performance_candidates_are_separate():
     assert got["flydsl-gfx942-path-gates"] == "constraint"
     assert got["flydsl-xor16-lds-layout-consistency"] == "performance_candidate"
     assert "flydsl-small-m-hgemm-family" not in got
+    assert {axis["id"] for axis in result["performance_axes"]} >= {
+        "compute_instruction", "workgroup_tile", "pipeline_schedule", "operand_layout",
+    }
+    assert result["performance_model"]["dependencies"]
+    assert "math_contract" in result["performance_model"]["comparison_context"]["required"]
 
 
 def test_small_m_family_is_rejected_on_gfx942_and_selected_on_gfx950():

@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+import _normalize_performance_decisions as PERFORMANCE
+
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CATALOG = HERE / "catalog.yaml"
@@ -269,6 +271,16 @@ def select(
     family = resolve_family(catalog, context["operator_family"])
     decisions_path = catalog_path.parent / family["decisions"]
     decision_data = load_yaml(decisions_path)
+    axes_path = (
+        catalog_path.parent / family["performance_axes"]
+        if family.get("performance_axes")
+        else None
+    )
+    performance_model = (
+        PERFORMANCE.model_summary(load_yaml(axes_path))
+        if axes_path is not None
+        else {"axes": [], "comparison_context": {}, "dependencies": [], "contract": {}}
+    )
 
     buckets: dict[str, list[dict[str, Any]]] = {
         "eligible": [],
@@ -306,12 +318,15 @@ def select(
         "schema_version": 1,
         "family": family["id"],
         "context": context,
+        "performance_axes": performance_model["axes"],
+        "performance_model": performance_model,
         "measured_bundles": compatible_bundles(outcomes, context) if outcomes else [],
         **buckets,
         "contract": (
             "Static match selects applicable cards. Compatible single-ref outcomes may rank "
             "performance candidates but are planner attribution, never a target-box verdict. "
-            "Constraints alone may reject impossible candidates."
+            "Shared performance axes align backend questions and spelling only; they do not make "
+            "unlike representations equivalent. Constraints alone may reject impossible candidates."
         ),
     }
 

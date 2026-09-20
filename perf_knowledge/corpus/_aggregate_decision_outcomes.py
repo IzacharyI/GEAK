@@ -157,7 +157,7 @@ def _quality_eligible(context, status, correctness, attribution, metric_conflict
     )
     correct = all(str(value or "").lower().startswith("pass") for value in correctness_values)
     return (
-        attribution == "single_ref_direction"
+        attribution in {"single_ref_direction", "bundle"}
         and context.get("measurement_reliable") is True
         and str(context.get("validation_status") or "").lower() == "accepted"
         and measured_status

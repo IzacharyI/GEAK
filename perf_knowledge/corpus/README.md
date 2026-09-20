@@ -46,6 +46,8 @@ and run that earned them. The always-on corpus does not copy them and bypass tho
 | `_extract_impl_facts.py` | reads an AITER checkout and writes raw source/tuning evidence. Needs `--aiter`. |
 | `evidence/gemm_source.yaml` | machine-readable source observations: stable ID, question category, language, `file:line`, match, arch scope, verbatim excerpt. |
 | `evidence/gemm_tuned_configs.yaml` | AITER's shipped selected Triton configs, each with stable `cfg_…` attribution ID, grouped by `(gfx, variant, M bucket)` with exact source JSON paths. |
+| `performance_axes/gemm.yaml` | backend-neutral performance questions plus loss-aware aliases for FlyDSL, Triton, CK and ASM knobs. |
+| `_normalize_performance_decisions.py` | projects backend spelling onto those axes while retaining source fields, completeness and comparison limits. |
 | `gemm_source_evidence.md` | generated evidence index for tracing a card back to source; not the first page an author should read. |
 | `decisions/gemm.yaml` | curated development cards with conditions, actions, alternatives and evidence strength. |
 | `_render_decisions.py` | validates card citations and combines curated cards with shipped tuning evidence. |
@@ -117,7 +119,54 @@ python3 perf_knowledge/corpus/_aggregate_decision_outcomes.py \
 planner attribution, not proof that the card caused the change; multi-ref directions remain bundles.
 Only finite, correctness-passing results from reliable, Director-accepted runs enter candidate
 ordering. Regressions remain valid negative evidence; failed/flagged measurements remain visible but
-do not supply a numeric prior.
+do not supply a numeric prior. A quality-passing multi-ref result may rank that exact bundle in
+`measured_bundles`, but it never creates a prior for any card inside the bundle.
+
+## Unified performance decisions
+
+`performance_axes/gemm.yaml` supplies the common vocabulary that raw API mapping does not:
+
+```text
+compute_instruction  workgroup_tile  work_partition  execution_geometry
+pipeline_schedule    operand_layout  memory_access   epilogue
+architecture_capability  configuration_constraints  tunable_surface
+implementation_variant  runtime_contract
+```
+
+Each axis keeps its comparison contract. For example, a direct FlyDSL `rocdl.mfma_*`, Triton's
+`tl.dot`, a CK XDL template and an ASM object name all answer the `compute_instruction` question,
+but they remain respectively instruction/compiler-op, template-family and binary-identity evidence.
+The normalizer never calls those values equivalent.
+
+The model also publishes:
+
+- `comparison_context`: math contract, dtype, architecture, shape, baseline, accounting and
+  toolchain/provenance fields that must match before measured bundles are comparable;
+- `dependencies`: cross-axis rules such as architecture selecting the MFMA/DMA/async-copy bundle,
+  tile geometry setting resource legality, and preshuffle changing both host and kernel layout;
+- axis `kind`: separates performance choices from hard constraints, search spaces, structural
+  variants and runtime integration contracts.
+
+Every category currently emitted by `gemm_source.yaml` maps to at least one axis. A source record may
+answer more than one question—for example an ASM launch formula is both execution geometry and a
+runtime contract—but it remains one observation and gains no extra performance weight.
+
+Inspect current source coverage and normalize shipped configs with:
+
+```bash
+python3 perf_knowledge/corpus/_normalize_performance_decisions.py \
+  --source-evidence perf_knowledge/corpus/evidence/gemm_source.yaml \
+  --tuned-evidence perf_knowledge/corpus/evidence/gemm_tuned_configs.yaml \
+  --config-id cfg_386a49c8c892741c
+```
+
+`benchmarks/merge_results.py` applies the same normalizer to every measured implementation. Registry
+rows therefore carry a `performance_decisions` vector alongside the untouched backend config:
+
+- exact components such as `workgroup_tile.{m,n,k}` and `work_partition.split_k` can be compared;
+- partial source/config observations stay `partial`;
+- opaque runtime-selected CK/ASM configs remain explicitly unresolved;
+- whole-bundle speedup remains on the implementation and is never copied onto an individual axis.
 
 ## Normalized upstream benchmark
 

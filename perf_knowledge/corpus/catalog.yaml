@@ -12,6 +12,8 @@ families:
       - grouped_gemm
     source_evidence: evidence/gemm_source.yaml
     tuned_evidence: evidence/gemm_tuned_configs.yaml
+    performance_axes: performance_axes/gemm.yaml
+    performance_normalizer: _normalize_performance_decisions.py
     decisions: decisions/gemm.yaml
     source_document: gemm_source_evidence.md
     decision_document: gemm_decisions.md

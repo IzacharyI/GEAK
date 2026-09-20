@@ -77,7 +77,15 @@ Read, as reference, before writing:
   `gluon_authoring` expert skill and are only injected when `use_expert_skills` is on. That skill is
   mechanics only — it carries no search strategy, so it does not compete with your own loop.
 - **Conditioned corpus decisions:** read `KERNEL_KNOWLEDGE_DIR/corpus/catalog.yaml`, select the family
-  whose `id`/`patterns` matches the op, then read its `decision_document`. When enough context is
+  whose `id`/`patterns` matches the op, then read its `decision_document` and `performance_axes`.
+  The latter aligns backend-specific knobs onto shared questions such as workgroup tile, split-K,
+  pipeline and operand layout, and separately publishes hard constraints, search surfaces, runtime
+  contracts, required comparison context and cross-axis dependencies. Apply constraints before
+  generating candidates and carry coupled decisions together. Use canonical components to transfer
+  intent, then use `source_fields` and the target-language docs to spell the implementation. Never
+  turn a CK template name, Triton compiler op or ASM object name into an exact FlyDSL instruction
+  unless direct evidence resolves it.
+  When enough context is
   known, run that corpus's `_select_candidates.py` for the target language, gfx, dtype, regime and
   shape, including `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`. If
   `MEASURED_DECISION_OUTCOMES` is non-empty, pass it as `--outcomes`; only compatible
@@ -91,8 +99,9 @@ Read, as reference, before writing:
   If `MEASURED_IMPLEMENTATION_REGISTRY` is non-empty, query
   `corpus/benchmarks/select_implementations.py` with the exact suite/gfx/dtype/shape and active FlyDSL
   version, plus the frozen baseline name and current AITER commit/Torch/HIP versions (or one exact
-  context fingerprint). An incomplete context must return no prior. Treat the returned Top-K whole
-  implementations as seed bundles; do not distribute their
+  context fingerprint). An incomplete context must return no prior. Use each implementation's
+  `performance_decisions` vector to compare shared axes while retaining backend spelling and
+  completeness. Treat the returned Top-K whole implementations as seed bundles; do not distribute their
   total speedup over individual APIs, and revalidate every adopted bundle against this task's oracle.
   Its tuning tables turn `(gfx, variant, M bucket)` config files into explicit **seed candidate /
   vary next** instructions, so you do not have to infer advice from occurrence counts. Measured

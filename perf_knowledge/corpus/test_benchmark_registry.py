@@ -28,8 +28,16 @@ def result(implementation_id="impl_a", speedup=1.2, run_id="run-a", baseline="tr
         "implementations": [{
             "implementation_id": implementation_id,
             "name": "flydsl",
+            "language": "flydsl",
             "status": "measured",
             "speedup_vs_baseline": speedup,
+            "config": {
+                "identity_complete": True,
+                "tile_m": 16,
+                "tile_n": 32,
+                "tile_k": 64,
+                "split_k": 2,
+            },
         }],
     }
 
@@ -49,6 +57,11 @@ def test_merge_flattens_and_deduplicates_identical_measurements(tmp_path):
     assert row["measurement_id"].startswith("measure_")
     assert row["context"]["shape"]["m"] == 8
     assert row["implementation"]["speedup_vs_baseline"] == 1.2
+    decisions = row["implementation"]["performance_decisions"]
+    assert decisions["axes"]["workgroup_tile"]["values"] == {
+        "k": 64, "m": 16, "n": 32,
+    }
+    assert decisions["axes"]["work_partition"]["values"]["split_k"] == 2
 
 
 def test_environment_or_implementation_change_produces_a_new_record(tmp_path):

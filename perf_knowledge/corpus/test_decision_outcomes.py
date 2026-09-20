@@ -15,6 +15,11 @@ SPEC = importlib.util.spec_from_file_location(
 )
 AGG = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AGG)
+SELECT_SPEC = importlib.util.spec_from_file_location(
+    "select_candidates_for_outcome_test", HERE / "_select_candidates.py",
+)
+SELECT = importlib.util.module_from_spec(SELECT_SPEC)
+SELECT_SPEC.loader.exec_module(SELECT)
 
 
 def write_yaml(run, outcomes, **context):
@@ -105,6 +110,14 @@ def test_multi_card_direction_is_bundle_only(tmp_path):
     assert bundle["decision_count"] == 2
     assert bundle["attribution_scope"] == "bundle_only"
     assert bundle["individual_decision_attribution"] is False
+    assert bundle["quality_eligible_for_ranking"] is True
+    context = {
+        "target_language": "flydsl",
+        "flydsl_version": "0.3.0",
+        "gfx": "gfx950",
+    }
+    assert SELECT.measured_priors(got, context) == {}
+    assert SELECT.compatible_bundles(got, context) == [bundle]
     for decision in ("card-a", "card-b"):
         assert got["decisions"][decision]["attempts"] == 1
         assert got["decisions"][decision]["winner_count"] == 0
