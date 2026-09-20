@@ -53,6 +53,9 @@ MUST_BE_READ = {
         "configuration seeds. The source index alone leaves the author to infer recommendations from "
         "regex-hit counts; this is the semantic layer that turns evidence into something usable "
         "without bypassing the separate switches for measured learned cards and expert skills.",
+    "corpus/catalog.yaml":
+        "operator/pattern discovery for conditioned corpus cards. Without it every new family needs "
+        "another GEMM-specific prompt and validation-code edit.",
     "languages/flydsl/version_map.md":
         "which FlyDSL symbol moved where across versions. Unread, an agent porting a recipe guesses "
         "at an API instead of looking it up, which is the specific failure it was built to remove.",

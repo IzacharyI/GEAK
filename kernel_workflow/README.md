@@ -27,6 +27,9 @@ by an agent returning **structured JSON**.
    conflicting ones into a coherent best implementation). Does not consume budget.
 7. **Director arbitration (H)** — independently validates the final patch against the TRUE original
    baseline and can flag / request a corrective round.
+8. **FlyDSL compatibility gate** — author and existing-FlyDSL optimize lanes statically resolve the
+   candidate's imports/API attributes against the installed FlyDSL before funding optimization;
+   compilation/correctness remains the final semantic gate.
 
 ## Roles → workflow mapping
 - **Director** = the script's orchestration + a setup agent + a final validation/arbitration agent.
@@ -70,6 +73,9 @@ Workflow({
     budget: 6,                 // optional, default 6
     min_improve: 0.02,         // optional, default 0.02 (2%): min verified geomean gain over the
                                //           cumulative best for a round winner to be committed
+    candidate_floor: 1.0,      // optional: candidate admission floor; default 1.0 in optimize,
+                               //           0.01 in author so sub-baseline improvements can compound.
+                               //           Final authored output still must exceed 1.0.
     deep_cost: 2,              // optional, default 2: budget cost of one deep_explore direction
                                //           (heavyweight; always runs in its own dedicated round)
     gpu_ids: "0",              // optional, comma-separated, default "0"
@@ -87,6 +93,12 @@ Workflow({
     op_spec: {},               // author mode: {op_kind, shapes, dtype, math_contract, regime} for the op
     use_perf_knowledge: "true",// optional, default true; false = clean authoring-KB A/B control arm
     perf_knowledge_dir: "",    // optional override; an explicit empty path remains empty
+    decision_outcomes_path: "",// optional aggregate from corpus/_aggregate_decision_outcomes.py;
+                               // compatible single-ref outcomes rank candidates, never gate them
+    implementation_registry_path: "", // optional merged normalized AITER benchmark results;
+                                      // exact-context Top-K bundles seed author/optimize
+    corpus_cold_direction: "true", // optional, default true: with >=2 directions, keep one
+                                   // profile/free hypothesis; it may still use semantic/constraint cards
     // --- workload alignment (optional; aligns the PERF harness with the real workload) ---
     workload_spec_path: "",    // optional: path to a workload-v1 json (parse_profile.py --workload-out).
                                //   The benchmark harness then times the EXACT (shape,dtype) cases the
@@ -267,7 +279,8 @@ the `exp/` folder sibling to `workflow_dir`):
 - `tech_lead_report.md` — round-by-round narrative + final per-case table (the TechLead summary)
 - `final_patch.diff`, `optimized/`, `director_validation.json` — the official verified result
 - `validation_environment.yaml` — software commits/versions, GPU, shape/workload, measurement protocol,
-  parity verdict and exact `decision_refs` outcomes for this run
+  parity verdict and exact `decision_refs` outcomes for this run, including frozen-baseline score,
+  ratio versus the round-start incumbent, and single-ref versus bundle attribution
 
 ## Generality (single kernel ↔ e2e model)
 The script never branches on kernel type or single-vs-e2e. Everything flows through the

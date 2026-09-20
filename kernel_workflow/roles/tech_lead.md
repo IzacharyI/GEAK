@@ -84,7 +84,12 @@ The fifth is the **open-ended deep optimizer** — use it differently (see the p
 
 ## PHASE=analyze
 
-Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`, `KERNEL_KNOWLEDGE_DIR` (may be empty), and optionally `INCREMENTAL_RESUME`.
+Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK` (may be empty), `SKILL_DIR`,
+`KERNEL_KNOWLEDGE_DIR` (may be empty), `CORPUS_CATALOG` (empty when perf knowledge is off), and
+`MEASURED_DECISION_OUTCOMES` (optional aggregate of prior verifier outcomes), and optionally
+`MEASURED_IMPLEMENTATION_REGISTRY` (optional exact-context whole-implementation measurements),
+`ACTIVE_FLYDSL_VERSION` (captured by the compatibility gate for FlyDSL sources), and optionally
+`INCREMENTAL_RESUME`.
 
 **FAST PATH — if `INCREMENTAL_RESUME` is set** (a resumed deep wave: the roadmap was already built in a
 prior wave and persisted): do NOT re-derive the analysis from scratch. Read the existing
@@ -132,8 +137,15 @@ analysis below exactly as before.)
      flydsl additionally has the full `authoring_gemm_levers.md` / `authoring_optimization.md` /
      `authoring_tile_programming.md` / `debugging.md` set). The source-backend card alone does NOT teach how
      to write the target — without this the engineer re-implements the new backend blind.
-   - **GEMM-family ops: also include `corpus/gemm_decisions.md` in `kk_refs`** when it exists
-     (`ls KERNEL_KNOWLEDGE_DIR/corpus/`). It is the only file in the base that states the shipped
+   - **Corpus decisions:** read `corpus/catalog.yaml` and match `kk_operator` against each family's
+     `id`/`patterns`. Include the matched family's `decision_document` in `kk_refs`; do not hard-code
+     GEMM in new consumers. When enough context is known, use `corpus/_select_candidates.py` to
+     separate eligible, deferred and rejected cards. If `MEASURED_DECISION_OUTCOMES` is non-empty,
+     pass it as `--outcomes`, and pass `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`; only
+     same-language/gfx/version compatible single-ref directions may
+     rank performance candidates. A rank remains a prior, never a target-box verdict. The current
+     GEMM family resolves to `corpus/gemm_decisions.md`, which states
+     the shipped
      CONFIGURATION SPACE — which tile and split-K values the library will accept, how a shape narrows
      them, and which combinations fail to build — and `kk_refs` is what the engineers are handed.
      Leaving it out is how it gets missed: the operator and language cards teach the programming
@@ -146,6 +158,12 @@ analysis below exactly as before.)
      your target language does not have.
    Treat all of this as advisory input that can only *widen* the candidate set (see the contract
    above). Do not let it override the per-case data or measurement.
+   - **Measured implementation bundles:** when `MEASURED_IMPLEMENTATION_REGISTRY` is non-empty, query
+     `corpus/benchmarks/select_implementations.py` using the exact suite/gfx/dtype/shape and
+     `ACTIVE_FLYDSL_VERSION`, plus the frozen baseline and current AITER commit/Torch/HIP versions
+     (or an exact context fingerprint). Missing environment identity means no prior, not a fuzzy
+     match. A returned Top-K bundle is a concrete seed/rewrite candidate, not proof
+     that one API caused its total speedup. Revalidate it through this run's oracle and frozen baseline.
 5. Write `EVAL_DIR/analysis.json` and `EVAL_DIR/codebase_context.md` (human-readable, INCLUDE the
    full kernel source for engineers to reference).
 6. Write `EVAL_DIR/roadmap.md`: kernel summary, bottleneck hypothesis, a multi-round strategy sketch
@@ -251,10 +269,16 @@ Rules:
      **Attribution is mandatory:** when one of these cards or a shipped-config row materially seeds a
      direction, copy its exact card `id` or `cfg_…` value into that direction's `decision_refs`.
      `kk_refs: ["corpus/gemm_decisions.md"]` is not enough — it cannot identify which of hundreds of
-     candidates was acted on. Profile-only directions use `decision_refs: []`.
+     candidates was acted on. `decision_refs` records implementation knowledge too, so a
+     profile-origin hypothesis may still cite semantic/constraint cards.
    - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_source_evidence.md` — trace a decision card to the same
      operator in FlyDSL / Triton / Gluon / CK / HIP / asm with `file:line` into AITER. Open this only
      when the exact MFMA/LDS/layout/scheduling precedent is needed; occurrence count is not a ranking.
+   **Corpus exploration floor:** set every direction's `hypothesis_source` to `profile`, `corpus`,
+   `mixed`, or `free`. All directions may use semantic/API and constraint cards. If this round issues
+   two or more directions, at least one MUST have a profile/free hypothesis formed from the current
+   measurements before corpus performance priors are consulted. This is enforced before dispatch:
+   corpus may inform every implementation without deciding the whole search portfolio.
 2b. **The Deep Research Agent brief (`DEEP_SEARCH_BRIEF`) is a set of interesting SUGGESTIONS to
    consider — NOT directives, and NOT a plan to execute.** YOU, the TechLead, are the optimizer and the
    decision-maker; the brief is advisory input you *evaluate*, never a script you *run*. Follow this
@@ -358,8 +382,9 @@ Return JSON:
       "focus_files": ["<rel paths this direction may edit>"],
       "expected_speedup": 2.0,
       "prompt": "full, self-contained task description for the engineer",
+      "hypothesis_source": "profile|corpus|mixed|free",
       "kk_refs": ["<optional perf_knowledge page paths grounding THIS direction; omit/[] if none>"],
-      "decision_refs": ["<exact card id or cfg_... from gemm_decisions.md; [] if profile-only>"]
+      "decision_refs": ["<exact card id or cfg_... materially used; semantic/constraint refs are allowed for profile hypotheses>"]
     }
   ]
 }

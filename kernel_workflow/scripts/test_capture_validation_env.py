@@ -110,8 +110,15 @@ def test_decision_registry_resolves_curated_and_config_ids(tmp_path):
     (evidence / "gemm_tuned_configs.yaml").write_text(
         'tuned_configs:\n  - config_id: "cfg_0123456789abcdef"\n',
     )
+    (decisions / "reduction.yaml").write_text(
+        'cards:\n  - id: "flydsl-wave-reduction"\n',
+    )
+    (evidence / "attention_tuned_configs.yaml").write_text(
+        'tuned_configs:\n  - config_id: "cfg_fedcba9876543210"\n',
+    )
     assert ENV.decision_registry(tmp_path) == {
-        "flydsl-half-mfma-call-forms", "cfg_0123456789abcdef",
+        "flydsl-half-mfma-call-forms", "flydsl-wave-reduction",
+        "cfg_0123456789abcdef", "cfg_fedcba9876543210",
     }
 
 

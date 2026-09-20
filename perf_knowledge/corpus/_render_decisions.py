@@ -29,10 +29,16 @@ TUNED_EVIDENCE = os.path.join(HERE, "evidence", "gemm_tuned_configs.yaml")
 DOC = os.path.join(HERE, "gemm_decisions.md")
 
 REQUIRED = {
-    "id", "question", "evidence_level", "status", "conditions", "actions", "alternatives", "why",
-    "source_evidence", "measurement_evidence", "limitations",
+    "id", "type", "match", "question", "evidence_level", "status", "conditions", "actions",
+    "alternatives", "why", "source_evidence", "measurement_evidence", "limitations",
 }
 LEVELS = {"source_observed"}
+CARD_TYPES = {"semantic", "constraint", "performance_candidate"}
+MATCH_LIST_FIELDS = {
+    "operator_families", "target_languages", "gfx", "exclude_gfx", "dtypes", "regimes",
+    "bottlenecks", "requires",
+}
+SHAPE_FIELDS = {"m_min", "m_max", "n_min", "n_max", "k_min", "k_max"}
 GFX_ORDER = {"gfx950": 0, "gfx942": 1, "gfx1250": 2, "gfx1201": 3}
 LEVEL_TEXT = {
     "source_observed": (
@@ -40,6 +46,46 @@ LEVEL_TEXT = {
         "implied."
     ),
 }
+
+
+def validate_match(label, match):
+    """Validate the deterministic filter without pretending it is a performance verdict."""
+    errors = []
+    if not isinstance(match, dict) or not match:
+        return [f"{label}: match must be a non-empty mapping"]
+    unknown = sorted(set(match) - MATCH_LIST_FIELDS - {"shape"})
+    if unknown:
+        errors.append(f"{label}: unknown match fields {unknown}")
+    for field in MATCH_LIST_FIELDS:
+        if field not in match:
+            continue
+        values = match[field]
+        if not isinstance(values, list) or not values or not all(
+            isinstance(value, str) and value for value in values
+        ):
+            errors.append(f"{label}: match.{field} must be a non-empty string list")
+    if not match.get("operator_families"):
+        errors.append(f"{label}: match.operator_families is required")
+    if not match.get("target_languages"):
+        errors.append(f"{label}: match.target_languages is required")
+    if set(match.get("gfx") or []) & set(match.get("exclude_gfx") or []):
+        errors.append(f"{label}: match.gfx and match.exclude_gfx overlap")
+    shape = match.get("shape")
+    if shape is not None:
+        if not isinstance(shape, dict) or not shape:
+            errors.append(f"{label}: match.shape must be a non-empty mapping")
+        else:
+            shape_unknown = sorted(set(shape) - SHAPE_FIELDS)
+            if shape_unknown:
+                errors.append(f"{label}: unknown match.shape fields {shape_unknown}")
+            for field, value in shape.items():
+                if not isinstance(value, int) or value < 0:
+                    errors.append(f"{label}: match.shape.{field} must be a non-negative integer")
+            for axis in ("m", "n", "k"):
+                low, high = shape.get(f"{axis}_min"), shape.get(f"{axis}_max")
+                if isinstance(low, int) and isinstance(high, int) and low > high:
+                    errors.append(f"{label}: match.shape.{axis}_min exceeds {axis}_max")
+    return errors
 
 
 def validate(cards, source_evidence):
@@ -61,6 +107,9 @@ def validate(cards, source_evidence):
         if label in ids:
             errors.append(f"{label}: duplicate id")
         ids.add(label)
+        if card["type"] not in CARD_TYPES:
+            errors.append(f"{label}: unknown card type {card['type']!r}")
+        errors.extend(validate_match(label, card["match"]))
         if card["evidence_level"] not in LEVELS:
             errors.append(f"{label}: unknown evidence_level {card['evidence_level']!r}")
         for field in ("conditions", "actions", "why", "limitations"):
@@ -85,14 +134,33 @@ def _bullets(items):
     return [f"- {item}" for item in items]
 
 
+def render_match(match):
+    out = []
+    for field in (
+        "operator_families", "target_languages", "gfx", "exclude_gfx", "dtypes", "regimes",
+        "bottlenecks", "requires",
+    ):
+        if match.get(field):
+            out.append(f"- `{field}`: " + ", ".join(f"`{value}`" for value in match[field]))
+    if match.get("shape"):
+        values = ", ".join(f"`{key}={value}`" for key, value in sorted(match["shape"].items()))
+        out.append(f"- `shape`: {values}")
+    return out
+
+
 def render_card(card, evidence_by_id):
     level = card["evidence_level"]
     out = [
         f"## {card['question']}",
         "",
-        f"**Card:** `{card['id']}` · **evidence:** `{level}` · **status:** `{card['status']}`",
+        (f"**Card:** `{card['id']}` · **type:** `{card['type']}` · "
+         f"**evidence:** `{level}` · **status:** `{card['status']}`"),
         "",
         LEVEL_TEXT[level],
+        "",
+        "### Machine match",
+        "",
+        *render_match(card["match"]),
         "",
         "### Use when",
         "",
@@ -180,8 +248,8 @@ def render_tuning_table(tuned):
 
 def render(decision_data, source_data, tuned_data):
     schema = (decision_data.get("provenance") or {}).get("schema_version")
-    if schema != 2:
-        raise ValueError(f"unsupported decisions schema_version {schema!r}; expected 2")
+    if schema != 3:
+        raise ValueError(f"unsupported decisions schema_version {schema!r}; expected 3")
     cards = decision_data.get("cards") or []
     source_evidence = source_data.get("source_evidence") or []
     tuned = tuned_data.get("tuned_configs") or []

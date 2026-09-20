@@ -96,13 +96,20 @@ def flydsl_provider(module_path):
 
 
 def decision_registry(perf_knowledge_dir):
-    """IDs published by the always-on GEMM decision and shipped-config sources."""
+    """IDs published by every catalogued decision/config source.
+
+    Discovery is by the stable corpus layout rather than a GEMM filename list.  Adding a family under
+    `corpus/decisions/` or `corpus/evidence/*_tuned_configs.yaml` must make its IDs resolvable without
+    editing the workflow's validation code.
+    """
     root = Path(str(perf_knowledge_dir or ""))
-    files = (
-        (root / "corpus" / "decisions" / "gemm.yaml", r'^\s*- id:\s*["\']?([^"\'\s]+)'),
-        (root / "corpus" / "evidence" / "gemm_tuned_configs.yaml",
-         r'^\s*- config_id:\s*["\']?([^"\'\s]+)'),
-    )
+    corpus = root / "corpus"
+    files = [
+        *((path, r'^\s*- id:\s*["\']?([^"\'\s]+)')
+          for path in sorted((corpus / "decisions").glob("*.yaml"))),
+        *((path, r'^\s*- config_id:\s*["\']?([^"\'\s]+)')
+          for path in sorted((corpus / "evidence").glob("*_tuned_configs.yaml"))),
+    ]
     found = set()
     for path, pattern in files:
         try:

@@ -110,9 +110,27 @@ check("an explicit empty perf knowledge dir does not fall back to the default",
 check("planning and authoring receive the perf knowledge switch",
       lane.count("PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off'") >= 3,
       "author, analyze and plan_round must all see the control-arm state")
+check("planning and authoring receive the corpus catalog",
+      lane.count("CORPUS_CATALOG") >= 4,
+      "new operator families must be discoverable without another GEMM hard-code")
+check("planning and authoring receive measured decision outcomes",
+      lane.count("MEASURED_DECISION_OUTCOMES") >= 4,
+      "the verifier feedback aggregate must reach the candidate selector")
+check("planning and authoring receive measured implementation bundles",
+      lane.count("MEASURED_IMPLEMENTATION_REGISTRY") >= 4,
+      "normalized AITER benchmark winners must reach author and optimize")
 check("the bake-off dispatcher forwards use_perf_knowledge to each lane",
       "use_perf_knowledge:" in disp,
       "kernel_workflow.js builds bake-off lane args explicitly; the flag must be there")
+check("the bake-off dispatcher forwards the corpus exploration control",
+      "corpus_cold_direction:" in disp and "corpus_dir_cap:" not in disp,
+      "all directions may use corpus; only a profile/free hypothesis is reserved")
+check("the bake-off dispatcher forwards measured decision outcomes",
+      "decision_outcomes_path:" in disp,
+      "explicit lane args must not silently drop the measured prior")
+check("the bake-off dispatcher forwards measured implementation bundles",
+      "implementation_registry_path:" in disp,
+      "explicit lane args must not silently drop exact-context implementation priors")
 
 # Perf-decision attribution is separate from the learned-card citation ledger. A page path (`kk_refs`)
 # cannot identify which curated card or cfg row seeded a direction, so exact IDs must survive the
@@ -128,6 +146,11 @@ check("decision refs reach engineers and round history",
 check("verifier outcomes are joined to decision refs",
       "decisionCitations.push" in lane and "decision_citations: decisionCitations" in lane,
       "formal validation needs exact per-decision outcomes in the lane result")
+check("decision outcomes distinguish frozen-baseline score from round increment",
+      "incremental_vs_incumbent" in lane
+      and "ratio_of_frozen_baseline_speedups" in lane
+      and "bundle_size" in lane,
+      "one final speedup must not be copied onto every referenced decision as causal credit")
 check("the perf-KB-off arm mechanically strips decision attribution",
       lane.count("USE_PERF_KNOWLEDGE ? normalizeDecisionRefs") >= 2,
       "author and plan outputs must not smuggle decision refs into the control arm")
@@ -136,6 +159,64 @@ check("every completed validation attempts an environment manifest",
       and "validation_environment.yaml" in lane
       and "validation_environment:" in lane,
       "software/GPU/shape/method capture must not depend on earning a learned card")
+check("corpus hypothesis diversity is checked before engineer dispatch",
+      "CORPUS_EXPLORATION_CONTRACT" in lane
+      and lane.index("corpusPlanViolation(plan)") < lane.index("const results = await pipeline("),
+      "a post-run attribution edit cannot undo hypothesis anchoring")
+check("a multi-direction round keeps a profile/free hypothesis",
+      "CORPUS_COLD_DIRECTION" in lane
+      and "no executable direction has a profile/free hypothesis" in lane
+      and "rawDirections = rawDirections.filter(" in lane
+      and "hypothesis_source" in lane,
+      "semantic/constraint cards are unlimited; performance history must not decide every hypothesis")
+check("there is no fixed cap on corpus-using directions",
+      "CORPUS_DIR_CAP" not in lane and "corpus_dir_cap" not in lane,
+      "API and constraint knowledge should be available to every direction")
+check("language detection excludes the frozen baseline tree",
+      re.search(r"detectSourceLanguage\(\s*`\$\{CANONICAL\}/kernel_src`", lane) is not None
+      and "detect_language.py ${CANONICAL} " not in lane,
+      "baseline_src may be Triton while the authored candidate is FlyDSL")
+check("author language mismatch is a hard result gate",
+      "validation_status: 'language_mismatch'" in lane
+      and "validation_status: effectiveValidationStatus" in lane,
+      "recording a mismatch while returning accepted poisons language-indexed knowledge")
+check("FlyDSL API compatibility is checked before optimization",
+      lane.count("checkFlydslCompatibility(") >= 3
+      and "validation_status: 'flydsl_incompatible'" in lane
+      and "ACTIVE_FLYDSL_VERSION" in lane,
+      "version-map advice needs an active-surface gate before GPU optimization")
+check("FlyDSL package availability is checked before the author agent",
+      lane.index("await probeFlydslPackage('author:flydsl-package')") <
+      lane.index("roleAgent('author_engineer'"),
+      "a missing FlyDSL install should not consume an author run")
+check("experience writes use the observed source language",
+      "--language ${JSON.stringify(observedLanguage)}" in lane,
+      "the optimize-mode requested language defaults to triton and is not an observation")
+check("author search starts from the measured seed rather than a fictional 1.0",
+      "MODE === 'author' ? authorSeedSpeedup : 1.0" in lane
+      and "seed_per_case" in lane,
+      "sub-baseline migration improvements cannot compound if the incumbent is fixed at 1.0")
+check("author search and shipping use different gates",
+      "REQUIRE_SPEEDUP: MODE === 'author' ? 'true' : 'false'" in lane
+      and "'no_speedup'" in lane,
+      "a sub-baseline candidate may advance search but must not be shipped")
+check("mode is normalized in both dispatcher and worker",
+      ".trim().toLowerCase() || 'optimize'" in lane
+      and "{ ...A, mode: MODE, workflow_dir: WORKFLOW_DIR }" in disp,
+      "mixed-case AUTHOR must not enter a half-author/half-optimize state")
+check("round state advances only after a successful commit",
+      "landed = !!(commitResult && commitResult.committed)" in lane
+      and lane.index("if (landed) {") < lane.index("cumulative = winner.geomean"),
+      "a measured patch that failed to apply is not the next canonical kernel")
+check("final source gate runs before Director may apply",
+      lane.index("'lang:detect-final'") < lane.index("roleAgent('director', 'validate'")
+      and "APPLY_TO_ORIGINAL: sourceGatePassed ? APPLY_TO_ORIGINAL : 'false'" in lane,
+      "language/API mismatch must disable external mutation before Director validation")
+check("author seed measurement uses the optimization primary metric",
+      "author_measurement_invalid" in lane
+      and "authored.seed_metric_kind === expectedSeedMetric" in lane
+      and "seed_metric_kind" in lane,
+      "a geomean seed cannot initialize a weighted optimization climb")
 
 print()
 if FAILED:

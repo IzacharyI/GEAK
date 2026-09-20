@@ -10,7 +10,8 @@ work in your OWN private workspace copy — total isolation, no coordination wit
 - `KERNEL_PATH` — YOUR PRIVATE workspace (a fresh copy of the canonical current-best). Operate ONLY here.
 - `OUTPUT_DIR` — where to write `best_patch.diff`, `worker_result.json`, `report.md`.
 - `GPU_ID`, `SKILL_DIR`, the `COMMANDMENT` path, `codebase_context`, `profiling_summary`,
-  `baseline_per_case`, and the cross-round `INSIGHTS` (durable findings from earlier rounds).
+  `baseline_per_case`, `CANDIDATE_FLOOR` (the search-admission floor; normally 1.0, lower during an
+  author migration climb), and the cross-round `INSIGHTS` (durable findings from earlier rounds).
 - **DEEP-MODE (optional — act only if present in your inputs; a normal run omits all three):**
   `SHARED_KB` (cross-backend blackboard — Read it and BORROW any technique that plausibly transfers to
   your kernel; skip its disproved dead-ends), `E2E_FEEDBACK` (latest end-to-end result+problems — if a
@@ -93,8 +94,10 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    METRIC is the time-weighted ratio-of-sums (workload-aligned), ALSO compute and report
    `speedup_weighted = Σ_i weight_i / Σ_i (weight_i / speedup_i)` using each case's `weight` from
    `baseline_per_case` — that is the PRIMARY number you optimize toward; the geomean is secondary.
-5. **Save patch** when geomean > 1.0: `cd $KERNEL_PATH && git diff > $OUTPUT_DIR/best_patch.diff`.
-   Do this the MOMENT you have a >1.0x result — not at the end. `best_patch.diff` is the RECOVERY
+5. **Save patch** when the PRIMARY metric clears `CANDIDATE_FLOOR`: `cd $KERNEL_PATH && git diff >
+   $OUTPUT_DIR/best_patch.diff`. In author mode this may still be below the online baseline; it is a
+   search step that must beat the current seed before the orchestrator banks it, not a ship claim.
+   Do this the MOMENT you clear the floor — not at the end. `best_patch.diff` is the RECOVERY
    artifact: if your final return is lost (you time out, crash, or mis-format the StructuredOutput),
    the lane falls back to re-measuring whatever >1.0x patch it finds on disk. A patch left on disk
    still counts; work that only exists in a lost return is gone. Re-save it whenever `best` improves.
@@ -133,5 +136,5 @@ JSON substitutes for the return — the lane does not read `worker_result.json`,
 `OUTPUT_DIR/report.md` — brief: task, approach, per-case results table, geomean, what worked, what
 didn't. (This is your required mini-report.)
 
-If you achieved no speedup (or correctness could not be fixed), still submit with `status` =
+If you did not clear `CANDIDATE_FLOOR` (or correctness could not be fixed), still submit with `status` =
 `failed`/`partial`, NO patch_file, and notes explaining why — that is valuable signal for the ledger.

@@ -17,12 +17,17 @@
 #     default tile_m is 128 has been taught the opposite of what a skinny-M shape needs.
 
 provenance:
-  schema_version: 2
+  schema_version: 3
   operator_family: "gemm"
   curator_contract: "candidate advice only; target-box correctness and benchmark remain the judge"
 
 cards:
   - id: "flydsl-gfx942-path-gates"
+    type: "constraint"
+    match:
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx942"]
     question: "Which FlyDSL GEMM paths does gfx942 (MI300X) actually give you, and which does it silently switch or refuse?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -56,6 +61,11 @@ cards:
       - "That a path is open says nothing about whether it is fast."
 
   - id: "flydsl-half-mfma-call-forms"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm", "grouped_gemm"]
+      target_languages: ["flydsl"]
+      dtypes: ["f16", "bf16"]
     question: "Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -86,6 +96,11 @@ cards:
       - "API spelling is version-sensitive; consult languages/flydsl/version_map.md before copying."
 
   - id: "flydsl-xor16-lds-layout-consistency"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm"]
+      target_languages: ["flydsl"]
+      requires: ["lds_staging"]
     question: "How should a FlyDSL GEMM apply an XOR16 LDS layout without making stores and loads disagree?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -115,6 +130,11 @@ cards:
       - "Retain the unswizzled implementation and choose by target-box measurement."
 
   - id: "flydsl-hgemm-config-space"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm"]
+      target_languages: ["flydsl"]
+      dtypes: ["f16", "bf16"]
     question: "Which tile and split-K values will the FlyDSL HGEMM family actually accept, and how does a shape narrow them?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -149,6 +169,11 @@ cards:
       - "A candidate that is inside the space can still be rejected at compile time by the tiling and LDS rules — see flydsl-hgemm-tiling-validity."
 
   - id: "flydsl-hgemm-tiling-validity"
+    type: "constraint"
+    match:
+      operator_families: ["gemm", "dense_gemm"]
+      target_languages: ["flydsl"]
+      dtypes: ["f16", "bf16"]
     question: "Which FlyDSL HGEMM configurations will fail to build at all, before any of them can be slow?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -181,6 +206,15 @@ cards:
       - "Passing every check means the configuration builds, not that it is fast, and not that it is correct in a modified kernel."
 
   - id: "flydsl-small-m-hgemm-family"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm"]
+      target_languages: ["flydsl"]
+      dtypes: ["bf16"]
+      regimes: ["decode"]
+      exclude_gfx: ["gfx942"]
+      shape:
+        m_max: 16
     question: "What does AITER do differently when M is a handful of rows, and which knobs does that open?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -227,6 +261,11 @@ cards:
       - "The family is bf16-only and its LDS budget is its own; do not carry its constants into the generic kernel."
 
   - id: "flydsl-preshuffle-b-layout-contract"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm"]
+      target_languages: ["flydsl"]
+      requires: ["reused_weight"]
     question: "What does enabling B preshuffle on a FlyDSL HGEMM actually require?"
     evidence_level: "source_observed"
     status: "candidate_only"
@@ -271,6 +310,11 @@ cards:
       - "The card is grounded in the vendored library's contract. A kernel copy that has been edited may have moved these checks."
 
   - id: "flydsl-splitk-hot-loop-schedule-bundle"
+    type: "performance_candidate"
+    match:
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm"]
+      target_languages: ["flydsl"]
+      requires: ["split_k_hot_loop"]
     question: "What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?"
     evidence_level: "source_observed"
     status: "candidate_only"

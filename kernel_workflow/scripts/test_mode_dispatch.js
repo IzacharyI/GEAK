@@ -136,6 +136,12 @@ const lanesOf = (trace) => trace.lanes.map((l) => `${l.lang}:${l.mode}`).sort().
     }
     ok(trace.agentLabels.length === 0, 'no agent spawned on pass-through', `n=${trace.agentLabels.length}`);
   }
+  {
+    const { run, trace } = build({ ...BASE, mode: 'AUTHOR', target_language: 'flydsl' }, {});
+    await run();
+    ok(trace.workflowCalls[0].args.mode === 'author',
+      'pass-through forwards normalized mode to the worker', trace.workflowCalls[0].args.mode);
+  }
 
   // -------------------------------------------------------------------------
   console.log('\n# D. required args');

@@ -36,7 +36,7 @@ const MODE = String(A.mode != null ? A.mode : 'optimize').trim().toLowerCase() |
 if (MODE === 'optimize' || MODE === 'author') {
   phase('Bakeoff');            // reuse a declared phase slot for the single passthrough lane
   log(`mode=${MODE}: single-language pass-through -> ${WORKER}`);
-  return await workflow({ scriptPath: WORKER }, { ...A, workflow_dir: WORKFLOW_DIR });
+  return await workflow({ scriptPath: WORKER }, { ...A, mode: MODE, workflow_dir: WORKFLOW_DIR });
 }
 
 // ===========================================================================
@@ -383,10 +383,21 @@ const results = await Promise.all(lanes.map(l => sem.with(1, async ([gpu]) => {
       mode: l.mode, target_language: l.lang,
       op_spec: oracle.op_spec || OP_SPEC, workload_spec_path: oracle.workload_path || WORKLOAD_SPEC_PATH || '',
       budget: BUDGET, gpu_ids: gpu, gpu_mode: GPU_MODE, task: TASK, apply_to_original: 'false',
+      ...(A.candidate_floor != null ? { candidate_floor: A.candidate_floor } : {}),
+      ...(A.min_improve != null ? { min_improve: A.min_improve } : {}),
+      ...(A.progress_delta != null ? { progress_delta: A.progress_delta } : {}),
+      ...(A.deep_cost != null ? { deep_cost: A.deep_cost } : {}),
+      ...(A.max_no_improve != null ? { max_no_improve: A.max_no_improve } : {}),
       exp_root: `${EVAL_DIR}/bakeoff/${l.key}`,
       use_expert_skills: USE_EXPERT_SKILLS ? 'true' : 'false', expert_skills_dir: EXPERT_SKILLS_DIR,
       use_perf_knowledge: USE_PERF_KNOWLEDGE ? 'true' : 'false',
       perf_knowledge_dir: KERNEL_KNOWLEDGE_DIR,
+      decision_outcomes_path: A.decision_outcomes_path != null
+        ? String(A.decision_outcomes_path) : '',
+      implementation_registry_path: A.implementation_registry_path != null
+        ? String(A.implementation_registry_path) : '',
+      corpus_cold_direction: A.corpus_cold_direction != null
+        ? String(A.corpus_cold_direction) : 'true',
       // Forward the KB switch. This arg object is explicit (the optimize/author path spreads {...A},
       // this one does not), so anything omitted here silently reverts to the lane's default — a
       // caller asking for a KB-off bakeoff would have got eight KB-on lanes and no error.

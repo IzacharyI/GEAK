@@ -47,15 +47,14 @@ const MIN_IMPROVE = (() => {
   const v = parseFloat(A.min_improve != null ? A.min_improve : 0.02);
   return Number.isFinite(v) && v >= 0 ? v : 0.02;
 })();
-// Minimum verified speedup for a candidate to enter the round's candidate list (default 1.0 = only a
-// candidate that beats the baseline is worth looking at). A knob for the same reason MIN_IMPROVE is:
-// a transcription (plain Triton -> Gluon/TileLang/HIP) lands BELOW the comparator by construction, and
-// at 1.0 its recovery phase is invisible -- no patch saved, no verify, `winner` null every round. The
-// COMMIT gate is separate and still requires beating `cumulative` by MIN_IMPROVE, so a sub-baseline
-// candidate can be TRACKED but never BANKED.
+// Minimum verified speedup for a candidate to enter the round's candidate list. Optimize mode keeps
+// the historical 1.0 floor. Author mode defaults to 0.01 because a correct cross-language seed often
+// starts far below the strong online comparator and must bank several improvements before crossing it.
+// Final shipping still requires >1.0; this lower SEARCH floor only makes the climb composable.
 const CANDIDATE_FLOOR = (() => {
-  const v = parseFloat(A.candidate_floor != null ? A.candidate_floor : 1.0);
-  return Number.isFinite(v) && v > 0 ? v : 1.0;
+  const authorDefault = String(A.mode || 'optimize').trim().toLowerCase() === 'author' ? 0.01 : 1.0;
+  const v = parseFloat(A.candidate_floor != null ? A.candidate_floor : authorDefault);
+  return Number.isFinite(v) && v > 0 ? v : authorDefault;
 })();
 // Rendered into the Optimize prompt, where `${1.0}` would stringify to "1" and silently reword a
 // prompt that has always said "geomean>1.0". Keeps the default run byte-identical.
@@ -109,7 +108,7 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 // the author always measures regardless). Default:
 // sibling perf_knowledge/ so standalone runs use it too. `use_perf_knowledge=false` is the explicit
 // control arm; an explicitly empty perf_knowledge_dir also stays empty rather than falling back.
-const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
+const MODE = String(A.mode != null ? A.mode : 'optimize').trim().toLowerCase() || 'optimize';
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
@@ -169,6 +168,13 @@ const REQUESTED_PERF_KNOWLEDGE_DIR =
   A.perf_knowledge_dir != null ? String(A.perf_knowledge_dir) : DEFAULT_PERF_KNOWLEDGE_DIR;
 const KERNEL_KNOWLEDGE_DIR =
   (USE_PERF_KNOWLEDGE ? REQUESTED_PERF_KNOWLEDGE_DIR : '').replace(/\/+$/, '');
+const CORPUS_CATALOG = KERNEL_KNOWLEDGE_DIR
+  ? `${KERNEL_KNOWLEDGE_DIR}/corpus/catalog.yaml` : '';
+const MEASURED_DECISION_OUTCOMES = USE_PERF_KNOWLEDGE && A.decision_outcomes_path != null
+  ? String(A.decision_outcomes_path) : '';
+const MEASURED_IMPLEMENTATION_REGISTRY =
+  USE_PERF_KNOWLEDGE && A.implementation_registry_path != null
+    ? String(A.implementation_registry_path) : '';
 // Expert skills = human-authored, validated kernel recipes (perf_knowledge/expert_skills/). ADVISORY
 // priors only: a matched `validated` skill is a HIGH-PRIOR author/optimize candidate the planning/author
 // roles reproduce, then gate by the isolated A/B vs the oracle — it NEVER overrides measurement. Default
@@ -228,6 +234,13 @@ const USE_LEARNED_READ = String(A.use_learned_kb != null ? A.use_learned_kb : 't
 const KB_DIR_CAP = Math.max(0, parseInt(A.kb_dir_cap != null ? A.kb_dir_cap : 1, 10));
 const KB_COLD_DIRECTION = String(A.kb_cold_direction != null ? A.kb_cold_direction : 'true') === 'true';
 let kbCapBound = 0;      // rounds where the cap actually had to strip something
+// Every direction may use source-corpus semantics, APIs and hard constraints. The only diversity
+// guard is on where the optimization HYPOTHESIS came from: in a multi-direction round at least one
+// hypothesis must originate in the current profile rather than historical performance precedent.
+const CORPUS_COLD_DIRECTION =
+  String(A.corpus_cold_direction != null ? A.corpus_cold_direction : 'true') === 'true';
+let corpusColdViolationRounds = 0;
+let corpusForcedReplans = 0;
 const UPDATE_EXPERIENCE = String(A.update_experience != null ? A.update_experience : 'on').trim().toLowerCase() || 'on';
 const UPDATE_EXPERIENCE_ON = UPDATE_EXPERIENCE !== 'off' && UPDATE_EXPERIENCE !== 'false' && UPDATE_EXPERIENCE !== 'none';
 
@@ -412,9 +425,12 @@ const SETUP_SCHEMA = obj({
 const AUTHOR_SCHEMA = obj({
   authored: { type: 'boolean' }, target_language: { type: 'string' }, correctness: { type: 'string' },
   baseline_ms: { type: 'number' }, kernel_src_path: { type: 'string' }, entry_point: { type: 'string' },
+  seed_speedup: { type: 'number' },
+  seed_metric_kind: { type: 'string', enum: ['geomean', 'time_weighted'] },
+  seed_per_case: { type: 'array', items: { type: 'object', additionalProperties: true } },
   decision_refs: { type: 'array', items: { type: 'string' } },
   build: { type: 'boolean' }, notes: { type: 'string' },
-}, ['authored', 'correctness']);
+}, ['authored', 'correctness', 'seed_speedup', 'seed_metric_kind', 'seed_per_case']);
 
 const ANALYZE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
@@ -521,6 +537,9 @@ const PLAN_SCHEMA = obj({
       specialty: { type: 'string', enum: ['algorithm', 'memory', 'compute', 'host_runtime', 'deep_explore'] },
       focus_files: { type: 'array', items: { type: 'string' } },
       expected_speedup: { type: 'number' }, prompt: { type: 'string' },
+      // Where the optimization hypothesis originated. A profile-origin direction may still cite
+      // semantic/constraint corpus cards for correct implementation.
+      hypothesis_source: { type: 'string', enum: ['profile', 'corpus', 'mixed', 'free'] },
       kk_refs: { type: 'array', items: { type: 'string' } }, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
       // Exact IDs from corpus/gemm_decisions.md that seeded THIS direction: curated card `id` values
       // or generated `cfg_…` config IDs. A file path in kk_refs cannot distinguish two cards in the
@@ -699,6 +718,52 @@ async function agentT(p, o) {
   return null;
 }
 
+const LANGUAGE_SCHEMA = {
+  type: 'object',
+  properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
+  required: ['language'],
+  additionalProperties: true,
+};
+async function detectSourceLanguage(sourcePath, label, entry = KERNEL_NAME_HINT) {
+  return await agentT(
+    `Run EXACTLY this command and nothing else. Do NOT edit any file.
+\`\`\`bash
+python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${JSON.stringify(sourcePath)} --entry ${JSON.stringify(entry)} --json
+\`\`\`
+Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
+    { phase: 'Validate', label, effort: 'low', schema: LANGUAGE_SCHEMA });
+}
+
+const FLYDSL_COMPAT_SCHEMA = {
+  type: 'object',
+  properties: {
+    compatible: { type: 'boolean' },
+    flydsl: { type: 'object', additionalProperties: true },
+    missing: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    reason: { type: 'string' },
+  },
+  required: ['compatible', 'flydsl', 'missing', 'reason'],
+  additionalProperties: true,
+};
+async function checkFlydslCompatibility(sourcePath, label) {
+  return await agentT(
+    `Run EXACTLY this command and nothing else. Do NOT edit any file.
+\`\`\`bash
+python3 ${WORKFLOW_DIR}/scripts/check_flydsl_compat.py ${JSON.stringify(sourcePath)} --json
+\`\`\`
+Return the command's JSON object verbatim.`,
+    { phase: 'Validate', label, effort: 'low', schema: FLYDSL_COMPAT_SCHEMA });
+}
+async function probeFlydslPackage(label) {
+  return await agentT(
+    `Run EXACTLY this command and nothing else. Do NOT edit any file.
+\`\`\`bash
+python3 ${WORKFLOW_DIR}/scripts/check_flydsl_compat.py --package-only --json
+\`\`\`
+Return the command's JSON object verbatim.`,
+    { phase: 'Setup', label, effort: 'low', schema: FLYDSL_COMPAT_SCHEMA });
+}
+
 // ---------------------------------------------------------------------------
 // WALL-CLOCK DEADLINE (opt-in; absent => byte-identical to a build without it).
 //   DEADLINE_EPOCH  unix seconds after which NO new optimization round may start.
@@ -820,12 +885,37 @@ if (!hasBaseline) {
 // e2e caller drops this language.
 // ===========================================================================
 let authorDecisionRefs = [];
+let authorSeedSpeedup = null;
+let authorSeedPerCase = [];
+let activeFlydslVersion = null;
+let initialObservedLanguage = MODE === 'author' ? TARGET_LANGUAGE : null;
+if (MODE === 'author' && TARGET_LANGUAGE === 'flydsl') {
+  const packageCheck = await probeFlydslPackage('author:flydsl-package');
+  activeFlydslVersion = packageCheck && packageCheck.flydsl
+    ? String(packageCheck.flydsl.version || '') || null : null;
+  if (!packageCheck || packageCheck.compatible !== true) {
+    const reason = packageCheck
+      ? `FlyDSL package preflight failed: ${packageCheck.reason}`
+      : 'FlyDSL package preflight returned no result';
+    log(`Author mode FAILED before authoring: ${reason}.`);
+    return {
+      mode: 'author', authored: false, target_language: TARGET_LANGUAGE,
+      flydsl_version: activeFlydslVersion,
+      eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+      final_geomean: 0, final_patch: '', validation_status: 'flydsl_incompatible', reason,
+    };
+  }
+}
 if (MODE === 'author') {
   phase('Author');
   const authored = await agentT(
     roleAgent('author_engineer', 'author', 'Write the simplest correct baseline in the target language.', {
       TARGET_LANGUAGE, OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
       GPU_ID: GPU_POOL, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
+      CORPUS_CATALOG, MEASURED_DECISION_OUTCOMES, MEASURED_IMPLEMENTATION_REGISTRY,
+      ACTIVE_FLYDSL_VERSION: activeFlydslVersion,
+      WORKLOAD_ALIGNED: HAS_WORKLOAD,
+      WORKLOAD_SPEC_PATH, WORKLOAD_SPEC,
       PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
       // The author engineer reads the learned index too, so the switch has to reach it. It is the
       // second reader; a switch that covers one of two readers is not a switch.
@@ -841,8 +931,91 @@ if (MODE === 'author') {
       reason: authored ? authored.notes || 'author produced no correct baseline' : 'author returned nothing',
     };
   }
+  const expectedSeedMetric = HAS_WORKLOAD ? 'time_weighted' : 'geomean';
+  const validSeedRows = Array.isArray(authored.seed_per_case) && authored.seed_per_case.length > 0 &&
+    authored.seed_per_case.every(row => row && Number.isFinite(row.baseline_ms) && row.baseline_ms > 0 &&
+      Number.isFinite(row.optimized_ms) && row.optimized_ms > 0 &&
+      Number.isFinite(row.speedup) && row.speedup > 0);
+  const validSeedMeasurement = Number.isFinite(authored.seed_speedup) && authored.seed_speedup > 0 &&
+    authored.seed_metric_kind === expectedSeedMetric && validSeedRows;
+  if (!validSeedMeasurement) {
+    const reason = `author seed measurement is missing or uses the wrong primary metric: expected ` +
+      `${expectedSeedMetric}, got ${authored.seed_metric_kind || 'missing'}`;
+    log(`Author mode FAILED measurement gate: ${reason}.`);
+    return {
+      mode: 'author', authored: false, target_language: TARGET_LANGUAGE,
+      eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+      final_geomean: 0, final_patch: '', validation_status: 'author_measurement_invalid', reason,
+    };
+  }
   authorDecisionRefs = USE_PERF_KNOWLEDGE ? normalizeDecisionRefs(authored.decision_refs) : [];
-  log(`Author mode: ${TARGET_LANGUAGE} seed written (correct, seed ${authored.baseline_ms || '?'} ms; denominator = frozen online kernel). Optimizing it now.`);
+  authorSeedSpeedup = authored.seed_speedup;
+  authorSeedPerCase = authored.seed_per_case;
+  const authoredLanguage = await detectSourceLanguage(
+    `${CANONICAL}/kernel_src`, `author:${TARGET_LANGUAGE}:language`, KERNEL_NAME);
+  const observedSeedLanguage = authoredLanguage && authoredLanguage.language
+    ? String(authoredLanguage.language) : null;
+  if (observedSeedLanguage !== TARGET_LANGUAGE) {
+    const reason = observedSeedLanguage
+      ? `authored source reads as ${observedSeedLanguage}, requested ${TARGET_LANGUAGE}`
+      : `authored source language is undecidable: ${
+          authoredLanguage && authoredLanguage.reason ? authoredLanguage.reason : 'no detector result'}`;
+    log(`Author mode FAILED language gate: ${reason}.`);
+    return {
+      mode: 'author', authored: false, target_language: TARGET_LANGUAGE,
+      observed_language: observedSeedLanguage,
+      eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+      final_geomean: 0, final_patch: '', validation_status: 'language_mismatch', reason,
+    };
+  }
+  if (TARGET_LANGUAGE === 'flydsl') {
+    const compatibility = await checkFlydslCompatibility(
+      `${CANONICAL}/kernel_src`, 'author:flydsl-compatibility');
+    activeFlydslVersion = compatibility && compatibility.flydsl
+      ? String(compatibility.flydsl.version || '') || null : null;
+    if (!compatibility || compatibility.compatible !== true) {
+      const reason = compatibility
+        ? `FlyDSL API compatibility failed: ${compatibility.reason}; missing=${
+            JSON.stringify(compatibility.missing || [])}`
+        : 'FlyDSL API compatibility check returned no result';
+      log(`Author mode FAILED compatibility gate: ${reason}.`);
+      return {
+        mode: 'author', authored: false, target_language: TARGET_LANGUAGE,
+        observed_language: observedSeedLanguage, flydsl_version: activeFlydslVersion,
+        eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+        final_geomean: 0, final_patch: '', validation_status: 'flydsl_incompatible', reason,
+      };
+    }
+  }
+  log(`Author mode: ${TARGET_LANGUAGE} seed written (correct, seed ` +
+      `${authorSeedSpeedup ? authorSeedSpeedup.toFixed(3) + 'x' : 'speedup not captured'} vs frozen ` +
+      `online kernel). Optimizing it now.`);
+}
+
+if (MODE === 'optimize') {
+  const initialLanguage = await detectSourceLanguage(
+    `${CANONICAL}/kernel_src`, 'optimize:language', KERNEL_NAME);
+  initialObservedLanguage = initialLanguage && initialLanguage.language
+    ? String(initialLanguage.language) : null;
+  if (initialObservedLanguage === 'flydsl') {
+    const compatibility = await checkFlydslCompatibility(
+      `${CANONICAL}/kernel_src`, 'optimize:flydsl-compatibility');
+    activeFlydslVersion = compatibility && compatibility.flydsl
+      ? String(compatibility.flydsl.version || '') || null : null;
+    if (!compatibility || compatibility.compatible !== true) {
+      const reason = compatibility
+        ? `FlyDSL API compatibility failed: ${compatibility.reason}; missing=${
+            JSON.stringify(compatibility.missing || [])}`
+        : 'FlyDSL API compatibility check returned no result';
+      log(`Optimize mode FAILED compatibility gate: ${reason}.`);
+      return {
+        mode: 'optimize', observed_language: initialObservedLanguage,
+        flydsl_version: activeFlydslVersion,
+        eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
+        final_geomean: 0, final_patch: '', validation_status: 'flydsl_incompatible', reason,
+      };
+    }
+  }
 }
 
 // ===========================================================================
@@ -852,7 +1025,10 @@ phase('Analyze');
 const analysis = await agentT(
   roleAgent('tech_lead', 'analyze', 'Analyze the kernel and write the roadmap.', {
     WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
-    KERNEL_KNOWLEDGE_DIR, PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
+    KERNEL_KNOWLEDGE_DIR, CORPUS_CATALOG, MEASURED_DECISION_OUTCOMES,
+    MEASURED_IMPLEMENTATION_REGISTRY,
+    ACTIVE_FLYDSL_VERSION: activeFlydslVersion,
+    PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
     ...RESUME_INPUT,
   }),
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
@@ -990,10 +1166,13 @@ if (DRA_ENABLED) {
 // ===========================================================================
 let dispatched = 0;          // counts ONLY optimization-direction engineers (the budget)
 let round = 0;
-let cumulative = 1.0;        // best verified geomean speedup vs the TRUE baseline
-let bestSeen = 0;            // best verified geomean of any candidate, committed or not
+// `cumulative` is the SEARCH champion vs the immutable online baseline. In author mode it starts at
+// the measured seed, not 1.0, so several correct sub-baseline improvements can compound. The final
+// Director/ship gate remains >1.0.
+let cumulative = MODE === 'author' ? authorSeedSpeedup : 1.0;
+let bestSeen = cumulative;   // best verified primary speedup of any candidate, committed or not
 let noImprove = 0;
-let bestPerCase = BASELINE_PER_CASE;
+let bestPerCase = MODE === 'author' ? authorSeedPerCase : BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source} — also set by a warm-start adopt
 let roundsCommitted = 0;     // rounds this run actually landed; a warm-start adopt is NOT one of them
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
@@ -1045,8 +1224,9 @@ if (WARM_START_ON && !setup.resumed && KB_ROOT_OK && KB_LOOP_OK) {
     const localResolveCmd = KB_MODE === 'store'
       ? `resolve-remote --plane local --store ${JSON.stringify(KB_STORE_DIR)}${KB_VERSION_FLAG}`
       : `resolve --root ${JSON.stringify(KB_ARTIFACTS_DIR)} --match ${WARM_START_MATCH}`;
+    const warmStartLanguage = MODE === 'author' ? TARGET_LANGUAGE : (KK_LANGUAGE || TARGET_LANGUAGE);
     const commonArgs =
-      `--kernel-name ${JSON.stringify(KERNEL_NAME)} --language ${JSON.stringify(TARGET_LANGUAGE)} \\\n` +
+      `--kernel-name ${JSON.stringify(KERNEL_NAME)} --language ${JSON.stringify(warmStartLanguage)} \\\n` +
       `  --gfx ${GFX} --top-n 3 --min-speedup ${WARM_START_MIN_SPEEDUP} \\\n` +
       `  --refs-dir ${JSON.stringify(EVAL_DIR + '/kb_references')}`;
     // Remote first, local curated tree as the fallback. The service is the shared plane and should
@@ -1208,6 +1388,7 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
 
   round++;
   const remaining = BUDGET - dispatched;
+  const incumbentAtRoundStart = cumulative;
   phase('Optimize');
 
   // --- (a) Plan the round (TechLead) ------------------------------------
@@ -1215,8 +1396,20 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
     EVAL_DIR, ROUND: round, BUDGET_REMAINING: remaining, CUMULATIVE_SPEEDUP: cumulative,
     BASELINE_GEOMEAN_MS, SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
     CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: history,
-    KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE, KK_REFS,
+    KERNEL_KNOWLEDGE_DIR, CORPUS_CATALOG, MEASURED_DECISION_OUTCOMES,
+    MEASURED_IMPLEMENTATION_REGISTRY,
+    ACTIVE_FLYDSL_VERSION: activeFlydslVersion,
+    KK_OPERATOR, KK_LANGUAGE, KK_REFS,
     PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
+    ...(USE_PERF_KNOWLEDGE ? { CORPUS_EXPLORATION_CONTRACT:
+      `Every direction may use semantic/API and constraint cards. Set hypothesis_source to profile, ` +
+      `corpus, mixed or free to state where its optimization hypothesis originated; decision_refs ` +
+      `must still list every card materially used. ` +
+      (CORPUS_COLD_DIRECTION
+        ? `When issuing two or more executable directions, at least one must have ` +
+          `hypothesis_source=profile or free. It may still cite semantic/constraint cards. `
+        : '') +
+      `Source-observed performance cards rank candidates only; only hard constraints may reject one.` } : {}),
     ...KB_INPUTS,
     // DRA brief (REFERENCE), from main. plan_round reads it and seeds directions[] from the ranked
     // DRA directions — see tech_lead.md plan_round. Spread conditionally, so when dra_enabled was off
@@ -1276,13 +1469,65 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
     left = await secondsLeft(`replan-r${round}`);
   }
 
+  // All directions may use corpus semantics and constraints. Diversity applies only to the origin of
+  // the optimization hypothesis. Check what would actually execute (deep_explore makes a round
+  // single-lane) and request one correction before dispatch when a multi-direction plan contains no
+  // profile/free hypothesis.
+  const executablePlanDirections = (candidatePlan) => {
+    let ds = candidatePlan && Array.isArray(candidatePlan.directions)
+      ? candidatePlan.directions.slice(0, remaining) : [];
+    const deep = ds.find(d => d.specialty === 'deep_explore');
+    return deep ? [deep] : ds;
+  };
+  const hypothesisSource = (direction) => {
+    const explicit = String(direction && direction.hypothesis_source || '').toLowerCase();
+    if (['profile', 'corpus', 'mixed', 'free'].includes(explicit)) return explicit;
+    return normalizeDecisionRefs(direction && direction.decision_refs).length ? 'corpus' : 'profile';
+  };
+  const corpusPlanViolation = (candidatePlan) => {
+    if (!USE_PERF_KNOWLEDGE) return '';
+    const ds = executablePlanDirections(candidatePlan);
+    const independent = ds.filter(d => ['profile', 'free'].includes(hypothesisSource(d)));
+    if (CORPUS_COLD_DIRECTION && ds.length >= 2 && !independent.length) {
+      return 'no executable direction has a profile/free hypothesis';
+    }
+    return '';
+  };
+  let corpusViolation = corpusPlanViolation(plan);
+  if (corpusViolation && plan && !plan.stop) {
+    corpusForcedReplans++;
+    log(`Round ${round}: corpus portfolio violation (${corpusViolation}) — re-planning before dispatch.`);
+    plan = await agentT(
+      roleAgent('tech_lead', 'plan_round',
+        'Revise the plan to preserve one profile/free hypothesis before any engineer runs.', {
+          ...planInputs(false),
+          CORPUS_REPLAN_REQUIRED: corpusViolation,
+        }),
+      { phase: 'Optimize', label: `tech_lead:corpus-replan r${round}`, schema: PLAN_SCHEMA });
+    corpusViolation = corpusPlanViolation(plan);
+  }
+
   if (!plan || plan.stop || !plan.directions || plan.directions.length === 0) {
     log(`Round ${round}: TechLead chose to stop. ${plan ? plan.reasoning || '' : ''}`);
     break;
   }
 
-  let directions = plan.directions.slice(0, remaining).map((d, i) => ({
+  let rawDirections = executablePlanDirections(plan);
+  if (corpusViolation) {
+    corpusColdViolationRounds++;
+    rawDirections = rawDirections.filter(
+      direction => ['profile', 'free'].includes(hypothesisSource(direction)));
+    log(`Round ${round}: corrected plan still lacks a profile/free hypothesis ` +
+        `(${corpusViolation}); refusing corpus-only directions rather than weakening the guard.`);
+  }
+  if (!rawDirections.length) {
+    log(`Round ${round}: no direction satisfies the corpus portfolio contract; stopping safely.`);
+    break;
+  }
+
+  let directions = rawDirections.map((d, i) => ({
     ...d,
+    hypothesis_source: hypothesisSource(d),
     decision_refs: USE_PERF_KNOWLEDGE ? normalizeDecisionRefs(d.decision_refs) : [],
     idx: i,
     id: d.id || `r${round}_d${i}`,
@@ -1340,6 +1585,7 @@ ${cfg({
         DIRECTION: {
           id: d.id, title: d.title, focus_files: d.focus_files || [],
           expected_speedup: d.expected_speedup, prompt: d.prompt,
+          hypothesis_source: d.hypothesis_source,
           decision_refs: d.decision_refs || [],
         },
         ...(isDeep ? { TARGET: d.expected_speedup ? `reach ${d.expected_speedup}x (or ~90% of the roofline ceiling), whichever is the harder bar` : 'reach ~90% of the roofline ceiling' } : {}),
@@ -1349,6 +1595,7 @@ ${cfg({
         codebase_context: `${EVAL_DIR}/codebase_context.md`,
         profiling_summary: profileSummary ? profileSummary.summary_path : '',
         baseline_per_case: BASELINE_PER_CASE,
+        CANDIDATE_FLOOR,
         INSIGHTS: history.insights,
         KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE,
         KK_REFS: (d.kk_refs && d.kk_refs.length ? d.kk_refs : KK_REFS),
@@ -1388,6 +1635,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
         roleAgent('verify_engineer', 'verify', 'Independently re-measure this candidate patch.', {
           CANONICAL, PATCH: patch, VERIFY_DIR: `${d.out_dir}/verify`,
           GPU_ID: d.gpu_id, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, BASELINE_PER_CASE,
+          CANDIDATE_FLOOR, SEARCH_INCUMBENT_SPEEDUP: cumulative,
           ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
           ...(REQUIRE_GRAPH_CAPTURE ? { REQUIRE_GRAPH_CAPTURE: '1' } : {}),
         }),
@@ -1457,8 +1705,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   const madeProgress = !!(winner && bestSeen > 0 && winner.geomean > bestSeen * (1 + PROGRESS_DELTA));
 
   // --- (e) Commit the winner into the canonical workspace ---------------
+  let landed = false;
+  let commitResult = null;
   if (improved) {
-    await agentT(
+    commitResult = await agentT(
       `You are the TechLead committing round ${round}'s winning patch into the canonical workspace.
 \`\`\`bash
 export GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 GIT_EDITOR=true
@@ -1479,33 +1729,41 @@ check (cd ${CANONICAL} && the COMMANDMENT CORRECTNESS cmd via gpu_lock); only re
 it still passes. (When a clean \`git apply\`/\`--3way\` succeeds, correctness was already verified and a
 re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
       { phase: 'Merge', label: `commit r${round}`, schema: COMMIT_SCHEMA });
-    cumulative = winner.geomean;
-    bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
-    finalWinner = winner;
-    roundsCommitted += 1;
+    landed = !!(commitResult && commitResult.committed);
+    if (landed) {
+      cumulative = winner.geomean;
+      bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
+      finalWinner = winner;
+      roundsCommitted += 1;
 
-    // --- (f) Re-profile the new best ------------------------------------
-    profileSummary = await agentT(
-      roleAgent('profile_engineer', 'reprofile', 'Re-profile the new best and explain the bottleneck shift.', {
-        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_POOL, ROUND: round,
-        COMMANDMENT, PREVIOUS_METRICS: profileSummary,
-      }),
-      { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
+      // --- (f) Re-profile the new best ----------------------------------
+      profileSummary = await agentT(
+        roleAgent('profile_engineer', 'reprofile', 'Re-profile the new best and explain the bottleneck shift.', {
+          WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_POOL, ROUND: round,
+          COMMANDMENT, PREVIOUS_METRICS: profileSummary,
+        }),
+        { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
+    } else {
+      log(`Round ${round}: measured winner was NOT committed; keeping cumulative=${cumulative.toFixed(3)}x. ` +
+          `${commitResult && commitResult.note ? commitResult.note : 'commit agent returned no success'}`);
+    }
   }
 
-  if (winner && winner.geomean > bestSeen) bestSeen = winner.geomean;
-  if (madeProgress || improved) { noImprove = 0; } else { noImprove++; }
+  if (landed && winner && winner.geomean > bestSeen) bestSeen = winner.geomean;
+  if (landed && (madeProgress || improved)) { noImprove = 0; } else { noImprove++; }
 
   // --- update cross-round memory (insight blackboard + hypothesis ledger)
   const mem = await agentT(
     roleAgent('tech_lead', 'update_memory', 'Distill durable insights + update the hypothesis ledger.', {
       EVAL_DIR, ROUND: round, SKILL_DIR: WORKFLOW_DIR,
       ROUND_RESULTS: clean.map(r => ({ id: r.d.id, title: r.d.title, specialty: r.d.specialty,
+        hypothesis_source: r.d.hypothesis_source,
         expected: r.d.expected_speedup, claimed: r.eng ? r.eng.speedup_geomean : 0,
         verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
         decision_refs: r.d.decision_refs || [], notes: r.eng ? r.eng.notes : '' })),
       INTEGRATE: integrate, WINNER: winner ? { source: winner.source, geomean: winner.geomean } : null,
-      IMPROVED: improved, REPROFILE_SHIFT: profileSummary ? profileSummary.shift_note : '',
+      IMPROVED: landed && improved, COMMIT_RESULT: commitResult,
+      REPROFILE_SHIFT: profileSummary ? profileSummary.shift_note : '',
       PRIOR_HISTORY: history,
       ...(STATE_DIR ? { STATE_DIR, CANONICAL, CUMULATIVE_SPEEDUP: cumulative, BEST_PER_CASE: bestPerCase } : {}),
       ...(SHARED_KB ? { SHARED_KB, TARGET_LANGUAGE } : {}),
@@ -1548,6 +1806,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
   // against the FROZEN baseline, so once a kernel sits at 2.5x cumulative every non-regressing
   // direction clears 1.0 and a card would accrue credit for advancing nothing.
   for (const r of clean) {
+    const directionDecisionRefs = r.d.decision_refs || [];
     for (const cardRef of (r.d.learned_refs || [])) {
       citations.push({
         card: cardRef, round, direction: r.d.id, specialty: r.d.specialty,
@@ -1559,29 +1818,39 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`,
         // incumbent by MIN_IMPROVE. Crediting on `winner` alone let a 1.5x round winner confirm a
         // card while the committed best already sat at 2x — a confirmation for advancing nothing,
         // which is precisely what the three-state scoring was written to avoid. Require both.
-        became_winner: !!(winner && winner.id === r.d.id && improved),
+        became_winner: !!(winner && winner.id === r.d.id && landed && improved),
       });
     }
-    for (const decisionRef of (r.d.decision_refs || [])) {
+    for (const decisionRef of directionDecisionRefs) {
+      const candidatePrimary = hasPrimSpeedup(r.ver) ? primSpeedup(r.ver) : null;
       decisionCitations.push({
         decision: decisionRef, round, direction: r.d.id, specialty: r.d.specialty,
-        cited_then_verified: hasPrimSpeedup(r.ver) ? primSpeedup(r.ver) : null,
+        cited_then_verified: candidatePrimary,
+        incumbent_speedup: incumbentAtRoundStart,
+        incremental_vs_incumbent: Number.isFinite(candidatePrimary) && incumbentAtRoundStart > 0
+          ? candidatePrimary / incumbentAtRoundStart : null,
+        incremental_basis: 'ratio_of_frozen_baseline_speedups',
+        attribution: directionDecisionRefs.length === 1 ? 'single_ref_direction' : 'bundle',
+        bundle_size: directionDecisionRefs.length,
+        hypothesis_source: r.d.hypothesis_source,
         status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none'),
         correctness: r.ver ? r.ver.correctness : '',
-        became_winner: !!(winner && winner.id === r.d.id && improved),
+        became_winner: !!(winner && winner.id === r.d.id && landed && improved),
       });
     }
   }
   history.rounds.push({
     round,
     directions: directions.map(d => ({ id: d.id, title: d.title, specialty: d.specialty,
-      focus_files: d.focus_files || [], learned_refs: d.learned_refs || [],
+      focus_files: d.focus_files || [], hypothesis_source: d.hypothesis_source,
+      learned_refs: d.learned_refs || [],
       decision_refs: d.decision_refs || [] })),
     results: clean.map(r => ({ id: r.d.id, claimed: r.eng ? r.eng.speedup_geomean : 0,
       verified: r.ver ? r.ver.verified_geomean : 0, status: r.ver ? r.ver.status : (r.eng ? r.eng.status : 'none') })),
     integrate: integrate ? { conclusion: integrate.conclusion, geomean: integrate.best ? integrate.best.geomean : 0 } : null,
     winner: winner ? { source: winner.source, geomean: winner.geomean } : null,
-    improved, cumulative,
+    measured_improved: improved, improved: landed && improved, landed,
+    commit_result: commitResult, cumulative,
   });
   log(`Round ${round} done. winner=${winner ? winner.source + ' ' + winner.geomean.toFixed(2) + 'x' : 'none'}, cumulative=${cumulative.toFixed(2)}x, noImprove=${noImprove}`);
 }
@@ -1598,6 +1867,46 @@ const report = await agentT(
   }),
   { phase: 'Report', label: 'tech_lead:report', schema: REPORT_SCHEMA });
 
+// Observe and gate the FINAL editable source before Director is allowed to apply anything to the
+// user's original tree. The Director still measures a mismatched candidate for auditability, but its
+// APPLY_TO_ORIGINAL input is forced off.
+let observedLanguage = null;
+let finalFlydslApiCompatible = true;
+let finalLanguageReason = '';
+try {
+  const det = await detectSourceLanguage(
+    `${CANONICAL}/kernel_src`, 'lang:detect-final', KERNEL_NAME);
+  observedLanguage = det && det.language ? String(det.language) : null;
+  finalLanguageReason = det && det.reason ? String(det.reason) : 'no detector result';
+  log(observedLanguage
+    ? `[lang] winning source reads as ${observedLanguage}`
+    : `[lang] undecided: ${finalLanguageReason}`);
+  if (observedLanguage === 'flydsl') {
+    const compatibility = await checkFlydslCompatibility(
+      `${CANONICAL}/kernel_src`, 'final:flydsl-compatibility');
+    finalFlydslApiCompatible = !!(compatibility && compatibility.compatible === true);
+    activeFlydslVersion = compatibility && compatibility.flydsl
+      ? String(compatibility.flydsl.version || '') || activeFlydslVersion : activeFlydslVersion;
+    if (!finalFlydslApiCompatible) {
+      finalLanguageReason = compatibility
+        ? `FlyDSL API compatibility failed: ${compatibility.reason}`
+        : 'FlyDSL API compatibility check returned no result';
+    }
+  }
+} catch (e) {
+  finalLanguageReason = e && e.message ? e.message : String(e);
+  log(`[lang] final detection failed: ${finalLanguageReason}`);
+}
+const expectedFinalLanguage = MODE === 'author' ? TARGET_LANGUAGE : initialObservedLanguage;
+const languageGatePassed = !expectedFinalLanguage || observedLanguage === expectedFinalLanguage;
+const sourceGatePassed = languageGatePassed && finalFlydslApiCompatible;
+const sourceGateStatus = !languageGatePassed ? 'language_mismatch'
+  : !finalFlydslApiCompatible ? 'flydsl_incompatible' : 'pass';
+if (!sourceGatePassed) {
+  log(`[source-gate] ${sourceGateStatus}: expected=${expectedFinalLanguage || 'unknown'} ` +
+      `observed=${observedLanguage || 'undecidable'} reason=${finalLanguageReason}`);
+}
+
 // ===========================================================================
 // PHASE: Director validation + arbitration
 // ===========================================================================
@@ -1605,7 +1914,13 @@ phase('Validate');
 const validation = await agentT(
   roleAgent('director', 'validate', 'Independently validate the final patch vs the TRUE baseline.', {
     KERNEL_PATH_ORIG, EVAL_DIR, WORKSPACE: CANONICAL, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_POOL,
-    APPLY_TO_ORIGINAL, COMMANDMENT,
+    APPLY_TO_ORIGINAL: sourceGatePassed ? APPLY_TO_ORIGINAL : 'false',
+    COMMANDMENT, REQUIRE_SPEEDUP: MODE === 'author' ? 'true' : 'false',
+    EXPECTED_LANGUAGE: expectedFinalLanguage,
+    PREVALIDATION_GATE: {
+      passed: sourceGatePassed, status: sourceGateStatus,
+      observed_language: observedLanguage, reason: finalLanguageReason,
+    },
     FINAL_PATCH: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
     TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,
     ...(HAS_WORKLOAD && report && report.final_speedup_weighted != null
@@ -1619,48 +1934,35 @@ const finalGeomean = validation ? validation.director_verified_speedup_geomean :
 const finalWeighted = validation && validation.director_verified_speedup_weighted != null
   ? validation.director_verified_speedup_weighted : null;
 const finalPrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
-log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
-    `${HAS_WORKLOAD && Number.isFinite(finalGeomean) ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
-    ` (status ${validation ? validation.validation_status : '?'}). Results in ${EVAL_DIR}`);
 const finalDecisionRefs = normalizeDecisionRefs([
   ...authorDecisionRefs,
   ...(finalWinner && Array.isArray(finalWinner.decision_refs) ? finalWinner.decision_refs : []),
 ]);
+
+const performanceGatePassed =
+  MODE !== 'author' || (Number.isFinite(finalPrimary) && finalPrimary > 1.0);
+const effectiveValidationStatus = !languageGatePassed ? 'language_mismatch'
+  : !finalFlydslApiCompatible ? 'flydsl_incompatible'
+  : !performanceGatePassed ? 'no_speedup'
+  : (validation ? validation.validation_status : 'unknown');
+log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ` +
+    `${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
+    `${HAS_WORKLOAD && Number.isFinite(finalGeomean)
+      ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
+    ` (status ${effectiveValidationStatus}). Results in ${EVAL_DIR}`);
 for (const decisionRef of authorDecisionRefs) {
   decisionCitations.push({
     decision: decisionRef, phase: 'author_seed', direction: 'author_seed',
     cited_then_verified: validation && Number.isFinite(finalPrimary) ? finalPrimary : null,
-    status: validation ? validation.validation_status : 'unknown',
-    correctness: validation ? validation.correctness : '',
-    survived_to_final: true,
+    status: effectiveValidationStatus,
+    correctness: sourceGatePassed && validation ? validation.correctness : 'fail',
+    survived_to_final: sourceGatePassed,
     became_winner: false,
+    incremental_vs_incumbent: null,
+    incremental_basis: 'not_isolated_author_seed_to_final',
+    attribution: authorDecisionRefs.length === 1 ? 'single_ref_seed' : 'bundle',
+    bundle_size: authorDecisionRefs.length,
   });
-}
-
-// Observe the FINAL source language and capture the run-local lab notebook for every validated run,
-// not only wins that earn a learned card. Selectively recording successful environments would make
-// failed decision candidates unauditable and bias the validation set.
-let observedLanguage = null;
-try {
-  const det = await agentT(
-    `Run EXACTLY this command and nothing else. Do NOT edit any file.
-\`\`\`bash
-python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${CANONICAL} --entry ${JSON.stringify(KERNEL_NAME)} --json
-\`\`\`
-Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
-    { phase: 'Validate', label: 'lang:detect', effort: 'low',
-      schema: { type: 'object',
-                properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
-                required: ['language'], additionalProperties: true } });
-  observedLanguage = det && det.language ? String(det.language) : null;
-  log(observedLanguage
-    ? `[lang] winning source reads as ${observedLanguage}`
-    : `[lang] undecided: ${det && det.reason ? det.reason : 'no result'}`);
-  if (MODE === 'author' && observedLanguage && observedLanguage !== TARGET_LANGUAGE) {
-    log(`[lang] MISMATCH: author mode was asked for ${TARGET_LANGUAGE}, the winning source reads as ${observedLanguage}. Recording what was measured.`);
-  }
-} catch (e) {
-  log(`[lang] detection failed: ${e && e.message ? e.message : e}`);
 }
 
 const VALIDATION_ENV_PATH = `${EVAL_DIR}/validation_environment.yaml`;
@@ -1690,8 +1992,8 @@ try {
       reliable: bench ? bench.reliable : null,
     },
     validation: {
-      status: validation ? validation.validation_status : 'unknown',
-      correctness: validation ? validation.correctness : 'unknown',
+      status: effectiveValidationStatus,
+      correctness: sourceGatePassed && validation ? validation.correctness : 'fail',
       speedup_primary: finalPrimary,
       speedup_geomean: finalGeomean,
       speedup_weighted: finalWeighted,
@@ -1751,7 +2053,7 @@ if (kbGate) log(`[kb] not distilling: ${kbGate}.`);
 // `flagged` result means the director found a reason not to believe the number (patch install
 // no-op, correctness fail, contended box), and curating from it teaches the next run a lesson this
 // run did not earn. Reported in review of #411.
-const kbAccepted = String((validation && validation.validation_status) || '').toLowerCase() === 'accepted';
+const kbAccepted = String(effectiveValidationStatus).toLowerCase() === 'accepted';
 if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
   try {
     learned_card = await agentT(
@@ -1767,7 +2069,7 @@ if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimar
             kernel: KERNEL_NAME, language: observedLanguage, mode: MODE, gfx: GFX,
             requested_language: MODE === 'author' ? TARGET_LANGUAGE : undefined,
             kernel_class: (analysis && analysis.kernel_type) || '',
-            speedup: finalPrimary, validation_status: validation ? validation.validation_status : '',
+            speedup: finalPrimary, validation_status: effectiveValidationStatus,
             bottleneck: profileSummary ? profileSummary.bottleneck : '',
             decision_refs: finalDecisionRefs,
           },
@@ -1833,7 +2135,8 @@ Return {"filed": <the "citations" number the command printed, or 0>}.`,
 // pre-check just avoids spending an agent on a run that cannot pass the gate anyway.
 // ===========================================================================
 let kb_written = null;
-if (KB_WRITE_OK && GFX && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
+if (KB_WRITE_OK && kbAccepted && sourceGatePassed && observedLanguage && GFX &&
+    Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
   const kernelClass = (analysis && analysis.kernel_type) || 'unknown';
   const finalPatch = report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`;
   const reportPath = report && report.report_path ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`;
@@ -1869,7 +2172,7 @@ if (KB_WRITE_OK && GFX && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
       : `.`) + `
 \`\`\`bash
 ${remoteWriteOn ? KB_ENV_PRELUDE + '\n' : ''}python3 ${JSON.stringify(EXPERIENCE_STORE)} ${writeCmd} --root ${JSON.stringify(KB_ARTIFACTS_DIR)} \\
-  --kernel-name ${JSON.stringify(KERNEL_NAME)} --language ${JSON.stringify(TARGET_LANGUAGE)} \\
+  --kernel-name ${JSON.stringify(KERNEL_NAME)} --language ${JSON.stringify(observedLanguage)} \\
   --gfx ${GFX} --kernel-class ${JSON.stringify(kernelClass)} \\
   --speedup ${finalPrimary} --baseline-wall-ms ${BASELINE_GEOMEAN_MS} \\
   --patch ${JSON.stringify(finalPatch)} --eval-dir ${JSON.stringify(EVAL_DIR)} \\
@@ -1914,6 +2217,7 @@ return {
   mode: MODE,
   target_language: MODE === 'author' ? TARGET_LANGUAGE : undefined,
   authored: MODE === 'author' ? true : undefined,
+  flydsl_version: activeFlydslVersion,
   eval_dir: EVAL_DIR,
   kernel_name: KERNEL_NAME,
   workload_aligned: HAS_WORKLOAD,
@@ -1922,7 +2226,7 @@ return {
   final_geomean: finalGeomean,
   final_arithmetic: validation ? validation.director_verified_speedup_arithmetic : null,
   tech_lead_reported_geomean: report ? report.final_speedup_geomean : cumulative,
-  validation_status: validation ? validation.validation_status : 'unknown',
+  validation_status: effectiveValidationStatus,
   validation_environment: validationEnvironment && validationEnvironment.path
     ? validationEnvironment.path : null,
   perf_knowledge_enabled: USE_PERF_KNOWLEDGE,
@@ -1953,6 +2257,10 @@ return {
   // Rounds where the planner overran the KB budget. A KB that binds every round is one that has taken
   // over planning, which is the regression this budget exists to catch.
   kb_cap_bound_rounds: kbCapBound,
+  // Corpus use is unlimited; these only report whether a multi-direction plan failed to preserve
+  // one profile/free hypothesis after the single corrective replan.
+  corpus_cold_violation_rounds: corpusColdViolationRounds,
+  corpus_forced_replans: corpusForcedReplans,
   // The monoculture canary, and it costs no GPU time: how many DISTINCT (specialty, focus_files)
   // directions this run explored vs how many it issued. A KB that helps raises the verified speedup;
   // a KB that cages lowers this without raising that. Reported on KB-less runs too — those are the

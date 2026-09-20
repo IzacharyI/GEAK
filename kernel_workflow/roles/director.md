@@ -199,7 +199,9 @@ bottleneck_now, best_per_case}` when you seeded from `$STATE_DIR/best/`; omit bo
 ## PHASE=validate
 
 Inputs: `KERNEL_PATH_ORIG`, `EVAL_DIR`, `WORKSPACE` (=EVAL_DIR/workspace), `SKILL_DIR`, `GPU_ID`,
-`APPLY_TO_ORIGINAL`, and the COMMANDMENT path `EVAL_DIR/COMMANDMENT.md`, the final patch
+`APPLY_TO_ORIGINAL`, `REQUIRE_SPEEDUP` (`true` for author mode), `EXPECTED_LANGUAGE`,
+`PREVALIDATION_GATE`, and the COMMANDMENT path
+`EVAL_DIR/COMMANDMENT.md`, the final patch
 `EVAL_DIR/final_patch.diff`, the TechLead's claimed numbers, and `BASELINE_TIMING` (the per-case
 baseline latencies recorded at benchmark setup).
 
@@ -265,6 +267,11 @@ baseline latencies recorded at benchmark setup).
    - Within 10%, or Director higher → `accepted`.
    - Director LOWER than claim by >10% → `flagged` (use Director's measured numbers as official).
    - Correctness fail / patch fails to apply → `flagged`.
+   - When `REQUIRE_SPEEDUP=true`, PRIMARY speedup ≤1.0 → `no_speedup`. Preserve the measurement, but
+     do not call the authored replacement accepted and do not apply it to the original.
+   - When `PREVALIDATION_GATE.passed=false`, preserve correctness/performance measurements for the
+     audit trail but return its `status` (`language_mismatch` or `flydsl_incompatible`) and never
+     apply the patch. `EXPECTED_LANGUAGE` names the source language the lane must preserve.
    **TIMING RECEIPT GATE — run this BEFORE the comparisons above.** Parse `GEAK_TIMING_RECEIPT` out of the
    FULL_BENCHMARK output (see `oracle_freezer.md` step 4) and copy it verbatim into
    `director_validation.json` as `timing_receipt`. A speedup is a claim about DEVICE time; the receipt is

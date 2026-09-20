@@ -13,6 +13,11 @@ rather than a guess:
 2. **Development decision cards** — when a pattern applies, what to try, why, alternatives, evidence
    strength and limits.
 
+The cards also publish a small machine-readable `type` + `match` block.  `semantic` cards explain how
+to express an invariant, `constraint` cards identify impossible/illegal candidates, and
+`performance_candidate` cards add something worth measuring.  A static match is never a performance
+ranking.
+
 ## The one rule
 
 **Never make the reader infer a recommendation from a source-match count.**
@@ -36,6 +41,8 @@ and run that earned them. The always-on corpus does not copy them and bypass tho
 
 | path | what it is |
 |---|---|
+| `catalog.yaml` | discovery surface for operator/pattern families; removes GEMM-only path knowledge from consumers. |
+| `benchmarks/<family>.yaml` | upstream UT/benchmark/tuner entrypoints plus the accounting a normalized runner must enforce; not timing evidence by itself. |
 | `_extract_impl_facts.py` | reads an AITER checkout and writes raw source/tuning evidence. Needs `--aiter`. |
 | `evidence/gemm_source.yaml` | machine-readable source observations: stable ID, question category, language, `file:line`, match, arch scope, verbatim excerpt. |
 | `evidence/gemm_tuned_configs.yaml` | AITER's shipped selected Triton configs, each with stable `cfg_…` attribution ID, grouped by `(gfx, variant, M bucket)` with exact source JSON paths. |
@@ -43,6 +50,8 @@ and run that earned them. The always-on corpus does not copy them and bypass tho
 | `decisions/gemm.yaml` | curated development cards with conditions, actions, alternatives and evidence strength. |
 | `_render_decisions.py` | validates card citations and combines curated cards with shipped tuning evidence. |
 | `gemm_decisions.md` | generated, actionable page the Workflow reads first. |
+| `_select_candidates.py` | deterministically matches card conditions to an operator/language/gfx/dtype/regime context; it does not rank performance. |
+| `_aggregate_decision_outcomes.py` | folds run-local validation manifests into per-decision and bundle outcome summaries; a single referenced card is planner attribution, not causal proof. |
 | `test_corpus.py` | source reproducibility, card grounding and generated-page contracts. |
 
 The extraction/rendering split matters: extraction needs a source tree that is not part of this repo,
@@ -83,6 +92,66 @@ citation unresolvable, and refusing on it would be superstition rather than a ch
 Provenance records `aiter_origin` (the remote) rather than a local path, since the pair that
 identifies a source is repository plus commit. A path like `/tmp/aiter-clean` names a directory that
 no longer exists and never meant anything to anyone else.
+
+## Conditioned lookup and measured feedback
+
+Static applicability is machine-queryable without claiming a winner:
+
+```bash
+python3 perf_knowledge/corpus/_select_candidates.py \
+  --operator-family scaled_quant_gemm --target-language flydsl \
+  --gfx gfx942 --flydsl-version 0.3.0 \
+  --dtype fp8_e4m3fnuz_blockscale --regime prefill \
+  --m 32768 --n 4096 --k 1024 --trait lds_staging \
+  --outcomes /path/to/decision_outcomes.json
+```
+
+Run-local measurements stay outside the source corpus. Aggregate their decision attribution with:
+
+```bash
+python3 perf_knowledge/corpus/_aggregate_decision_outcomes.py \
+  --runs /path/to/exp --output /path/to/decision_outcomes.json
+```
+
+`speedup_vs_frozen_baseline` is the candidate's absolute score. A single-ref direction is still
+planner attribution, not proof that the card caused the change; multi-ref directions remain bundles.
+Only finite, correctness-passing results from reliable, Director-accepted runs enter candidate
+ordering. Regressions remain valid negative evidence; failed/flagged measurements remain visible but
+do not supply a numeric prior.
+
+## Normalized upstream benchmark
+
+`benchmarks/gemm.yaml` inventories reusable AITER UT/benchmark/tuner entrypoints. The first normalized
+adapter compares fp8 block-scale implementations with one input/oracle/accounting protocol:
+
+```bash
+python3 perf_knowledge/corpus/benchmarks/run_fp8_a8w8_blockscale.py \
+  --m 8 --n 4096 --k 1024 \
+  --candidate triton --candidate ck --candidate cktile --candidate asm \
+  --baseline triton --output /path/to/measured_fp8_gemm.json
+```
+
+It correctness-gates each implementation, interleaves CUDA/HIP-event samples, and records build or
+unsupported failures as data. Input generation, JIT/build, final-output allocation and external
+preshuffle are outside its declared steady-state timing; backend-internal workspace allocation and
+layout preparation remain inside. The resulting whole-implementation speedup ranks bundles;
+it cannot assign causal credit to an individual API or decision card.
+The AITER FlyDSL preshuffle entry point is intentionally absent here: it uses per-token scaling, not
+this suite's 128×128 block-scale contract. Generated block-scale FlyDSL remains measured by
+`kernel_workflow`; correctness must not be traded for a superficially complete backend list.
+
+Merge cached runs without losing their environment/config identity:
+
+```bash
+python3 perf_knowledge/corpus/benchmarks/merge_results.py \
+  --input /path/to/run_a.json --input /path/to/run_b.json \
+  --output /path/to/measured_implementations.json
+```
+
+Physical repeats retain distinct measurement IDs and share a comparable-context fingerprint. Top-K
+selection requires that fingerprint, or the baseline plus matching AITER/Torch/HIP identity; it
+deduplicates implementations and ranks their repeat median. Dirty-source or unresolved-runtime
+identities remain in the registry for audit but cannot become an automatic prior.
 
 ## Reading the source-evidence table without drawing the wrong conclusion
 

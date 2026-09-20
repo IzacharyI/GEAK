@@ -14,7 +14,7 @@ from aiter.ops.triton.gemm.basic.gemm_a8w8_blockscale import gemm_a8w8_blockscal
 
 
 CONFIGS = {
-    (8, 4096, 2048): {
+    (8, 4096, 1024): {
         "BLOCK_SIZE_K": 128,
         "BLOCK_SIZE_M": 128,
         "BLOCK_SIZE_N": 128,
@@ -27,7 +27,7 @@ CONFIGS = {
         "num_warps": 4,
         "waves_per_eu": 2,
     },
-    (32768, 4096, 2048): {
+    (32768, 4096, 1024): {
         "BLOCK_SIZE_K": 128,
         "BLOCK_SIZE_M": 128,
         "BLOCK_SIZE_N": 128,

@@ -12,9 +12,15 @@ Evidence levels:
 
 ## Which FlyDSL GEMM paths does gfx942 (MI300X) actually give you, and which does it silently switch or refuse?
 
-**Card:** `flydsl-gfx942-path-gates` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-gfx942-path-gates` · **type:** `constraint` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `scaled_quant_gemm`, `grouped_gemm`
+- `target_languages`: `flydsl`
+- `gfx`: `gfx942`
 
 ### Use when
 
@@ -57,9 +63,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?
 
-**Card:** `flydsl-half-mfma-call-forms` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-half-mfma-call-forms` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `grouped_gemm`
+- `target_languages`: `flydsl`
+- `dtypes`: `f16`, `bf16`
 
 ### Use when
 
@@ -99,9 +111,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## How should a FlyDSL GEMM apply an XOR16 LDS layout without making stores and loads disagree?
 
-**Card:** `flydsl-xor16-lds-layout-consistency` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-xor16-lds-layout-consistency` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `scaled_quant_gemm`, `grouped_gemm`
+- `target_languages`: `flydsl`
+- `requires`: `lds_staging`
 
 ### Use when
 
@@ -140,9 +158,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## Which tile and split-K values will the FlyDSL HGEMM family actually accept, and how does a shape narrow them?
 
-**Card:** `flydsl-hgemm-config-space` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-hgemm-config-space` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`
+- `target_languages`: `flydsl`
+- `dtypes`: `f16`, `bf16`
 
 ### Use when
 
@@ -186,9 +210,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## Which FlyDSL HGEMM configurations will fail to build at all, before any of them can be slow?
 
-**Card:** `flydsl-hgemm-tiling-validity` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-hgemm-tiling-validity` · **type:** `constraint` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`
+- `target_languages`: `flydsl`
+- `dtypes`: `f16`, `bf16`
 
 ### Use when
 
@@ -230,9 +260,18 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## What does AITER do differently when M is a handful of rows, and which knobs does that open?
 
-**Card:** `flydsl-small-m-hgemm-family` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-small-m-hgemm-family` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`
+- `target_languages`: `flydsl`
+- `exclude_gfx`: `gfx942`
+- `dtypes`: `bf16`
+- `regimes`: `decode`
+- `shape`: `m_max=16`
 
 ### Use when
 
@@ -288,9 +327,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## What does enabling B preshuffle on a FlyDSL HGEMM actually require?
 
-**Card:** `flydsl-preshuffle-b-layout-contract` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-preshuffle-b-layout-contract` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`
+- `target_languages`: `flydsl`
+- `requires`: `reused_weight`
 
 ### Use when
 
@@ -344,9 +389,15 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 ## What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?
 
-**Card:** `flydsl-splitk-hot-loop-schedule-bundle` · **evidence:** `source_observed` · **status:** `candidate_only`
+**Card:** `flydsl-splitk-hot-loop-schedule-bundle` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only`
 
 Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `scaled_quant_gemm`, `grouped_gemm`
+- `target_languages`: `flydsl`
+- `requires`: `split_k_hot_loop`
 
 ### Use when
 
