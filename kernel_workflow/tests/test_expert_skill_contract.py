@@ -25,6 +25,7 @@ MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "fused_host_abi",
     "persistent_kernel_abi",
     "fused_launch_abi",
+    "stage2_active_compile_flow",
     "flat_stripe_completion",
     "g1_cache_builder_flow",
     "g1_cache_epilogue_flow",
@@ -33,11 +34,13 @@ MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "g2_scheduler_cfg",
     "g2_skew_orientation",
     "shared_stage2_body",
+    "scheduler_counter_domain_separation",
     "nontrivial_stage2_body",
     "stage2_descriptor_flow",
     "stage2_standalone_shared_body",
     "stage2_nw8_geometry",
     "combine_emitter_wired",
+    "combine_readiness_is_strict",
     "combine_launch_bindings",
     "combine_block_fp8_decode",
     "combine_u_selection",
@@ -165,6 +168,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         "fused_host_abi",
         "persistent_kernel_abi",
         "fused_launch_abi",
+        "stage2_active_compile_flow",
         "host_specializes_g2_chunk",
         "flat_stripe_completion",
         "g1_cache_builder_flow",
@@ -174,6 +178,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         "g2_scheduler_cfg",
         "g2_skew_orientation",
         "shared_stage2_body",
+        "scheduler_counter_domain_separation",
         "nontrivial_stage2_body",
         "stage2_descriptor_flow",
         "stage2_standalone_shared_body",
@@ -182,6 +187,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         "combine_block_fp8_decode",
         "combine_u_selection",
         "combine_emitter_wired",
+        "combine_readiness_is_strict",
         "progressive_token_readiness",
         "generation_lifecycle",
         "combine_output_work_item",
@@ -307,7 +313,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     assert fixture["required_failure_count"] == len(
         fixture["failed_required_checks"]
     )
-    assert fixture["required_failure_count"] == 10
+    assert fixture["required_failure_count"] == 13
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"

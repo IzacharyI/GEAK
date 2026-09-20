@@ -393,6 +393,7 @@ if (PINNED_MEGA_SKILL &&
     [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
     [LAUNCH_TARGET === 2, 'launch_target=2'],
     [!ALLOW_PARTIAL_FUSION, 'allow_partial_fusion=false'],
+    [EXPERT_SKILL_ACCURACY_CASES.length > 0, 'expert_skill_accuracy_cases'],
   ].filter(([ok]) => !ok).map(([, label]) => label);
   if (missing.length) {
     throw new Error(`pinned candidate_validation missing gates: ${missing.join(', ')}`);
@@ -4308,7 +4309,9 @@ function functionalRequirementsFor(direction, purpose) {
     replayGuards: strictPath ? [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])] : [],
     accuracyMetric: ACCURACY_METRIC,
     accuracyThreshold: ACCURACY_THRESHOLD,
-    accuracyGuards: strictPath ? TARGET_GUARDS : [],
+    accuracyGuards: strictPath
+      ? [...new Set([...EXPERT_SKILL_ACCURACY_CASES, ...TARGET_GUARDS])]
+      : [],
     // Null/attribution/overlap arms decide final acceptance, not whether a correct running terminal
     // artifact is preserved for the next round. Enabling arms remain part of functional acceptance.
     requiredArms: runtimeCommit ? [] : ((direction && direction.mandatory_arms) || []),
@@ -6787,7 +6790,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       targetGuards: TARGET_GUARDS, regressionGuards: [],
       launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
       accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
-      requiredAccuracyCases: [],
+      requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES,
       requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
       allowPartialFusion: ALLOW_PARTIAL_FUSION,
     });

@@ -61,6 +61,13 @@ progress and must not consume the turn. Implement the next dependency-closed
 batch. Use this order: Host/ABI → G1 cache/publication → shared Stage2+P2P →
 unified G1/G2 scheduler → Combine+generation → full contract.
 
+For source-shape contracts, names and dead helpers do not count. Trace each
+selected Host value through the active cached compile call and the actual device
+call sites. In particular, wave geometry and transport format must reach every
+dependent load/store/decode calculation, the unified scheduler must be passed
+to and invoked by the shared Stage2 emitter, and Stage1-completion, G2-claim and
+Stage2-close counters must remain in their declared address domains.
+
 For a Mega candidate, treat `MEGA_PLAN_IR` as the source-authoring contract:
 map every queue/event/ABI/resource lifetime and source-shape constraint to a
 reachable implementation before inventing an equivalent form. Use

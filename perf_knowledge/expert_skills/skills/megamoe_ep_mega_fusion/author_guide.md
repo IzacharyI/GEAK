@@ -49,6 +49,10 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 ## Implementation invariants
 
 - Host bundle values must reach cached compile specs and the real launch ABI.
+- Treat reachability as load-bearing: `NW` and `p2p_quant` must flow from the
+  selected Host spec through the cached compiler into every A-load, GEMM2,
+  scatter and Combine address/format calculation. A same-named constant or dead
+  helper does not satisfy this invariant.
 - Cached specs are immutable/hashable; output returned by Host aliases kernel output.
 - G1 completion uses cache 17, waitcnt, uniform barrier, then one system publish.
 - G2 has its own sharded extent and readiness counters; continuation drains C1/C16
@@ -73,6 +77,9 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   uninstrumented command. Add bounded device-side waits and/or per-protocol progress
   counters, dump the first unmet generation/address after a short timeout, then run
   only bs=128 until it produces relL2 or a new bounded failure.
+- Bounded waits and cut-point switches are diagnostic-only. Remove them before the
+  production checkpoint: final Combine must not continue into payload reduction
+  after a readiness timeout, and no diagnostic-off branch may earn correctness.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 

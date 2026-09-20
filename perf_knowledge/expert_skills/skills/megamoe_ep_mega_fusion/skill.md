@@ -899,6 +899,7 @@ failure_routes:
         - fused_host_abi
         - persistent_kernel_abi
         - fused_launch_abi
+        - stage2_active_compile_flow
         - flat_stripe_completion
         - g1_cache_builder_flow
         - g1_cache_epilogue_flow
@@ -907,11 +908,13 @@ failure_routes:
         - g2_scheduler_cfg
         - g2_skew_orientation
         - shared_stage2_body
+        - scheduler_counter_domain_separation
         - nontrivial_stage2_body
         - stage2_descriptor_flow
         - stage2_standalone_shared_body
         - stage2_nw8_geometry
         - combine_emitter_wired
+        - combine_readiness_is_strict
         - p2p_visibility
         - p2p_cache_selection
         - p2p_cache_store_sink
@@ -1224,6 +1227,66 @@ checks:
     file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
     patterns:
       - '[''"]16[''"]\s+if\s+cur_tok\s*>=\s*4096\s+else\s+[''"]1[''"]'
+
+  - id: stage2_active_compile_flow
+    category: compiler
+    severity: required
+    kind: value_flow
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1
+    normalize_wrappers: [fx.Int32, fx.Int64]
+    relations:
+      - id: host_spec_owns_nw_and_transport
+        op: mapping_entries
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+        scope: MegaMoEV2._fused_all_kwargs
+        mapping: {node: assign, target: s2_spec}
+        entries:
+          NW: 'int\(config\.stage1\.num_waves\)'
+          p2p_quant: 'str\(p2p_quant\)'
+      - id: host_nw_reaches_emitter_constants
+        op: depends
+        sink: {node: call, call: derive_stage2_emit_constants}
+        keyword: NW
+        source: s2_kw
+      - id: host_transport_reaches_emitter_constants
+        op: depends
+        sink: {node: call, call: derive_stage2_emit_constants}
+        keyword: p2p_quant_type
+        source: s2_kw
+      - id: combine_decode_uses_producer_transport
+        op: depends
+        sink: {node: call, call: _combine_transport_spec}
+        keyword: blockwise_fp8_transport
+        source: _p2p_quant_type
+      - id: a_loader_partitions_rows_by_nw
+        op: count
+        file: aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+        scope: issue_a_load_lds_dt
+        count: 1
+        select: {node: assign, target: rows_per_wave, value: BM // NW}
+      - id: recurring_a_prefetch_receives_nw
+        op: depends
+        file: aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+        scope: gemm2_compute_v2
+        sink: {node: call, call: issue_a_load_lds_dt}
+        keyword: NW
+        source: NW
+      - id: b_scale_wave_stride_depends_on_nw
+        op: depends
+        file: aiter/ops/flydsl/kernels/mega_moe/gemm2.py
+        scope: gemm2_compute_v2
+        sink: {node: assign, target: mni_base}
+        source: NW
+      - id: scatter_rows_partition_by_nw
+        op: count
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage2.py
+        scope: p2p_scatter_epilog
+        count: 1
+        select:
+          node: assign
+          target: row
+          value: 'wave \+ row_iter \* NW'
 
   - id: flat_stripe_completion
     category: correctness
@@ -1597,6 +1660,8 @@ checks:
                 arg_bq: s2_bq
                 arg_bscale: s2_bscale
                 i32_max_m_blocks: i32_s2_maxmb
+                arg_mtile_ctr: arg_comb_mtile_ctr
+                unified_drive: _unified_drive
                 lds_slab: _s2_slab
                 lds_byte_off: '_half \* S2\[[''"]slab[''"]\]'
       - id: authoritative_constants_to_factory
@@ -1664,6 +1729,36 @@ checks:
           node: assign
           target: 's2_kw\[[''"]BN[''"]\]'
           value: 'int\(s2_kw\.get\([''"]BN[''"], 256\)\) \* \(NUM_WAVES // 4\)'
+
+  - id: scheduler_counter_domain_separation
+    category: lifecycle
+    severity: required
+    kind: value_flow
+    file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_stage1.py
+    scope: compile_mega_moe_stage1.kernel
+    normalize_wrappers: [fx.Int32, fx.Int64]
+    relations:
+      - id: g1_completion_uses_stage1_counter
+        op: count
+        count: 1
+        select: {node: assign, target: g2_ctr_i64, value: arg_mtile_ctr}
+      - id: stage2_close_uses_combine_counter
+        op: depends
+        sink: {node: call, call: 'S2\[[''"]emit[''"]\]'}
+        keyword: arg_mtile_ctr
+        source: arg_comb_mtile_ctr
+      - id: no_post_unified_g1_fallback
+        op: forbidden
+        region: {node: if, test: 'const_expr\(S2 is None\)'}
+        region_arm: orelse
+        select: {node: while, test: g1_live}
+      - id: group_done_has_rank_capacity
+        op: mapping_entries
+        file: aiter/ops/flydsl/kernels/mega_moe/mega_moe_v2.py
+        scope: MegaMoEV2._allocate_dispatch_workspace
+        mapping: {node: assign, target: workspace}
+        entries:
+          group_done: 'torch\.zeros\((?:self\.world_size|_group_done_slots\(self\.world_size\)),.*\)'
 
   - id: nontrivial_stage2_body
     category: correctness
@@ -1930,6 +2025,37 @@ checks:
           node: assign
           target: _c_total
           value: '_c_consts\[[''"]s3_total_work[''"]\]'
+
+  - id: combine_readiness_is_strict
+    category: lifecycle
+    severity: required
+    kind: structured_cfg
+    file: aiter/ops/flydsl/kernels/flydsl_dispatch_combine_intranode_kernel.py
+    scope: make_combine_reduce_emitter._emit_item
+    normalize_wrappers: [fx.Int32, fx.Int64]
+    relations:
+      - id: lane_zero_waits_for_generation_target
+        op: guarded
+        subject:
+          node: call
+          call: int32_wait_until_greater_than
+          args:
+            - 'tok_ready_addr \+ tok_id \* 4'
+            - '_tok_ready_target - 1'
+        guard: lane == 0
+      - id: no_bounded_readiness_fallthrough
+        op: count
+        count: 0
+        select:
+          node: while
+          test: '.*(?:_rdy_spin|_RDY_CAP).*'
+      - id: no_stall_then_reduce
+        op: count
+        count: 0
+        select:
+          node: call
+          call: printf
+          args: ['.*COMBINE_STALL.*']
 
   - id: progressive_token_readiness
     category: lifecycle
@@ -2379,7 +2505,7 @@ checks:
       - id: bm_parallel_arrival
         op: guarded
         subject: {node: call, call: atomic_add_system}
-        guard: tx_i32 < BM
+        guard: '.*tx_i32 < BM.*'
       - id: bm_arrival_under_close
         op: guarded
         subject: {node: call, call: atomic_add_system}
@@ -2399,7 +2525,7 @@ checks:
         select:
           node: assign
           target: ready_base
-          value: 'fx\.ptr_load\(lds_typed_ptr\(lds_ready_off \+ mt_pe \* 8, T\.i64, align=8\)\)'
+          value: 'fx\.ptr_load\(lds_typed_ptr\(lds_base_i32 \+ lds_ready_off \+ mt_pe(?:_safe)? \* 8, T\.i64, align=8\)\)'
           search: true
       - id: token_address_from_metadata
         op: depends

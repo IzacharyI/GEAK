@@ -240,6 +240,11 @@ ok(/const MEGA_ROUTE_ONLY = MODE === 'mega'/.test(src) &&
    /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src) &&
    /mega_route_only: true[\s\S]{0,500}validation_status: 'route_only'/.test(src),
   'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
+ok(/requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES/.test(src) &&
+   /EXPERT_SKILL_ACCURACY_CASES, \.\.\.TARGET_GUARDS/.test(src),
+  'Expert Skill accuracy cases are mandatory functional and scoring gates');
+ok(/EXPERT_SKILL_ACCURACY_CASES\.length > 0, 'expert_skill_accuracy_cases'/.test(src),
+  'pinned candidate validation fails closed without declared accuracy cases');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'
