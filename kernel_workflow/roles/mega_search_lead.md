@@ -159,6 +159,11 @@ Return the ordinary analysis schema with this lowerable IR shape:
       "format": "layout/transport", "producers": ["region_a"],
       "consumers": ["region_b"], "lifetime": "generation",
       "alias_group": ""
+    }, {
+      "id": "final_output", "role": "output", "element_type": "dtype",
+      "capacity": "symbolic expression", "address_space": "global",
+      "format": "layout/transport", "producers": ["region_b"],
+      "consumers": [], "lifetime": "generation", "alias_group": ""
     }],
     "counters": [{
       "id": "ready", "element_type": "i32",
@@ -235,7 +240,11 @@ Before returning, mechanically require non-empty `modifiable_files`,
 all required MegaPlanIR collections (`counters` may be empty only when no event
 uses counter-based synchronization). Every queue references a declared work
 domain; every region references one; every event/counter producer and consumer
-is declared; ABI buffer IDs and capacity expressions agree with source-derived
+is declared; every `buffers[].producers` and `buffers[].consumers` entry is a
+declared region id — a terminal output buffer that the host returns out-of-graph
+MUST use `"consumers": []` (an empty array), NEVER a non-region sentinel such as
+`host_return`, `host`, or `output`, which the plan-IR validator rejects as an
+unknown consumer; ABI buffer IDs and capacity expressions agree with source-derived
 work domains.
 
 ## PHASE=plan_round
