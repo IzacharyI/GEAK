@@ -27,6 +27,10 @@ When the prompt supplies `STAGED_GPU_AUTHORING=1`, the Author may run the
 earliest construction/JIT/small-correctness smoke before the full source
 contract passes. This is development evidence only; final correctness,
 liveness and performance remain independently verified.
+Every such smoke must export `AITER_MEGAMOE_FUSE_ALL=1` plus the declared
+Combine/quant switches, use `--mega-only` when the harness supports it, and
+observe `path=MEGA` on all eight ranks. Otherwise it measured the scattered
+fallback and is void.
 
 Do not scaffold-and-bail. While the EP8 lease is available, keep the same turn
 open across write → trace/JIT → smoke → traceback-guided repair. Return only

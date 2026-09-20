@@ -248,6 +248,10 @@ ok(/EXPERT_SKILL_ACCURACY_CASES\.length > 0, 'expert_skill_accuracy_cases'/.test
 ok(/label: `mega:structure:\$\{candidateId\}`[\s\S]{0,120}timeout_ms: 600000/.test(src) &&
    /if \(shouldStructuralVerify\) megaAdvanceMs\(600000\)/.test(src),
   'deep structural verification has a replay-consistent ten-minute budget');
+ok(engineer.includes('Every staged smoke') &&
+   engineer.includes('candidate-only harness mode') &&
+   engineer.includes('path marker'),
+  'staged GPU authoring cannot count fallback-path smoke evidence');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'

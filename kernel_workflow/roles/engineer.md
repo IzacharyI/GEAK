@@ -79,7 +79,11 @@ For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` blocks
 promotion. It is a fail-closed GPU prohibition unless
 `STAGED_GPU_AUTHORING=1`. In staged mode, use the supplied device only for the
 earliest construction/JIT/small-correctness smoke of a dependency-closed source
-stage; partial source never earns runtime or score evidence. Run the current contract against `CANDIDATE_TREE`,
+stage; partial source never earns runtime or score evidence. Every staged smoke
+must enable the declared candidate activation switches verbatim, select a
+candidate-only harness mode when available, and require the declared path
+marker on every rank. A run without those switches or markers exercised the
+baseline path and is void evidence. Run the current contract against `CANDIDATE_TREE`,
 `FROZEN_KERNEL_PATH`, and the supplied `MEGA_PLAN_IR` without any reference
 tree. Repair required failures in this order:
 `plan → correctness → abi → lifecycle → resource/compiler → schedule →
