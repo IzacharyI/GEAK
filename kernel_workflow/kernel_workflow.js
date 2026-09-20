@@ -6558,7 +6558,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         }),
       { phase: 'Verify', label: `mega:structure:${candidateId}`,
         schema: EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA,
-        timeout_ms: 300000, max_retries: 1 });
+        timeout_ms: 600000, max_retries: 1 });
     const structuralIdentity = structuralEvidenceIdentityVerdict(structural, {
       candidateId,
       candidateHead: expectedHead,
@@ -6639,7 +6639,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     });
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
   }
-  if (shouldStructuralVerify) megaAdvanceMs(300000);
+  if (shouldStructuralVerify) megaAdvanceMs(600000);
   if (MEGA_PRODUCTION) {
     verifyBudgetS = Math.max(0, Math.min(
       verifyBudgetS,

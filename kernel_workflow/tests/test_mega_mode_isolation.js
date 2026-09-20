@@ -245,6 +245,9 @@ ok(/requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES/.test(src) &&
   'Expert Skill accuracy cases are mandatory functional and scoring gates');
 ok(/EXPERT_SKILL_ACCURACY_CASES\.length > 0, 'expert_skill_accuracy_cases'/.test(src),
   'pinned candidate validation fails closed without declared accuracy cases');
+ok(/label: `mega:structure:\$\{candidateId\}`[\s\S]{0,120}timeout_ms: 600000/.test(src) &&
+   /if \(shouldStructuralVerify\) megaAdvanceMs\(600000\)/.test(src),
+  'deep structural verification has a replay-consistent ten-minute budget');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'
