@@ -145,10 +145,10 @@ ok(!validMegaSearchDirection({
   title: 'diagnostic-only instrumentation',
 }), 'an explicitly diagnostic-only direction remains ineligible');
 const continuationFn = src.match(
-  /function megaWipContinuationDirection\(currentRound\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+  /function megaWipContinuationDirection\(currentRound\) \{[\s\S]*?\n\}\n\nfunction bindMegaDirectionToWip\(currentRound, direction\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
 );
-if (!continuationFn) throw new Error('cannot lift megaWipContinuationDirection');
-const makeWipContinuation = new Function(`
+if (!continuationFn) throw new Error('cannot lift Mega WIP continuation helpers');
+const { makeWipContinuation, bindWipDirection } = new Function(`
   const megaCandidateRegistry = [{
     id: 'same_lane',
     source: 'search',
@@ -170,7 +170,10 @@ const makeWipContinuation = new Function(`
   const MEGA_DEFAULT_SPECIALTY = 'distributed';
   const topologyLaunchCount = (topology) => Number(topology.launch_count);
   ${continuationFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
-  return megaWipContinuationDirection;
+  return {
+    makeWipContinuation: megaWipContinuationDirection,
+    bindWipDirection: bindMegaDirectionToWip,
+  };
 `)();
 const continued = makeWipContinuation(2);
 ok(continued.candidate_id === 'same_lane' &&
@@ -178,6 +181,27 @@ ok(continued.candidate_id === 'same_lane' &&
    continued.target_topology.launch_count === 2 &&
    continued.target_topology.parameters.nw === 8,
   'fallback carries the same lane and its complete topology into the next round');
+const rebound = bindWipDirection(2, {
+  id: 'planner_batch_r2',
+  candidate_id: 'replacement_lane',
+  candidate_source: 'search',
+  base_candidate_id: 'same_lane',
+  title: 'repair Stage2 flow',
+  focus_files: ['stage2.py'],
+  prompt: 'Create replacement_lane from same_lane and continue there.',
+  target_shape: { launches: 2 },
+  target_topology: { launch_count: 2, included_regions: ['wrong'] },
+});
+ok(rebound.candidate_id === 'same_lane' &&
+   rebound.base_candidate_id === 'frozen_baseline' &&
+   rebound.tree === '/state/candidates/same_lane/tree' &&
+   rebound.id === 'planner_batch_r2' &&
+   rebound.focus_files[0] === 'stage2.py' &&
+   rebound.target_topology.included_regions.includes('persistent') &&
+   !rebound.prompt.includes('replacement_lane'),
+  'a Planner rename is rebound to the existing WIP identity without its stale lane prompt');
+ok(/const bound = bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
+  'every planned round binds to a recoverable WIP before candidate identity is resolved');
 ok(/const continuation = megaWipContinuationDirection\(currentRound\);[\s\S]{0,420}continuing resumable WIP lane[\s\S]{0,260}raw = continuation/.test(src),
   'a rejected planner direction continues the same WIP lane inside one Workflow');
 ok(/Full and profitable partial[\s\S]*fusion are both legal/.test(searchLead) &&

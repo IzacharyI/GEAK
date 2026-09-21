@@ -6057,7 +6057,8 @@ function safeVerifyTimeoutRecovery(result) {
 
 function megaWipContinuationDirection(currentRound) {
   const wip = megaCandidateRegistry.find((c) =>
-    c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));
+    (c.source === 'search' || c.source === 'integrated') &&
+    (c.status === 'authoring' || c.status === 'runnable'));
   if (!wip) return null;
   const target = analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target || {};
   const wipLaunches = topologyLaunchCount(wip.topology);
@@ -6085,6 +6086,32 @@ function megaWipContinuationDirection(currentRound) {
     prompt: wip.contract_failures.length
       ? `Resolve required contract failures: ${JSON.stringify(wip.contract_failures)}`
       : (wip.next_blocker || 'Continue the first unresolved measured blocker.'),
+  };
+}
+
+function bindMegaDirectionToWip(currentRound, direction) {
+  const continuation = megaWipContinuationDirection(currentRound);
+  if (!continuation) return direction;
+  const planned = direction || {};
+  // Candidate identity is controller-owned once a recoverable WIP exists. A Planner may refine the
+  // next repair batch, but it may not rename the lane or turn an authoring WIP into a "base"
+  // candidate: authoring candidates are intentionally ineligible as bases, so doing so silently
+  // falls back to frozen_baseline and repeats the implementation from scratch.
+  return {
+    ...planned,
+    ...continuation,
+    id: planned.id || continuation.id,
+    title: planned.title || continuation.title,
+    specialty: planned.specialty || continuation.specialty,
+    ...(planned.roadmap_rung ? { roadmap_rung: planned.roadmap_rung } : {}),
+    ...(planned.step_role ? { step_role: planned.step_role } : {}),
+    ...(Array.isArray(planned.gated_on) ? { gated_on: planned.gated_on } : {}),
+    ...(Array.isArray(planned.focus_files) ? { focus_files: planned.focus_files } : {}),
+    ...(planned.target_shape ? { target_shape: planned.target_shape } : {}),
+    // Do not retain a Planner prompt that names a replacement lane/base. Exact structured failures
+    // and the persisted runtime blocker are the safe handoff for the same candidate.
+    prompt: continuation.prompt,
+    target_topology: continuation.target_topology,
   };
 }
 
@@ -6159,6 +6186,15 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       candidate_source: 'search',
       base_candidate_id: 'frozen_baseline',
     };
+  }
+  const plannerCandidateId = String(raw.candidate_id || '');
+  const bound = bindMegaDirectionToWip(currentRound, raw);
+  if (bound !== raw) {
+    if (plannerCandidateId && plannerCandidateId !== bound.candidate_id) {
+      log(`Mega round ${currentRound}: Planner requested replacement lane ${plannerCandidateId}; ` +
+        `continuing recoverable WIP ${bound.candidate_id} in place instead.`);
+    }
+    raw = bound;
   }
   if (!validMegaSearchDirection(raw)) {
     log(`Mega search plan rejected diagnostic-only direction ` +
