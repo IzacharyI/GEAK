@@ -128,6 +128,58 @@ ok(/MEGA unified mode: Expert Skills are/.test(src),
 console.log('\n# autonomous candidates remain measurable and flexible');
 ok(/search plan rejected diagnostic-only direction/.test(src),
   'diagnostic-only work cannot consume a candidate turn');
+const validDirectionFn = src.match(
+  /function validMegaSearchDirection\(direction\) \{[\s\S]*?\n\}\n\nfunction freshMegaDirectionLeak/,
+);
+if (!validDirectionFn) throw new Error('cannot lift validMegaSearchDirection');
+const validMegaSearchDirection = new Function(
+  `${validDirectionFn[0].replace(/\n\nfunction freshMegaDirectionLeak$/, '')}
+   return validMegaSearchDirection;`,
+)();
+ok(validMegaSearchDirection({
+  candidate_id: 'full_persistent_pipeline_host_abi',
+  title: 'complete persistent ABI and disjoint counter-control roots',
+}), 'counter-control kernel work is not mistaken for a control-only direction');
+ok(!validMegaSearchDirection({
+  candidate_id: 'diagnostic-only-probe',
+  title: 'diagnostic-only instrumentation',
+}), 'an explicitly diagnostic-only direction remains ineligible');
+const continuationFn = src.match(
+  /function megaWipContinuationDirection\(currentRound\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+);
+if (!continuationFn) throw new Error('cannot lift megaWipContinuationDirection');
+const makeWipContinuation = new Function(`
+  const megaCandidateRegistry = [{
+    id: 'same_lane',
+    source: 'search',
+    base_id: 'frozen_baseline',
+    status: 'authoring',
+    tree: '/state/candidates/same_lane/tree',
+    topology: {
+      launch_count: 2,
+      included_regions: ['quant', 'persistent'],
+      included_queues: ['compute'],
+      capabilities: ['overlap'],
+      parameters: { nw: 8 },
+      require_overlap: true,
+    },
+    contract_failures: [{ id: 'body_missing' }],
+    next_blocker: 'write the persistent body',
+  }];
+  const analysis = { mega_plan_ir: { target: { launch_count: 2 } } };
+  const MEGA_DEFAULT_SPECIALTY = 'distributed';
+  const topologyLaunchCount = (topology) => Number(topology.launch_count);
+  ${continuationFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+  return megaWipContinuationDirection;
+`)();
+const continued = makeWipContinuation(2);
+ok(continued.candidate_id === 'same_lane' &&
+   continued.tree === '/state/candidates/same_lane/tree' &&
+   continued.target_topology.launch_count === 2 &&
+   continued.target_topology.parameters.nw === 8,
+  'fallback carries the same lane and its complete topology into the next round');
+ok(/const continuation = megaWipContinuationDirection\(currentRound\);[\s\S]{0,420}continuing resumable WIP lane[\s\S]{0,260}raw = continuation/.test(src),
+  'a rejected planner direction continues the same WIP lane inside one Workflow');
 ok(/Full and profitable partial[\s\S]*fusion are both legal/.test(searchLead) &&
    /partial terminal[\s\S]*complete runnable operator/.test(searchLead),
   'full and partial fusion may both become runnable performance candidates');

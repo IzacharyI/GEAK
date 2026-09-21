@@ -6018,7 +6018,13 @@ function megaBaseHead(baseId, requesterSource) {
 function validMegaSearchDirection(direction) {
   const d = direction || {};
   const identity = `${d.candidate_id || d.id || ''} ${d.title || ''}`.toLowerCase();
-  if (/no[-_ ]?payload|diagnostic|instrument|meter|control|profile/.test(identity)) return false;
+  // Reject directions that explicitly declare themselves as diagnostic-only work. Do not match
+  // generic substrings such as "control": real kernels routinely contain counter-control,
+  // scheduler-control, and flow-control code. A false positive here aborts the whole invocation
+  // before the next authoring turn, despite a resumable WIP lane being available.
+  if (/\b(?:no[-_ ]?payload|diagnostic[-_ ]only|instrument(?:ation)?[-_ ]only|meter(?:ing)?[-_ ]only|control[-_ ]only|profil(?:e|ing)[-_ ]only)\b/.test(identity)) {
+    return false;
+  }
   return true;
 }
 
@@ -6047,6 +6053,39 @@ function safeVerifyTimeoutRecovery(result) {
   return r.timeout_recovery_safe === true &&
     Number(r.active_gpu_processes || 0) === 0 &&
     r.lane_lock_free === true;
+}
+
+function megaWipContinuationDirection(currentRound) {
+  const wip = megaCandidateRegistry.find((c) =>
+    c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));
+  if (!wip) return null;
+  const target = analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target || {};
+  const wipLaunches = topologyLaunchCount(wip.topology);
+  const reachesTarget = Number.isFinite(wipLaunches) &&
+    wipLaunches === Number(target.launch_count);
+  return {
+    id: `r${currentRound}_continue_${wip.id}`, candidate_id: wip.id,
+    candidate_source: wip.source, base_candidate_id: wip.base_id,
+    title: `continue candidate ${wip.id}`, specialty: MEGA_DEFAULT_SPECIALTY,
+    tree: wip.tree,
+    target_topology: {
+      launch_count: wipLaunches,
+      included_regions: Array.isArray(wip.topology.included_regions)
+        ? wip.topology.included_regions
+        : (Array.isArray(wip.topology.fused_stages) ? wip.topology.fused_stages : []),
+      included_queues: Array.isArray(wip.topology.included_queues)
+        ? wip.topology.included_queues : (reachesTarget ? target.required_queues || [] : []),
+      capabilities: Array.isArray(wip.topology.capabilities)
+        ? wip.topology.capabilities
+        : (reachesTarget ? target.required_capabilities || [] : []),
+      parameters: wip.topology.parameters || {},
+      require_overlap: wip.topology.require_overlap === true,
+    },
+    contract_failures: wip.contract_failures,
+    prompt: wip.contract_failures.length
+      ? `Resolve required contract failures: ${JSON.stringify(wip.contract_failures)}`
+      : (wip.next_blocker || 'Continue the first unresolved measured blocker.'),
+  };
 }
 
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
@@ -6099,36 +6138,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
       ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
   if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
-    const wip = megaCandidateRegistry.find((c) =>
-      c.source === 'search' && (c.status === 'authoring' || c.status === 'runnable'));
-    if (!wip) return null;
-    const target = analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target || {};
-    const wipLaunches = topologyLaunchCount(wip.topology);
-    const reachesTarget = Number.isFinite(wipLaunches) &&
-      wipLaunches === Number(target.launch_count);
-    const normalizedTopology = {
-      launch_count: wipLaunches,
-      included_regions: Array.isArray(wip.topology.included_regions)
-        ? wip.topology.included_regions
-        : (Array.isArray(wip.topology.fused_stages) ? wip.topology.fused_stages : []),
-      included_queues: Array.isArray(wip.topology.included_queues)
-        ? wip.topology.included_queues : (reachesTarget ? target.required_queues || [] : []),
-      capabilities: Array.isArray(wip.topology.capabilities)
-        ? wip.topology.capabilities
-        : (reachesTarget ? target.required_capabilities || [] : []),
-      parameters: wip.topology.parameters || {},
-      require_overlap: wip.topology.require_overlap === true,
-    };
-    return {
-      id: `r${currentRound}_continue_${wip.id}`, candidate_id: wip.id,
-      candidate_source: wip.source, base_candidate_id: wip.base_id,
-      title: `continue candidate ${wip.id}`, specialty: MEGA_DEFAULT_SPECIALTY,
-      tree: wip.tree, target_topology: normalizedTopology,
-      contract_failures: wip.contract_failures,
-      prompt: wip.contract_failures.length
-        ? `Resolve required contract failures: ${JSON.stringify(wip.contract_failures)}`
-        : (wip.next_blocker || 'Continue the first unresolved measured blocker.'),
-    };
+    return megaWipContinuationDirection(currentRound);
   }
   let raw = plan.directions[0];
   const freshLane = !MEGA_RESUME_STATE && megaCandidateRegistry.length === 0;
@@ -6154,19 +6164,26 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     log(`Mega search plan rejected diagnostic-only direction ` +
       `${String(raw.candidate_id || raw.id || raw.title || '(unnamed)')}; a search budget unit must ` +
       `author or optimize a selectable whole-kernel candidate.`);
-    raw = {
-      id: `search_whole_r${currentRound}`,
-      candidate_id: `search_whole_r${currentRound}`,
-      candidate_source: 'search',
-      base_candidate_id: 'frozen_baseline',
-      title: 'autonomous runnable Mega-kernel candidate',
-      specialty: MEGA_DEFAULT_SPECIALTY,
-      step_role: 'terminal',
-      focus_files: [],
-      prompt: 'Author a complete runnable operator candidate from the frozen source/task graph. Full ' +
-        'or partial fusion is valid if paired rank-max performance beats the frozen baseline. ' +
-        'Diagnostics may be temporary inside this turn but cannot be its output.',
-    };
+    const continuation = megaWipContinuationDirection(currentRound);
+    if (continuation) {
+      log(`Mega round ${currentRound}: continuing resumable WIP lane ${continuation.candidate_id} ` +
+        `inside this invocation instead of terminating or opening another workflow.`);
+      raw = continuation;
+    } else {
+      raw = {
+        id: `search_whole_r${currentRound}`,
+        candidate_id: `search_whole_r${currentRound}`,
+        candidate_source: 'search',
+        base_candidate_id: 'frozen_baseline',
+        title: 'autonomous runnable Mega-kernel candidate',
+        specialty: MEGA_DEFAULT_SPECIALTY,
+        step_role: 'terminal',
+        focus_files: [],
+        prompt: 'Author a complete runnable operator candidate from the frozen source/task graph. Full ' +
+          'or partial fusion is valid if paired rank-max performance beats the frozen baseline. ' +
+          'Diagnostics may be temporary inside this turn but cannot be its output.',
+      };
+    }
   }
   const requestedId = String(raw.candidate_id || raw.id || `search_r${currentRound}`);
   const safeRequestedId = validMegaCandidateId(requestedId)
