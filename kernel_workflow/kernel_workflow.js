@@ -20,30 +20,14 @@ export const meta = {
 // Args/defaults; agents perform filesystem work through caller-supplied paths.
 // ---------------------------------------------------------------------------
 const A = args || {};
-// Mega uses a modeled clock for replay/tests, but production may charge the
-// actual wall time consumed by an agent instead of its full allocated slice.
+// Resume-safe deterministic modeled time. Charge allocated phase slices rather
+// than wall time: replay/cached agents must follow the same budget path.
 const WORKFLOW_STARTED_MS = 0;
 let MEGA_CLOCK_MS = 0;
 const MEGA_PREP_MODEL_MS = 90 * 1000;
 function megaNowMs() { return WORKFLOW_STARTED_MS + MEGA_CLOCK_MS; }
 function megaAdvanceMs(ms) { MEGA_CLOCK_MS += Math.max(0, Number(ms) || 0); }
-const MEGA_TIME_ACCOUNTING = String(
-  A.mega_time_accounting != null
-    ? A.mega_time_accounting
-    : (String(A.mega_profile || 'production') === 'production' ? 'elapsed' : 'allocated')
-);
-if (!['elapsed', 'allocated'].includes(MEGA_TIME_ACCOUNTING)) {
-  throw new Error('args.mega_time_accounting must be elapsed|allocated');
-}
-function megaChargeMs(allocatedMs, wallStartedMs) {
-  const budget = Math.max(0, Number(allocatedMs) || 0);
-  if (MEGA_TIME_ACCOUNTING === 'allocated' || !Number.isFinite(Number(wallStartedMs))) {
-    megaAdvanceMs(budget);
-    return;
-  }
-  const elapsed = Math.max(0, Date.now() - Number(wallStartedMs));
-  megaAdvanceMs(Math.min(budget, elapsed));
-}
+function megaChargeMs(allocatedMs) { megaAdvanceMs(allocatedMs); }
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
 // Caller-supplied directory holding roles, knowledge, tools and scripts.
@@ -6365,7 +6349,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (authorPreflightRequired && !stagedGpuAuthoring);
   const role = 'engineer';
   const roleFile = 'engineer.md';
-  const engineerWallStartedMs = Date.now();
   eng = await agentT(
       roleAgent(role, 'optimize',
         `Advance candidate lane ${candidateId}; never edit or replace another candidate lane.`, {
@@ -6493,7 +6476,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         candidateId} before structural Verify`,
     };
   }
-  megaChargeMs(engineerBudgetS * 1000, engineerWallStartedMs);
+  megaChargeMs(engineerBudgetS * 1000);
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
     ? eng.changed_files.map(String) : [];
@@ -6548,7 +6531,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   let structuralPassThisTurn = false;
   const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
     eng && eng.claim_complete === true && expectedHead;
-  const structuralWallStartedMs = shouldStructuralVerify ? Date.now() : null;
   if (shouldStructuralVerify) {
     structural = await agentT(
       roleAgent('verify_engineer', 'verify_structure',
@@ -6659,7 +6641,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     });
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
   }
-  if (shouldStructuralVerify) megaChargeMs(600000, structuralWallStartedMs);
+  if (shouldStructuralVerify) megaChargeMs(600000);
   if (MEGA_PRODUCTION) {
     verifyBudgetS = Math.max(0, Math.min(
       verifyBudgetS,
@@ -6693,7 +6675,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
     (postAuthoringVerify ||
       ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
-  const verifyWallStartedMs = shouldVerify ? Date.now() : null;
   if (shouldVerify) {
     const verifyInputs = {
       CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
@@ -6805,7 +6786,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       }
     }
   }
-  if (shouldVerify) megaChargeMs(verifyBudgetS * 1000, verifyWallStartedMs);
+  if (shouldVerify) megaChargeMs(verifyBudgetS * 1000);
 
   let record = meta;
   if (ver) {

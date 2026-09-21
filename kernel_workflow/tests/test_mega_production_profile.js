@@ -67,10 +67,9 @@ ok(/Production identity-only tier/.test(director),
   'Director documents the no-duplicate-GPU validation contract');
 ok(/timeout_marker: true/.test(src) && /MEGA SAFE STOP/.test(src),
   'a timed-out candidate/finalist stops safely instead of overlapping recovery or fallback GPU work');
-ok(/MEGA_TIME_ACCOUNTING/.test(src) &&
-   /megaChargeMs/.test(src) &&
-   /Date\.now\(\) - Number\(wallStartedMs\)/.test(src),
-  'production candidate budgets charge actual elapsed time by default');
+ok(/function megaChargeMs\(allocatedMs\) \{ megaAdvanceMs\(allocatedMs\); \}/.test(src) &&
+   !/Date\.now\(\)/.test(src),
+  'production candidate budgets use deterministic allocated-time accounting');
 ok(/if \(!eng \|\| eng\.claim_complete !== true\)/.test(src) &&
    /timed-out writer is quiescent/.test(src) &&
    /lane lock is free/.test(src),
