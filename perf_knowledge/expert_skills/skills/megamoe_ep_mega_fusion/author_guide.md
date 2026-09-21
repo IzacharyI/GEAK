@@ -185,6 +185,15 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   owner publishes exactly once per valid row, and that each consumer waits on its
   OWN tile's counter rather than a coarse last-tile proxy. Dump the first token
   whose observed arrivals are below expected and fix the wiring there.
+- A trace-time `cannot evaluate dynamic Boolean as Python bool during tracing`
+  means a kernel RUNTIME value was used as a Python `if`/`and`/`or` inside a traced
+  body (e.g. `if m_slot < active_cu:` in an epilogue `scf.for`). FlyDSL cannot fold a
+  data-dependent predicate at trace time. Never branch host-Python control flow on a
+  runtime value: use a device-side predicate instead — an Int32 0/1 mask, a masked or
+  `select` store, or an `scf.if`/`const_expr` guard reserved for truly compile-time
+  constants. When the offending line sits on the SHARED Stage2 path it breaks BOTH the
+  fused arm and the scattered baseline (A/B denominator) at trace time before any
+  kernel launches, so this must be fixed before the next on-card run.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 
