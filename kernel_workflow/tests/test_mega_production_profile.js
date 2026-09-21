@@ -44,7 +44,7 @@ ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
 ok(/dispatch deadline reached/.test(src) && /MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S/.test(src),
   'the workflow preserves final-validation time instead of spending the full wall budget on search');
 ok(/availableAfterPrepS < 900/.test(src) &&
-   /if \(shouldStructuralVerify\) megaAdvanceMs\(300000\)/.test(src),
+   /if \(shouldStructuralVerify\) megaChargeMs\(600000/.test(src),
   'production reserves Author, structural, and GPU handoff time and charges structural verification');
 ok(/GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS/.test(src) &&
    /GPU_RUN_TIMEOUT_S: gpuRunBudgetS/.test(src),
@@ -67,6 +67,14 @@ ok(/Production identity-only tier/.test(director),
   'Director documents the no-duplicate-GPU validation contract');
 ok(/timeout_marker: true/.test(src) && /MEGA SAFE STOP/.test(src),
   'a timed-out candidate/finalist stops safely instead of overlapping recovery or fallback GPU work');
+ok(/MEGA_TIME_ACCOUNTING/.test(src) &&
+   /megaChargeMs/.test(src) &&
+   /Date\.now\(\) - Number\(wallStartedMs\)/.test(src),
+  'production candidate budgets charge actual elapsed time by default');
+ok(/if \(!eng \|\| eng\.claim_complete !== true\)/.test(src) &&
+   /timed-out writer is quiescent/.test(src) &&
+   /lane lock is free/.test(src),
+  'author timeout recovery resumes only after single-writer quiescence');
 ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src) &&
    /MEGA EXPERT SKILL/.test(src) &&
    /EXPERIMENTAL TRANSFER, EXPLICIT PIN/.test(src),

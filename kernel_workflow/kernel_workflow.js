@@ -20,12 +20,30 @@ export const meta = {
 // Args/defaults; agents perform filesystem work through caller-supplied paths.
 // ---------------------------------------------------------------------------
 const A = args || {};
-// Resume-safe modeled time: never read a live clock in replayable workflow code.
+// Mega uses a modeled clock for replay/tests, but production may charge the
+// actual wall time consumed by an agent instead of its full allocated slice.
 const WORKFLOW_STARTED_MS = 0;
 let MEGA_CLOCK_MS = 0;
 const MEGA_PREP_MODEL_MS = 90 * 1000;
 function megaNowMs() { return WORKFLOW_STARTED_MS + MEGA_CLOCK_MS; }
 function megaAdvanceMs(ms) { MEGA_CLOCK_MS += Math.max(0, Number(ms) || 0); }
+const MEGA_TIME_ACCOUNTING = String(
+  A.mega_time_accounting != null
+    ? A.mega_time_accounting
+    : (String(A.mega_profile || 'production') === 'production' ? 'elapsed' : 'allocated')
+);
+if (!['elapsed', 'allocated'].includes(MEGA_TIME_ACCOUNTING)) {
+  throw new Error('args.mega_time_accounting must be elapsed|allocated');
+}
+function megaChargeMs(allocatedMs, wallStartedMs) {
+  const budget = Math.max(0, Number(allocatedMs) || 0);
+  if (MEGA_TIME_ACCOUNTING === 'allocated' || !Number.isFinite(Number(wallStartedMs))) {
+    megaAdvanceMs(budget);
+    return;
+  }
+  const elapsed = Math.max(0, Date.now() - Number(wallStartedMs));
+  megaAdvanceMs(Math.min(budget, elapsed));
+}
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
 // Caller-supplied directory holding roles, knowledge, tools and scripts.
@@ -6347,6 +6365,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (authorPreflightRequired && !stagedGpuAuthoring);
   const role = 'engineer';
   const roleFile = 'engineer.md';
+  const engineerWallStartedMs = Date.now();
   eng = await agentT(
       roleAgent(role, 'optimize',
         `Advance candidate lane ${candidateId}; never edit or replace another candidate lane.`, {
@@ -6447,12 +6466,14 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `cancelled and may still hold ${laneLock}.`);
     eng = null;
   }
-  if (!laneWriterTimedOut && (!eng || eng.claim_complete !== true)) {
+  if (!eng || eng.claim_complete !== true) {
     const recovered = await agentT(
         roleAgent('engineer', 'recover',
-          `RECOVER ONLY candidate ${candidateId}. Read ${outDir}/candidate_result.json and completed ` +
+          `RECOVER ONLY candidate ${candidateId}. First confirm the timed-out writer is quiescent and ` +
+          `the lane lock is free. Read ${outDir}/candidate_result.json and completed ` +
           `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
-          `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}.`, {
+          `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}. ` +
+          `If the writer is still active or the lock is held, return claim_complete:false.`, {
             OUT_DIR: outDir, OUTPUT_DIR: outDir, CANDIDATE_ID: candidateId,
             CANDIDATE_SOURCE: source, BASE_CANDIDATE_ID: baseCandidateId,
             CANDIDATE_TREE: tree, KERNEL_PATH: tree, ATTEMPT_ID: attemptId,
@@ -6460,7 +6481,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           }),
         { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
           ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
-    if (recovered && recovered.claim_complete === true) eng = recovered;
+    if (recovered && recovered.claim_complete === true) {
+      eng = recovered;
+      laneWriterTimedOut = false;
+    }
   }
   if (!MEGA_RESUME_STATE && !existing && freshMegaAuthorLeak(eng)) {
     return {
@@ -6469,7 +6493,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         candidateId} before structural Verify`,
     };
   }
-  megaAdvanceMs(engineerBudgetS * 1000);
+  megaChargeMs(engineerBudgetS * 1000, engineerWallStartedMs);
 
   const reportedChangedFiles = Array.isArray(eng && eng.changed_files)
     ? eng.changed_files.map(String) : [];
@@ -6524,6 +6548,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   let structuralPassThisTurn = false;
   const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
     eng && eng.claim_complete === true && expectedHead;
+  const structuralWallStartedMs = shouldStructuralVerify ? Date.now() : null;
   if (shouldStructuralVerify) {
     structural = await agentT(
       roleAgent('verify_engineer', 'verify_structure',
@@ -6634,7 +6659,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     });
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
   }
-  if (shouldStructuralVerify) megaAdvanceMs(600000);
+  if (shouldStructuralVerify) megaChargeMs(600000, structuralWallStartedMs);
   if (MEGA_PRODUCTION) {
     verifyBudgetS = Math.max(0, Math.min(
       verifyBudgetS,
@@ -6668,6 +6693,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
     (postAuthoringVerify ||
       ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
+  const verifyWallStartedMs = shouldVerify ? Date.now() : null;
   if (shouldVerify) {
     const verifyInputs = {
       CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
@@ -6779,7 +6805,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       }
     }
   }
-  if (shouldVerify) megaAdvanceMs(verifyBudgetS * 1000);
+  if (shouldVerify) megaChargeMs(verifyBudgetS * 1000, verifyWallStartedMs);
 
   let record = meta;
   if (ver) {

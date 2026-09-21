@@ -248,7 +248,7 @@ ok(/requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES/.test(src) &&
 ok(/EXPERT_SKILL_ACCURACY_CASES\.length > 0, 'expert_skill_accuracy_cases'/.test(src),
   'pinned candidate validation fails closed without declared accuracy cases');
 ok(/label: `mega:structure:\$\{candidateId\}`[\s\S]{0,120}timeout_ms: 600000/.test(src) &&
-   /if \(shouldStructuralVerify\) megaAdvanceMs\(600000\)/.test(src),
+   /if \(shouldStructuralVerify\) megaChargeMs\(600000/.test(src),
   'deep structural verification has a replay-consistent ten-minute budget');
 ok(engineer.includes('Every staged smoke') &&
    engineer.includes('candidate-only harness mode') &&
