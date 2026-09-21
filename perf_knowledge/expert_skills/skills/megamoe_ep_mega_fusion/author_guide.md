@@ -19,6 +19,25 @@ If preflight still has source failures and no GPU blocker exists, implement the
 next dependency-closed stage below. Re-sealing an unchanged HEAD twice is not
 progress.
 
+### Hard rules (fail-closed)
+
+1. Never read the checker/verifier implementation as authoring input. The
+   contract's AST/check code, PlanIR checker fields, `runtime_validation.py`,
+   the contract tool source, and any oracle/reference tree are OFF LIMITS for
+   shaping source. The contract tells you WHAT to implement, never HOW. Your
+   authority is the candidate's own runtime behavior (compile, on-card smoke,
+   relL2, launch count, path marker). If you find yourself studying how a check
+   computes its verdict, stop and author the code that check is asking for.
+2. Every lease must move the fused kernel BODY past the last committed HEAD.
+   Once Host/ABI is closed, committing only more host/ABI/spec scaffolding is a
+   failed turn: two consecutive turns landing on the same rung is forbidden, and
+   `body=deferred` is never an acceptable output once the host shell exists.
+   Each lease commits at least one new dependency-closed body stage of real
+   device code that the persistent kernel executes.
+3. Runtime correctness is the only authority. When the observed relL2 / launch
+   count / path marker disagrees with what a static check "wants", fix the
+   behavior the runtime saw, not the shape that satisfies the checker.
+
 ## Dependency-ordered build recipe
 
 Do not rewrite GEMM math. Reuse the baseline quantizer, GEMM1, GEMM2, weighted
