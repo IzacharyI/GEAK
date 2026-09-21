@@ -247,6 +247,12 @@ MUST use `"consumers": []` (an empty array), NEVER a non-region sentinel such as
 unknown consumer; ABI buffer IDs and capacity expressions agree with source-derived
 work domains.
 
+When an Expert Skill is supplied, inspect its PlanIR assertions before
+returning. Every `schedule.policies` key referenced by those assertions MUST be
+present with the exact required semantic value; never return an empty policies
+mapping for a pinned Skill. These values are the machine-checkable bridge from
+the Skill to Author and structural Verify, not optional roadmap prose.
+
 ## PHASE=plan_round
 
 Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,

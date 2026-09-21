@@ -162,6 +162,8 @@ ok(/plan_version/.test(src) &&
    /compiler_constraints/.test(src) &&
    /evidence_requirements/.test(src),
   'MegaPlanIR v2 strongly types operator-neutral dataflow, resources and evidence');
+ok(/Every `schedule\.policies` key[\s\S]{0,180}exact required semantic value/.test(searchLead),
+  'Analyze carries pinned Skill policy assertions into MegaPlanIR');
 ok(!/stage2_pointer_count|combine_pointer_count|g2_chunk|combine_third_queue/.test(src) &&
    !/MegaMoE|GEMM1|GEMM2|g2_chunk/.test(searchLead) &&
    !/MegaMoE|8192_uniform|AITER_MEGAMOE|SCATTERED|g2_/.test(src),
