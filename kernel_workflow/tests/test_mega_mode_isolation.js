@@ -32,13 +32,13 @@ const makeBlock = (enabled) => new Function(`
   const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
   const EXPERT_SKILL_PLAYBOOK_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
   const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
-    '/skills/skills/megamoe_ep_mega_fusion/skill.md';
+    '/skills/skills/megamoe_ep_mega_fusion/planner_extension.yaml';
   const EXPERT_SKILL_PLANNER_GUIDE_FILE =
     '/skills/skills/megamoe_ep_mega_fusion/planner_guide.md';
   const EXPERT_SKILL_AUTHOR_GUIDE_FILE =
     '/skills/skills/megamoe_ep_mega_fusion/author_guide.md';
-  const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/skill.md';
-  const EXPERT_SKILL_REVISION = 'v1';
+  const EXPERT_SKILL_CONTRACT_FILE = '/skills/skills/megamoe_ep_mega_fusion/contract.yaml';
+  const EXPERT_SKILL_REVISION = '';
   const EXPERT_SKILL_BUNDLE_TOOL = '/skills/_contribute/validate_skill.py';
   const EXPERT_SKILL_BUNDLE_SHA256 = 'b'.repeat(64);
   const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 = 'p'.repeat(64);
@@ -55,7 +55,7 @@ const makeBlock = (enabled) => new Function(`
 
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
-ok(enabled('mega_search_lead', 'analyze').includes('skill.md') &&
+  ok(enabled('mega_search_lead', 'analyze').includes('planner_extension.yaml') &&
    enabled('mega_search_lead', 'analyze').includes('canonical Planner Extension'),
   'Mega Analyze receives the canonical Skill extension');
 ok(enabled('mega_search_lead', 'plan_round').includes('planner_guide.md') &&
@@ -254,6 +254,10 @@ ok(engineer.includes('Every staged smoke') &&
    engineer.includes('candidate-only harness mode') &&
    engineer.includes('path marker'),
   'staged GPU authoring cannot count fallback-path smoke evidence');
+ok(/const STRUCTURAL_CONTRACT_BLOCKING/.test(src) &&
+   /const contractBlocksRuntime = STRUCTURAL_CONTRACT_BLOCKING/.test(src) &&
+   /!STRUCTURAL_CONTRACT_BLOCKING \|\| n\.structural_verified/.test(src),
+  'Mega AST contract is advisory unless explicitly promoted to a blocking policy');
 
 console.log(failures === 0
   ? '\nPASS: mode=mega has one lifecycle; Expert Skills are optional normative knowledge.'

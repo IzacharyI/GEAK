@@ -205,7 +205,7 @@ denominator.
    drain-vs-floor, a triangle-bound estimate, or accuracy inherited from another HEAD is not
    evidence. Run `GRAPH_CONTRACT_TOOL` from the candidate environment in one EP8 lease:
    `torchrun --standalone --nproc_per_node=8 GRAPH_CONTRACT_TOOL --candidate-tree "$WS"
-   --skill-file EXPERT_SKILL_FILE
+   --runtime-file EXPERT_SKILL_VALIDATION
    --accuracy-cases <EXPERT_SKILL_ACCURACY_CASES> --liveness-cases <EXPERT_SKILL_ACCURACY_CASES>
    --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
    --rtol <ACCURACY_THRESHOLD> --json-output "$VERIFY_DIR/graph_contract.json"`.

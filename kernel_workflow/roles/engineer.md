@@ -28,24 +28,17 @@ work in your OWN private workspace copy — total isolation, no coordination wit
   `BASE_HEAD`, `CANDIDATE_TREE`, `CANDIDATE_PYTHONPATH`,
   `CANDIDATE_IMPORT_MODULES`,
   `BASE_CANDIDATE_ID`, `CANDIDATE_SOURCE`, `ATTEMPT_ID`, and
-  `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, `PRIOR_CANDIDATE`, `TASK_GRAPH`,
-  `RESOURCE_TIMELINE`, and `MEGA_PLAN_IR`; optionally `STRUCTURAL_ONLY` and
-  `STRUCTURAL_TARGET`. A Skill-enabled Mega lane may also provide
-  `EXPERT_SKILL_PLANNER_EXTENSION`, `EXPERT_SKILL_BUNDLE_SHA256`,
-  `EXPERT_SKILL_PLANNER_EXTENSION_SHA256`, and
-  `EXPERT_SKILL_CONTRACT_SHA256`, `EXPERT_SKILL_CONTRACT_TOOL`,
-  `FROZEN_KERNEL_PATH`, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED`, and
-  `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`; use its selected candidate checkpoint and
-  failure route as machine-readable context, while `DIRECTION` and
-  `MEGA_PLAN_IR` remain the concrete contract. Continue that persistent tree; never
-  recreate it or edit another lane. A matched Expert Skill may append normative
-  semantic/compiler-shape constraints, but the lane remains ordinary
-  `search`/`integrated`.
+  `CANDIDATE_TIMEOUT_S`, `LANE_MANIFEST`, and `PRIOR_CANDIDATE`; optionally
+  `STRUCTURAL_ONLY` and `STRUCTURAL_TARGET`. A Skill-enabled Mega lane provides
+  an `EXPERT_SKILL_RECIPE` plus the current source/UT context. Read that recipe
+  as semantic implementation guidance; do not treat hidden AST checks or
+  PlanIR fields as an authoring answer key. Continue that persistent tree; never
+  recreate it or edit another lane. A matched Expert Skill changes knowledge,
+  not the ordinary `search`/`integrated` lifecycle.
 
-When `EXPERT_SKILL_PLANNER_EXTENSION` ends in `author_guide.md`, it is the
-compact Author projection. Read that guide and the current GPU/contract failure
-only. Do not read or restate the full Skill contract; invoke
-`EXPERT_SKILL_CONTRACT_TOOL` against `EXPERT_SKILL_CONTRACT` as a verifier.
+Read the current recipe, MegaMoEV2 source and UT before editing. Use the current
+runtime failure as feedback. Static contract output is diagnostic context, not
+the implementation specification.
 
 In a Mega lane, a correct but slow implementation is retained as `candidate_status:"runnable"` so it
 can be optimized later, but it is never a final result. Finalists require absolute speedup greater
@@ -68,12 +61,9 @@ dependent load/store/decode calculation, the unified scheduler must be passed
 to and invoked by the shared Stage2 emitter, and Stage1-completion, G2-claim and
 Stage2-close counters must remain in their declared address domains.
 
-For a Mega candidate, treat `MEGA_PLAN_IR` as the source-authoring contract:
-map every queue/event/ABI/resource lifetime and source-shape constraint to a
-reachable implementation before inventing an equivalent form. Use
-`TASK_GRAPH` for dependency legality and `RESOURCE_TIMELINE` for scheduling
-headroom. Record any evidence-backed deviation explicitly in the result; an
-undeclared deviation is a structural failure, not Engineer discretion.
+For a Mega candidate, treat the six-stage recipe and the current MegaMoEV2/UT
+behavior as the source-authoring context. Keep queue/event/ABI/resource
+lifetime semantics correct, but choose equivalent source organization freely.
 
 For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` blocks
 promotion. It is a fail-closed GPU prohibition unless

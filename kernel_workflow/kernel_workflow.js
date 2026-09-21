@@ -253,12 +253,12 @@ const EXPERT_SKILL_BUNDLE_TOOL = PINNED_MEGA_SKILL
 const EXPERT_SKILL_PLAYBOOK_FILE = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_playbook || '');
 const EXPERT_SKILL_PLANNER_EXTENSION_FILE =
-  PINNED_MEGA_SKILL ? `${EXPERT_SKILL_DIR}/skill.md`
+  PINNED_MEGA_SKILL ? `${EXPERT_SKILL_DIR}/planner_extension.yaml`
     : String(A.expert_skill_planner_extension || '');
 const EXPERT_SKILL_CONTRACT_FILE = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_contract || '');
+  ? `${EXPERT_SKILL_DIR}/contract.yaml` : String(A.expert_skill_contract || '');
 const EXPERT_SKILL_VALIDATION_FILE = PINNED_MEGA_SKILL
-  ? `${EXPERT_SKILL_DIR}/skill.md` : String(A.expert_skill_validation || '');
+  ? `${EXPERT_SKILL_DIR}/validation.yaml` : String(A.expert_skill_validation || '');
 const EXPERT_SKILL_VALIDATION_STATUS = String(
   A.expert_skill_validation_status || ''
 );
@@ -289,6 +289,10 @@ const CHECK_EXPERT_SKILL_CONTRACT = MODE === 'mega' && USE_EXPERT_SKILLS &&
 const REQUIRE_EXPERT_SKILL_CONTRACT = CHECK_EXPERT_SKILL_CONTRACT &&
   (PINNED_MEGA_SKILL || MEGA_STRUCTURAL_ONLY ||
     String(A.require_expert_skill_contract || 'false') === 'true');
+// Skill source-shape checks are advisory diagnostics. Runtime admission is
+// decided by the activated on-card behavior gates below.
+const STRUCTURAL_CONTRACT_BLOCKING =
+  String(A.block_on_expert_skill_contract || 'false') === 'true';
 if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
   throw new Error('mega_structural_only requires an enabled Expert Skill contract');
 }
@@ -311,8 +315,8 @@ if (USE_EXPERT_SKILLS && PINNED_MEGA_SKILL) {
     throw new Error('pinned authoring usage requires mega_structural_only=true');
   }
   if (EXPERT_SKILL_USAGE === 'candidate_validation' &&
-      !REQUIRE_EXPERT_SKILL_CONTRACT) {
-    throw new Error('pinned candidate_validation requires the structural contract');
+      !CHECK_EXPERT_SKILL_CONTRACT) {
+    throw new Error('pinned candidate_validation requires contract diagnostics');
   }
 }
 const GRAPH_CONTRACT_TOOL = PINNED_MEGA_SKILL
@@ -1943,7 +1947,7 @@ function expertSkillsBlock(role, phase) {
   if (MODE === 'mega' && EXPERT_SKILL_DIR) {
     if (!['mega_search_lead', 'engineer', 'deep_engineer'].includes(role)) return '';
     const guide = role === 'mega_search_lead'
-      ? (phase === 'analyze' ? `${EXPERT_SKILL_DIR}/skill.md`
+      ? (phase === 'analyze' ? EXPERT_SKILL_PLANNER_EXTENSION_FILE
         : EXPERT_SKILL_PLANNER_GUIDE_FILE)
       : EXPERT_SKILL_AUTHOR_GUIDE_FILE;
     return `\n\n## MEGA EXPERT SKILL — ${
@@ -3581,8 +3585,8 @@ function megaCandidateHardPass(c) {
       n.paired_readings, targetGuard,
       typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS)
     : { count: 0, score: null, sign_p: 1 };
-  const structuralPass = typeof REQUIRE_EXPERT_SKILL_CONTRACT === 'undefined' ||
-    !REQUIRE_EXPERT_SKILL_CONTRACT || n.structural_verified;
+  const structuralPass = typeof STRUCTURAL_CONTRACT_BLOCKING === 'undefined' ||
+    !STRUCTURAL_CONTRACT_BLOCKING || n.structural_verified;
   return structuralPass &&
     n.claim_complete && n.correctness_pass && n.activation_pass && n.head_pass &&
     n.launch_pass && n.liveness_pass && n.graph_pass && n.guards_pass &&
@@ -6322,7 +6326,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const candidateClaimsSkillTarget =
     candidateClaimsPlanTarget(d, analysis && analysis.mega_plan_ir);
   const authorPreflightRequired = authoringContractNeedsPreflight(
-    d, analysis && analysis.mega_plan_ir, existing, CHECK_EXPERT_SKILL_CONTRACT, {
+    d, analysis && analysis.mega_plan_ir, existing, STRUCTURAL_CONTRACT_BLOCKING, {
       skillId: EXPERT_SKILL_ID,
       revision: EXPERT_SKILL_REVISION,
       bundle: EXPERT_SKILL_BUNDLE_SHA256,
@@ -6378,21 +6382,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           ...(USE_EXPERT_SKILLS ? {
             EXPERT_SKILL_ID,
             EXPERT_SKILL_REVISION,
-            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_AUTHOR_GUIDE_FILE,
-            EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_AUTHOR_GUIDE_FILE,
-            EXPERT_SKILL_BUNDLE_SHA256,
-            EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
-            EXPERT_SKILL_CONTRACT_SHA256,
-            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-            EXPERT_SKILL_CONTRACT_TOOL,
-            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+            EXPERT_SKILL_RECIPE: EXPERT_SKILL_AUTHOR_GUIDE_FILE,
           } : {}),
           codebase_context: `${EVAL_DIR}/codebase_context.md`,
           profiling_summary: profileSummary ? profileSummary.summary_path : '',
           baseline_per_case: BASELINE_PER_CASE,
-          TASK_GRAPH: analysis && analysis.task_graph || {},
-          RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
-          MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
+          UT_PATH: KERNEL_PATH_ORIG,
           BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
@@ -6647,8 +6642,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
     ));
   }
-  const contractBlocksRuntime = REQUIRE_EXPERT_SKILL_CONTRACT ||
-    (CHECK_EXPERT_SKILL_CONTRACT && candidateClaimsSkillTarget);
+  const contractBlocksRuntime = STRUCTURAL_CONTRACT_BLOCKING;
   const priorLaneHead = existing
     ? String(existing.working_head || existing.head || '') : '';
   const sourceAdvancedThisTurn = existing
@@ -6656,9 +6650,12 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const structurallyReadyAuthoring = !!(
     eng && String(eng.candidate_status || '') === 'authoring' &&
     eng.claim_complete === true && eng.build !== false &&
-    structuralPassThisTurn && meta.checkpoint_complete &&
-    meta.structural_candidate_head === expectedHead &&
-    !!meta.structural_candidate_tree_digest
+    meta.checkpoint_complete &&
+    (!STRUCTURAL_CONTRACT_BLOCKING || (
+      structuralPassThisTurn &&
+      meta.structural_candidate_head === expectedHead &&
+      !!meta.structural_candidate_tree_digest
+    ))
   );
   const postAuthoringVerify = structurallyReadyAuthoring &&
     ((sourceAdvancedThisTurn && candidateClaimsSkillTarget) ||

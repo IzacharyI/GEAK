@@ -10,7 +10,10 @@ const skill = fs.readFileSync(
   path.join(wf, '..', 'perf_knowledge', 'expert_skills', 'skills',
     'megamoe_ep_mega_fusion', 'skill.md'), 'utf8',
 );
-const validation = skill;
+const validation = fs.readFileSync(
+  path.join(wf, '..', 'perf_knowledge', 'expert_skills', 'skills',
+    'megamoe_ep_mega_fusion', 'validation.yaml'), 'utf8',
+);
 
 let failures = 0;
 const ok = (value, message) => {

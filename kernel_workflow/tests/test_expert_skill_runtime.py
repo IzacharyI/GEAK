@@ -14,7 +14,7 @@ MEGAMOE_SKILL = (
     / "expert_skills"
     / "skills"
     / "megamoe_ep_mega_fusion"
-    / "skill.md"
+    / "runtime_validation.py"
 )
 SPEC = importlib.util.spec_from_file_location("expert_skill_runtime", TOOL)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -76,7 +76,7 @@ def test_executes_embedded_main_with_forwarded_arguments(tmp_path, monkeypatch):
 
 
 def test_megamoe_runtime_uses_candidate_numeric_reference_and_graph():
-    source = MODULE.extract_runtime(MEGAMOE_SKILL)
+    source = MODULE.load_runtime(MEGAMOE_SKILL)
     assert "--candidate-tree" in source
     assert "test_mega_moe_v2.py" in source
     assert "/sgl-workspace" not in source
@@ -86,7 +86,7 @@ def test_megamoe_runtime_uses_candidate_numeric_reference_and_graph():
 
 
 def test_megamoe_runtime_mutates_routes_and_writes_atomic_progress():
-    source = MODULE.extract_runtime(MEGAMOE_SKILL)
+    source = MODULE.load_runtime(MEGAMOE_SKILL)
     assert "route_weights.copy_(new_weights)" in source
     assert "ids.copy_(new_ids)" in source
     assert '"arrival_jitter": True' in source

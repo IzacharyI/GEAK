@@ -156,7 +156,7 @@ def test_repository_megamoe_contract_is_declarative_and_generic():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     assert contract["skill_id"] == "megamoe_ep_mega_fusion"
@@ -207,7 +207,7 @@ def test_repository_megamoe_contract_requires_selected_implementation_semantics(
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     checks = {item["id"]: item for item in contract["checks"]}
@@ -237,7 +237,7 @@ def test_missing_selected_megamoe_implementation_fails_structural_checkpoint(tmp
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     baseline = tmp_path / "baseline"
@@ -294,7 +294,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     contract_sha = hashlib.sha256(
@@ -326,7 +326,7 @@ def test_compact_skill_contains_no_private_evidence_identifiers():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     text = path.read_text()
     assert "/sgl-workspace" not in text
@@ -369,7 +369,7 @@ def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     plan = {
@@ -485,7 +485,7 @@ def test_repository_plan_contract_rejects_missing_combine_transition():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     plan = {
@@ -1896,7 +1896,7 @@ def test_group_segment_plan_relation_rejects_limit_overflow():
         / "expert_skills"
         / "skills"
         / "megamoe_ep_mega_fusion"
-        / "skill.md"
+        / "contract.yaml"
     )
     contract = MODULE.load_contract(path)
     plan = {

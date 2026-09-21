@@ -9,9 +9,14 @@ const skill = fs.readFileSync(path.join(
   ROOT, 'perf_knowledge', 'expert_skills', 'skills',
   'megamoe_ep_mega_fusion', 'skill.md',
 ), 'utf8');
+const skillDir = path.dirname(path.join(
+  ROOT, 'perf_knowledge', 'expert_skills', 'skills',
+    'megamoe_ep_mega_fusion', 'skill.md',
+));
 const playbook = skill;
-const contract = skill;
-const validation = skill;
+const planner = fs.readFileSync(path.join(skillDir, 'planner_extension.yaml'), 'utf8');
+const contract = fs.readFileSync(path.join(skillDir, 'contract.yaml'), 'utf8');
+const validation = fs.readFileSync(path.join(skillDir, 'validation.yaml'), 'utf8');
 const engineer = fs.readFileSync(path.join(
   ROOT, 'kernel_workflow', 'roles', 'engineer.md',
 ), 'utf8');
@@ -32,11 +37,12 @@ console.log('\n# the experimental transfer is explicit and workflow-owned');
 ok(/role: experimental_authoring_prior/.test(skill) &&
    /does not create a reproduction mode/.test(skill),
   'skill declares explicitly pinned constraints inside the common Mega lifecycle');
-ok(/embedded_components: \[planner_extension, contract, runtime_validation\]/.test(skill) &&
-   /```expert-skill-planner-extension/.test(skill) &&
-   /```expert-skill-contract/.test(skill) &&
-   /```expert-skill-runtime-python/.test(skill),
-  'one skill file embeds human, machine, evidence, and runtime components');
+ok(/planner_extension_file: planner_extension\.yaml/.test(skill) &&
+   /contract_file: contract\.yaml/.test(skill) &&
+   /runtime_validation_file: runtime_validation\.py/.test(skill) &&
+   !/embedded_components:/.test(skill) &&
+   fs.existsSync(path.join(skillDir, 'runtime_validation.py')),
+  'skill points to independent planner, contract and runtime components');
 ok(/normative: true/.test(playbook) &&
    /normative_scope: explicitly_pinned_authoring/.test(playbook) &&
    /does not create a reproduction mode,[\s\S]{0,120}reserved candidate source/.test(playbook),
@@ -58,7 +64,7 @@ console.log('\n# runtime uses the same roles and candidate source');
 ok(/EXPERIMENTAL TRANSFER, EXPLICIT PIN/.test(wf),
   'enabled skill is appended to the common planner/engineer prompt');
 ok(/pinned authoring usage requires mega_structural_only=true/.test(wf) &&
-   /pinned candidate_validation requires the structural contract/.test(wf),
+   /pinned candidate_validation requires contract diagnostics/.test(wf),
   'experimental usage is mechanically limited to explicit authoring or validation');
 ok(/expert_skill_id must be a safe slug/.test(wf) &&
    /PINNED_MEGA_SKILL/.test(wf) &&

@@ -1,0 +1,49 @@
+schema_version: expert-skill-validation-v1
+skill_id: megamoe_ep_mega_fusion
+status: experimental
+reference_evidence:
+  status: measured
+constraint_validation:
+  status: static_validated
+usage:
+  auto_apply: false
+  explicit_pin_modes:
+  - authoring
+  - candidate_validation
+measured:
+  target: 8192_uniform_rank_max
+  isolated: 1.0448
+  reference_speedup: 1.0448
+  parity: pass
+  bf16_launches: 2
+  quantization_separate: true
+  persistent_ctas_8192: 256
+  swiglu_limit: 10
+  stage1_8192:
+    sbm: 128
+    tile_n: 512
+    tile_k: 256
+    waves: 8
+    dispatch_ctas: 96
+    shards: 4
+  stage2_8192:
+    bm: 64
+    bn: 512
+    bk: 256
+    waves: 8
+    halves: 1
+  g2_schedule:
+    preempt_modulus: 6
+    skew_numerator: 5
+    skew_denominator: 4
+    chunk: 16
+  cache_bits:
+    g1_store: 17
+    p2p_store: 19
+    combine_load: 19
+    combine_output: 2
+  combine_8192:
+    partitions_per_token: 1
+    reduction_width: 4
+    total_items: 8192
+  timed_diagnostics: false

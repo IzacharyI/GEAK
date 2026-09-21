@@ -25,19 +25,28 @@ def extract_runtime(skill_file: Path) -> str:
     return matches[0]
 
 
+def load_runtime(skill_file: Path) -> str:
+    if skill_file.suffix == ".py":
+        return skill_file.read_text()
+    return extract_runtime(skill_file)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--skill-file", required=True)
+    parser.add_argument("--skill-file")
+    parser.add_argument("--runtime-file")
     known, remaining = parser.parse_known_args()
-    skill_file = Path(known.skill_file).resolve()
-    source = extract_runtime(skill_file)
+    if bool(known.skill_file) == bool(known.runtime_file):
+        parser.error("exactly one of --skill-file or --runtime-file is required")
+    source_path = Path(known.runtime_file or known.skill_file).resolve()
+    source = load_runtime(source_path)
     namespace = {
         "__name__": "__embedded_expert_skill_runtime__",
-        "__file__": f"{skill_file}#{TAG}",
+        "__file__": str(source_path),
     }
     old_argv = sys.argv
     try:
-        sys.argv = [str(skill_file), *remaining]
+        sys.argv = [str(source_path), *remaining]
         exec(compile(source, namespace["__file__"], "exec"), namespace)
         embedded_main = namespace.get("main")
         if not callable(embedded_main):

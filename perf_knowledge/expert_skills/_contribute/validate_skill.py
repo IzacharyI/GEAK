@@ -632,6 +632,16 @@ def static_check(skill_path, fm, body):
             continue
         if not referenced or not os.path.isfile(referenced):
             errs.append(f"{key} does not exist: {fm.get(key)!r}")
+    runtime_file = None
+    try:
+        runtime_file = _skill_file(skill_path, fm, "runtime_validation_file")
+    except ValueError:
+        pass
+    if runtime_file and os.path.isfile(runtime_file):
+        try:
+            compile(open(runtime_file).read(), runtime_file, "exec")
+        except SyntaxError as exc:
+            errs.append(f"runtime_validation_file is invalid Python: {exc}")
     for label in embedded_component_names(fm):
         try:
             component = load_embedded_component(skill_path, fm, label)

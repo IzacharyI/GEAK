@@ -77,10 +77,16 @@ def _v2_validation():
 
 def test_repository_skill_is_one_compact_experimental_entry():
     skill_path, skill_metadata, body, _ = VALIDATE.load("megamoe_ep_mega_fusion")
-    assert sorted(
+    assert {
         path.name for path in Path(skill_path).parent.iterdir()
         if path.is_file()
-    ) == ["skill.md"]
+    } >= {
+        "skill.md",
+        "planner_extension.yaml",
+        "contract.yaml",
+        "validation.yaml",
+        "runtime_validation.py",
+    }
     validation = _repository_validation()
     metadata = VALIDATE.validation_metadata(validation)
     assert validation["schema_version"] == "expert-skill-validation-v1"

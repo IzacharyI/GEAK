@@ -291,7 +291,7 @@ batch may contain all finalists for one exhaustive comparison.
      candidate output directly with the task's numeric reference. Drain-vs-floor or any other
      transitive equivalence is not correctness evidence. Run `GRAPH_CONTRACT_TOOL` in the detached
      candidate environment with `--accuracy-cases <EXPERT_SKILL_ACCURACY_CASES>`,
-     `--skill-file EXPERT_SKILL_FILE`,
+     `--runtime-file EXPERT_SKILL_VALIDATION`,
      `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, caller-supplied routes, and
      `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON.
 3. A source label (`search` or `integrated`) never relaxes a
