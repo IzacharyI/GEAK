@@ -335,6 +335,33 @@ def test_compact_skill_contains_no_private_evidence_identifiers():
     assert "mega-ep-fusion-v" not in text
 
 
+def test_megamoe_skill_exposes_dependency_ordered_implementation_recipe():
+    skill_dir = (
+        Path(__file__).resolve().parents[2]
+        / "perf_knowledge"
+        / "expert_skills"
+        / "skills"
+        / "megamoe_ep_mega_fusion"
+    )
+    skill = (skill_dir / "skill.md").read_text()
+    author = (skill_dir / "author_guide.md").read_text()
+    planner = (skill_dir / "planner_guide.md").read_text()
+    stages = [
+        "Host selection, ownership and ABI",
+        "G1 production and publication",
+        "shared G2 body and weighted P2P publication",
+        "unified persistent G1/G2 scheduler",
+        "Combine as the irreversible third queue",
+        "generation, replay and acceptance",
+    ]
+    positions = [skill.index(stage) for stage in stages]
+    assert positions == sorted(positions)
+    assert "Dependency-ordered build recipe" in author
+    assert "Source batch order" in planner
+    assert "SharedAllocator().allocate(...).peek()" in skill
+    assert "A bounded diagnostic wait must be removed" in author
+
+
 def test_repository_fusion_contract_accepts_operator_neutral_plan_ir_v2():
     path = (
         Path(__file__).resolve().parents[2]

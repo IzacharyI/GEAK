@@ -22,6 +22,27 @@ lane and exact working HEAD.
 - When no on-card blocker exists because preflight is incomplete, route the next
   dependency-closed source batch instead of waiting for Verify.
 
+## Source batch order
+
+Route only the earliest incomplete stage:
+
+1. **Host/ABI** — immutable Stage2/Combine specs, persistent ownership,
+   disjoint counter roots, exact runtime signature and two-launch selection.
+2. **G1 publication** — flat-stripe execution, cache-17 stores and exactly-once
+   completion publication.
+3. **Shared G2/P2P** — one NW-aware single-unit emitter, weighted direct-slot
+   stores, m-block close and row arrivals.
+4. **Unified scheduler** — continuation → skew-ready G2 → G1 → blocking G2,
+   with C1/C16 clamp and no fallback drain.
+5. **Combine** — block claim, strict generation readiness, matching transport
+   decode, FP32 reduction and BF16 output.
+6. **Lifecycle/runtime** — generation, omitted-token padding, replay, launch
+   count, three-size accuracy, then performance.
+
+Do not combine non-adjacent stages in one Author turn. A later stage may be
+planned only when every earlier stage either passes its required checks or has
+one concrete on-card blocker that the later stage is necessary to expose.
+
 ## Blocker order
 
 1. Host construction and argument allocation.

@@ -214,6 +214,178 @@ The second launch is one CTA-local state machine:
   above, and not structurally catchable — verify the producer emit and the
   Combine emit resolve the SAME `p2p_quant` at bs=128.
 
+## Normative implementation recipe
+
+This is one dependency-ordered construction, not six independent optimization
+ideas. Reuse the supplied baseline's numerical bodies; change ownership,
+placement, queueing and publication around them. Complete each stage before
+using evidence from the next stage.
+
+### Stage 0 — freeze baseline semantics
+
+Discover and record the current bindings for quantization, GEMM1, GEMM2,
+weighted scatter and Combine. Preserve:
+
+- input/output dtypes and layouts;
+- expert/routing/top-k indexing;
+- weight and E8M0 scale layouts;
+- SwiGLU and route-weight math;
+- FP32 Combine accumulation.
+
+Do not author new GEMM math. The fused implementation calls, extracts, inlines
+or equivalently rewrites these existing numerical bodies.
+
+### Stage 1 — Host selection, ownership and ABI
+
+Host owns all persistent allocations and two immutable compile specs:
+
+- Stage2 spec: `NW`, `BM/BN/BK`, `SBM`, `p2p_quant`, extents and publication
+  mode;
+- Combine spec: the same `p2p_quant`, output geometry and reduction policy.
+
+Host also owns distinct runtime roots for:
+
+- Stage2/GEMM2 inputs, route metadata and peer payload table;
+- Combine input/output and token-readiness peer table;
+- G1 completion counters;
+- sharded G2 claim heads;
+- Stage2 m-block close counters;
+- Combine claim head and generation.
+
+Compile specs belong in the cached JIT identity. Pointer roots and dynamic
+extents are real kernel runtime parameters, not captured Python objects or
+compile-time tuple splats. The fused launch signature and launch call must have
+the same positional order and count.
+
+The selected path performs:
+
+```text
+quant_launch()
+persistent_launch(stage2_roots, combine_roots, dynamic_extents)
+return persistent_combine_output
+```
+
+It launches no Stage2 or Combine tail. This stage is complete only when the
+active host call reaches the cached compile call and real launch ABI.
+
+### Stage 2 — G1 production and publication
+
+Keep the baseline dispatch and GEMM1 numerical body. Change the consumer
+epilogue so each flat G1 stripe:
+
+1. waits for its dispatch payload;
+2. executes GEMM1 once;
+3. stores activation and scales with cache bits `17`;
+4. drains every wave's stores;
+5. reaches one uniform workgroup barrier;
+6. lets thread zero perform exactly one system-scope completion increment for
+   the owning Stage1 m-tile.
+
+The G1 completion region is separate from G2 claim heads and Stage2 close
+counters. A G2 dependency wait reads only the G1 completion region.
+
+### Stage 3 — shared G2 body and weighted P2P publication
+
+Extract one shared Stage2 single-unit emitter used by both standalone Stage2
+and the persistent scheduler. Its unit is exactly one
+`(m_block,n_block)`. Inside that frame construct all route, expert, weight,
+peer and readiness resources; do not carry descriptors or accumulators around
+the scheduler backedge.
+
+The Host-provided `NW` is load-bearing:
+
+- A-load rows use `BM/NW`;
+- GEMM2 columns and scale words use `BN/NW`;
+- scatter rows use `BM/NW`;
+- the 8192 profile resolves to BM64/BN512/BK256/NW8.
+
+After GEMM2, apply route weight and write the direct peer slot with cache bits
+`19`. Every wave releases its stores, all waves meet a uniform barrier, and
+thread zero increments the dedicated m-block close counter. The last N-stripe
+owner self-clears that close slot and the first `BM` threads publish one remote
+arrival per valid row.
+
+The emitter receives a caller-provided LDS allocation handle. Obtain the
+address from the materialized `SharedAllocator().allocate(...).peek()` handle
+and its `.buf.ptr`; never pass a raw storage type where the emitter expects the
+peek handle. Every derived address includes the caller's slab base.
+
+### Stage 4 — unified persistent G1/G2 scheduler
+
+Use one block-uniform outer loop. Its decision order is:
+
+```text
+if a claimed G2 chunk has continuation:
+    run next G2 unit                         # no claim, poll or LDS handoff
+else if this CTA is in the skew cohort and next G2 chunk is ready:
+    claim G2 chunk; clamp final unit; run G2
+else if a G1 stripe remains:
+    claim G1; wait payload; run G1; publish G1 completion
+else if a G2 chunk remains:
+    claim G2; wait for its last in-range dependency; run G2
+else:
+    exit scheduler
+```
+
+G1 is the forward-progress default. Preemption requires both ticket-mod-6 and
+the 5/4 expert-skew predicate. A chunk claim seeds only
+`next_unit`/`units_remaining`; continuation performs no further atomic or
+readiness wait. Clamp the last chunk before mapping it to a G1 dependency.
+
+Only after the scheduler owns no continuation and its G2 shard is exhausted
+may the CTA enter Combine. Do not append a second fallback G1 drain after the
+unified loop.
+
+### Stage 5 — Combine as the irreversible third queue
+
+Create one decorated Combine item emitter. Runtime block claims advance by one;
+claim `b`, wave `w` executes item `b*cta_waves+w`. The item:
+
+1. derives `tok_id`, partition and bounded hidden range;
+2. lane zero waits monotonically for `topk*generation`;
+3. reads all direct top-k slots using cache bits `19`;
+4. decodes either BF16 or block-FP8+E8M0 according to the same `p2p_quant`
+   used by Stage2;
+5. reduces in FP32 through one pressure-selected U1/U2/U4 main path;
+6. stores BF16 with cache bits `2`.
+
+Readiness is a correctness precondition. A production item never times out and
+continues into incomplete payload reduction. Bounded waits and cut-points are
+diagnostic variants with distinct JIT identities and cannot be committed as
+the final path.
+
+### Stage 6 — generation, replay and acceptance
+
+Before startup publication, the owner:
+
+- clears only per-launch claim heads and G2 heads;
+- increments Combine generation;
+- advances omitted token counters to `topk*generation`;
+- leaves arrival counters monotone across launches.
+
+Changing routes and smaller-to-larger token replays must reuse persistent
+storage without stale reads. Validate in order:
+
+1. active-path trace/JIT at bs=128;
+2. `path=MEGA` on eight ranks and exactly two launches;
+3. relL2 below 0.10 at 128, 512 and 8192;
+4. route-changing graph replay and liveness;
+5. paired 8192-uniform rank-max speedup at least 1.03x.
+
+### Construction checkpoints
+
+After each stage, run only the earliest meaningful check:
+
+- Host/ABI: Python compile, import identity and exact compile/launch binding;
+- G1/G2 construction: active-path FlyDSL trace with the real fused switches;
+- publication/scheduler: bs=128 bounded diagnostic smoke, then restore strict
+  production waits;
+- Combine/lifecycle: independent exact-HEAD runtime Verify;
+- performance: only after all correctness and replay gates pass.
+
+An inactive fallback, a same-named dead helper, or a run without `path=MEGA`
+does not complete a stage.
+
 Timed builds fix native Stage2 geometry, G2 cadence, cache policies, readiness,
 and Combine geometry to the rules below. Every non-target launch topology,
 publication cut, fused-quant path, wait timer, profiler, and diagnostic is

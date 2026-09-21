@@ -16,9 +16,80 @@ same lane for independent verification. Preserve working numerical bodies and
 already-passing evidence. Do not write token-shaped stubs for contract checks.
 
 If preflight still has source failures and no GPU blocker exists, implement the
-next dependency-closed batch in this order: Host/ABI → G1 cache/publication →
-shared Stage2+P2P → unified G1/G2 scheduler → Combine+generation. Re-sealing an
-unchanged HEAD twice is not progress.
+next dependency-closed stage below. Re-sealing an unchanged HEAD twice is not
+progress.
+
+## Dependency-ordered build recipe
+
+Do not rewrite GEMM math. Reuse the baseline quantizer, GEMM1, GEMM2, weighted
+scatter and Combine numerical bodies; fuse their ownership and scheduling.
+
+### 1. Host/ABI
+
+- Allocate persistent Stage2/Combine payloads, outputs, peer tables and four
+  disjoint counter domains: G1 completion, G2 claims, Stage2 close, and Combine
+  claim/generation.
+- Build immutable Stage2 and Combine compile specs from one selected
+  `p2p_quant`; include `NW` and all codegen switches in the JIT key.
+- Pass dynamic roots as declared kernel runtime parameters in exact signature
+  order. Do not capture pointers or blindly splat tuples.
+- Select exactly quant + one persistent launch and return its Combine output.
+
+Done: the active Host values reach the cached compile call and real launch ABI.
+
+### 2. G1 publication
+
+- Claim one flat G1 stripe, wait dispatch payload, execute baseline GEMM1.
+- Store activation/scales with cache 17.
+- waitcnt every wave, uniform barrier, then thread-zero system increment once.
+
+Done: G2 waits read only the G1 completion domain.
+
+### 3. Shared G2/P2P emitter
+
+- Build one single-unit `(m_block,n_block)` emitter shared by standalone and
+  persistent paths.
+- Thread Host `NW` into A-load, GEMM2, scale and scatter indexing.
+- Use the caller's materialized `SharedAllocator().allocate(...).peek()` handle;
+  `.buf.ptr` belongs to that handle, not a raw storage value.
+- Weight and store the peer row with cache 19; release, barrier, close the
+  dedicated m-block counter, and publish one arrival per valid row.
+
+Done: standalone and persistent distributors call the same numerical emitter.
+
+### 4. Unified G1/G2 scheduler
+
+One block-uniform loop chooses in this exact order:
+
+1. carried G2 continuation;
+2. ready skew-preempt G2 claim;
+3. G1 claim/execute/publication;
+4. blocking post-G1 G2 claim;
+5. terminate.
+
+Use C1 below 4096 tokens and C16 otherwise; clamp the final chunk. Continuation
+carries only next/count and performs no claim or wait. Never append a second G1
+drain after this loop.
+
+Done: a CTA enters Combine only with no continuation and exhausted G2 shard.
+
+### 5. Combine third queue
+
+- Claim one block; item is `claim*waves+wave`.
+- Lane zero strictly waits for `topk*generation`.
+- Read all direct top-k slots with cache 19; decode from the same `p2p_quant`
+  as Stage2; reduce FP32 through one U1/U2/U4 path; store BF16 with cache 2.
+- A bounded diagnostic wait must be removed before the production checkpoint.
+
+Done: no Stage2/Combine tail launch remains.
+
+### 6. Lifecycle and acceptance
+
+- Clear claim heads, increment generation, pre-arm omitted tokens, keep arrivals
+  monotone.
+- Verify active `path=MEGA` ×8 and two launches before using numerical evidence.
+- Then run 128→512→8192 accuracy, route-changing replay, and finally 8192 paired
+  performance.
 
 After a source edit, CPU checks are preflight only. The next independent Verify
 must execute the exact HEAD on eight GPUs.
