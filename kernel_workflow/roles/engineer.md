@@ -54,6 +54,28 @@ progress and must not consume the turn. Implement the next dependency-closed
 batch. Use this order: Host/ABI → G1 cache/publication → shared Stage2+P2P →
 unified G1/G2 scheduler → Combine+generation → full contract.
 
+HARD RULES for a resumed Mega lane (fail-closed — these override any softer
+guidance above):
+1. NEVER open, read, grep or reason from the verifier/checker implementation to
+   shape source: `tools/expert_skill_contract.py`, the contract's AST/check
+   code, PlanIR checker fields, or any oracle/reference tree are OFF LIMITS as
+   authoring input. The authoritative feedback is the candidate's own RUNTIME
+   behavior (compile result, on-card smoke, relL2, launch count, path marker);
+   the static contract is only an advisory checklist of WHAT to implement, never
+   HOW. If you catch yourself studying how a check is computed, stop and go
+   author the code the check is asking for.
+2. Each lease MUST advance the kernel BODY past the last committed HEAD. Landing
+   only host/ABI/spec scaffolding when host/ABI is already closed is a FAILED
+   turn, not progress: two consecutive turns whose committed rung is the same
+   (e.g. "Host/ABI" again after Host/ABI already compiled) is forbidden. Every
+   lease has to commit at least one NEW dependency-closed body stage from the
+   order list — real device code that the fused persistent kernel executes —
+   with a coherent, importable checkpoint. `body=deferred` is never an
+   acceptable turn output once the host shell exists.
+3. Runtime correctness is the only authority. When the current relL2/launch/path
+   result disagrees with what the static contract "wants", fix the behavior that
+   the runtime observed, not the shape that satisfies the checker.
+
 For source-shape contracts, names and dead helpers do not count. Trace each
 selected Host value through the active cached compile call and the actual device
 call sites. In particular, wave geometry and transport format must reach every
