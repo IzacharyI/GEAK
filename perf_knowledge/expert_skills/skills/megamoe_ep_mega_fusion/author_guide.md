@@ -194,6 +194,18 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   constants. When the offending line sits on the SHARED Stage2 path it breaks BOTH the
   fused arm and the scattered baseline (A/B denominator) at trace time before any
   kernel launches, so this must be fixed before the next on-card run.
+- A DETERMINISTIC on-device `Memory access fault ... Reason: Unknown` + SIGABRT that
+  reproduces on every rank at bs=128, activates `path=MEGA` first, produces NO `[RESULT]`,
+  and STILL reproduces when the routed scatter store is replaced by a plain global
+  `_buffer_store`, is a flyc CODEGEN frame-fault (register-allocation regression), NOT an
+  addressing/OOB bug. Stop re-deriving payload offsets — the address arithmetic is not the
+  cause. The trigger is a store or atomic read-modify-write emitted INSIDE the persistent
+  producer while-body frame (the hot GEMM/MFMA loop tail): the live-register pressure of
+  that frame forces flyc onto a spill/frame path that faults. Hoist the offending store or
+  atomic OUT of the hot loop frame — perform the exactly-once completion publish AFTER the
+  producer loop, and keep any RMW out of the MFMA frame — then re-smoke bs=128 before making
+  any addressing change. Confirm the reclassification with the plain-`_buffer_store` probe
+  before spending a lease on offsets.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 
