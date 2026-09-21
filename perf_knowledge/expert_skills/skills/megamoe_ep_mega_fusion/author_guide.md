@@ -174,6 +174,17 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 - Bounded waits and cut-point switches are diagnostic-only. Remove them before the
   production checkpoint: final Combine must not continue into payload reduction
   after a readiness timeout, and no diagnostic-off branch may earn correctness.
+- A run that reports `path=MEGA` ×8 and two launches but a high relL2 (output
+  near-zero or missing most tokens' contribution) is a COVERAGE/LIVENESS defect,
+  not an address off-by-one: the publish/readiness path is not firing for most
+  tokens. Before touching numerics, confirm on-card at bs=128 that every routed
+  token's arrival counter reaches its expected count. Verify the claim loop is
+  actually DRIVEN over the entire (block,tile) grid so coverage reaches the bound
+  (a single-shot emit with a raw block index, or a scheduler that enumerates one
+  fewer owner than the tile count, leaves observed arrivals at zero), that each
+  owner publishes exactly once per valid row, and that each consumer waits on its
+  OWN tile's counter rather than a coarse last-tile proxy. Dump the first token
+  whose observed arrivals are below expected and fix the wiring there.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 
