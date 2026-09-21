@@ -49,10 +49,8 @@ const MIN_IMPROVE = (() => {
   const v = parseFloat(A.min_improve != null ? A.min_improve : 0.02);
   return Number.isFinite(v) && v >= 0 ? v : 0.02;
 })();
-// Budget cost of ONE `deep_explore` direction. The deep-explore engineer does far more than a single
-// specialist — broad rewrite authority, its own multi-iteration measure→profile→rewrite loop — so it
-// is charged more than 1 against the direction budget (default 2). It also always runs in a DEDICATED
-// round (no other directions that round), enforced below.
+// Budget cost of ONE `deep_explore` direction: broad rewrite authority + its own multi-iteration
+// measure→profile→rewrite loop, so it is charged >1 (default 2) and always runs in a DEDICATED round.
 const DEEP_COST = (() => {
   const v = parseInt(A.deep_cost != null ? A.deep_cost : 2, 10);
   return Number.isFinite(v) && v >= 1 ? v : 2;
@@ -127,9 +125,8 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 // mode=optimize (default) keeps the exact original behavior (backward compatible). mode=author seeds
 // the workspace from an op task dir (immutable oracle + frozen online kernel in baseline_src/), the
 // author_engineer writes a passing seed, then the SAME optimize loop runs — always timing against the
-// frozen online kernel, never against the seed's own language. KERNEL_KNOWLEDGE_DIR is the AMD authoring
-// knowledge base — REFERENCE ONLY (facts/how-to, never decisions; the author always measures regardless). Default:
-// sibling perf_knowledge/ so standalone runs use it too; empty if WORKFLOW_DIR is unset (no behavior change).
+// frozen online kernel, never the seed. KERNEL_KNOWLEDGE_DIR is the AMD authoring knowledge base
+// (REFERENCE ONLY; the author always measures). Default: sibling perf_knowledge/; empty if WORKFLOW_DIR unset.
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
 if (!['optimize', 'author', 'mega'].includes(MODE)) {
   throw new Error(`args.mode must be 'optimize', 'author' or 'mega', got '${MODE}'`);
@@ -5946,8 +5943,7 @@ async function persistMegaCandidateState(currentRound, finalizing) {
         ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
     let verify = await readState('');
     if (!echoOk(verify)) {
-      // Genuinely-missing write. Retry the WRITE once with a larger cap: by round 4+ the registry has
-      // grown, so emitting the write helper + STATE.json takes longer than the first-round budget.
+      // Genuinely-missing write. Retry the WRITE once with a larger cap (registry grown by round 4+).
       const retry = await agentT(
         roleAgent('tech_lead', 'update_memory',
           'RETRY persist: the prior attempt did not land STATE.json on disk. Persist the mega ' +
@@ -5966,8 +5962,7 @@ async function persistMegaCandidateState(currentRound, finalizing) {
           ...(MEGA_PRODUCTION ? { timeout_ms: 600000, max_retries: 1 } : {}) });
       if (!echoOk(retry)) verify = await readState(' recheck');
       if (!echoOk(retry) && !echoOk(verify)) {
-        // A candidate checkpoint that exists only in process memory is not resumable. Stop before another
-        // writer/round can advance from stale state; the lane git commit remains intact for recovery.
+        // In-memory-only checkpoint is not resumable. Stop before a round advances from stale state (lane git commit stays intact).
         log(`MEGA STATE PERSIST FAILED r${currentRound}: STATE.json did not advance to seq=${sequence} ` +
           `after retry. The invocation must stop; continuing would lose structured candidate progress.`);
         return false;
@@ -6018,10 +6013,7 @@ function megaBaseHead(baseId, requesterSource) {
 function validMegaSearchDirection(direction) {
   const d = direction || {};
   const identity = `${d.candidate_id || d.id || ''} ${d.title || ''}`.toLowerCase();
-  // Reject directions that explicitly declare themselves as diagnostic-only work. Do not match
-  // generic substrings such as "control": real kernels routinely contain counter-control,
-  // scheduler-control, and flow-control code. A false positive here aborts the whole invocation
-  // before the next authoring turn, despite a resumable WIP lane being available.
+  // Reject only explicit diagnostic-only work, never generic "control" substrings.
   if (/\b(?:no[-_ ]?payload|diagnostic[-_ ]only|instrument(?:ation)?[-_ ]only|meter(?:ing)?[-_ ]only|control[-_ ]only|profil(?:e|ing)[-_ ]only)\b/.test(identity)) {
     return false;
   }
@@ -6093,10 +6085,7 @@ function bindMegaDirectionToWip(currentRound, direction) {
   const continuation = megaWipContinuationDirection(currentRound);
   if (!continuation) return direction;
   const planned = direction || {};
-  // Candidate identity is controller-owned once a recoverable WIP exists. A Planner may refine the
-  // next repair batch, but it may not rename the lane or turn an authoring WIP into a "base"
-  // candidate: authoring candidates are intentionally ineligible as bases, so doing so silently
-  // falls back to frozen_baseline and repeats the implementation from scratch.
+  // WIP identity is controller-owned: a Planner may not rename the lane or rebase an authoring WIP (silent frozen_baseline fallback).
   return {
     ...planned,
     ...continuation,
@@ -6108,8 +6097,7 @@ function bindMegaDirectionToWip(currentRound, direction) {
     ...(Array.isArray(planned.gated_on) ? { gated_on: planned.gated_on } : {}),
     ...(Array.isArray(planned.focus_files) ? { focus_files: planned.focus_files } : {}),
     ...(planned.target_shape ? { target_shape: planned.target_shape } : {}),
-    // Do not retain a Planner prompt that names a replacement lane/base. Exact structured failures
-    // and the persisted runtime blocker are the safe handoff for the same candidate.
+    // Drop any Planner prompt naming a replacement lane/base; keep structured failures + runtime blocker.
     prompt: continuation.prompt,
     target_topology: continuation.target_topology,
   };
