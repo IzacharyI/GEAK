@@ -167,6 +167,20 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   harness failure.
 - A GPU timeout may be a deadlock. Use the saved process/log classification; do not
   call it an agent failure without checking the GPU command.
+- Put a bounded wall-clock timeout on EVERY on-card smoke you launch yourself, sized to a
+  few× the EXPECTED runtime (a bs=128 fused smoke returns in well under a couple of minutes;
+  a full accuracy/liveness pass in a handful). Wrap each attempt as
+  `timeout <bound> bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID <cmd>` (or export
+  `GEAK_GPU_RUN_TIMEOUT`/`GEAK_GPU_WAIT_TIMEOUT` from the supplied `GPU_RUN_TIMEOUT_S`/
+  `GPU_WAIT_TIMEOUT_S`). If a run has NOT returned by its bound, STOP and do not wait it out:
+  treat the overrun itself as a probable deadlock (mismatched collective order, a readiness
+  counter never published, a coordinator↔worker cycle, a counter cleared into the next
+  generation) — an overrun is a FAILED ATTEMPT with a concrete next probe, never a hang to
+  sit through. Immediately classify with `crash_bisection.md` / the bounded bs=128 diagnostic
+  path, dump the first unmet generation/address, and kill any orphaned rank processes before
+  the next attempt or it will fail on an already-bound port / stale heap. You do not need a
+  prescribed procedure to notice this — when the expected-time bound is exceeded, self-check
+  which stage's readiness counter is not advancing and report that, not a bare timeout.
 - Once the same HEAD has produced the same device-sync hang twice, do not rerun the
   uninstrumented command. Add bounded device-side waits and/or per-protocol progress
   counters, dump the first unmet generation/address after a short timeout, then run
