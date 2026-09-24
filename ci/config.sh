@@ -88,7 +88,7 @@ export GEAK_MONITOR_CONFIRM="${GEAK_MONITOR_CONFIRM:-2}"               # consecu
 export GEAK_MONITOR_TAIL_LINES="${GEAK_MONITOR_TAIL_LINES:-300}"       # log tail lines fed to the arbiter
 export GEAK_MONITOR_CALL_TIMEOUT_S="${GEAK_MONITOR_CALL_TIMEOUT_S:-180}" # cap a single claude call (claude mode)
 export GEAK_MONITOR_STARTUP_GRACE_S="${GEAK_MONITOR_STARTUP_GRACE_S:-300}" # grace before the first judgement
-export GEAK_MONITOR_MODEL="${GEAK_MONITOR_MODEL:-claude-opus-4-8}"     # arbiter model (claude mode)
+export GEAK_MONITOR_MODEL="${GEAK_MONITOR_MODEL:-claude-opus-5-5}"     # arbiter model (claude mode)
 # ---- Deterministic stall watchdog (run_monitor.sh MODE=stall) ---------------
 # A wedge is declared ONLY when NO artifact under OUT_DIR has been written AND both
 # GPU and CPU are idle for GEAK_STALL_KILL_S, confirmed GEAK_MONITOR_CONFIRM times.

@@ -40,7 +40,7 @@ mkdir -p "$HOME/.claude"
 # base container image does not trust; NODE_TLS_REJECT_UNAUTHORIZED=0 is a stopgap.
 # Preferred long-term fix: bake the corporate CA bundle into the image and drop it.
 # Only the claude-opus family is served by this proxy, so the haiku/sonnet defaults
-# also point at claude-opus-4-8 (nonessential traffic is disabled regardless).
+# also point at claude-opus-5-5 (nonessential traffic is disabled regardless).
 cat > "$HOME/.claude/settings.json" <<EOF
 {
   "\$schema": "https://json.schemastore.org/claude-code-settings.json",
@@ -48,9 +48,9 @@ cat > "$HOME/.claude/settings.json" <<EOF
     "ANTHROPIC_BASE_URL": "${LITELLM_BASE}",
     "ANTHROPIC_API_KEY": "${LITELLM_KEY}",
     "NODE_TLS_REJECT_UNAUTHORIZED": "0",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-4-8",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-8",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
@@ -90,6 +90,6 @@ export PATH="$HOME/.local/bin:$PATH"
 echo
 echo "Done. Version: $("$HOME/.local/bin/claude" --version)"
 echo "Quick test:"
-"$HOME/.local/bin/claude" -p "Reply with exactly: SETUP OK" --model claude-opus-4-8 </dev/null || true
+"$HOME/.local/bin/claude" -p "Reply with exactly: SETUP OK" --model claude-opus-5-5 </dev/null || true
 echo
-echo "Run it with:  IS_SANDBOX=1 claude --dangerously-skip-permissions --model claude-opus-4-8"
+echo "Run it with:  IS_SANDBOX=1 claude --dangerously-skip-permissions --model claude-opus-5-5"

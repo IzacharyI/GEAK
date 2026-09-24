@@ -31,7 +31,7 @@ to the local `gfx` at build time.
 |---|---|---|
 | Claude Code | ≥ 2.1.177 | The workflows use the dynamic Workflow (JS orchestration) feature, available only from this version. Check with `claude --version`. |
 | Launch mode | `IS_SANDBOX=1 claude --dangerously-skip-permissions` | Workflows spawn sub-agents and run profiling, benchmark, and build commands on the box, so permissions must be auto-approved. |
-| Default model | `claude-opus-4-8` | Default used by the external-orchestrator entry point (`interface/run_e2e.py`). |
+| Default model | `claude-opus-5-5` | Default used by the external-orchestrator entry point (`interface/run_e2e.py`). |
 | Effort | `ultracode` | Default effort for `interface/run_e2e.py`. |
 
 ## Invocation mode

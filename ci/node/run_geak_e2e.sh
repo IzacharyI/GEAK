@@ -13,7 +13,7 @@
 #         The CLI "--timeout-s" value is DISCARDED by run_e2e (it lands in an ignored positional).
 #       - PERFSKILLS_ROOT is derived from run_e2e.py's own location (interface/..), so calling the
 #         real path is enough; it maps the handoff onto e2e_workflow/e2e_workflow.js and drives it
-#         via the Claude SDK (model claude-opus-4-8, effort ultracode).
+#         via the Claude SDK (model claude-opus-5-5, effort ultracode).
 #
 # Usage:   ./run_geak_e2e.sh <model_dir> [--dry-run]
 #   <model_dir> is one of the per-model folders here (contains handoff.json [+ baseline_config...]).
@@ -154,7 +154,7 @@ PY
 export PERFSKILLS_E2E_TIMEOUT_S   # value/default from ci/config.sh
 
 # ---- Claude workflow knobs (defaults already match run_e2e.py) ----
-export PERFSKILLS_CLAUDE_MODEL="${PERFSKILLS_CLAUDE_MODEL:-claude-opus-4-8}"
+export PERFSKILLS_CLAUDE_MODEL="${PERFSKILLS_CLAUDE_MODEL:-claude-opus-5-5}"
 export PERFSKILLS_CLAUDE_EFFORT="${PERFSKILLS_CLAUDE_EFFORT:-ultracode}"
 
 # (INFERENCEX_PATH already exported above; run_e2e exports BENCH_CLIENT from it.)

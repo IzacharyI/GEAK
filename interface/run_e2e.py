@@ -66,7 +66,7 @@ BENCH_SCRIPT = E2E_DIR / "scripts" / "bench_e2e.sh"
 
 # Workflow primitives are only available at this effort tier (see README).
 CLAUDE_EFFORT = os.environ.get("GEAK_CLAUDE_EFFORT", "ultracode")
-CLAUDE_MODEL = os.environ.get("GEAK_CLAUDE_MODEL", "claude-opus-4-8")
+CLAUDE_MODEL = os.environ.get("GEAK_CLAUDE_MODEL", "claude-opus-5-5")
 ALLOWED_TOOLS = ["Workflow", "Bash", "Read", "Write"]
 
 # Public claude builds (>=2.1.x) REJECT "--effort ultracode". The Workflow /

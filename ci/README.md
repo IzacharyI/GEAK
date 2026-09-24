@@ -320,7 +320,7 @@ modes (`GEAK_MONITOR_MODE`):
 | `GEAK_STALL_KILL_S` | `3600` | (stall) flat+idle duration before a kill is considered |
 | `GEAK_STALL_GPU_UTIL_PCT` | `5` | (stall) max GPU util% counted as idle |
 | `GEAK_STALL_CPU_PCT` | `5` | (stall) container CPU% counted as idle |
-| `GEAK_MONITOR_MODEL` | `claude-opus-4-8` | (claude) arbiter model |
+| `GEAK_MONITOR_MODEL` | `claude-opus-5-5` | (claude) arbiter model |
 | `GEAK_MONITOR_TAIL_LINES` | `300` | (claude) how much of `run.log` to feed each poll |
 | `GPU_HEALTHCHECK_TIMEOUT_S` | `120` | preflight probe cap; `0` skips preflight (CPU-only debugging) |
 | `GEAK_SKIP_DSTATE_CHECK` | `0` | set `1` to skip the D-state wedge pre-check |
@@ -382,7 +382,7 @@ All timeouts / caps / intervals / toggles have their defaults in **`ci/config.sh
   CA the base image doesn't trust. Preferred long-term fix: bake the corporate
   CA bundle into the image and drop the flag.
 - Only the `claude-opus` family is served by the proxy, so the haiku/sonnet
-  Claude Code defaults also point at `claude-opus-4-8`.
+  Claude Code defaults also point at `claude-opus-5-5`.
 - The container runs with `--rm`; it's destroyed after each run. The pulled
   image is cached. Everything worth keeping is written to the mounted
   `ci_runs/<timestamp>/` dir.
