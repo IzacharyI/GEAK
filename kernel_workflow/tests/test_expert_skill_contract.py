@@ -55,6 +55,28 @@ MEGAMOE_REQUIRED_IMPLEMENTATION_CHECKS = {
     "bucket_512_payload_rows",
 }
 
+MEGAMOE_CONTRACT = (
+    Path(__file__).resolve().parents[2]
+    / "perf_knowledge"
+    / "expert_skills"
+    / "skills"
+    / "megamoe_ep_mega_fusion"
+    / "contract.yaml"
+)
+MEGAMOE_REFERENCE_ROOT = Path(os.environ.get(
+    "MEGAMOE_REFERENCE_ROOT", "/sgl-workspace/mega_ref/aiter"
+))
+MEGAMOE_REFERENCE_PLAN = Path(os.environ.get(
+    "MEGAMOE_REFERENCE_PLAN_JSON",
+    "/sgl-workspace/mega_test/geak_runs/team_aiter_20260923_125408_3211508_24199/"
+    "aiter/round_12/candidate_megamoe_fused_v2_fresh/structure/mega_plan_ir.json",
+))
+MEGAMOE_DEVIATING_CANDIDATE_ROOT = Path(os.environ.get(
+    "MEGAMOE_DEVIATING_CANDIDATE_ROOT",
+    "/sgl-workspace/mega_test/geak_state/megamoe_persistent_skill_on_gpu_v4/"
+    "candidates/megamoe_fused_v2_fresh/tree",
+))
+
 
 def _contract():
     return {
@@ -285,7 +307,7 @@ def test_false_pass_fixture_matches_current_contract_identity():
     fixture = json.loads(
         (
             Path(__file__).with_name("fixtures")
-            / "megamoe_ep_mega_fusion_false_pass.json"
+            / "megamoe_ep_mega_fusion_false_pass_v2.json"
         ).read_text()
     )
     path = (
@@ -314,6 +336,15 @@ def test_false_pass_fixture_matches_current_contract_identity():
         fixture["failed_required_checks"]
     )
     assert fixture["required_failure_count"] == 13
+    tiers = {item["id"]: item["tier"] for item in contract["checks"]}
+    assert fixture["semantic_failures"] == [
+        check_id for check_id in fixture["failed_required_checks"]
+        if tiers[check_id] == "semantic"
+    ]
+    assert fixture["surface_failures"] == [
+        check_id for check_id in fixture["failed_required_checks"]
+        if tiers[check_id] == "surface"
+    ]
     assert fixture["identity_mismatch_failures"] == []
     assert fixture["structural_compatible"] is False
     assert fixture["verdict"] == "incomplete"
@@ -2219,3 +2250,182 @@ def test_reference_links_are_not_independent_evidence(tmp_path, link_kind):
     evidence = result["candidate_symlinks"] + result["reference_hardlinks"]
     assert "src/a.py" in evidence
     assert not result["capability_eligible"]
+
+
+def test_every_repository_megamoe_check_declares_a_tier():
+    contract = MODULE.load_contract(MEGAMOE_CONTRACT)
+    missing = [item["id"] for item in contract["checks"] if "tier" not in item]
+    assert missing == []
+    tiers = {item["id"]: item["tier"] for item in contract["checks"]}
+    assert set(tiers.values()) <= {"semantic", "surface"}, tiers
+    for check_id in (
+        "flat_stripe_completion",
+        "unified_g1_g2_loop",
+        "g2_scheduler_cfg",
+        "g2_skew_orientation",
+        "scheduler_counter_domain_separation",
+        "generation_lifecycle",
+    ):
+        assert tiers[check_id] == "semantic"
+    assert tiers["fused_host_abi"] == "surface"
+
+
+def test_contract_loader_rejects_unknown_check_tier(tmp_path):
+    contract = _contract()
+    path = tmp_path / "contract.yaml"
+    contract["checks"][0]["tier"] = "cosmetic"
+    path.write_text(yaml.safe_dump(contract))
+    with pytest.raises(ValueError, match="tier"):
+        MODULE.load_contract(path)
+    contract["checks"][0]["tier"] = "surface"
+    path.write_text(yaml.safe_dump(contract))
+    assert MODULE.load_contract(path)["checks"][0]["tier"] == "surface"
+
+
+def test_next_blocker_names_every_failing_required_check_semantic_first(tmp_path):
+    contract = _contract()
+    surface = [f"surface_gap_{index}" for index in range(4)]
+    semantic = [f"semantic_gap_{index}" for index in range(6)]
+    contract["checks"] = [
+        {"id": check_id, "tier": "surface", "kind": "regex", "file": "src/a.py",
+         "patterns": [f"absent_{check_id}"]}
+        for check_id in surface
+    ] + [
+        {"id": check_id, "kind": "regex", "file": "src/a.py",
+         "patterns": [f"absent_{check_id}"]}
+        for check_id in semantic
+    ] + [
+        {"id": "satisfied", "tier": "semantic", "kind": "regex", "file": "src/a.py",
+         "patterns": ["def new"]},
+        {"id": "advisory_gap", "tier": "surface", "severity": "advisory",
+         "kind": "regex", "file": "src/a.py", "patterns": ["absent_advisory"]},
+    ]
+    baseline = _root(tmp_path, "baseline", "def old():\n    pass\n")
+    candidate = _root(tmp_path, "candidate", "def new():\n    return 1\n")
+    plan = _plan()
+    plan["resource"]["threads"] = 256
+    result = MODULE.evaluate(
+        contract, baseline, candidate, None, _manifest(contract, candidate), plan,
+    )
+    assert result["failed_required_checks"] == surface + semantic
+    assert result["semantic_failures"] == semantic
+    assert result["surface_failures"] == surface
+    assert result["checks"][semantic[0]]["tier"] == "semantic"
+    assert result["checks"][surface[0]]["tier"] == "surface"
+    assert {item["id"]: item["tier"] for item in result["contract_failures"]} == {
+        **{check_id: "semantic" for check_id in semantic},
+        **{check_id: "surface" for check_id in surface},
+        "threads": "semantic",
+    }
+
+    blocker = result["next_blocker"]
+    assert isinstance(blocker, str) and "\n" not in blocker
+    assert blocker.startswith("10 required checks failing (6 semantic, 4 surface).")
+    semantic_group = "semantic: " + ", ".join(semantic)
+    surface_group = "surface: " + ", ".join(surface)
+    assert blocker.index(semantic_group) < blocker.index(surface_group)
+    assert "satisfied" not in blocker and "advisory_gap" not in blocker
+    details = blocker.split("details: ", 1)[1]
+    assert details.startswith(f"{semantic[0]}: absent_{semantic[0]}")
+    assert details.count("absent_semantic_gap_") == MODULE.NEXT_BLOCKER_DETAIL_LIMIT
+    assert "absent_surface_gap_" not in details
+    assert "(+4 more unit failures)" in details
+    assert blocker.endswith(
+        "plan errors (1): " + "; ".join(result["plan_consistency_errors"])
+    )
+
+
+def test_any_of_relation_requires_one_complete_alternative():
+    source = (
+        "def kernel(spec, waves):\n"
+        "    nw = int(waves)\n"
+        "    kw = dict(spec)\n"
+        "    kw['NW'] = nw\n"
+        "    return derive(**kw)\n"
+        "def helper():\n"
+        "    only_in_helper()\n"
+    )
+    relations = [
+        {"id": "nw_reaches", "op": "any_of", "alternatives": [
+            {"id": "explicit", "relations": [
+                {"op": "depends", "sink": {"node": "call", "call": "derive"},
+                 "keyword": "NW", "source": r"\bwaves\b"},
+            ]},
+            {"id": "expanded", "relations": [
+                {"op": "depends", "sink": {"node": "assign", "target": r"kw\['NW'\]"},
+                 "source": r"\bwaves\b"},
+                {"op": "depends", "sink": {"node": "call", "call": "derive"},
+                 "star_keyword": True, "source": "^kw$"},
+            ]},
+        ]},
+        {"id": "scoped", "op": "any_of", "scope": "helper", "alternatives": [
+            {"op": "count", "count": 1,
+             "select": {"node": "call", "call": "only_in_helper"}},
+        ]},
+    ]
+    result = _semantic_result("value_flow", source, relations)
+    assert result["pass"], result["failures"]
+    assert result["units_total"] == 2
+    explicit = source.replace(
+        "    kw['NW'] = nw\n    return derive(**kw)\n", "    return derive(NW=nw)\n"
+    )
+    assert _semantic_result("value_flow", explicit, relations)["pass"]
+    literal = _semantic_result(
+        "value_flow", source.replace("kw['NW'] = nw", "kw['NW'] = 8"), relations
+    )
+    assert not literal["pass"]
+    assert literal["units_passed"] == 1
+    assert literal["failures"][0].startswith("nw_reaches: no alternative holds: [explicit]")
+    assert "| [expanded]" in literal["failures"][0]
+    empty = _semantic_result(
+        "value_flow", source, [{"id": "none", "op": "any_of", "alternatives": []}]
+    )
+    assert not empty["pass"]
+
+
+def test_reference_megamoe_tree_passes_every_required_check():
+    if not MEGAMOE_REFERENCE_ROOT.is_dir() or not MEGAMOE_REFERENCE_PLAN.is_file():
+        pytest.skip("MegaMoE reference tree or MegaPlanIR JSON is not available")
+    contract = MODULE.load_contract(MEGAMOE_CONTRACT)
+    plan = json.loads(MEGAMOE_REFERENCE_PLAN.read_text())
+    result = MODULE.evaluate(
+        contract, MEGAMOE_REFERENCE_ROOT, MEGAMOE_REFERENCE_ROOT, None, None, plan,
+    )
+    assert result["input_errors"] == []
+    assert result["plan_consistency_errors"] == []
+    assert result["failed_required_checks"] == [], result["next_blocker"]
+    assert result["semantic_failures"] == []
+    assert result["surface_failures"] == []
+    assert result["structural_compatible"]
+    assert result["next_blocker"] == ""
+
+
+def test_deviating_megamoe_candidate_still_fails_its_semantic_deviations():
+    if not MEGAMOE_DEVIATING_CANDIDATE_ROOT.is_dir() or not MEGAMOE_REFERENCE_PLAN.is_file():
+        pytest.skip("deviating MegaMoE candidate tree or MegaPlanIR JSON is not available")
+    contract = MODULE.load_contract(MEGAMOE_CONTRACT)
+    plan = json.loads(MEGAMOE_REFERENCE_PLAN.read_text())
+    root = MEGAMOE_DEVIATING_CANDIDATE_ROOT
+    result = MODULE.evaluate(contract, root, root, None, None, plan)
+    deviations = {
+        "flat_stripe_completion": "one_flat_g1_execute",
+        "g2_scheduler_cfg": "sharded_head_address",
+        "g2_skew_orientation": "five_four_orientation",
+        "unified_g1_g2_loop": "discriminator_g2",
+        "generation_lifecycle": "only_combine_head_resets",
+        "progressive_token_readiness": "padding_target_is_generation_topk",
+        "combine_readiness_is_strict": "lane_zero_waits_for_generation_target",
+    }
+    for check_id, unit in deviations.items():
+        assert check_id in result["semantic_failures"], check_id
+        failing_units = {
+            re.split(r"[:.\[]", message, maxsplit=1)[0]
+            for message in result["checks"][check_id]["failures"]
+        }
+        assert unit in failing_units, (check_id, sorted(failing_units))
+    assert "preemption_cohort_and_skew" in {
+        re.split(r"[:.\[]", message, maxsplit=1)[0]
+        for message in result["checks"]["g2_scheduler_cfg"]["failures"]
+    }
+    for check_id in result["failed_required_checks"]:
+        assert check_id in result["next_blocker"]

@@ -1,11 +1,9 @@
 {
-  "schema_version": "megamoe-source-shape-false-pass-regression-v1",
+  "schema_version": "megamoe-source-shape-false-pass-regression-v2",
   "candidate_head": "08f0c3a9b974103f9fcde000925436d5bd640f82",
   "candidate_tree_digest": "5e2b431d649931dd6a85d457c2ea0d7ecd3de49a21e3a641257e49b216401784",
-  "skill_bundle_sha256": "a0c706653fa7d1ea203f65eaab11dcdd1d55b010bbec0865481aa7fd6e4bd2ec",
-  "planner_extension_sha256": "a381f59cd63acb20a4b942ea004d10c1f334deda14271d49b1e304dd55f8399e",
-  "contract_sha256": "c885103536255469366f05a6c297ea40ba1dbc0c056367e57eb84362ed42c970",
-  "runtime_validation_sha256": "d486b8ece8397b55e9be708b347e125dc1b15b07ada8a5150e0bdb6b60717e34",
+  "planner_extension_sha256": "f025b158880c02b300ed2f3e4640cd6491ec6df566addce22e4fef0ff0f76cbc",
+  "contract_sha256": "0439919f1cd83cfc4fe18ccd136f9ea1a5fb414cf31ae1803e2b1295fa3d290b",
   "required_check_count": 34,
   "required_failure_count": 13,
   "failed_required_checks": [
@@ -16,12 +14,29 @@
     "shared_stage2_body",
     "scheduler_counter_domain_separation",
     "stage2_descriptor_flow",
+    "combine_readiness_is_strict",
     "generation_lifecycle",
     "combine_output_work_item",
     "combine_block_fp8_decode",
     "combine_u_selection",
-    "combine_readiness_is_strict",
     "p2p_close_protocol"
+  ],
+  "semantic_failures": [
+    "stage2_active_compile_flow",
+    "g2_scheduler_cfg",
+    "shared_stage2_body",
+    "scheduler_counter_domain_separation",
+    "combine_readiness_is_strict",
+    "generation_lifecycle",
+    "combine_output_work_item",
+    "combine_block_fp8_decode",
+    "combine_u_selection",
+    "p2p_close_protocol"
+  ],
+  "surface_failures": [
+    "fused_host_abi",
+    "fused_launch_abi",
+    "stage2_descriptor_flow"
   ],
   "passing_required_checks": [
     "complete_host_path",

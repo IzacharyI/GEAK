@@ -27,6 +27,10 @@ import yaml
 
 RESULT_SCHEMA_VERSION = "expert-skill-contract-result-v1"
 CONTRACT_SCHEMA_VERSION = "expert-skill-contract-v1"
+CHECK_TIERS = ("semantic", "surface")
+DEFAULT_CHECK_TIER = "semantic"
+NEXT_BLOCKER_DETAIL_LIMIT = 6
+NEXT_BLOCKER_DETAIL_CHARS = 240
 
 
 def load_contract(path: Path) -> dict[str, Any]:
@@ -63,6 +67,16 @@ def load_contract(path: Path) -> dict[str, Any]:
         raise ValueError("every contract check must have a non-empty id")
     if len(ids) != len(set(ids)):
         raise ValueError("contract check ids must be unique")
+    bad_tiers = [
+        f"{item.get('id')}={item.get('tier')!r}"
+        for item in checks
+        if "tier" in item and item.get("tier") not in CHECK_TIERS
+    ]
+    if bad_tiers:
+        raise ValueError(
+            f"contract check tier must be one of {', '.join(CHECK_TIERS)}: "
+            + ", ".join(bad_tiers)
+        )
     return data
 
 
@@ -2642,8 +2656,13 @@ def _semantic_relation_failures(
     for index, relation in enumerate(relations):
         label = str(relation.get("id") or f"relation_{index + 1}")
         kind = str(relation.get("op") or "")
-        root, file_name, scope = context(relation)
         before_failures = len(failures)
+        if kind == "any_of":
+            failures.extend(_any_of_failures(rule, trees, relation, label))
+            if len(failures) == before_failures:
+                passed += 1
+            continue
+        root, file_name, scope = context(relation)
         if root is None:
             failures.append(f"{label}: missing scope {file_name}:{scope}")
         elif kind == "count":
@@ -3306,6 +3325,48 @@ def _semantic_relation_failures(
     return max(1, len(relations)), passed, failures
 
 
+def _any_of_failures(
+    rule: dict[str, Any],
+    trees: dict[str, ast.AST],
+    relation: dict[str, Any],
+    label: str,
+) -> list[str]:
+    """Hold when every relation of at least one declared alternative holds.
+
+    An alternative is one relation, a list of relations, or a mapping with
+    ``relations`` and an optional ``id``; its relations form a conjunction.
+    ``file``/``scope`` on the ``any_of`` relation default its alternatives.
+    """
+    alternatives = relation.get("alternatives")
+    if not isinstance(alternatives, list) or not alternatives:
+        return [f"{label}: any_of requires a non-empty alternatives list"]
+    attempts: list[str] = []
+    for position, alternative in enumerate(alternatives):
+        name = str(position)
+        group: Any = alternative
+        if isinstance(alternative, dict) and "relations" in alternative:
+            name = str(alternative.get("id") or position)
+            group = alternative.get("relations")
+        elif isinstance(alternative, dict):
+            group = [alternative]
+        members = (
+            [item for item in group if isinstance(item, dict)]
+            if isinstance(group, list) else []
+        )
+        if not members:
+            attempts.append(f"[{name}] declares no relations")
+            continue
+        sub_rule = {**rule, "relations": members}
+        for key in ("file", "scope"):
+            if key in relation:
+                sub_rule[key] = relation[key]
+        _, _, sub_failures = _semantic_relation_failures(sub_rule, trees)
+        if not sub_failures:
+            return []
+        attempts.append(f"[{name}] " + "; ".join(sub_failures))
+    return [f"{label}: no alternative holds: " + " | ".join(attempts)]
+
+
 def _check_semantic_relations(
     rule: dict[str, Any],
     trees: dict[str, ast.AST],
@@ -3365,6 +3426,7 @@ def evaluate_checks(
         check_id = str(rule["id"])
         severity = str(rule.get("severity") or "required")
         category = str(rule.get("category") or "semantic")
+        tier = str(rule.get("tier") or DEFAULT_CHECK_TIER)
         kind = str(rule.get("kind") or "regex")
         evaluator = evaluators.get(kind)
         if evaluator is None:
@@ -3374,6 +3436,7 @@ def evaluate_checks(
         else:
             results[check_id] = evaluator(rule, trees, severity)
         results[check_id]["category"] = category
+        results[check_id]["tier"] = tier if tier in CHECK_TIERS else DEFAULT_CHECK_TIER
     return results
 
 
@@ -3539,6 +3602,48 @@ def _input_evidence(
                     f"reference digest mismatch: {tree_digest(reference_files)} != {reference_pin}"
                 )
     return errors, sorted(symlinks), sorted(hardlinks)
+
+
+def _next_blocker_summary(
+    check_results: dict[str, dict[str, Any]],
+    semantic_failures: list[str],
+    surface_failures: list[str],
+    plan_errors: list[str],
+) -> str:
+    """One line naming every failing required check, semantic tier first."""
+    parts: list[str] = []
+    failing = semantic_failures + surface_failures
+    if failing:
+        noun = "check" if len(failing) == 1 else "checks"
+        parts.append(
+            f"{len(failing)} required {noun} failing "
+            f"({len(semantic_failures)} semantic, {len(surface_failures)} surface)."
+        )
+        groups = [
+            f"{tier}: {', '.join(ids)}"
+            for tier, ids in (("semantic", semantic_failures), ("surface", surface_failures))
+            if ids
+        ]
+        parts.append("; ".join(groups) + ".")
+        messages = [
+            f"{check_id}: {failure}"
+            for check_id in failing
+            for failure in check_results[check_id]["failures"]
+        ]
+        shown = [
+            message if len(message) <= NEXT_BLOCKER_DETAIL_CHARS
+            else message[:NEXT_BLOCKER_DETAIL_CHARS - 3] + "..."
+            for message in messages[:NEXT_BLOCKER_DETAIL_LIMIT]
+        ]
+        if shown:
+            omitted = len(messages) - len(shown)
+            parts.append(
+                "details: " + "; ".join(shown)
+                + (f"; (+{omitted} more unit failures)" if omitted else "")
+            )
+    if plan_errors:
+        parts.append(f"plan errors ({len(plan_errors)}): " + "; ".join(plan_errors))
+    return " ".join(parts)
 
 
 def evaluate(
@@ -3736,16 +3841,19 @@ def evaluate(
 
     units_passed = sum(result["units_passed"] for result in check_results.values())
     units_total = sum(result["units_total"] for result in check_results.values())
-    failed_details = [
-        f"{check_id}: {failure}"
-        for check_id, result in check_results.items()
-        if result["severity"] == "required" and not result["pass"]
-        for failure in result["failures"]
+    semantic_failures = [
+        check_id for check_id in required_check_failures
+        if check_results[check_id].get("tier", DEFAULT_CHECK_TIER) == "semantic"
+    ]
+    surface_failures = [
+        check_id for check_id in required_check_failures
+        if check_results[check_id].get("tier", DEFAULT_CHECK_TIER) == "surface"
     ]
     contract_failures = [
         {
             "id": check_id,
             "category": result.get("category", "semantic"),
+            "tier": result.get("tier", DEFAULT_CHECK_TIER),
             "severity": result["severity"],
             "messages": list(result["failures"]),
         }
@@ -3755,10 +3863,13 @@ def evaluate(
     contract_failures.extend({
         "id": error.split(":", 1)[0],
         "category": "plan",
+        "tier": DEFAULT_CHECK_TIER,
         "severity": "required",
         "messages": [error],
     } for error in plan_errors)
-    next_blocker = "; ".join((failed_details + plan_errors)[:8])
+    next_blocker = _next_blocker_summary(
+        check_results, semantic_failures, surface_failures, plan_errors
+    )
 
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
@@ -3793,6 +3904,8 @@ def evaluate(
         "checks": check_results,
         "contract_failures": contract_failures,
         "failed_required_checks": required_check_failures,
+        "semantic_failures": semantic_failures,
+        "surface_failures": surface_failures,
         "forbidden_markers_present": forbidden_present,
         "baseline_tree_digest": tree_digest(base_files) if base_files else "",
         "reference_tree_digest": tree_digest(ref_files) if ref_files else "",

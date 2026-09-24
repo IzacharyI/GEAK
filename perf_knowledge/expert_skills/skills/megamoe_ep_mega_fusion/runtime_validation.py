@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import statistics
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -21,6 +24,7 @@ PROFILE = {
     "topk": 6,
     "swiglu_limit": 10.0,
 }
+FROZEN_BASELINE_MISSING = "not_evaluated: missing --frozen-baseline-ms"
 
 
 def _csv_ints(value):
@@ -149,9 +153,9 @@ def _relative_l2(torch, dist, helper, output, reference, device):
     return helper._reduce_float(value, device, dist.ReduceOp.MAX)
 
 
-def _capture(torch, helper, body):
+def _capture(torch, helper, body, warmup=None):
     helper._barrier()
-    body()
+    (warmup or body)()
     helper._barrier()
     graph = torch.cuda.CUDAGraph()
     stream = torch.cuda.Stream()
@@ -212,6 +216,12 @@ def _resource_checks(path):
             "required_by_acceptance": True,
             "reason": "outer verifier must supply emitted metadata",
         }
+    if not Path(path).is_file():
+        return {
+            "status": "missing",
+            "required_by_acceptance": True,
+            "reason": f"resource evidence file not found: {path}",
+        }
     data = json.loads(Path(path).read_text())
     rows = data.get("cases") if isinstance(data, dict) else None
     if not isinstance(rows, dict):
@@ -243,6 +253,203 @@ def _resource_checks(path):
     return {"status": "pass", "cases": sorted(limits)}
 
 
+def _positive_finite(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _speedup_summary(frozen_ms, cand_ms_list, switch_off_ms_list, min_speedup, tol):
+    """Gate ``min_speedup`` on the frozen baseline; the same-tree pair is diagnostic.
+
+    ``paired_rank_max_speedup`` is kept for backward compatibility as an alias
+    of ``absolute_speedup`` (null when the frozen baseline is missing); it never
+    carries the same-tree switch-off ratio.
+    """
+    if (
+        not cand_ms_list
+        or len(cand_ms_list) != len(switch_off_ms_list)
+        or any(
+            _positive_finite(value) is None
+            for value in [*cand_ms_list, *switch_off_ms_list]
+        )
+    ):
+        raise ValueError("paired readings must be matched positive latencies")
+    cand_ms = statistics.median(cand_ms_list)
+    switch_off_ms = statistics.median(switch_off_ms_list)
+    summary = {
+        "frozen_baseline_ms": None,
+        "candidate_ms_median": cand_ms,
+        "switch_off_ms_median": switch_off_ms,
+        "incremental_switch_speedup": statistics.median(
+            [base / cand for base, cand in zip(switch_off_ms_list, cand_ms_list)]
+        ),
+        "absolute_speedup": None,
+        "paired_rank_max_speedup": None,
+        "paired_rank_max_speedup_basis": "absolute_speedup",
+        "min_speedup": min_speedup,
+        "denominator_tolerance": tol,
+        "denominator_deviation_pct": None,
+        "speedup_gate": FROZEN_BASELINE_MISSING,
+    }
+    frozen = _positive_finite(frozen_ms)
+    if frozen is None:
+        return summary
+    absolute = frozen / cand_ms
+    deviation = (switch_off_ms - frozen) / frozen
+    summary.update(
+        frozen_baseline_ms=frozen,
+        absolute_speedup=absolute,
+        paired_rank_max_speedup=absolute,
+        denominator_deviation_pct=100.0 * deviation,
+        speedup_gate="pass" if absolute >= min_speedup else "fail",
+    )
+    if abs(deviation) > tol:
+        direction = "regressed" if deviation > 0 else "changed"
+        summary["denominator_mismatch"] = {
+            "switch_off_ms": switch_off_ms,
+            "frozen_ms": frozen,
+            "deviation_pct": 100.0 * deviation,
+            "note": (
+                f"the candidate tree's switch-off path {direction} shared code; "
+                "incremental_switch_speedup is not a frozen-baseline speedup"
+            ),
+        }
+    return summary
+
+
+def _restore_route(tensors, snapshot):
+    """Copy a route snapshot back in place so captured graph addresses stay valid."""
+    if len(tensors) != len(snapshot):
+        raise ValueError("route snapshot does not match the target tensors")
+    for tensor, original in zip(tensors, snapshot):
+        tensor.copy_(original)
+
+
+def _flush_output_streams():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (AttributeError, OSError, ValueError):
+            pass
+    try:
+        import ctypes
+
+        ctypes.CDLL(None).fflush(None)
+    except (AttributeError, OSError, TypeError):
+        pass
+
+
+def _read_fd(fd):
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 1 << 16)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+@contextlib.contextmanager
+def _captured_output_fds(directory, prefix):
+    """Redirect fds 1 and 2 into files for one window, then restore and re-emit.
+
+    Capture files are removed only after both descriptors are restored, so a
+    hard abort inside the window leaves them in ``directory``.
+    """
+    Path(directory).mkdir(parents=True, exist_ok=True)
+    captured = {"text": ""}
+    redirected = []
+    _flush_output_streams()
+    try:
+        for fd in (1, 2):
+            capture_fd, capture_path = tempfile.mkstemp(
+                prefix=f"{prefix}.fd{fd}.", suffix=".log", dir=directory
+            )
+            try:
+                saved_fd = os.dup(fd)
+            except OSError:
+                os.close(capture_fd)
+                os.unlink(capture_path)
+                continue
+            redirected.append((fd, saved_fd, capture_fd, capture_path))
+            os.dup2(capture_fd, fd)
+        yield captured
+    finally:
+        _flush_output_streams()
+        for fd, saved_fd, _, _ in redirected:
+            os.dup2(saved_fd, fd)
+            os.close(saved_fd)
+        texts = []
+        for fd, _, capture_fd, capture_path in redirected:
+            data = b""
+            with contextlib.suppress(OSError):
+                data = _read_fd(capture_fd)
+                os.unlink(capture_path)
+            os.close(capture_fd)
+            texts.append(data.decode(errors="replace"))
+            view = memoryview(data)
+            with contextlib.suppress(OSError):
+                while view:
+                    view = view[os.write(fd, view):]
+        captured["text"] = "".join(texts)
+
+
+def _reduce_marker_observation(torch, dist, device, count, world):
+    observed = torch.tensor(1 if count > 0 else 0, dtype=torch.int32, device=device)
+    observed_min = observed.clone()
+    dist.all_reduce(observed, op=dist.ReduceOp.SUM)
+    dist.all_reduce(observed_min, op=dist.ReduceOp.MIN)
+    local = torch.tensor([int(count)], dtype=torch.int32, device=device)
+    gathered = [torch.zeros_like(local) for _ in range(world)]
+    dist.all_gather(gathered, local)
+    return (
+        int(observed.item()),
+        int(observed_min.item()),
+        [int(item.item()) for item in gathered],
+    )
+
+
+def _activation_summary(marker, world, observed_sum, observed_min, per_rank_counts):
+    """Activation passes only when every rank observed ``marker``."""
+    per_rank = [
+        {"rank": rank, "marker_count": int(count), "observed": int(count) > 0}
+        for rank, count in enumerate(per_rank_counts)
+    ]
+    passed = (
+        world > 0
+        and len(per_rank) == world
+        and int(observed_sum) == world
+        and int(observed_min) == 1
+        and all(row["observed"] for row in per_rank)
+    )
+    return {
+        "status": "pass" if passed else "fail",
+        "path_marker": marker,
+        "ranks": world,
+        "observed_ranks": int(observed_sum),
+        "all_ranks_observed": passed,
+        "per_rank": per_rank,
+    }
+
+
+def _claim_blockers(activation, resources, speedup):
+    """Missing or failed evidence keeps ``claim_complete`` false."""
+    blockers = []
+    if (activation or {}).get("status") != "pass":
+        blockers.append("activation_marker_missing")
+    if (resources or {}).get("status") != "pass":
+        blockers.append("resource_evidence_missing")
+    gate = str((speedup or {}).get("speedup_gate") or "")
+    if gate.startswith("not_evaluated"):
+        blockers.append("frozen_baseline_missing")
+    elif gate != "pass":
+        blockers.append("speedup_gate_failed")
+    return blockers
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate-tree", required=True)
@@ -257,6 +464,9 @@ def main():
     parser.add_argument("--perf-iters", type=int, default=20)
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--min-speedup", type=float, default=1.03)
+    parser.add_argument("--frozen-baseline-ms", type=float, default=None)
+    parser.add_argument("--denominator-tolerance", type=float, default=0.05)
+    parser.add_argument("--path-marker", default="path=MEGA")
     parser.add_argument("--resource-evidence", default="")
     parser.add_argument("--json-output", required=True)
     args = parser.parse_args()
@@ -276,6 +486,10 @@ def main():
         raise ValueError("runtime claims require direct 128/512/8192 cases")
     if args.replays <= 0 or args.pairs <= 0 or args.perf_iters <= 0:
         raise ValueError("replays, pairs and perf-iters must be positive")
+    if not args.path_marker:
+        raise ValueError("path-marker must be non-empty")
+    if not math.isfinite(args.denominator_tolerance) or args.denominator_tolerance < 0:
+        raise ValueError("denominator-tolerance must be a finite non-negative fraction")
 
     rank, world, device = helper._setup_dist()
     result = {
@@ -338,18 +552,60 @@ def main():
             **profile_data,
         )
 
+        cases = sorted(set(accuracy_cases + liveness_cases))
+        output_path = Path(args.json_output).resolve()
+        capture_prefix = f"{output_path.name}.rank{rank}.activation"
+        marker_counts = []
         target_body = None
         target_tensors = None
-        for tokens in sorted(set(accuracy_cases + liveness_cases)):
+        uniform_route = None
+        for tokens in cases:
             x, route_weights, ids = _make_route(
                 torch, tokens, "uniform", 0, profile_data, rank, world, device
             )
+            if tokens == 8192:
+                uniform_route = (route_weights.clone(), ids.clone())
             state = {}
 
-            def body():
+            def body(
+                x=x, route_weights=route_weights, ids=ids, tokens=tokens, state=state
+            ):
                 state["output"] = candidate(x, route_weights, ids)[:tokens]
 
-            graph = _capture(torch, helper, body)
+            first_forward = tokens == cases[0]
+            warmup = None
+            if first_forward:
+                result["activation"] = {
+                    "status": "pending",
+                    "path_marker": args.path_marker,
+                    "capture_files": str(
+                        output_path.parent
+                        / f"{output_path.name}.rank*.activation.fd*.log"
+                    ),
+                }
+                write_result(False)
+
+                def warmup(body=body):
+                    with _captured_output_fds(
+                        output_path.parent, capture_prefix
+                    ) as captured:
+                        body()
+                    marker_counts.append(captured["text"].count(args.path_marker))
+
+            graph = _capture(torch, helper, body, warmup)
+            if first_forward:
+                observed_sum, observed_min, per_rank = _reduce_marker_observation(
+                    torch, dist, device, marker_counts[0], world
+                )
+                result["activation"] = {
+                    **_activation_summary(
+                        args.path_marker, world, observed_sum, observed_min, per_rank
+                    ),
+                    "window": f"first eager candidate forward (tokens={tokens})",
+                    "method": "fd 1/2 capture; all-reduce SUM/MIN of observed flag",
+                    "fusion_switch": os.environ["AITER_MEGAMOE_FUSE_ALL"],
+                }
+                write_result(False)
             if tokens == 8192:
                 target_body = body
                 target_tensors = (x, route_weights, ids, graph)
@@ -437,20 +693,16 @@ def main():
                     result["replay_results"].append(replay_row)
                     write_result(False)
 
-        if target_body is None or target_tensors is None:
+        if target_body is None or target_tensors is None or uniform_route is None:
             raise AssertionError("8192 target graph was not produced")
+        x, route_weights, ids, candidate_graph = target_tensors
+        _restore_route((route_weights, ids), uniform_route)
         launch_count = _profile_launch_count(
             torch, dist, helper, target_body, device
         )
-        result["activation"] = {
-            "status": "pass",
-            "ranks": world,
-            "fusion_switch": os.environ["AITER_MEGAMOE_FUSE_ALL"],
-        }
         result["launch_count"] = launch_count
         result["resources"] = _resource_checks(args.resource_evidence)
 
-        x, route_weights, ids, candidate_graph = target_tensors
         os.environ["AITER_MEGAMOE_FUSE_ALL"] = "0"
         control = factory(
             rank=rank,
@@ -470,7 +722,8 @@ def main():
 
         control_graph = _capture(torch, helper, control_body)
         os.environ["AITER_MEGAMOE_FUSE_ALL"] = "1"
-        ratios = []
+        cand_readings = []
+        switch_off_readings = []
         for pair in range(args.pairs):
             if pair % 2:
                 cand_ms = _time_rank_max(
@@ -486,26 +739,48 @@ def main():
                 cand_ms = _time_rank_max(
                     torch, dist, helper, candidate_graph, device, args.perf_iters
                 )
-            ratios.append(base_ms / cand_ms)
+            cand_readings.append(cand_ms)
+            switch_off_readings.append(base_ms)
             result["paired_readings"].append(
-                {"guard": "8192_uniform", "base": base_ms, "cand": cand_ms}
+                {
+                    "guard": "8192_uniform",
+                    "base_arm": "same_tree_switch_off",
+                    "base": base_ms,
+                    "cand": cand_ms,
+                }
             )
             write_result(False)
-        speedup = statistics.median(ratios)
-        result["paired_rank_max_speedup"] = speedup
-        result["paired_control"] = (
-            "same selected tree with persistent fusion disabled; "
-            "outer workflow still owns the frozen-baseline pair"
+        speedup = _speedup_summary(
+            args.frozen_baseline_ms,
+            cand_readings,
+            switch_off_readings,
+            args.min_speedup,
+            args.denominator_tolerance,
         )
-        if speedup < args.min_speedup:
+        result.update(speedup)
+        result["paired_control"] = (
+            "same selected tree with AITER_MEGAMOE_FUSE_ALL=0 is diagnostic only "
+            "(incremental_switch_speedup); min_speedup gates absolute_speedup "
+            "against --frozen-baseline-ms"
+        )
+        if speedup["speedup_gate"] == "fail":
             raise AssertionError(
-                f"paired rank-max speedup {speedup:.6f} < {args.min_speedup}"
+                f"absolute speedup {speedup['absolute_speedup']:.6f} vs frozen "
+                f"baseline {speedup['frozen_baseline_ms']:.6f} ms "
+                f"< {args.min_speedup}"
             )
 
         result["correctness"] = "pass"
         result["graph_safe"] = "pass"
         result["liveness"] = "pass"
         result["liveness_replays"] = args.replays
+        claim_blockers = _claim_blockers(
+            result.get("activation"), result.get("resources"), speedup
+        )
+        result["claim_blockers"] = claim_blockers
+        if claim_blockers:
+            write_result(False)
+            return 1
         write_result(True)
         return 0
     except BaseException as error:
