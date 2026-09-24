@@ -145,6 +145,7 @@ Workflow({
     promotion_metric: "legacy", // set operator_e2e or changed_kernel explicitly for strict tasks
     strict_autonomy: "false",  // requires capability_eval, fresh state, clean immutable workflow
     launch_target: 2,          // strict terminal launch ceiling
+    required_accuracy_cases: [], // run-owned direct accuracy/liveness cases; independent of Expert Skills
     require_overlap: "false",
     require_attribution: "false",
     required_replays: 1000,
@@ -159,6 +160,7 @@ Workflow({
     perf_knowledge_dir: "",  // optional: AMD authoring knowledge base the author_engineer reads
     analysis_skill: "none",  // optional, default none; e.g. "moe_bottleneck" dispatches a separate
                               //   analysis_engineer after each successful generic Profile
+    use_expert_skills: "false", // optional knowledge layer; false keeps the generic Mega lifecycle
     // --- workload alignment (optional; aligns the PERF harness with the real workload) ---
     workload_spec_path: "",    // optional: path to a workload-v1 json (parse_profile.py --workload-out).
                                //   The benchmark harness then times the EXACT (shape,dtype) cases the

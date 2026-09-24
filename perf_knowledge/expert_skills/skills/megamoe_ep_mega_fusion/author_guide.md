@@ -1,7 +1,9 @@
 # MegaMoE EP fusion — Author guide
 
-Continue the current `full_persistent_pipeline` lane. The frozen baseline is only
-the root commit; never recreate the lane or inspect external implementations.
+Continue the lane the direction names. The frozen baseline is only the root
+commit; never recreate the lane or inspect external implementations. When the
+prompt carries `REWIND_TO`, roll the lane back to that commit first (the old
+HEAD stays tagged) and continue from there.
 
 Treat `BASELINE_OPERATOR_MAP` and the supplied baseline kernels as concrete
 implementation references. For each region, choose reuse, extraction, inlining,
@@ -37,6 +39,86 @@ progress.
 3. Runtime correctness is the only authority. When the observed relL2 / launch
    count / path marker disagrees with what a static check "wants", fix the
    behavior the runtime saw, not the shape that satisfies the checker.
+
+## Blocking invariants (every checkpoint, Stage A included)
+
+These are behavior, not spellings: names and file layout are free, the behavior is not. A
+checkpoint that violates one is a defect even when it is correct today, because every later
+optimization is built on it. Verify reports them as `semantic`-tier contract failures.
+
+1. G1 work unit is one flat `(m_tile, n_stripe)` stripe claimed from its OWN 64-byte shard head
+   (`claim = shard + local * SHARDS`). Each stripe publishes its own completion: cache-17 stores,
+   `s_waitcnt` in every wave, one block barrier, ONE thread-0 system increment. Never claim a whole
+   m-tile and run its stripes serially in one CTA.
+2. G2 claims come from sharded 64-byte heads in contiguous chunks (C16 at >=4096 tokens, else C1);
+   a new chunk waits only on its last in-range unit. The continuation carries two block-uniform
+   scalars (next, remaining) and issues NO atomic, NO readiness poll and NO LDS round-trip.
+3. Skew preemption happens only when `ticket % 6 == 0` AND
+   `max_expert_tiles * experts_per_rank * stage1_tile_m * 4 > valid_rows * 5` (the hottest expert's
+   padded rows exceed 5/4 of the balanced share). About 1/6 of CTAs are eligible, and on a uniform
+   route none preempt.
+4. The scheduler broadcasts only `kind` and `unit` through LDS; no multi-word LDS scheduler frame.
+5. Stage2 runs as one native NW=8, BN=512 slab (never two lockstep 4-wave halves); descriptors,
+   route, weights and peer resources are built inside the single-unit frame.
+6. Stage2 publication per m-block: every wave fences, one block barrier, thread 0 does one
+   agent-scope close increment; the block that closes the m-block self-clears the close counter and
+   its first BM threads each publish one remote arrival in parallel. One atomic per publishing
+   thread — never an all-lane masked atomic.
+7. Combine is the irreversible third queue: one block claim serves NW items, lane 0 alone waits for
+   `topk * generation`, loads use cache 19 with no acquire fence, the output store uses cache 2.
+8. Arrival counters are never cleared: the Combine generation increments and omitted tokens are
+   padded to the current target. No per-generation resets, parity banks or re-arm sweeps.
+9. Copies stay 16-byte vectorized (as in the baseline) on every shared path.
+10. The unfused path of the candidate tree (switch off) stays within noise of the frozen baseline.
+    If it does not, the change regressed shared code; fix that before anything else.
+
+Stage A (correctness first) may add ONE simplification: a coarse barrier before Combine. It may not
+break any invariant above.
+
+## FlyDSL idioms
+
+- Runtime control flow exists only in compiled functions. FlyDSL rewrites Python `if`/`for`/`while`
+  on runtime values into device control flow inside the kernel body and inside helpers decorated
+  with `@flyc.jit`; a plain nested closure runs as ordinary Python at trace time and raises
+  `cannot evaluate dynamic Boolean`. When a helper needs "only thread 0", "only lane 0" or "only
+  valid rows", decorate it with `@flyc.jit` and write the `if` (the baseline's `_publish_tile_range`
+  in `dispatch.py` is such a helper), or move the code into the kernel body.
+- Masks and `select` choose VALUES; they never decide WHO performs a side effect. Replacing a
+  thread-0 atomic with an all-lane masked atomic, or a lane-0 wait with a whole-wave spin plus a
+  fence, multiplies atomics/polls by 64-512 per event and is a performance defect.
+- A backend error such as `Do not know how to scalarize this operator's operand` on a vector buffer
+  store means an operand no longer matches the baseline's working 16-byte copy. Compare resource
+  uniformity (`readfirstlane`), dtype and offset type with the baseline and restore that form. Do not
+  split the copy into 4-byte stores: that multiplies instructions and remote transactions on the
+  shared dispatch path and slows the unfused path too.
+- Keep the G2 continuation as scalars carried by the outer loop. A nested loop around the GEMM2 body
+  makes its whole live range loop-carried; the resulting spills cost about 2.6x.
+- Build descriptors and per-unit resources inside the unit frame; hoisting them into the outer
+  scheduler frame extends live ranges into Combine and spills SGPRs.
+
+## Performance budget (8192 uniform, EP8 gfx950, rank-max)
+
+The whole fusion gain is ~0.2 ms, so a single expensive construct erases it. Use these measured
+costs to judge a design before tuning knobs:
+
+| item | measured |
+|---|---|
+| frozen 4-launch baseline | ~4.70 ms |
+| Stage1+Stage2 persistent, Combine still a separate launch | ~4.62 ms |
+| full fusion target (Combine as third queue) | ~4.50 ms (~1.045x) |
+| Stage2 + Combine, measured separately | ~2.08 ms |
+| two lockstep Stage2 halves instead of one NW8 slab | +0.53 ms |
+| per-block L2 writeback instead of cache-19 write-through P2P stores | +0.41 ms |
+| skew preemption active on a uniform route | +0.30 ms (saves 0.51 ms on skew) |
+| quantization work-stealing atomics | +0.30 ms |
+| nested G2 loop around the GEMM2 body (spills) | ~2.6x |
+
+Hot-path budget per unit of work: G2 continuation 0 atomics and 0 polls; new G2 chunk 1 claim and 1
+wait; G1 stripe 1 claim and 1 system increment; Stage2 m-block close <= 1 atomic per n-block plus <=
+BM remote arrivals; Combine 1 claim per NW items and 1 lane-0 poll per item, no fences. When the
+candidate misses the target, first measure where the time goes (ablation: disable one component in a
+diagnostic build and re-time; or per-CTA phase timestamps) and compare each component with the
+budget above; do not tune occupancy, chunk sizes or barriers blind.
 
 ## Dependency-ordered build recipe
 
@@ -113,10 +195,11 @@ Done: no Stage2/Combine tail launch remains.
 After a source edit, CPU checks are preflight only. The next independent Verify
 must execute the exact HEAD on eight GPUs.
 
-When the prompt supplies `STAGED_GPU_AUTHORING=1`, the Author may run the
-earliest construction/JIT/small-correctness smoke before the full source
-contract passes. This is development evidence only; final correctness,
-liveness and performance remain independently verified.
+With `AUTHOR_GPU_MODE=bounded_smoke` (the normal candidate-validation turn) the
+Author runs bounded construction/JIT/correctness smokes of the HEAD being
+edited, before and after source edits, at any contract state; a production fix
+never revokes the device. This is development evidence only; final
+correctness, liveness and performance remain independently verified.
 Every such smoke must export `AITER_MEGAMOE_FUSE_ALL=1` plus the declared
 Combine/quant switches, use `--mega-only` when the harness supports it, and
 observe `path=MEGA` on all eight ranks. Otherwise it measured the scattered
@@ -138,7 +221,10 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 3. All ranks must report `path=MEGA`; profiler must observe two launches.
 4. Pass relL2 <0.10 at 128, 512, and 8192.
 5. Pass changing-route and smaller→larger graph replays without stale reads/hang.
-6. Tune only after correctness; accept only paired 8192-uniform speedup >=1.03x.
+6. Tune only after correctness; accept only a frozen-relative 8192-uniform
+   speedup >=1.03x (frozen `BASELINE_PER_CASE` latency / candidate latency). A
+   same-tree switch-off arm is a diagnostic and must stay within noise of the
+   frozen latency.
 
 ## Implementation invariants
 
@@ -200,26 +286,61 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   OWN tile's counter rather than a coarse last-tile proxy. Dump the first token
   whose observed arrivals are below expected and fix the wiring there.
 - A trace-time `cannot evaluate dynamic Boolean as Python bool during tracing`
-  means a kernel RUNTIME value was used as a Python `if`/`and`/`or` inside a traced
-  body (e.g. `if m_slot < active_cu:` in an epilogue `scf.for`). FlyDSL cannot fold a
-  data-dependent predicate at trace time. Never branch host-Python control flow on a
-  runtime value: use a device-side predicate instead — an Int32 0/1 mask, a masked or
-  `select` store, or an `scf.if`/`const_expr` guard reserved for truly compile-time
-  constants. When the offending line sits on the SHARED Stage2 path it breaks BOTH the
-  fused arm and the scattered baseline (A/B denominator) at trace time before any
-  kernel launches, so this must be fixed before the next on-card run.
+  means a kernel RUNTIME value reached a Python `if`/`and`/`or` in code FlyDSL does not
+  rewrite (a plain nested closure). Fix the location, not the semantics: decorate that
+  helper with `@flyc.jit` or move the branch into the kernel body so it becomes device
+  control flow (see FlyDSL idioms). A 0/1 mask or `select` is right only for choosing a
+  value; never use it to turn a single-thread atomic or a lane-0 wait into an all-lane
+  one. When the offending line sits on the SHARED Stage2 path it breaks BOTH the fused
+  arm and the unfused path at trace time, so fix it before the next on-card run.
 - A DETERMINISTIC on-device `Memory access fault ... Reason: Unknown` + SIGABRT that
   reproduces on every rank at bs=128, activates `path=MEGA` first, produces NO `[RESULT]`,
   and STILL reproduces when the routed scatter store is replaced by a plain global
-  `_buffer_store`, is a flyc CODEGEN frame-fault (register-allocation regression), NOT an
-  addressing/OOB bug. Stop re-deriving payload offsets — the address arithmetic is not the
-  cause. The trigger is a store or atomic read-modify-write emitted INSIDE the persistent
-  producer while-body frame (the hot GEMM/MFMA loop tail): the live-register pressure of
-  that frame forces flyc onto a spill/frame path that faults. Hoist the offending store or
-  atomic OUT of the hot loop frame — perform the exactly-once completion publish AFTER the
-  producer loop, and keep any RMW out of the MFMA frame — then re-smoke bs=128 before making
-  any addressing change. Confirm the reclassification with the plain-`_buffer_store` probe
-  before spending a lease on offsets.
+  `_buffer_store`, is most likely a flyc CODEGEN frame fault (register-allocation
+  pressure), not an addressing bug; confirm with that plain-store probe before spending a
+  lease on offsets. Fix it by shrinking live ranges while KEEPING the schedule: the unit
+  stays one flat stripe and its completion is still published once per stripe, in the same
+  outer-loop iteration, right after the per-unit body returns. Move the GEMM body and its
+  accumulators into a `@flyc.jit` per-unit helper so they die before the publish, keep
+  descriptors inside the unit frame, and keep the continuation as carried scalars. Never
+  "fix" a frame fault by claiming a whole m-tile or publishing once after a multi-stripe
+  loop: that removes the G1/G2 overlap the fusion exists for, and every later round then
+  optimizes a structure that cannot reach the target.
+- When the GPU-free structural preflight reports device-body checks at `0 nodes` or a
+  broken declared-source->sink edge, the cause is almost always an EXACT-SPELLING mismatch,
+  NOT a pruned/branch-selected subtree and NOT missing content. The structural checker is
+  pure AST matching: a `depends` relation looks for a specific sink call by exact name and a
+  specific keyword by exact case (e.g. the sink keyword must read `NW=`, not `nw=`), and its
+  def-use walk abandons any intermediate that is assigned more than once and cannot trace a
+  value that arrives as a function parameter; a `count`/assign relation matches unparsed text
+  by `re.fullmatch`, so `rows_per_wave = BM // _nw` fails the pattern `BM // NW`. So a
+  semantically-correct body fails purely because an identifier, keyword case, or helper name
+  differs from the reference surface syntax. Do NOT keep threading "reachability edges" round
+  after round chasing this. Each contract failure carries a `tier`: `semantic` failures are the
+  blocking invariants above (route them), `surface` failures are spelling/plumbing hints (ignore
+  them when runtime evidence shows the behavior is right). `next_blocker` lists every failing
+  check ID, semantic first. Because the contract is ADVISORY here (it does not block a runtime
+  smoke), the right move once a coherent 2-launch body compiles and imports is to go on-card
+  for a correctness result, not to reproduce every exact spelling first.
+- Your on-card authorization is `AUTHOR_GPU_MODE`, nothing else. With `bounded_smoke` (`GPU_ID`
+  is a concrete device) you may run bounded smokes this turn at any contract state, before and
+  after edits; `STAGED_GPU_AUTHORING=0` or an empty structural-evidence HEAD does not remove
+  that. Do not invent a "GPU-authorized lease required" blocker. A partially complete structural
+  contract is NOT a reason to stay GPU-free.
+- Once the fused body is fully authored, do not keep spending leases on GPU-free static
+  visibility. The authored body's real semantics (numerics, launch shape, liveness) only
+  resolve on-card, never in the AST checker. Take the authored HEAD on-card at bs=128
+  (export `AITER_MEGAMOE_FUSE_ALL=1` + the declared switches, observe `path=MEGA` ×8) to get a
+  concrete runtime blocker — that is worth more than another round of 0-node chasing, and it is
+  where the flyc frame-fault (above) and coverage/liveness defects actually surface.
+- Sequence correctness before performance, keeping the fused entry's function interface fixed.
+  STAGE A: land a 2-launch `path=MEGA` fusion whose numerics pass (`relL2<0.10` at bs=128, then
+  512/8192). The only acceptable Stage-A simplification is a coarse barrier before Combine; the
+  blocking invariants (flat stripes, sharded heads, one-atomic publication, monotone counters,
+  vectorized copies) hold already, so Stage B does not have to rebuild the scheduler. STAGE B: with
+  the interface unchanged, remove the barrier (Combine third queue, lane-0 per-token readiness) to
+  reach the ≥1.03x target. Never let Stage-B scheduling completeness gate a Stage-A
+  correctness smoke — the two are separable and Stage A is the one that breaks a GPU-free spin.
 - Do not run full performance after a failed construction/JIT/small correctness smoke.
 - Never claim launch count, correctness, liveness, or speed without on-card evidence.
 

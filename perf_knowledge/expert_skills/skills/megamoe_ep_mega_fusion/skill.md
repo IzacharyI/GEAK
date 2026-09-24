@@ -789,6 +789,39 @@ be avoided.
   separately reimplemented fused body do not satisfy a device semantic.
 - Do not infer safety from VGPR/SGPR counts alone. Validate the exact emitted
   artifact and execute the all-six-slot bs=128 path before broader testing.
+- FlyDSL rewrites runtime `if`/loops only in the kernel body and in `@flyc.jit`
+  helpers; a plain nested closure runs as Python at trace time. Thread-0, lane-0
+  and valid-row side effects belong in a `@flyc.jit` helper or the kernel body.
+  Never emulate them with all-lane masked atomics or whole-wave spins plus
+  fences; that multiplies atomics and polls by 64-512 per event.
+- Never split a 16-byte vector copy into scalar stores to get past a backend
+  legalization error; restore the baseline operand form (wave-uniform resource,
+  dtype, offset type). Scalarized shared copies also slow the unfused path.
+- Never coarsen the G1 work unit to a whole m-tile, or move the completion
+  publish out of the per-stripe iteration, to escape a frame fault. Shrink live
+  ranges instead (per-unit helper, descriptors inside the unit frame).
+
+## Performance budget
+
+Measured on the validated profile (8192 uniform, rank-max):
+
+- Frozen four-launch baseline ~4.70 ms; Stage1+Stage2 persistent with a
+  separate Combine launch ~4.62 ms; complete fusion ~4.50 ms. The whole gain is
+  ~0.2 ms, so one expensive construct erases it.
+- Single costs that erase it: two lockstep Stage2 halves +0.53 ms; per-block L2
+  writeback instead of cache-19 write-through P2P stores +0.41 ms; skew
+  preemption on a uniform route +0.30 ms (it saves 0.51 ms on skew);
+  quantization work-stealing atomics +0.30 ms; a nested G2 loop around the
+  GEMM2 body spills (~2.6x). Stage2 plus Combine measured separately ~2.08 ms.
+- Hot-path budget per unit of work: G2 continuation 0 atomics and 0 polls; new
+  G2 chunk 1 claim and 1 wait; G1 stripe 1 claim and 1 system increment; Stage2
+  close at most 1 atomic per n-block plus at most BM remote arrivals per m-block;
+  Combine 1 claim per NW items, 1 lane-0 poll per item, no fence.
+- Fusion removes waiting (launch gaps, tails, cross-rank barriers), never work.
+  A fused candidate that misses the target is attributed per component as work
+  versus wait (ablation of one component in a diagnostic build, or per-CTA
+  phase timestamps) before any tuning, and a component whose work exceeds its
+  frozen counterpart is fixed in place rather than abandoning the architecture.
 
 ## Procedure
 
@@ -850,8 +883,22 @@ The Skill succeeds only when its independently authored candidate has:
 - emitted 128 and 8192 resource envelopes within the values above and at least
   one resident workgroup per CU;
 - no regression on fixed, compact or skew guards;
-- paired 8192-uniform rank-max speedup close to the measured 1.0448x reference
-  and at least 1.03x after the established noise allowance.
+- frozen-relative 8192-uniform rank-max speedup (frozen `BASELINE_PER_CASE`
+  latency divided by the candidate latency, paired against a frozen-tree base
+  arm) close to the measured 1.0448x reference and at least 1.03x after the
+  established noise allowance. A same-tree switch-off pair is a diagnostic only.
+
+The runtime validator (`runtime_validation.py`, executed through the
+workflow's runtime tool) takes `--frozen-baseline-ms` (the frozen 8192-uniform
+rank-max latency) and `--resource-evidence <json>`, where the JSON is
+`{"cases": {"fixed_128": {...}, "large_8192": {...}}}` and each case reports
+`threads`, `group_segment`, `kernarg`, `vgpr`, `sgpr`, `vgpr_spills`,
+`sgpr_spills`, `private` and `resident_workgroups` read from the emitted
+code-object metadata of the persistent kernel. It gates `--min-speedup` only on
+`absolute_speedup` (frozen latency / candidate median), reports the same-tree
+pair as `incremental_switch_speedup`, requires the path marker on every rank,
+and keeps `claim_complete=false` with `claim_blockers` (exit 1) when the
+marker, the frozen latency or the resource evidence is missing.
 
 ## Sources
 

@@ -257,7 +257,7 @@ class TestMoEBottleneckAnalysis(unittest.TestCase):
         with open(workflow_path) as f:
             source = f.read()
         self.assertIn("async function runProfileAnalysis", source)
-        self.assertEqual(source.count("await runProfileAnalysis("), 2)
+        self.assertEqual(source.count("await runProfileAnalysis("), 3)
         self.assertIn("'analysis_engineer'", source)
         self.assertIn("ANALYSIS_RESULT_SCHEMA", source)
         self.assertIn("analysis_status=awaiting_measurement", source)

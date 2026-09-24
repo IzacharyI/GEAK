@@ -244,6 +244,7 @@ Inputs: `CANDIDATES`, `BASELINE_TREE`, `FROZEN_KERNEL_PATH`, `COMMANDMENT`, `GPU
 `REQUIRE_ARTIFACT_DISTINCT`, `MEGA_PROFILE`, `DIRECT_GRAPH_ACCURACY`,
 `BIMODAL_GUARDS`, `BASELINE_ACTIVATION`,
 `CANDIDATE_IMPORT_MODULES`,
+`REQUIRED_ACCURACY_CASES`,
 optional `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`, `EXPERT_SKILL_PLAYBOOK`,
 `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
 `EXPERT_SKILL_ACCURACY_CASES`, `EXPERT_SKILL_SOURCE_FILES`, and `SELECTED_WORKSPACE`.
@@ -287,13 +288,17 @@ batch may contain all finalists for one exhaustive comparison.
      candidate HEAD and require every changed path to be in that list. Tests, benchmarks, scripts, logs,
      dumps, and evidence inside the source tree reject the finalist.
    - When `DIRECT_GRAPH_ACCURACY=1`, emit one numeric
-     `accuracy_results` row for every `EXPERT_SKILL_ACCURACY_CASES` entry by comparing graph-captured
+     `accuracy_results` row for every `REQUIRED_ACCURACY_CASES` entry by comparing graph-captured
      candidate output directly with the task's numeric reference. Drain-vs-floor or any other
-     transitive equivalence is not correctness evidence. Run `GRAPH_CONTRACT_TOOL` in the detached
-     candidate environment with `--accuracy-cases <EXPERT_SKILL_ACCURACY_CASES>`,
-     `--runtime-file EXPERT_SKILL_VALIDATION`,
-     `--liveness-cases <EXPERT_SKILL_ACCURACY_CASES>`, caller-supplied routes, and
-     `--replays <GRAPH_CONTRACT_REPLAYS>`. Accept only its atomic complete JSON.
+     transitive equivalence is not correctness evidence. When non-empty, run `GRAPH_CONTRACT_TOOL` in
+     the detached candidate environment with `--accuracy-cases <REQUIRED_ACCURACY_CASES>`,
+     `--runtime-file EXPERT_SKILL_RUNTIME_FILE`,
+     `--liveness-cases <REQUIRED_ACCURACY_CASES>`, caller-supplied routes,
+     `--replays <GRAPH_CONTRACT_REPLAYS>`, `--frozen-baseline-ms` (the frozen target-guard latency) and
+     `--resource-evidence` (emitted-kernel metadata in the Skill's documented format). Accept only
+     its atomic complete JSON. When the optional
+     tool is empty, use COMMANDMENT's graph-capable correctness/liveness command for the same cases
+     and replay count; the evidence requirements remain unchanged.
 3. A source label (`search` or `integrated`) never relaxes a
    quality gate. Exclude any incomplete or incorrect arm, and exclude every candidate whose absolute
    target-guard speedup is `<=1.0` versus the frozen baseline. Slow candidates remain WIP; they are

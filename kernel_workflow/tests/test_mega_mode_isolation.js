@@ -92,6 +92,15 @@ ok(!freshMegaDirectionLeak({
   prompt: 'Author the complete candidate from the frozen source and current MegaPlanIR.',
 }),
   'a clean frozen-baseline Analyze direction remains eligible');
+ok(!freshMegaDirectionLeak({
+  prompt: 'Author from frozen_baseline + the pinned Skill ONLY (hard anti-reuse: no prior candidate, ' +
+    'handoff, or M2.5 tree). Do NOT recreate or continue any prior lane.',
+}),
+  'a negated anti-reuse clause is not mistaken for a prior-lane continuation');
+ok(freshMegaDirectionLeak({
+  prompt: 'Do not rebuild from scratch; continue the existing candidate lane.',
+}),
+  'a real continuation after a negated clause is still detected');
 const authorLeakFn = src.match(
   /function freshMegaAuthorLeak\(result\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
 );
@@ -200,8 +209,8 @@ ok(rebound.candidate_id === 'same_lane' &&
    rebound.target_topology.included_regions.includes('persistent') &&
    !rebound.prompt.includes('replacement_lane'),
   'a Planner rename is rebound to the existing WIP identity without its stale lane prompt');
-ok(/const bound = bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
-  'every planned round binds to a recoverable WIP before candidate identity is resolved');
+ok(/const bound = parkedNow \? raw : bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
+  'every planned round binds to a recoverable WIP unless the Planner parked it this round');
 ok(/const continuation = megaWipContinuationDirection\(currentRound\);[\s\S]{0,420}continuing resumable WIP lane[\s\S]{0,260}raw = continuation/.test(src),
   'a rejected planner direction continues the same WIP lane inside one Workflow');
 ok(/Full and profitable partial[\s\S]*fusion are both legal/.test(searchLead) &&
@@ -318,15 +327,16 @@ ok(/const MEGA_ROUTE_ONLY = MODE === 'mega'/.test(src) &&
    /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src) &&
    /mega_route_only: true[\s\S]{0,500}validation_status: 'route_only'/.test(src),
   'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
-ok(/requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES/.test(src) &&
-   /EXPERT_SKILL_ACCURACY_CASES, \.\.\.TARGET_GUARDS/.test(src),
-  'Expert Skill accuracy cases are mandatory functional and scoring gates');
-ok(/EXPERT_SKILL_ACCURACY_CASES\.length > 0, 'expert_skill_accuracy_cases'/.test(src),
-  'pinned candidate validation fails closed without declared accuracy cases');
+ok(/requiredAccuracyCases: REQUIRED_ACCURACY_CASES/.test(src) &&
+   /REQUIRED_ACCURACY_CASES, \.\.\.TARGET_GUARDS/.test(src) &&
+   /A\.required_accuracy_cases != null/.test(src),
+  'run-owned accuracy cases remain mandatory without an Expert Skill');
+ok(/REQUIRED_ACCURACY_CASES\.length > 0, 'required_accuracy_cases'/.test(src),
+  'pinned candidate validation accepts only an explicit run-owned accuracy contract');
 ok(/label: `mega:structure:\$\{candidateId\}`[\s\S]{0,120}timeout_ms: 600000/.test(src) &&
    /if \(shouldStructuralVerify\) megaChargeMs\(600000/.test(src),
   'deep structural verification has a replay-consistent ten-minute budget');
-ok(engineer.includes('Every staged smoke') &&
+ok((engineer.includes('Every staged smoke') || engineer.includes('Every smoke is wall-clock bounded')) &&
    engineer.includes('candidate-only harness mode') &&
    engineer.includes('path marker'),
   'staged GPU authoring cannot count fallback-path smoke evidence');

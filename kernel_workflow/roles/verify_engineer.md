@@ -117,7 +117,8 @@ invented reference-parity failures.
 - `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
   provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
   content digests and reveal neither source location nor reference-only filenames.
-- `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`,
+- `REQUIRED_ACCURACY_CASES` is the run-owned accuracy/liveness coverage and remains authoritative
+  when Expert Skills are disabled. `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`,
   `EXPERT_SKILL_PLAYBOOK`, `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
   `EXPERT_SKILL_ACCURACY_CASES`, and `EXPERT_SKILL_SOURCE_FILES` describe
   optional matched knowledge. They never create a different candidate source
@@ -143,6 +144,19 @@ When `VERIFY_TIER` is present:
 
 A score-tier pass does not imply finalist acceptance. Both tiers use the same frozen baseline
 denominator.
+
+- The paired `base` arm is the FROZEN baseline: run it from `FROZEN_KERNEL_PATH` (detached, activation
+  switch off), interleaved with the candidate. The candidate tree's own switch-off path is NOT the
+  baseline: if you also time it, report it only as a diagnostic (`switch_off_ms`, `switch_speedup`).
+  `per_case.baseline_ms` must be the frozen arm's reading; the orchestrator re-bases any row whose base
+  drifts more than 5% from `BASELINE_PER_CASE` and records it as a denominator mismatch.
+- When the candidate fuses stages, also return `component_breakdown`: rows of `{component, busy_ms,
+  wait_ms, method, evidence}` where `method` is `ablation` (one component disabled in a diagnostic
+  build, then re-timed), `standalone` (the component's emitter timed alone) or `timestamp` (per-CTA
+  phase timestamps). Return `hot_path_counters` as dynamic or emitted counts per unit of work (atomics
+  per m-block and per scheduler iteration, fences per Combine item, barriers per iteration). Diagnostic
+  builds carry their own JIT identity and are never the timed score arm. Omit a row you could not
+  measure rather than estimating it.
 
 ## Steps
 1. Build a clean copy and apply the patch, or copy the whole candidate:
@@ -200,15 +214,24 @@ denominator.
    CORRECTNESS entry verbatim (with its workspace changed to `$WS`);
    never wrap a COMMANDMENT GPU entry a second time. If it fails → `status:"correctness_failed"`.
    When `DIRECT_GRAPH_ACCURACY=1`, emit one `accuracy_results` row for every
-   `EXPERT_SKILL_ACCURACY_CASES` entry by capturing/replaying the candidate path and comparing its output
+   `REQUIRED_ACCURACY_CASES` entry by capturing/replaying the candidate path and comparing its output
    directly with the task's numeric reference. Candidate-vs-floor,
    drain-vs-floor, a triangle-bound estimate, or accuracy inherited from another HEAD is not
-   evidence. Run `GRAPH_CONTRACT_TOOL` from the candidate environment in one EP8 lease:
+   evidence. When `GRAPH_CONTRACT_TOOL` is non-empty, run it from the candidate environment in one
+   EP8 lease:
    `torchrun --standalone --nproc_per_node=8 GRAPH_CONTRACT_TOOL --candidate-tree "$WS"
-   --runtime-file EXPERT_SKILL_VALIDATION
-   --accuracy-cases <EXPERT_SKILL_ACCURACY_CASES> --liveness-cases <EXPERT_SKILL_ACCURACY_CASES>
+   --runtime-file EXPERT_SKILL_RUNTIME_FILE
+   --accuracy-cases <REQUIRED_ACCURACY_CASES> --liveness-cases <REQUIRED_ACCURACY_CASES>
    --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
-   --rtol <ACCURACY_THRESHOLD> --json-output "$VERIFY_DIR/graph_contract.json"`.
+   --rtol <ACCURACY_THRESHOLD> --frozen-baseline-ms <BASELINE_PER_CASE latency of the first
+   TARGET_GUARDS entry> --resource-evidence "$VERIFY_DIR/resources.json"
+   --json-output "$VERIFY_DIR/graph_contract.json"`. `EXPERT_SKILL_RUNTIME_FILE` is the validator
+   itself (never the `validation.yaml` data file); build `resources.json` in the format the Skill's
+   acceptance section documents before the run. A JSON with `claim_blockers` and exit status 1 is
+   incomplete evidence to report, not a harness crash.
+   When `GRAPH_CONTRACT_TOOL` is empty, use the graph-capable correctness command from COMMANDMENT for
+   every `REQUIRED_ACCURACY_CASES` entry and the required replay count. An empty optional tool never
+   waives direct graph accuracy or liveness evidence.
    Use the MORI/JIT environment from COMMANDMENT and an outer wall timeout. Consume only an atomic
    JSON with `claim_complete:true`. The known MORI post-result teardown may make torchrun nonzero
    after that file is complete; no other nonzero/fatal is admissible. If the harness cannot execute

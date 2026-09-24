@@ -259,16 +259,38 @@ Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,
 `CURRENT_BEST_PER_CASE`, `HISTORY`, `MEGA_CANDIDATE_REGISTRY`,
 `MEASUREMENT_CALIBRATION`, `ROADMAP_LADDER`, `OPEN_RUNGS`, `TASK_GRAPH`,
 `RESOURCE_TIMELINE`, `MEGA_PLAN_IR`, guards, score configuration, and optional
-`STRUCTURAL_ONLY`, plus `BASELINE_OPERATOR_MAP`. A Skill-enabled run may additionally provide
+`STRUCTURAL_ONLY`, plus `BASELINE_OPERATOR_MAP` and `MEGA_STALL` (`rounds` without new runtime
+evidence, and its `limit`). A Skill-enabled run may additionally provide
 `EXPERT_SKILL_PLANNER_EXTENSION`, Skill identity, and the bundle/component
 digests listed for Analyze.
 
 Plan exactly one complete candidate direction:
 
-1. Continue recoverable WIP before opening a duplicate lane.
+1. Continue recoverable WIP before opening a duplicate lane. The controller binds every round to
+   the active WIP lane, so changing course needs one of two explicit, reversible exits (never a
+   silent rename):
+   - `rewind_head` + `rewind_reason`: roll the SAME lane back to an earlier commit of its own history
+     (e.g. the last commit that still had the required work-unit/publication structure). The old
+     HEAD is tagged, not lost.
+   - `park_candidate_id` + `park_reason` with a NEW `candidate_id`: freeze the active lane (status
+     `parked`) and start a structurally different lane from `frozen_baseline` or a scored parent.
+     A parked lane is resumed later by naming it as `candidate_id` (parking the then-active lane
+     in the same direction).
+   Use an exit only for a structural reason stated in the reason field (see 11); never to escape a
+   bug that is merely unlocalized.
+   To keep pushing a direction that is right but unfinished, name it again: put the essential task
+   (what to change or measure, and why, in one sentence) in `title` and its files in `focus_files`.
+   While a WIP lane exists the Author's `prompt` also carries the lane state (and some orchestrator
+   versions replace your prompt with that state entirely), but `title`, `focus_files`,
+   `graph_refs` and `roadmap_rung` always reach the Author.
 2. Consume `contract_failures` structurally. Order categories:
    `plan` → `correctness` → `abi` → `lifecycle` → `resource/compiler` →
-   `schedule` → `performance`. Required failures are blockers. If a matching
+   `schedule` → `performance`. Required failures are blockers; each carries a
+   `tier`: `semantic` failures (a broken behavioral invariant) are routed like
+   runtime blockers, `surface` failures (spelling/plumbing of names) never
+   outrank runtime evidence. `STRUCTURAL_CONTRACT_POLICY` is authoritative: when
+   it is `advisory`, no contract failure keeps a coherent checkpoint off the card,
+   even if the TASK text calls the contract a preflight gate. If a matching
    `failure_routes` entry exists in the Planner Extension, use its
    `repair_intent`, checkpoint, focus files and proof requirement; do not
    replace the structured route with a prose guess.
@@ -285,7 +307,90 @@ Plan exactly one complete candidate direction:
    stop.
 6. Under `STRUCTURAL_ONLY=1`, finish the declared target topology without GPU
    claims and stop only at a current-revision contract pass.
+7. When a `performance` blocker is actually a graph-replay **liveness** failure —
+   the fused kernel deadlocks or is reaped as a hang under capture+replay and the
+   round retreats to a coarse cross-rank barrier that serializes the stages —
+   treat *diagnosis* as the blocker, not another speculative overlap rewrite.
+   Before spending a round on another readiness/arrival edit by guess-and-check,
+   require a host-readable diagnostic first: on spin-timeout each stuck consumer
+   writes `{observed, target}` (its counted arrivals against its expected
+   `topk*generation`) into a host-visible scratch slot, and the readiness wait is
+   bounded (cap iterations → dump → exit cleanly) instead of infinite. This turns
+   an information-free hang into a one-shot classification in a single run —
+   coverage/accounting (target advanced past what was published, e.g. a per-
+   generation counter not re-armed across the replay boundary) vs visibility
+   (published but not observed) vs under-publish — and a minimal replay-only smoke
+   (smallest guard, capture + two replays, no stage re-captures) makes the
+   diagnostic loop seconds rather than a full round. A round that lands this
+   instrumentation is progress even with no speedup; the fast overlap the Skill
+   describes only becomes reachable once the deadlock is *located*, not guessed.
+8. Do not regress a landed, replay-safe partial win while chasing overlap. If the
+   stage1 per-bucket tuned tile schedule is already wired (dispatch rules
+   populated, its isolated time at the Skill's target), keep it wired across
+   resumes and rungs — the coarse-barrier base plus the tuned tile table is the
+   fallback to protect, and the remaining gain is the stage overlap that (7)
+   unblocks. `PROFILE_SUMMARY.analysis_result` may reorder directions only when it
+   is `ready`, its evidence is complete, its confidence is medium/high, and its
+   input is this lane's `PROFILE_SUMMARY.candidate_evidence` (same candidate id and
+   HEAD). An `awaiting_measurement`/low-confidence result may only choose the NEXT
+   MEASUREMENT, never a code direction; a baseline-only route comparison is not a
+   fused-vs-baseline delta.
+9. Suspect your implementation before the Skill's contract. The Skill is a
+   deconstruction of a known-working reference, so when your implementation of a
+   Skill-specified invariant deadlocks or misbehaves, the null hypothesis is that
+   *your realization of it is wrong*, not that the invariant is wrong. You MUST
+   NOT replace a Skill-specified contract — e.g. never-reset, epoch-scaled arrival
+   counters with a monotone `topk*generation` target — with a home-grown
+   alternative (a per-generation reset, a parity/double-bank ABA scheme, an
+   "absolute" retargeting) until step 7's host-readable `{observed, target}`
+   evidence pinpoints the *invariant itself* as violated. A symptom like "the
+   cumulative count is off by ±1..2 per token" is evidence of a **non-idempotent
+   producer** (a per-n-block arrival bump not gated to a single wave, or missing
+   its system-release fence ordering — so redundant waves double-count), NOT of a
+   brittle target: fix the producer's idempotency/fence and keep the contract.
+   Abandoning a proven contract on a deadlock you have not yet localized is the
+   failure this rung exists to stop; record the localized cause in `notes` so the
+   next round inherits the conclusion instead of re-litigating it.
+10. Judge progress against the frozen denominator, not a moving self-reference.
+    The headline speedup is the fused candidate's rank-max over the **frozen
+    scattered baseline** rank-max on the same machine, which is fixed and needs no
+    re-measurement. Do not treat a prior candidate's own scattered fallback arm
+    (the same tree run with the activation switch off, which regresses when the
+    fused path is broken) as the denominator, and do not re-open a "machine got
+    slower vs the code regressed" debate from that arm's number — a scattered arm
+    that reads far above the frozen baseline is the candidate's own regression, not
+    a stale baseline. If a paired base other than `frozen_baseline` is used for
+    incremental A/B, still report the frozen-relative number so the direction is
+    chosen against the fixed target. The controller re-bases any score whose paired
+    base drifted >5% from the frozen row and records `denominator_mismatch`; a lane
+    carrying it has a shared-code regression (or ran the wrong tree) that is its
+    first blocker.
+11. Judge the ARCHITECTURE by its ceiling, not by the current end-to-end score. Fusion
+    only removes waiting (launch gaps, tails, cross-rank barriers); it never removes
+    work (GEMM compute, data movement, atomics). Read the lane's
+    `component_breakdown` (per-component busy vs wait time, standalone or ablation
+    measurements) and `hot_path_counters`:
+    - Construction phase (the fused structure is not complete yet): never park or
+      rewind because of a low e2e score; a correct-but-slow checkpoint is expected.
+      Check only correctness and the Skill's blocking invariants.
+    - A component whose WORK is slower than its frozen counterpart (e.g. a copy,
+      an epilogue, a publish path) is a component defect: fix that component; do not
+      abandon the architecture for it.
+    - Large WAIT with baseline-level work means overlap is unfinished: keep building.
+    - Rewind or park only when (a) the lane's committed structure violates a blocking
+      invariant that cannot be restored incrementally (e.g. the work unit was
+      coarsened), or (b) work plus unavoidable wait already exceeds the target
+      latency even with perfect overlap. When the breakdown is missing, the next
+      direction is the measurement (ablation: disable one component, re-time), not a
+      rewrite.
+12. `MEGA_STALL.rounds >= MEGA_STALL.limit` means the lane produced no new runtime
+    evidence for that many rounds. The next direction must produce evidence on the
+    banked HEAD (bounded on-card smoke, the bounded `{observed,target}` diagnostic of
+    rule 7, or an ablation), not another GPU-free authoring batch. At twice the limit
+    the controller stops the wave.
 
 Return the ordinary `PLAN_SCHEMA` with at most one `search|integrated`
-direction. Return `stop:true` only when no WIP is recoverable and no distinct
-evidence-backed direction remains.
+direction; the optional direction fields `rewind_head`/`rewind_reason` and
+`park_candidate_id`/`park_reason` carry the exits of rule 1. Return `stop:true`
+only when no WIP is recoverable and no distinct evidence-backed direction
+remains.

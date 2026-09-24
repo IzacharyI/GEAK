@@ -237,13 +237,12 @@ const primSpeedup = (o) => {
 };
 const KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
   (WORKFLOW_DIR ? WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge' : '')).replace(/\/+$/, '');
-// Expert Skills are opt-in and never override frozen-source facts or measurement.
 const USE_EXPERT_SKILLS = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
-const PINNED_MEGA_SKILL = MODE === 'mega' && !!EXPERT_SKILL_DIR;
+const PINNED_MEGA_SKILL = MODE === 'mega' && USE_EXPERT_SKILLS && !!EXPERT_SKILL_DIR;
 const EXPERT_SKILL_PLANNER_GUIDE_FILE = `${EXPERT_SKILL_DIR}/planner_guide.md`;
 const EXPERT_SKILL_AUTHOR_GUIDE_FILE = `${EXPERT_SKILL_DIR}/author_guide.md`;
 const EXPERT_SKILL_BUNDLE_TOOL = PINNED_MEGA_SKILL
@@ -258,6 +257,8 @@ const EXPERT_SKILL_CONTRACT_FILE = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILL_DIR}/contract.yaml` : String(A.expert_skill_contract || '');
 const EXPERT_SKILL_VALIDATION_FILE = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILL_DIR}/validation.yaml` : String(A.expert_skill_validation || '');
+const EXPERT_SKILL_RUNTIME_FILE = PINNED_MEGA_SKILL
+  ? `${EXPERT_SKILL_DIR}/runtime_validation.py` : String(A.expert_skill_runtime_file || '');
 const EXPERT_SKILL_VALIDATION_STATUS = String(
   A.expert_skill_validation_status || ''
 );
@@ -292,6 +293,20 @@ const REQUIRE_EXPERT_SKILL_CONTRACT = CHECK_EXPERT_SKILL_CONTRACT &&
 // decided by the activated on-card behavior gates below.
 const STRUCTURAL_CONTRACT_BLOCKING =
   String(A.block_on_expert_skill_contract || 'false') === 'true';
+// Structural check + on-card Verify are reserved BEFORE the Author is sized; a leftover-based
+// Verify budget was always <300s after a full Author turn, so no turn ever reached the card.
+const MEGA_VERIFY_RESERVE_S = Math.max(300, Number(A.mega_verify_reserve_s || 1200));
+const MEGA_POST_AUTHOR_RESERVE_S = MEGA_STRUCTURAL_ONLY ? 0
+  : (CHECK_EXPERT_SKILL_CONTRACT ? 600 : 0) + MEGA_VERIFY_RESERVE_S;
+const MEGA_STALL_LIMIT = Math.max(0, Number(A.mega_stall_limit != null ? A.mega_stall_limit : 3));
+const MEASURE_FIRST_TEXT = (n) => MEGA_STALL_LIMIT && n >= MEGA_STALL_LIMIT
+  ? `MEASURE_FIRST: ${n} rounds produced no new runtime evidence; before any source edit run a ` +
+    'bounded on-card smoke of the current HEAD and report its concrete result. ' : '';
+if (MODE === 'mega' && MEGA_PRODUCTION &&
+    MEGA_CANDIDATE_TIMEOUT_S - 150 - MEGA_POST_AUTHOR_RESERVE_S < 900) {
+  throw new Error(`mega_candidate_timeout_s=${MEGA_CANDIDATE_TIMEOUT_S} cannot fit a 900s Author ` +
+    `plus the ${MEGA_POST_AUTHOR_RESERVE_S}s structural+on-card Verify reserve`);
+}
 if (MEGA_STRUCTURAL_ONLY && !CHECK_EXPERT_SKILL_CONTRACT) {
   throw new Error('mega_structural_only requires an enabled Expert Skill contract');
 }
@@ -326,9 +341,9 @@ const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
   A.candidate_import_modules || [],
 ));
 const EXPERT_SKILL_SOURCE_FILES = argList(A.expert_skill_source_files || []);
-const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(
-  A.expert_skill_accuracy_cases || [],
-));
+const EXPERT_SKILL_ACCURACY_CASES = Object.freeze(argList(A.expert_skill_accuracy_cases || []));
+const REQUIRED_ACCURACY_CASES = Object.freeze(argList(A.required_accuracy_cases != null
+  ? A.required_accuracy_cases : (USE_EXPERT_SKILLS ? EXPERT_SKILL_ACCURACY_CASES : [])));
 const FORBIDDEN_CANDIDATE_TREE_DIGESTS = new Set(argList(
   A.forbidden_candidate_tree_digests || [],
 ).filter(validSha256));
@@ -336,8 +351,7 @@ const EXPERT_SKILL_ROLES = new Set([
   'tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'mega_search_lead',
 ]);
 
-// Capability evaluation hides reference addresses and enables provenance checks.
-const CAPABILITY_EVAL = String(A.capability_eval != null ? A.capability_eval : 'false') === 'true';
+const CAPABILITY_EVAL = String(A.capability_eval ?? 'false') === 'true';
 const STRICT_AUTONOMY = String(A.strict_autonomy != null ? A.strict_autonomy : 'false') === 'true';
 if (STRICT_AUTONOMY && !CAPABILITY_EVAL) {
   throw new Error('args.strict_autonomy requires capability_eval=true');
@@ -396,7 +410,7 @@ if (PINNED_MEGA_SKILL &&
     [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
     [LAUNCH_TARGET === 2, 'launch_target=2'],
     [!ALLOW_PARTIAL_FUSION, 'allow_partial_fusion=false'],
-    [EXPERT_SKILL_ACCURACY_CASES.length > 0, 'expert_skill_accuracy_cases'],
+    [REQUIRED_ACCURACY_CASES.length > 0, 'required_accuracy_cases'],
   ].filter(([ok]) => !ok).map(([, label]) => label);
   if (missing.length) {
     throw new Error(`pinned candidate_validation missing gates: ${missing.join(', ')}`);
@@ -2003,6 +2017,7 @@ function analysisSkillBlock(role, phase) {
       `high/medium-confidence evidence alongside generic profile/per-case data. A degraded or unavailable ` +
       `analysis contributes nothing; continue from the generic Profile result.`;
   }
+  if (role === 'mega_search_lead' && phase === 'plan_round') return analysisSkillBlock('tech_lead', 'plan_round');
   return '';
 }
 
@@ -2211,15 +2226,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Enforce a FROZEN REAL-ONLINE BASELINE in BOTH modes (author AND same-language
-// optimize). The immutable unittest times + parity-checks the candidate against
-// baseline_src/ / meta.baseline_callable (the live online kernel); if neither
-// exists it would silently fall back to timing kernel_src/ against itself — the
-// "optimized-HIP vs naive-HIP = fake 15.7×" bug this harness exists to prevent.
-// The script has no FS access, so we trust the director's structured verdict
-// (it copied baseline_src/ + confirmed the callable). Missing -> abort/re-extract.
-// ---------------------------------------------------------------------------
+// Require the Director's frozen online baseline; self-timing kernel_src would create a fake win.
 const hasBaseline = setup.baseline_frozen === true ||
   (typeof setup.baseline_callable === 'string' && setup.baseline_callable.trim().length > 0);
 if (!hasBaseline) {
@@ -2269,10 +2276,14 @@ if (MODE === 'author') {
 // ===========================================================================
 
 // One candidate portfolio and lifecycle, with or without Expert Skills.
-const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected'];
+const MEGA_CANDIDATE_STATES = ['authoring', 'runnable', 'scored', 'finalist', 'rejected', 'parked'];
 let megaCandidateRegistry = [];
 let megaStateSequenceBase = 0;
 let megaUnsafeTimeout = null;
+// Consecutive rounds without new runtime evidence (independent Verify, a better score, or an
+// on-card Author result that changed the blocker). Drives measure-first and the stall stop.
+let megaStall = 0;
+let megaLastBlocker = '';
 let megaMeasurementCalibration = {
   ready: false, candidate_id: '', attempt_id: '', evidence_manifest: '', note: 'not measured',
 };
@@ -2894,38 +2905,14 @@ function pipeOccupancyGate(rt, directions) {
 // <</REPLAY:pipe_occupancy_gate>>
 
 // <<REPLAY:roadmap_ladder_gate>>
-// DID THE ROUND PLAN AGAINST THE LADDER ANALYZE BUILT, OR AROUND IT?
-//
-// The third of the three "was the artifact READ" gates, and the one that catches a failure the
-// other two structurally cannot. taskGraphGate asks whether the dependency graph exists.
-// pipeOccupancyGate asks whether each direction was priced against a busy or idle pipe. Both look
-// at the directions that WERE issued. Neither can see the direction that was never issued.
-//
-// The cost of not having it, measured: a wave's Analyze produced a correct four-rung ladder ending
-// in the exact acceptance shape the whole program existed to reach, wrote it to `roadmap.md` and to
-// `analysis.json:candidate_directions`, and then `plan_round` was never handed either artifact and
-// never mentioned a rung again — `grep -c 'D0\|D1\|D2\|D3\|roadmap'` over the run's report and
-// insight log returned 0. Six directions were dispatched. The bounding readout never ran. The rung
-// the ladder explicitly designated as THIS RUN'S POSITIVE CONTROL never ran, so the run had no
-// control and had to improvise a substitute mid-flight from an engineer's scratch workspace. The
-// fusion rung, gated on a rung that ran out of order and without its own mandatory arm, was never
-// proposed at all. Every one of those is invisible in a per-direction check; all of them are
-// obvious the moment you diff dispatched-rungs against the ladder.
+// DID THE ROUND PLAN AGAINST THE LADDER ANALYZE BUILT, OR AROUND IT? taskGraphGate and
+// pipeOccupancyGate only see directions that WERE issued; this gate diffs dispatched rungs against
+// the ladder, which exposes skipped controls and a fusion rung that was never proposed.
 //
 // <<REPLAY:open_rungs>>
-// A RUNG IS DONE WHEN IT PRODUCED A NUMBER, NOT WHEN IT WAS PLANNED.
-//
-// `dispatchedRungs` is filled from `lg.planned`, i.e. from what the round INTENDED to take. That is
-// the right input for the ordering check — a rung whose prerequisite was attempted and failed should
-// not silently satisfy the prerequisite, but neither should the run pretend the attempt never
-// happened. It is the wrong input for "what is still owed", and until now it was the only record.
-//
-// What that cost, in full: one wave's ladder ended in the fusion rung the whole program existed to
-// reach. The rung below it was planned, its device arm hit an illegal access, and it was retired as
-// a bring-up failure — but it counted as dispatched, so nothing was owed. The fusion rung's producer
-// side was then written in a later round and measured by nobody. The wave ended with the ladder
-// nominally clear, a handover note inside one engineer's round directory, and no measurement. The
-// next wave inherited none of it.
+// A RUNG IS DONE WHEN IT PRODUCED A NUMBER, NOT WHEN IT WAS PLANNED. `dispatchedRungs` (from
+// `lg.planned`) is right for ordering but wrong for "what is still owed": a planned rung that
+// faulted or was never measured must stay open and carry forward.
 //
 // So tally an OUTCOME per rung and carry the unfinished ones forward:
 //   never_planned  no round has taken it
@@ -3211,19 +3198,7 @@ function roadmapLadderGate(ladder, directions, completedRungs) {
 // claim with no patch behind it has said nothing about the search space, and charging it to the
 // stopping criterion ends the run on the strength of experiments that were never performed.
 //
-// This is not hypothetical. Measured on wave 14: budget 8, max_no_improve 3, three rounds, seven
-// directions, one GPU lease left in the budget and the plan naming round 4 as the round that had
-// to spend it. Round 1 dispatched three directions and produced zero measurements (two returned
-// static analysis without a lease, one copied the baseline latencies into `optimized_ms`). Round 2
-// dispatched two and produced zero the same way. Round 3 produced exactly one real reading. The
-// counter reached 3 and the loop exited at the top of round 4 with the budget not exhausted. Of
-// the three rounds it counted, one was an experiment that ran and lost and two were rounds in
-// which nothing was measured at all.
-//
-// An earlier, narrower version of this rule existed — it exempted a round only when EVERY
-// direction was `inactive`. It missed wave 14 twice over: a single direction that returned nothing
-// (rather than returning an unexecuted patch) breaks the `every`, and "never got the lease" is not
-// `inactive` in the first place.
+// (A run once stopped with budget left after two of its three counted rounds measured nothing.)
 //
 // Admissibility is deliberately the same standard the rest of the round already applies, so a
 // reading that is VOID for promotion cannot be counted as evidence for stopping:
@@ -3295,6 +3270,7 @@ function normalizeContractFailures(raw) {
     id: String(failure && failure.id || ''),
     category: String(failure && failure.category || 'semantic'),
     severity: String(failure && failure.severity || 'required'),
+    tier: failure && failure.tier === 'surface' ? 'surface' : 'semantic',
     messages: Array.isArray(failure && failure.messages)
       ? failure.messages.map(String) : [],
   })).filter((failure) => failure.id);
@@ -3341,7 +3317,7 @@ function normalizeMegaCandidate(raw) {
   const idValid = validMegaCandidateId(c.id);
   const sourceIdValid = validMegaCandidateSourceForId(c.id, source);
   const candidateStates = typeof MEGA_CANDIDATE_STATES === 'undefined'
-    ? ['authoring', 'runnable', 'scored', 'finalist', 'rejected'] : MEGA_CANDIDATE_STATES;
+    ? ['authoring', 'runnable', 'scored', 'finalist', 'rejected', 'parked'] : MEGA_CANDIDATE_STATES;
   const status = (!sourceValid || !idValid || !sourceIdValid) ? 'rejected'
     : (candidateStates.includes(c.status) ? c.status : 'authoring');
   const score = Number(c.absolute_score);
@@ -3403,6 +3379,10 @@ function normalizeMegaCandidate(raw) {
     absolute_score: Number.isFinite(score) && score > 0 ? score : null,
     per_case: Array.isArray(c.per_case) ? c.per_case : [],
     paired_readings: Array.isArray(c.paired_readings) ? c.paired_readings : [],
+    denominator_mismatch: Array.isArray(c.denominator_mismatch) ? c.denominator_mismatch : [],
+    component_breakdown: Array.isArray(c.component_breakdown) ? c.component_breakdown : [],
+    hot_path_counters: c.hot_path_counters && typeof c.hot_path_counters === 'object'
+      ? c.hot_path_counters : {},
     null_arm_pct: c.null_arm_pct == null ? null : Number(c.null_arm_pct),
     reps: Math.max(0, Number(c.reps || 0)),
     artifact_hash_base: String(c.artifact_hash_base || ''),
@@ -3535,6 +3515,9 @@ function megaRegistryForSearch(registry) {
       absolute_score: c.absolute_score,
       target_guard: c.target_guard,
       per_case: c.per_case,
+      denominator_mismatch: c.denominator_mismatch,
+      component_breakdown: c.component_breakdown,
+      hot_path_counters: c.hot_path_counters,
       topology_sig: effective.topology_sig || c.topology_sig,
       next_blocker: effective.next_blocker || c.next_blocker,
       notes: effective.notes || c.notes,
@@ -3728,6 +3711,10 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       if (String(r.head || '') !== registered.head) fail.push('head mismatch');
     }
     if (!(Number(r.score) > 1.0)) fail.push('score <= 1.0');
+    if (typeof megaFrozenPerCase === 'function' &&
+        megaFrozenPerCase(r.per_case, o.frozenBaseline, 0.05).mismatch.length) {
+      fail.push('paired base drifted from the frozen baseline');
+    }
     if (!String(r.correctness || '').toLowerCase().startsWith('pass')) fail.push('correctness');
     const perCase = new Map((Array.isArray(r.per_case) ? r.per_case : [])
       .map((x) => [String(x.name || ''), Number(x.speedup)]));
@@ -3875,10 +3862,31 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
   return { pass: reasons.length === 0, reasons, source, row };
 }
 
+// The absolute score is frozen-relative. A paired base arm that drifted from the frozen latency (e.g. a
+// candidate-tree switch-off path that regressed shared code) is re-scored against the frozen row.
+function megaFrozenPerCase(rows, frozen, tol) {
+  const f = new Map((Array.isArray(frozen) ? frozen : []).map((r) =>
+    [String(r && r.name || ''), Number(r && (r.latency_ms || r.baseline_ms))]));
+  const mismatch = [];
+  const perCase = (Array.isArray(rows) ? rows : []).map((r) => {
+    const ms = f.get(String(r && r.name || '')), opt = Number(r && r.optimized_ms);
+    const base = Number(r && r.baseline_ms);
+    if (!(ms > 0 && opt > 0 && base > 0) || Math.abs(base - ms) / ms <= tol) return r;
+    mismatch.push({ name: r.name, reported_base_ms: base, frozen_ms: ms,
+      deviation_pct: Math.round(1000 * (base - ms) / ms) / 10 });
+    return { ...r, baseline_ms: ms, speedup: ms / opt, switch_speedup: Number(r.speedup) };
+  });
+  return { perCase, mismatch };
+}
+
 function megaCandidateFromVerification(meta, ver, opts) {
-  const v = ver || {};
   const o = opts || {};
-  const aggregate = Number(v.verified_weighted != null ? v.verified_weighted : v.verified_geomean);
+  const frozenFix = megaFrozenPerCase((ver || {}).per_case, o.frozenBaseline,
+    Number(o.denominatorTolerance || 0.05));
+  const denomBad = frozenFix.mismatch.length > 0;
+  const v = denomBad ? { ...ver, per_case: frozenFix.perCase } : (ver || {});
+  const aggregate = denomBad ? NaN
+    : Number(v.verified_weighted != null ? v.verified_weighted : v.verified_geomean);
   const score = promotionScore(v, o.promotionMetric || 'operator_e2e',
     o.targetGuards || [], o.regressionGuards || [], aggregate);
   const launches = Number(v.launch_shape && v.launch_shape.launches_cand);
@@ -3930,6 +3938,9 @@ function megaCandidateFromVerification(meta, ver, opts) {
     absolute_score: score,
     per_case: v.per_case || [],
     paired_readings: v.paired_readings || [],
+    denominator_mismatch: frozenFix.mismatch,
+    component_breakdown: v.component_breakdown || [],
+    hot_path_counters: v.hot_path_counters || {},
     null_arm_pct: nullArm,
     reps: Number(v.reps || targetReadout.count),
     artifact_hash_base: v.artifact_hash_base || '',
@@ -3958,14 +3969,18 @@ function megaCandidateFromVerification(meta, ver, opts) {
     correctness: String(v.correctness || ''),
     gpu_executed: String(v.activation_on_hardware || '').toLowerCase() === 'yes',
     activation_on_hardware: String(v.activation_on_hardware || ''),
-    next_blocker: verificationFailed
+    next_blocker: (denomBad ? `DENOMINATOR: paired base deviates from the frozen baseline (${
+      frozenFix.mismatch.map((m) => `${m.name} ${m.reported_base_ms}ms vs frozen ${m.frozen_ms}ms, ${
+        m.deviation_pct}%`).join('; ')}); score re-based on frozen latency. If the base arm was the frozen tree ` +
+      'this is machine drift: re-check GPU state and re-measure, do not edit code for it; if it was the ' +
+      'candidate switch-off path, shared code regressed: fix that first. ' : '') + (verificationFailed
       ? `independent Verify ${v.status || 'failed'} at HEAD ${
         v.candidate_head || meta && meta.head || '(missing)'}; correctness=${
         v.correctness || 'unknown'}, activation_on_hardware=${
         v.activation_on_hardware || 'unknown'}; evidence=${
         v.evidence_manifest || '(missing)'}; prior_handoff=${
         meta && meta.next_blocker || '(none)'}`
-      : String(meta && meta.next_blocker || ''),
+      : String(meta && meta.next_blocker || '')),
     notes: v.claim_complete === true && v.notes ? String(v.notes) :
       String(meta && meta.notes || ''),
   });
@@ -3978,21 +3993,10 @@ function megaCandidateFromVerification(meta, ver, opts) {
 // <<REPLAY:objective_gate>>
 // A WAVE THAT SKIPS THE POSITIVE CONTROL MUST NOT SHIP A NUMBER.
 //
-// `objective: 'working_kernel'` is allowed to skip the control, and skipping it is most of what makes
-// the mode affordable — the control batch is 2.2 of the wave's leases (see OBJECTIVE above). The
-// hazard is obvious and has already happened twice in this project's history: a wave collects timings
-// anyway, someone reads one, and it enters a report as a result. The comment on POSITIVE_CONTROL
-// states the reason it cannot be read — without a control, "we found nothing" and "we cannot see
-// anything" produce byte-identical output — and that reason does not weaken just because the wave
-// was not hunting a win.
-//
-// So the trade is stated explicitly rather than left to discipline: this mode does not make timing
-// numbers cheaper, it makes them INADMISSIBLE. Every finite geomean from an uncontrolled wave is
-// VOID, 1.000x included. Voiding 1.000x is not pedantry — an uncontrolled 1.000x is precisely the
-// reading a blind harness emits, and it is the one that has been believed before.
-//
-// A wave that wants a number pays for the control. `pcRan` is the caller's honest answer to "did the
-// positive control actually run in this wave", so a run that keeps the control keeps its scoring.
+// `objective: 'working_kernel'` may skip the control, which makes its timings INADMISSIBLE, not
+// cheaper: without a control "found nothing" and "cannot see anything" are byte-identical, so every
+// finite geomean from an uncontrolled wave is VOID, 1.000x included. A wave that wants a number pays
+// for the control; `pcRan` says whether it actually ran in this wave.
 function objectiveVerdict(objective, pcRan, geomean) {
   if (objective !== 'working_kernel') return { state: 'scored', caveat: '' };
   if (pcRan) return { state: 'scored', caveat: '' };
@@ -4016,44 +4020,15 @@ function runsCleanly(ver, requirements) {
 // <</REPLAY:objective_gate>>
 
 // <<REPLAY:enabling_step>>
-// A STEP THAT ENABLES A FUSION IS NOT A STEP THAT SPEEDS ONE UP.
-//
-// The round filter that decides what survives is `primSpeedup(ver) > 1.0`. Every direction is judged
-// by whether it made the operator faster THIS ROUND, and everything else is discarded. For a fusion
-// built in stages that filter is not a quality bar, it is a structural block, because the producer
-// half of a fusion cannot be faster on its own by construction: it adds completion signalling and a
-// second buffer, it has no consumer yet to hand the work to, and the only thing it can possibly
-// measure is its own overhead. It is supposed to be slower. It gets rejected for being exactly what
-// it is, does not enter the next round's canonical tree, and the consumer half is then written
-// against a tree where the producer half no longer exists — so it is never written at all.
-//
-// That is how this project stopped at half a fusion. The producer side of the combine fold was
-// authored, compiled, and never carried forward; the consumer side was never begun; the two-launch
-// shape that was the entire acceptance criterion was never reached.
-//
-// So a direction declares which of two things it is, and is judged accordingly:
-//
-//   terminal  — it closes a fusion chain (or it is a standalone optimisation). Judged on SPEED, with
-//               the full protocol: all four guards, rank-max, base/candidate/blank-control
-//               interleaved, and the overlap fraction on the edge it claims to have fused.
-//   enabling  — it is a prerequisite. Judged on FUNCTION: it builds, its path is actually taken,
-//               the results are correct, and it does not deadlock. Its timing is RECORDED AS A COST,
-//               not used to reject it. It is committed to the canonical tree so the next step has
-//               something to build on.
-//
-// Three things keep `enabling` from being a way to commit anything at all:
-//
-//   1. It must name the terminal rung it enables. A prerequisite to nothing is a regression.
-//   2. Its cost is bounded. `cost_budget_pct` is what the direction predicted it would cost; blowing
-//      through that is a design error rather than an expected temporary slowdown, and it is rejected.
-//   3. The cost is DEBT, and the debt is tracked by name until the terminal step pays it. A chain
-//      that never closes leaves the tree slower than it found it, and that has to be on the record
-//      as an outstanding balance rather than absorbed into the baseline.
-//
-// (3) is also what stops the chain from laundering its own overhead. Every committed enabling step
-// makes the canonical tree slower, and the terminal step is measured against the canonical tree. Left
-// alone, a chain that costs 3% and then recovers 3% reads as +3%. So the baseline is PINNED when the
-// first enabling step of a chain is committed, and the terminal step's claim is against the pin.
+// A STEP THAT ENABLES A FUSION IS NOT A STEP THAT SPEEDS ONE UP. The producer half of a staged fusion
+// is slower by construction; a per-round `speedup > 1` filter would discard it and the consumer half
+// would never be written. So a direction declares its role:
+//   terminal — closes a chain (or is standalone). Judged on SPEED with the full paired protocol.
+//   enabling — a prerequisite. Judged on FUNCTION (builds, path taken, correct, no deadlock); its
+//              timing is recorded as a COST, and it is committed so the next step can build on it.
+// Guards: it must name the terminal rung it enables; its cost stays within `cost_budget_pct`; the cost
+// is DEBT tracked until the terminal step pays it, and the baseline is PINNED at the chain's first
+// enabling commit so a chain cannot launder its own overhead.
 const ENABLING_DEFAULT_BUDGET_PCT = 5.0;   // a prerequisite that costs more than this is a design error
 const CHAIN_DEBT_MAX_ROUNDS = 2;           // rounds an unpaid chain may stay open before it is called out
 
@@ -4313,7 +4288,7 @@ function functionalRequirementsFor(direction, purpose) {
     accuracyMetric: ACCURACY_METRIC,
     accuracyThreshold: ACCURACY_THRESHOLD,
     accuracyGuards: strictPath
-      ? [...new Set([...EXPERT_SKILL_ACCURACY_CASES, ...TARGET_GUARDS])]
+      ? [...new Set([...REQUIRED_ACCURACY_CASES, ...TARGET_GUARDS])]
       : [],
     // Null/attribution/overlap arms decide final acceptance, not whether a correct running terminal
     // artifact is preserved for the next round. Enabling arms remain part of functional acceptance.
@@ -4732,22 +4707,11 @@ if (POSITIVE_CONTROL) {
   //                  resolve a 1.5% one. Treat as PASS WITH OVERSHOOT and carry the caveat forward.
   //   absurd/wrong sign -> the instrument is measuring something else entirely. HARD ABORT.
   //
-  // This distinction was learned the expensive way. A control reproduced a known +4.71% effect at
-  // +5.13%, 5/5 pairs favourable, every pair in [4.26, 6.01], against a +0.38% null arm inside the
-  // guard's 0.66% noise threshold — i.e. it demonstrated exactly the sensitivity the step exists to
-  // demonstrate — and a symmetric band killed the whole run over 0.20pp. The old `hi` had been set
-  // to max-observed + 0.2pp from three same-week measurements (4.57/4.71/4.73), which is a
-  // reproduction interval, not a sanity bound. A fourth measurement on a different day landing
-  // 0.4pp out is ordinary; a band that tight was measuring the weather.
+  // (A symmetric band once killed a run whose control read +5.13% against a recorded +4.71%.)
   //
-  // Everything below is computed on MAGNITUDE plus an expected SIGN, not on the raw number, so that
-  // a control can be a deliberate SLOWDOWN. A control whose `how` points at a finished optimization
-  // is the convenient case, not the general one: most runs have no known win lying around, and in a
-  // capability evaluation one that does is a hazard, because the control workspace is the answer
-  // applied. The gate's question — "can this loop resolve an effect of the size we are hunting?" —
-  // is answered just as well by an injected known cost, and an instrument blind to a deliberate
-  // slowdown is blind to a real speedup. So `expected_pct_lo/hi` may both be negative; the caller
-  // states the direction by their sign and this code stops caring which way it points.
+  // Everything below is computed on MAGNITUDE plus an expected SIGN, so a control can be a deliberate
+  // SLOWDOWN: an instrument blind to an injected known cost is blind to a real speedup, and a known
+  // win is a hazard in capability evaluation. `expected_pct_lo/hi` may both be negative.
   // (See benchmark_engineer.md 5b, "When no known-good change exists".)
   // <<REPLAY:pc_gate>>  scripts/replay_runs.js lifts everything between these markers verbatim and
   // re-decides recorded controls with it. Keep the region PURE: it may read only `lo`, `hi`, `got`,
@@ -4777,23 +4741,9 @@ if (POSITIVE_CONTROL) {
   // A CONTROL'S EXPECTED MAGNITUDE IS EITHER A MEASUREMENT OR A GUESS, AND THE TWO CANNOT BE GATED
   // THE SAME WAY.
   //
-  // The overshoot rule above already concedes half of this: a band set from three same-week
-  // reproductions is "a reproduction interval, not a sanity bound". The same is true underneath, and
-  // it is MORE true, because the floor is where a band gets set by arithmetic on a workload nobody
-  // has ever run. `magnitude: 'constructed'` marks that case — a synthetic control (benchmark_
-  // engineer.md 5b), where `expected_pct_lo/hi` is a TARGET the engineer aimed a knob at, not an
-  // effect anyone has recorded. A recorded 4.7% win that reads 2.3% is an instrument problem. An
-  // injected cost aimed at 3.4% that lands at 2.3% is a KNOB-SIZING problem, and the instrument that
-  // measured it is the one piece of the experiment that demonstrably worked.
-  //
-  // This was learned on 2026-08-22, wave 7. An engineer with no known-good change available built the
-  // synthetic slowdown the task asks for, calibrated it on a dose ladder (spin 50/200/800 -> +6.8 /
-  // +36 / +175%, monotone), extrapolated linearly to spin=25 for ~3.4%, and measured -2.30%: 6 of 6
-  // pairs negative, range -1.58..-3.07, against a -0.04% null arm whose worst pair was 0.35%. Then
-  // they reported the 0.2pp shortfall in plain text instead of retrying or widening the band — the
-  // exact behaviour this workflow asks for everywhere else — and the gate killed the run for it.
-  // s_sleep is sublinear at small counts; the extrapolation was optimistic. Nothing about that says
-  // the loop cannot see 2.5%. It had just seen 2.30% at ~7x its own null spread.
+  // `magnitude: 'constructed'` marks a synthetic control (benchmark_engineer.md 5b) whose band is a
+  // TARGET a knob was aimed at, not a recorded effect: a recorded 4.7% win reading 2.3% is an
+  // instrument problem, an injected cost aimed at 3.4% landing at 2.3% is a knob-sizing problem.
   //
   // So a constructed control that UNDERSHOOTS its target is admissible, but only on evidence that
   // the reading is an effect and not noise, which is the question the gate actually asks:
@@ -4815,32 +4765,11 @@ if (POSITIVE_CONTROL) {
   const signUnanimous = ctrlPairs.length >= 3 && ctrlPairs.every((d) => Math.sign(d) === wantSign);
   const resolvedByScale = Number.isFinite(nullWorst) && mGot >= RESOLVE_K * nullWorst;
 
-  // RESOLUTION ON A NULL THAT IS NOT UNIMODAL.
-  //
-  // `RESOLVE_K x the worst null pair` is the right test when the null scatters around a centre: the
-  // worst of a handful of pairs is then a fair stand-in for the spread. It is the WRONG test when
-  // the null is a mixture. Some guards sit in one of two discrete states run to run, and one
-  // excursion into the slow state -- an additive host-side cost that lands on whichever arm happens
-  // to draw it -- sets `nullWorst` by itself. The rule then asks the effect to beat three times a
-  // single draw from the tail of a distribution it is not competing with, and a large, perfectly
-  // clean effect fails.
-  //
-  // A prior run showed one outlying null pair from a reproducible slow state while all candidate
-  // pairs were direction-consistent and the raw arm ranges did not overlap. The outlier made the
-  // real effect look smaller, yet the old worst-null multiplier rejected it.
-  //
-  // So add a second, distribution-free way to be resolved: the effect pairs and the null pairs, by
-  // magnitude, do not overlap. Under the null hypothesis that all n+m pairs are draws from one
-  // distribution, the chance of the two groups separating completely is 2/C(n+m, n) -- 7.9e-3 at
-  // 5-vs-5, 1.1e-5 at 10-vs-10. That is a rank test, so a single fat-tailed draw cannot break it,
-  // and it needs nothing the engineer is not already required to report.
-  //
-  // This is deliberately NOT "sign unanimity is enough". The A/B driver measured a ~0.6% ordering
-  // bias on this operator -- the arm that runs second reads slow -- and a bias like that produces
-  // unanimous signs with no effect at all. Separation is immune to it in a way unanimity is not:
-  // a 0.6pp bias cannot lift every effect pair above every null pair when the null itself spans
-  // several pp. Both routes still have to clear `mLo * UNDERSHOOT_FRAC`, so an injection that never
-  // took effect is caught either way.
+  // RESOLUTION ON A NULL THAT IS NOT UNIMODAL. `RESOLVE_K x the worst null pair` fails a clean effect
+  // when a bimodal guard's single slow-state excursion sets `nullWorst`. Second, distribution-free
+  // route: effect and null pairs do not overlap by magnitude (chance 2/C(n+m, n) under one
+  // distribution: 7.9e-3 at 5-vs-5). Not sign unanimity: a ~0.6% arm-ordering bias yields unanimous
+  // signs with no effect. Both routes still have to clear `mLo * UNDERSHOOT_FRAC`.
   const absCtrl = ctrlPairs.map(Math.abs);
   const absNull = nullPairs.map(Math.abs);
   const resolvedBySeparation = absCtrl.length >= 5 && absNull.length >= 5 &&
@@ -5014,7 +4943,7 @@ if (MODE === 'mega' && profileSummary && profileSummary.__agent_timed_out) {
     reason: 'baseline profile exceeded the production timeout; no candidate GPU work was started',
   };
 }
-const baselineAnalysisResult = MODE === 'mega' ? null : await runProfileAnalysis(
+const baselineAnalysisResult = await runProfileAnalysis(
   profileSummary, 0, 'analysis_engineer:baseline');
 if (profileSummary) {
   profileSummary = {
@@ -6026,9 +5955,11 @@ function freshMegaDirectionLeak(direction) {
     d.title, d.prompt, d.fills_hole, d.enables,
   ].map((value) => String(value || '')).join('\n');
   const externalArtifactPath = /(?:^|[\s"'`])\/[^\s"'`]*(?:geak_state|geak_runs)\//i.test(text);
+  // Negated clauses ("anti-reuse: no prior candidate") forbid reuse; they are not a continuation claim.
+  const asserted = text.replace(/\b(?:no|not|never|without|forbid\w*|avoid\w*)\b[^.;,\n]{0,120}/gi, ' ');
   const priorArtifactClaim =
     /\b(?:continue|resume|reconcile|existing|prior|stale)\b[\s\S]{0,96}\b(?:candidate|lane|checkpoint|head|state|revision)\b/i
-      .test(text);
+      .test(asserted);
   return externalArtifactPath || priorArtifactClaim;
 }
 
@@ -6048,15 +5979,23 @@ function safeVerifyTimeoutRecovery(result) {
 }
 
 function megaWipContinuationDirection(currentRound) {
-  const wip = megaCandidateRegistry.find((c) =>
+  const lane = megaCandidateRegistry.find((c) =>
     (c.source === 'search' || c.source === 'integrated') &&
     (c.status === 'authoring' || c.status === 'runnable'));
-  if (!wip) return null;
+  if (!lane) return null;
+  // Resume from the working checkpoint; the top-level record can hold an older (empty) topology.
+  const e = typeof megaEffectiveLaneCheckpoint === 'function' ? megaEffectiveLaneCheckpoint(lane) : lane;
+  const wip = { ...lane,
+    topology: e.topology && Object.keys(e.topology).length ? e.topology : (lane.topology || {}),
+    contract_failures: Array.isArray(e.contract_failures) ? e.contract_failures : [],
+    next_blocker: e.next_blocker || lane.next_blocker };
+  const sem = wip.contract_failures.filter((f) => f && f.tier !== 'surface');
+  const surf = wip.contract_failures.filter((f) => f && f.tier === 'surface');
   const target = analysis && analysis.mega_plan_ir && analysis.mega_plan_ir.target || {};
   const wipLaunches = topologyLaunchCount(wip.topology);
   const reachesTarget = Number.isFinite(wipLaunches) &&
     wipLaunches === Number(target.launch_count);
-  return {
+    return {
     id: `r${currentRound}_continue_${wip.id}`, candidate_id: wip.id,
     candidate_source: wip.source, base_candidate_id: wip.base_id,
     title: `continue candidate ${wip.id}`, specialty: MEGA_DEFAULT_SPECIALTY,
@@ -6075,9 +6014,11 @@ function megaWipContinuationDirection(currentRound) {
       require_overlap: wip.topology.require_overlap === true,
     },
     contract_failures: wip.contract_failures,
-    prompt: wip.contract_failures.length
-      ? `Resolve required contract failures: ${JSON.stringify(wip.contract_failures)}`
-      : (wip.next_blocker || 'Continue the first unresolved measured blocker.'),
+    prompt: (sem.length
+      ? `Resolve required semantic contract failures: ${JSON.stringify(sem)}`
+      : (wip.next_blocker || 'Continue the first unresolved measured blocker.')) +
+      (surf.length ? ` Surface-tier spelling hints (never outrank runtime evidence): ${
+        surf.map((f) => f.id).join(', ')}.` : ''),
   };
 }
 
@@ -6086,6 +6027,10 @@ function bindMegaDirectionToWip(currentRound, direction) {
   if (!continuation) return direction;
   const planned = direction || {};
   // WIP identity is controller-owned: a Planner may not rename the lane or rebase an authoring WIP (silent frozen_baseline fallback).
+  const ask = String(planned.prompt || '');
+  const other = String(planned.candidate_id || '');
+  const keepAsk = ask && !(other && other !== continuation.candidate_id && ask.includes(other)) &&
+    !/\b(?:restart|recreate|re-create|rebase|from scratch)\b/i.test(ask);
   return {
     ...planned,
     ...continuation,
@@ -6097,8 +6042,11 @@ function bindMegaDirectionToWip(currentRound, direction) {
     ...(Array.isArray(planned.gated_on) ? { gated_on: planned.gated_on } : {}),
     ...(Array.isArray(planned.focus_files) ? { focus_files: planned.focus_files } : {}),
     ...(planned.target_shape ? { target_shape: planned.target_shape } : {}),
-    // Drop any Planner prompt naming a replacement lane/base; keep structured failures + runtime blocker.
-    prompt: continuation.prompt,
+    ...(planned.rewind_head ? { rewind_head: planned.rewind_head,
+      rewind_reason: planned.rewind_reason } : {}),
+    // Keep the Planner's task (unless it names a replacement lane/base) and attach the lane state.
+    prompt: keepAsk ? `${ask}\n\nLANE STATE (${continuation.candidate_id}): ${continuation.prompt}`
+      : continuation.prompt,
     target_topology: continuation.target_topology,
   };
 }
@@ -6115,6 +6063,8 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: searchHistory,
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
+        MEGA_STALL: { rounds: megaStall, limit: MEGA_STALL_LIMIT },
+        STRUCTURAL_CONTRACT_POLICY: STRUCTURAL_CONTRACT_BLOCKING ? 'blocking' : 'advisory',
         MEGA_PROFILE, CANDIDATE_TIMEOUT_S: MEGA_CANDIDATE_TIMEOUT_S,
         ...(MEGA_STRUCTURAL_ONLY ? {
           STRUCTURAL_ONLY: '1',
@@ -6175,8 +6125,19 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
       base_candidate_id: 'frozen_baseline',
     };
   }
+  // Parking freezes (never deletes) the active lane so a structurally different lane can start.
+  const parkId = String(raw.park_candidate_id || '');
+  const parked = parkId && String(raw.park_reason || '').trim() && megaCandidateById(parkId);
+  const parkedNow = !!parked && ['authoring', 'runnable'].includes(parked.status) &&
+    String(raw.candidate_id || '') !== parkId;
+  if (parkedNow) {
+    megaCandidateRegistry = megaCandidateRegistry.map((c) => c.id !== parkId ? c
+      : normalizeMegaCandidate({ ...c, status: 'parked',
+        notes: `parked r${currentRound}: ${raw.park_reason}. ${c.notes || ''}` }));
+    log(`Mega round ${currentRound}: Planner parked lane ${parkId} (${raw.park_reason}); resumable.`);
+  }
   const plannerCandidateId = String(raw.candidate_id || '');
-  const bound = bindMegaDirectionToWip(currentRound, raw);
+  const bound = parkedNow ? raw : bindMegaDirectionToWip(currentRound, raw);
   if (bound !== raw) {
     if (plannerCandidateId && plannerCandidateId !== bound.candidate_id) {
       log(`Mega round ${currentRound}: Planner requested replacement lane ${plannerCandidateId}; ` +
@@ -6312,6 +6273,11 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       'must use the common search/integrated lifecycle' };
   }
   const existing = megaCandidateById(candidateId);
+  if (existing && existing.status === 'parked') {
+    megaCandidateRegistry = megaCandidateRegistry.map((c) => c.id !== candidateId ? c
+      : normalizeMegaCandidate({ ...c, status: 'authoring' }));
+    log(`Mega round ${currentRound}: resuming parked lane ${candidateId}.`);
+  }
   megaAdvanceMs(MEGA_PREP_MODEL_MS);
   const dispatchRemainingS = (dispatchDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && dispatchRemainingS < 900) {
@@ -6341,7 +6307,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const engineerBudgetS = MEGA_PRODUCTION
     ? Math.max(240, Math.min(
       Math.floor(turnBudgetS * (gpuCandidateDevelopment ? 0.85 : 0.60)),
-      Math.floor(availableAfterPrepS - 360)))
+      Math.floor(availableAfterPrepS - Math.max(360, 60 + MEGA_POST_AUTHOR_RESERVE_S))))
     : MEGA_CANDIDATE_TIMEOUT_S;
   const commandBudgetS = Math.max(180, engineerBudgetS - 60);
 
@@ -6390,7 +6356,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     (authorPreflightRequired && !stagedGpuAuthoring);
   const role = 'engineer';
   const roleFile = 'engineer.md';
-  eng = await agentT(
+    eng = await agentT(
       roleAgent(role, 'optimize',
         `Advance candidate lane ${candidateId}; never edit or replace another candidate lane.`, {
           CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
@@ -6409,6 +6375,10 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             : GPU_RESOURCE.specForIndex(0),
           GPUS_PER_JOB: authorGpuProhibited
             ? '0' : String(GPU_RESOURCE.gpusPerJob),
+          AUTHOR_GPU_MODE: authorGpuProhibited ? 'forbidden' : 'bounded_smoke',
+          ...(MEASURE_FIRST_TEXT(megaStall) ? { MEASURE_FIRST: String(megaStall) } : {}),
+          ...(/^[0-9a-f]{7,40}$/.test(String(d.rewind_head || ''))
+            ? { REWIND_TO: d.rewind_head, REWIND_REASON: String(d.rewind_reason || '') } : {}),
           AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
             authorPreflightRequired ? '1' : '0',
           STAGED_GPU_AUTHORING: stagedGpuAuthoring ? '1' : '0',
@@ -6435,28 +6405,21 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent,
         }) +
-      `\n\n${authorPreflightRequired && !stagedGpuAuthoring
-        ? `AUTHORING CONTRACT PREFLIGHT IS REQUIRED AND GPU IS UNAVAILABLE THIS TURN. ` +
-          `The direction's request for on-card work is subordinate to this gate. Run the current ` +
-          `Expert Skill contract without a reference, repair required failures in category order, ` +
-          `commit a coherent source checkpoint, and return claim_complete=true with ` +
+      `\n\n${authorGpuProhibited
+        ? `AUTHOR_GPU_MODE=forbidden (${MEGA_STRUCTURAL_ONLY ? 'STRUCTURAL-ONLY RUN'
+          : 'AUTHORING CONTRACT PREFLIGHT IS REQUIRED'}): no rocm-smi, torchrun, benchmark, ` +
+          `correctness command or GPU runtime import. Repair required failures in category order, ` +
+          `commit a coherent checkpoint, and return claim_complete=true with ` +
           `candidate_status=authoring; runtime_verified, gpu_executed, and score_complete remain ` +
-          `false separately. Do not run ` +
-          `rocm-smi, torchrun, a benchmark, a correctness command, or any GPU runtime import. `
-        : stagedGpuAuthoring
-        ? `STAGED GPU AUTHORING IS ENABLED. Implement a dependency-closed next kernel stage; an ` +
-          `unchanged-HEAD evidence re-seal is not progress while required source checks remain. ` +
-          `Use the supplied EP8 lease for the earliest construction/JIT/small-correctness smoke, ` +
-          `fix concrete failures repeatedly in this same turn when safe, and commit the stage. While ` +
-          `the lease is available, do not return with only scaffolding, planning, or a re-seal: return ` +
-          `after a real smoke result or a concrete bounded failure. Do not run full ` +
-          `performance or claim runtime completion until the full structural contract passes. `
-        : `The exact structural evidence HEAD is ${existing &&
-            existing.structural_candidate_head || '(none)'}. Temporary compile-time diagnostic ` +
-          `instrumentation may run only for bisection, earns no candidate evidence, and must be ` +
-          `fully restored to that exact HEAD before a normal run. Once a production fix is applied, ` +
-          `GPU authorization is revoked for the rest of the turn: commit and return for independent ` +
-          `structural Verify first. `}` +
+          `false separately. `
+        : `AUTHOR_GPU_MODE=bounded_smoke: use the supplied EP8 device for bounded construction/JIT/` +
+          `correctness/short-perf smokes of the HEAD you are editing, before AND after source edits, ` +
+          `repeatedly in this turn. Author smokes are development evidence; independent Verify owns ` +
+          `scoring. Revert diagnostic-only probes before committing. ${MEASURE_FIRST_TEXT(megaStall)}`}` +
+      (/^[0-9a-f]{7,40}$/.test(String(d.rewind_head || ''))
+        ? `REWIND_TO=${d.rewind_head}: after taking the lane lock and before other edits, run ` +
+          `\`git tag -f parked_r${currentRound} HEAD && git reset --hard ${d.rewind_head}\` in ` +
+          `${tree}; the old HEAD stays recoverable through that tag. ` : '') +
       `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
       `through the final commit/manifest write. If the lock is held, return incomplete without editing. ` +
@@ -6482,16 +6445,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       { phase: 'Optimize', label: `mega:${source}:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
         timeout_ms: engineerBudgetS * 1000, timeout_marker: true, max_retries: 1 });
 
-  if (eng && eng.__agent_timed_out) {
+    if (eng && eng.__agent_timed_out) {
     megaUnsafeTimeout = eng;
     laneWriterTimedOut = true;
     log(`Mega round ${currentRound}: candidate author ${eng.label || candidateId} exceeded its ` +
       `deadline. Stopping this workflow invocation because the underlying agent cannot be ` +
       `cancelled and may still hold ${laneLock}.`);
-    eng = null;
-  }
-  if (!eng || eng.claim_complete !== true) {
-    const recovered = await agentT(
+      eng = null;
+    }
+    if (!eng || eng.claim_complete !== true) {
+      const recovered = await agentT(
         roleAgent('engineer', 'recover',
           `RECOVER ONLY candidate ${candidateId}. First confirm the timed-out writer is quiescent and ` +
           `the lane lock is free. Read ${outDir}/candidate_result.json and completed ` +
@@ -6718,8 +6681,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
   if (shouldVerify) {
     const verifyInputs = {
-      CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
-      CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+          CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
       PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
       CANDIDATE_IMPORT_MODULES,
       EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
@@ -6728,22 +6691,23 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       LANE_LOCK: laneLock,
       GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
       GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
-      BASE_CANDIDATE_ID: baseCandidateId,
-      CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
-      VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
-      VERIFY_TIMEOUT_S: verifyBudgetS,
-      GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
-      BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+          BASE_CANDIDATE_ID: baseCandidateId,
+          CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
+          VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
+          VERIFY_TIMEOUT_S: verifyBudgetS,
+          GPU_ID: GPU_RESOURCE.specForIndex(0), SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+          BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
       VERIFY_TIER: 'score',
       MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
       SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
       TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
-      TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-      REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
-      REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
+          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+          REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
+          REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
       REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
-      REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
-      ACCURACY_METRIC, ACCURACY_THRESHOLD,
+          REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
+          ACCURACY_METRIC, ACCURACY_THRESHOLD,
+      REQUIRED_ACCURACY_CASES,
       MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
       RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
       REQUIRE_RESOURCE_VERIFY: '1',
@@ -6755,6 +6719,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
         EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
         EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+        EXPERT_SKILL_RUNTIME_FILE,
         EXPERT_SKILL_ACCURACY_CASES,
         EXPERT_SKILL_SOURCE_FILES,
       } : {}),
@@ -6835,9 +6800,9 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       targetGuards: TARGET_GUARDS, regressionGuards: [],
       launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
       accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
-      requiredAccuracyCases: EXPERT_SKILL_ACCURACY_CASES,
+      requiredAccuracyCases: REQUIRED_ACCURACY_CASES,
       requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
-      allowPartialFusion: ALLOW_PARTIAL_FUSION,
+      allowPartialFusion: ALLOW_PARTIAL_FUSION, frozenBaseline: BASELINE_PER_CASE,
     });
     record.attempts = attempts;
     record.tree = tree;
@@ -6888,6 +6853,19 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const hardwareWasDue = !!shouldVerify;
   if (reachedHardware) noHardware = 0;
   else if (hardwareWasDue) noHardware += 1;
+  const blockerKey = String(record.next_blocker || '').slice(0, 160);
+  megaStall = hasEvidence || improved ||
+    (eng && eng.gpu_executed === true && blockerKey !== megaLastBlocker) ? 0 : megaStall + 1;
+  megaLastBlocker = blockerKey;
+  // Analysis gets the identity-bound evidence of THIS candidate instead of scanning EVAL_DIR.
+  if (ANALYSIS_SKILL_ON && ver) profileSummary = { ...profileSummary,
+    analysis_result: await runProfileAnalysis({ ...profileSummary, candidate_evidence: {
+      candidate_id: candidateId, head: record.head, attempt_id: record.attempt_id,
+      target_guard: record.target_guard, frozen_per_case: BASELINE_PER_CASE,
+      per_case: record.per_case, paired_readings: record.paired_readings,
+      denominator_mismatch: record.denominator_mismatch,
+      component_breakdown: record.component_breakdown, hot_path_counters: record.hot_path_counters,
+      evidence_manifest: record.evidence_manifest } }, currentRound, 'mega:analyze') };
   history.rounds.push({
     round: currentRound,
     directions: [{ id: d.id, title: d.title, specialty: d.specialty,
@@ -6995,6 +6973,12 @@ while (dispatched < BUDGET &&
       stopReason = `${noHardware} consecutive portfolio attempts did not execute the candidate path ` +
         `on hardware; stopping before another unmeasured direction. Lane WIP remains resumable.`;
       log(`Mega hardware stop: ${stopReason}`);
+      break;
+    }
+    if (MEGA_STALL_LIMIT && megaStall >= 2 * MEGA_STALL_LIMIT) {
+      stopReason = `${megaStall} consecutive rounds produced no new runtime evidence (independent ` +
+        'Verify, better score, or a changed on-card blocker); lane WIP remains resumable.';
+      log(`Mega stall stop: ${stopReason}`);
       break;
     }
     continue;
@@ -8365,6 +8349,7 @@ if (MODE === 'mega') {
           BIMODAL_GUARDS, BASELINE_ACTIVATION,
           REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
           ACCURACY_METRIC, ACCURACY_THRESHOLD,
+          REQUIRED_ACCURACY_CASES,
           REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
           REQUIRE_GRAPH_CAPTURE: REQUIRE_GRAPH_CAPTURE ? '1' : '0',
           DIRECT_GRAPH_ACCURACY: DIRECT_GRAPH_ACCURACY ? '1' : '0',
@@ -8375,6 +8360,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
             EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
             EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+            EXPERT_SKILL_RUNTIME_FILE,
             EXPERT_SKILL_TARGET_SCORE: EXPERT_SKILL_RECORDED_SCORE,
             EXPERT_SKILL_TARGET_BAND: [
               EXPERT_SKILL_RECORDED_LOW, EXPERT_SKILL_RECORDED_HIGH,
@@ -8426,6 +8412,7 @@ if (MODE === 'mega') {
         selectedWorkspace: `${EVAL_DIR}/mega_selected`,
         launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
         baselineLaunches: optionalNumber(A.baseline_launch_count),
+        frozenBaseline: BASELINE_PER_CASE,
         targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
         requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
         requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,
@@ -8480,6 +8467,7 @@ if (MODE === 'mega') {
       selectedWorkspace: `${EVAL_DIR}/mega_selected`,
       launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
       baselineLaunches: optionalNumber(A.baseline_launch_count),
+      frozenBaseline: BASELINE_PER_CASE,
       targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
       requiredReplays: REQUIRED_REPLAYS, requiredPairs: REQUIRED_PAIRS,
       requiredPairsByGuard: REQUIRED_PAIRS_BY_GUARD,

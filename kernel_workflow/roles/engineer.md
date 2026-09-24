@@ -87,40 +87,60 @@ For a Mega candidate, treat the six-stage recipe and the current MegaMoEV2/UT
 behavior as the source-authoring context. Keep queue/event/ABI/resource
 lifetime semantics correct, but choose equivalent source organization freely.
 
-For a full Skill target, `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=1` blocks
-promotion. It is a fail-closed GPU prohibition unless
-`STAGED_GPU_AUTHORING=1`. In staged mode, use the supplied device only for the
-earliest construction/JIT/small-correctness smoke of a dependency-closed source
-stage; partial source never earns runtime or score evidence. Every staged smoke
-must enable the declared candidate activation switches verbatim, select a
-candidate-only harness mode when available, and require the declared path
-marker on every rank. A run without those switches or markers exercised the
-baseline path and is void evidence. Run the current contract against `CANDIDATE_TREE`,
-`FROZEN_KERNEL_PATH`, and the supplied `MEGA_PLAN_IR` without any reference
-tree. Repair required failures in this order:
-`plan → correctness → abi → lifecycle → resource/compiler → schedule →
-performance`. Commit a coherent source checkpoint and return
-`candidate_status:"authoring"` with the exact structured
-`contract_failures`: preserve every failing contract check ID as its own entry
-with the tool's category/severity/messages; never collapse them into a summary
-ID or prose. Unless staged mode is enabled, do not run `rocm-smi`, import a GPU
-runtime, acquire a lease, or execute correctness/benchmark commands.
-`claim_complete:true` is valid for
-that finalized static checkpoint and lets independent structural Verify
-populate the next round.
+GPU use is decided by ONE input, `AUTHOR_GPU_MODE`. The legacy inputs
+`AUTHORING_CONTRACT_PREFLIGHT_REQUIRED`, `STAGED_GPU_AUTHORING` and
+`AUTHORING_STRUCTURAL_EVIDENCE_HEAD` are context only and never grant or
+revoke GPU access on their own, and `AUTHOR_GPU_MODE` outranks any TASK or
+DIRECTION wording that calls the Skill contract a GPU or preflight gate.
 
-When `AUTHORING_CONTRACT_PREFLIGHT_REQUIRED=0`, GPU work is authorized only for
-the exact `AUTHORING_STRUCTURAL_EVIDENCE_HEAD`. A temporary compile-time
-cut-point/probe may modify the working tree only to collect diagnostic
-evidence: it is not a candidate, earns no correctness/performance credit, and
-must be completely restored to the exact verified HEAD before another normal
-run. Once you apply a production fix, GPU authorization is revoked for the
-rest of the Author turn: commit, finalize the manifest/result with
-`claim_complete:true` and `candidate_status:"authoring"`, and return for
-independent structural Verify. If that NEW exact HEAD passes, the orchestrator
-may immediately hand it to a separate independent on-card Verify role in the
-same candidate turn; the Author must not perform that retry itself. Never
-compile or measure a changed candidate HEAD using a stale pass.
+- `AUTHOR_GPU_MODE=forbidden` (structural-only runs, or a blocking contract
+  preflight outside staged mode) is a fail-closed GPU prohibition unless the
+  orchestrator switches the mode: do not run `rocm-smi`, import a GPU runtime,
+  acquire a lease, or execute correctness/benchmark commands. Run the current
+  contract against `CANDIDATE_TREE`, `FROZEN_KERNEL_PATH`, and the supplied
+  `MEGA_PLAN_IR` without any reference tree. Repair required failures in this
+  order: `plan → correctness → abi → lifecycle → resource/compiler → schedule →
+  performance`. Commit a coherent source checkpoint and return
+  `candidate_status:"authoring"` with the exact structured
+  `contract_failures`: preserve every failing contract check ID as its own entry
+  with the tool's category/severity/messages; never collapse them into a summary
+  ID or prose. `claim_complete:true` is valid for that finalized static
+  checkpoint and lets independent structural Verify populate the next round.
+- `AUTHOR_GPU_MODE=bounded_smoke` (the normal candidate-validation turn): the
+  supplied device is yours for the whole turn, before AND after source edits.
+  Run the earliest construction/JIT/small-correctness smoke of each
+  dependency-closed stage, fix the concrete failure, rerun, and repeat inside
+  the same turn. A production fix does NOT revoke GPU access: rerun the smoke on
+  the edited HEAD. Every smoke is wall-clock bounded (a few times its expected
+  runtime; an overrun is a probable deadlock to classify, not a hang to wait
+  out), enables the declared candidate activation switches verbatim, selects a
+  candidate-only harness mode when available, and requires the declared path
+  marker on every rank; a run without those switches or markers exercised the
+  baseline path and is void evidence. A temporary compile-time cut-point/probe
+  is diagnostic only: it earns no correctness/performance credit and must be
+  reverted before the commit. Author smokes are development evidence;
+  independent Verify owns correctness, liveness and the score, so never claim
+  runtime completion from your own smoke.
+- `MEASURE_FIRST` present: the lane produced no new runtime evidence for that
+  many rounds. Before any source edit, run a bounded on-card smoke of the
+  current HEAD and report its concrete result (numbers, traceback, or the
+  first unmet readiness counter).
+- `DIRECTION.title` names a concrete change or measurement while
+  `DIRECTION.prompt` only lists lane state (contract failures or a prior
+  blocker): the title is this turn's task and the prompt is context. Fix a
+  semantic-tier failure first only when it blocks the titled task;
+  surface-tier failures are spelling hints.
+- `REWIND_TO` present: the Planner rolled this lane back to an earlier commit
+  for the stated `REWIND_REASON`. After taking the lane lock, tag the current
+  HEAD `parked_r<ROUND>` and `git reset --hard` to `REWIND_TO`; the old HEAD
+  must stay reachable through the tag. Continue from the rewound commit.
+
+Performance numbers you report are frozen-relative: per-case `speedup` and
+`absolute_score` = the frozen `BASELINE_PER_CASE` latency / your candidate
+latency. A same-tree switch-off arm is a diagnostic only; report it as
+`switch_speedup`. If that arm is more than 5% away from the frozen latency,
+your change regressed shared code or the wrong tree ran: that is the blocker
+to fix first, not a slow machine.
 
 Every Python command for a Mega candidate must resolve imports from the
 candidate, not an installed/global checkout. Before an import, correctness,

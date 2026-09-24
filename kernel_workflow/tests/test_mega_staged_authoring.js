@@ -94,8 +94,11 @@ ok(/fail-closed GPU prohibition unless/.test(engineer) &&
      fs.readFileSync(path.resolve(__dirname, '..', '..',
        'perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion/author_guide.md'), 'utf8')) &&
    /temporary compile-time[\s\S]*earns no correctness\/performance credit/.test(engineer) &&
-   /Once you apply a production fix[\s\S]*GPU authorization is revoked/.test(engineer),
-  'Engineer may bisect reversibly but cannot use stale evidence after a production fix');
+   /ONE input, `AUTHOR_GPU_MODE`/.test(engineer) &&
+   /A production fix does NOT revoke GPU access/.test(engineer) &&
+   !/GPU authorization is revoked/.test(engineer) &&
+   /AUTHOR_GPU_MODE: authorGpuProhibited \? 'forbidden' : 'bounded_smoke'/.test(wf),
+  'one AUTHOR_GPU_MODE decides Author GPU use; a production fix reruns the smoke instead of revoking it');
 ok(/preserve every failing contract check ID as its own entry/.test(engineer) &&
    /never collapse them into a summary/.test(engineer) &&
    /GPU absence is not a reason to defer source authoring/.test(engineer),

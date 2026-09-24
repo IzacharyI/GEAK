@@ -8,9 +8,18 @@ validates the canonical Skill bundle.
 Select exactly one direction: continue `full_persistent_pipeline` on its current
 lane and exact working HEAD.
 
-- Never open a duplicate lane.
-- Never restart from the frozen baseline when a WIP lane exists.
-- Never propose an alternate schedule or partial-fusion fallback.
+- Never open a duplicate lane or a <2-launch terminal, and never restart from the frozen
+  baseline silently. The two explicit exits are `rewind_head` (roll the same lane back to an
+  earlier commit of its own history) and `park_candidate_id` (freeze the lane, resumable, and
+  start a new one). Use them only when the lane's committed structure breaks a blocking
+  invariant of `author_guide.md` that cannot be restored incrementally (for example the G1 work
+  unit became a whole m-tile, publication became all-lane atomics, or counters gained
+  per-generation resets), or when measured work plus unavoidable wait already exceeds the target.
+  Never use them because the current e2e score is low while the structure is still being built.
+- A coarse-barrier 2-launch schedule inside the SAME lane is a PERMITTED correctness
+  intermediate, not an alternate lane or a partial-fusion fallback: the code accepts a
+  correct-but-slower 2-launch landing (verify status `regression`/`slower`) and reports its
+  numbers. The barrier is the only allowed simplification; the blocking invariants still hold.
 - Never restate the full implementation contract in the Author prompt.
 - Choose the earliest unresolved evidence boundary, not a broad rewrite.
 - Consume `BASELINE_OPERATOR_MAP`: choose reuse, extraction, inlining, or
@@ -19,8 +28,19 @@ lane and exact working HEAD.
   identity.
 - An unchanged-HEAD evidence re-seal may repair identity once, but cannot consume
   another round while required source checks remain.
-- When no on-card blocker exists because preflight is incomplete, route the next
-  dependency-closed source batch instead of waiting for Verify.
+- The structural contract is ADVISORY (block_on_expert_skill_contract is off): it does
+  NOT block on-card Verify. Each failure carries a `tier`: `semantic` failures mark a broken
+  blocking invariant and are routed like runtime blockers; `surface` failures are
+  exact-spelling hints and never outrank runtime evidence.
+  Once a coherent 2-launch body compiles and imports, route it ON-CARD for a correctness
+  smoke (relL2 at 128/512/8192, path=MEGA x8, launch==2) rather than routing yet another
+  GPU-free source batch. Do not treat "required source checks remain" as a reason to keep
+  the lane off the card.
+- If the same blocker recurs for >=3 rounds with no HEAD move or no measured on-card
+  result, do NOT re-emit the identical direction. Either (a) route the single earliest
+  evidence boundary of that blocker, or (b) if numerics are already correct and the
+  remaining checks are scheduling/performance shape, freeze the correct barriered kernel
+  and isolate only the overlap edit. Repeating an unmoved blocker is not progress.
 
 ## Source batch order
 
@@ -60,10 +80,23 @@ failure to Author. Preserve all already-passing source and runtime evidence.
 - Launch 1: existing BF16→MXFP8 per-1x32 quantization.
 - Launch 2: one persistent grid containing dispatch, GEMM1, GEMM2, weighted
   P2P publication, readiness, and Combine.
-- No grid barrier between G1/G2 drain and Combine.
+- Stage A (correctness): a 2-launch persistent kernel MAY carry a coarse G1/G2->Combine
+  grid barrier while it establishes relL2 < 0.10 at 128/512/8192 on-card. This is the
+  required first milestone, not a failure.
+- Stage B (performance): removing the grid barrier for the overlapped no-barrier schedule
+  is the PERFORMANCE target (blocker step 6 below); introduce it only after Stage A passes
+  relL2 at all three sizes. Do not gate the Stage-A correctness smoke on the no-barrier
+  schedule being present.
 - 8192 profile: 256 CTAs, 8 waves, G2 `64x512x256`, chunk 16, skew 5/4,
   Combine P=1/U=4.
-- Acceptance: relL2 < 0.10 and paired rank-max speedup >=1.03x.
+- Acceptance: relL2 < 0.10 and a frozen-relative rank-max speedup >=1.03x (frozen
+  `BASELINE_PER_CASE` latency / candidate). A lane carrying `denominator_mismatch` has a
+  same-tree switch-off path that drifted from the frozen baseline: route that shared-code
+  regression first.
+- Performance routing: compare the lane's `component_breakdown` with the budget table in
+  `author_guide.md`. A component whose work exceeds its budget is fixed in place; missing
+  breakdown means the next direction is an ablation measurement, not a knob sweep. When
+  `MEGA_STALL` reaches its limit, route an on-card measurement of the banked HEAD.
 
 The complete declarative contract belongs to independent Verify. Planner should
 reference failed check IDs or GPU evidence paths instead of copying its contents.
