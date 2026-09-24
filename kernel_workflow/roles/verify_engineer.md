@@ -139,6 +139,12 @@ When `VERIFY_TIER` is present:
 - `score`: run the supplied target guard paired A/B, artifact/path/launch checks, accuracy and the supplied
   short liveness count (normally 30). This makes the whole candidate rankable. Do not spend the three
   regression guards, overlap meter or 256-replay terminal contract here.
+  **The score tier MUST include its own null arm.** In the same lease and the same interleave as the
+  target-guard pairs, run at least 5 frozen-vs-frozen pairs (both arms from `FROZEN_KERNEL_PATH`,
+  switch off, byte-identical work) and report their median as `null_arm_pct`. The orchestrator will not
+  rank a candidate whose `null_arm_pct` is missing, however strong its speedup, so `status:"verified"`
+  with `null_arm_pct:null` wastes the lease. Setup-phase null floors or an author's null arm do not
+  substitute. If you cannot run it, report `claim_complete:false` and say why.
 - `finalist`: run all target/regression guards, arrival-jittered `REQUIRED_REPLAYS`,
   overlap/attribution and exact source identity. This is the only tier that can ship.
 
