@@ -2284,6 +2284,8 @@ let megaUnsafeTimeout = null;
 // on-card Author result that changed the blocker). Drives measure-first and the stall stop.
 let megaStall = 0;
 let megaLastBlocker = '';
+// A refused plan re-plans with the reason instead of ending the wave; 3 in a row still stops.
+let megaRefusal = null;
 let megaMeasurementCalibration = {
   ready: false, candidate_id: '', attempt_id: '', evidence_manifest: '', note: 'not measured',
 };
@@ -6064,6 +6066,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
         MEGA_STALL: { rounds: megaStall, limit: MEGA_STALL_LIMIT },
+        ...(megaRefusal ? { PREVIOUS_PLAN_REFUSED: megaRefusal.reason } : {}),
         STRUCTURAL_CONTRACT_POLICY: STRUCTURAL_CONTRACT_BLOCKING ? 'blocking' : 'advisory',
         MEGA_PROFILE, CANDIDATE_TIMEOUT_S: MEGA_CANDIDATE_TIMEOUT_S,
         ...(MEGA_STRUCTURAL_ONLY ? {
@@ -6237,7 +6240,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   if (!topologyVerdict.pass) {
     log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
     return {
-      stop: true,
+      refused: true, stop: MEGA_ROUTE_ONLY,
       reason: `Mega direction refused before authoring: ${topologyVerdict.reason}`,
     };
   }
@@ -6255,7 +6258,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   if (STRICT_AUTONOMY) {
     const strict = strictDirectionVerdict(d, LADDER, LADDER_MEASURED);
     if (!strict.pass) {
-      return { stop: true, reason:
+      return { refused: true, stop: MEGA_ROUTE_ONLY, reason:
         `strict Mega direction refused before authoring: ${strict.reason}` };
     }
   }
@@ -6915,6 +6918,19 @@ while (dispatched < BUDGET &&
       break;
     }
     const turn = await runMegaCandidateTurn(round, remaining);
+    if (turn.refused && !turn.stop) {
+      const count = megaRefusal ? megaRefusal.count + 1 : 1;
+      megaRefusal = { reason: turn.reason, count };
+      dispatched += 1;
+      megaStall += 1;
+      log(`Mega round ${round}: ${turn.reason} (refusal ${count}/3; re-planning).`);
+      if (count >= 3) {
+        stopReason = `${count} consecutive refused directions; last: ${turn.reason}`;
+        break;
+      }
+      continue;
+    }
+    megaRefusal = null;
     if (turn.stop) {
       if (MEGA_ROUTE_ONLY) {
         const d = turn.direction || {};
