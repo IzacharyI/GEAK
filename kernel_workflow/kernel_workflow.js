@@ -3248,6 +3248,15 @@ function validMegaCandidateId(value) {
   const id = String(value || '');
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(id) && id !== 'frozen_baseline';
 }
+// Resumed waves restart round numbers, so `_rN` lineage grows without bound; hash-compact at the cap.
+function megaChildCandidateId(parentId, round) {
+  const id = `${parentId}_r${round}`;
+  if (validMegaCandidateId(id)) return id;
+  let h = 5381;
+  for (const ch of id) h = (h * 33 + ch.charCodeAt(0)) >>> 0;
+  const tag = `_${h.toString(36)}_r${round}`;
+  return parentId.slice(0, 64 - tag.length).replace(/[._-]+$/, '') + tag;
+}
 function validMegaCandidateSourceForId(_id, source) {
   return source === 'search' || source === 'integrated';
 }
@@ -6178,7 +6187,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     ? requestedId : `search_r${currentRound}`;
   const requested = megaCandidateById(safeRequestedId);
   const candidateId = requested && (requested.status === 'scored' || requested.status === 'finalist')
-    ? `${safeRequestedId}_r${currentRound}` : safeRequestedId;
+    ? megaChildCandidateId(safeRequestedId, currentRound) : safeRequestedId;
   const requestedBaseId = String(raw.base_candidate_id ||
     (candidateId !== safeRequestedId ? safeRequestedId : '') ||
     ((selectMegaSearchParent(megaCandidateRegistry) || {}).id || 'frozen_baseline'));

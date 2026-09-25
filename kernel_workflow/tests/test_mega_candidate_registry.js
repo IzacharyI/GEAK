@@ -31,7 +31,7 @@ const api = new Function(`
   ${topology[1]}
   ${match[1]}
   return {
-    validMegaCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
+    validMegaCandidateId, megaChildCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
     megaCandidateHardPass, selectMegaCandidate, selectMegaSearchParent,
     megaCalibrationClaimPass, pairedGuardReadout, megaCandidateFromVerification,
     megaRegistryForSearch,
@@ -71,6 +71,23 @@ ok(api.normalizeMegaCandidate({ id: 'guided_fusion_v1', source: 'search' }).sour
   'candidate ids are not reserved for a reproduction lane');
 ok(!api.validMegaCandidateId('../escape') && !api.validMegaCandidateId('a/b'),
   'candidate ids cannot escape their state directory');
+{
+  const parent = 'full_persistent_pipeline_r7_r10_r15_r16_r17_r1_r2_r3_r5_r7_r8_r9';
+  ok(api.megaChildCandidateId('lane_r1', 2) === 'lane_r1_r2',
+    'a short lineage keeps the readable _rN child id');
+  const child = api.megaChildCandidateId(parent, 10);
+  ok(api.validMegaCandidateId(child) && /_r10$/.test(child) && child.length <= 64,
+    'a 64-char parent (the v8 crash) yields a valid, round-tagged child id');
+  ok(child === api.megaChildCandidateId(parent, 10) &&
+     child !== api.megaChildCandidateId(parent.replace(/_r9$/, '_r8'), 10) &&
+     child !== api.megaChildCandidateId(parent, 11),
+    'compacted child ids are deterministic and distinct per parent and round');
+  let id = parent;
+  for (let r = 1; r <= 40; r++) id = api.megaChildCandidateId(id, r);
+  ok(api.validMegaCandidateId(id), 'repeated compaction across rounds stays valid');
+  ok(/megaChildCandidateId\(safeRequestedId, currentRound\)/.test(src),
+    'the planner derives scored-parent child ids through the bounded helper');
+}
 {
   const staged = api.normalizeMegaCandidate({
     id: 'staged', source: 'search', checkpoint_complete: true,
