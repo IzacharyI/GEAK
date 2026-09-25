@@ -167,8 +167,10 @@ ok(/megaRefusal = null;\s*if \(turn\.stop\)/.test(src) &&
   'the refusal reason reaches the next plan and resets after an accepted direction');
 ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
    /timeout_ms: \(180 \+ drainS\) \* 1000/.test(src) &&
-   /flock -w \$\{drainS\} \$\{laneLock\} true/.test(src),
-  'a timed-out author gets a bounded drain wait before recovery gives up');
+   /flock -w <left> \$\{laneLock\} true/.test(src) && /team_gpu_locks\}\/gpu_\*\.lock/.test(src) &&
+   /non-zombie process/.test(src) && /under \$\{laneDir\} or \$\{outDir\}/.test(src) &&
+   /max_retries: 1 \} : \{\}\) \}\);\s*megaAdvanceMs\(drainS \* 1000\);/.test(src),
+  'a timed-out author gets a bounded, charged drain on the lane lock, GPU leases and lane processes');
 ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;\s*megaUnsafeTimeout = null;/.test(src) &&
    /if \(laneWriterTimedOut\) \{\s*await persistMegaCandidateState\(currentRound\);\s*return \{\s*stop: true,/.test(src),
   'only a quiescent timed-out writer continues the wave; a live one still stops it');

@@ -6468,13 +6468,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     if (!eng || eng.claim_complete !== true) {
       // A timed-out writer usually exits within minutes; wait for it instead of ending the wave.
       const drainS = laneWriterTimedOut ? 1500 : 0;
+      const laneDir = tree.replace(/\/tree$/, '');
       const recovered = await agentT(
         roleAgent('engineer', 'recover',
           `RECOVER ONLY candidate ${candidateId}. First confirm the timed-out writer is quiescent and ` +
-          `the lane lock is free. ` + (drainS ? `If not, wait up to ${drainS}s total: ` +
-          `\`flock -w ${drainS} ${laneLock} true\`, then poll every 30s until no process whose ` +
-          `cmdline or cwd references ${tree} or ${outDir} remains (excluding your own shell). Return ` +
-          `writer_quiescent=true only if both held; the wait is not a GPU command. ` : '') +
+          `the lane lock is free. ` + (drainS ? `If not, wait up to ${drainS}s total, in order: ` +
+          `\`flock -w <left> ${laneLock} true\`; the same on every ` +
+          `\${GEAK_GPU_LOCK_DIR:-/tmp/team_gpu_locks}/gpu_*.lock; then poll every 30s until no ` +
+          `non-zombie process (ps state not Z) has a cmdline or cwd under ${laneDir} or ${outDir}, ` +
+          `excluding your own shell. Zombies and stale lease_*.json files are not holders; never ` +
+          `use kill -0. Return writer_quiescent=true only if all three held. ` : '') +
           `Read ${outDir}/candidate_result.json and completed ` +
           `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
           `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}. ` +
@@ -6486,6 +6489,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           }),
         { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
           ...(MEGA_PRODUCTION ? { timeout_ms: (180 + drainS) * 1000, max_retries: 1 } : {}) });
+    megaAdvanceMs(drainS * 1000);
     if (recovered && recovered.claim_complete === true) {
       eng = recovered;
       laneWriterTimedOut = false;
