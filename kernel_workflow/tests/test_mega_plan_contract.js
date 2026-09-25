@@ -165,6 +165,13 @@ ok(/if \(turn\.refused && !turn\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0
 ok(/megaRefusal = null;\s*if \(turn\.stop\)/.test(src) &&
    /\.\.\.\(megaRefusal \? \{ PREVIOUS_PLAN_REFUSED: megaRefusal\.reason \} : \{\}\)/.test(src),
   'the refusal reason reaches the next plan and resets after an accepted direction');
+ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
+   /timeout_ms: \(180 \+ drainS\) \* 1000/.test(src) &&
+   /flock -w \$\{drainS\} \$\{laneLock\} true/.test(src),
+  'a timed-out author gets a bounded drain wait before recovery gives up');
+ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;\s*megaUnsafeTimeout = null;/.test(src) &&
+   /if \(laneWriterTimedOut\) \{\s*await persistMegaCandidateState\(currentRound\);\s*return \{\s*stop: true,/.test(src),
+  'only a quiescent timed-out writer continues the wave; a live one still stops it');
 ok(/megaTopologyVerdict\(\s*d, analysis && analysis\.mega_plan_ir, ALLOW_PARTIAL_FUSION\)/.test(src),
   'the caller-owned exact-target policy reaches the pre-author topology gate');
 ok(/allow_partial_fusion=false/.test(src) &&

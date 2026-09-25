@@ -6466,10 +6466,16 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       eng = null;
     }
     if (!eng || eng.claim_complete !== true) {
+      // A timed-out writer usually exits within minutes; wait for it instead of ending the wave.
+      const drainS = laneWriterTimedOut ? 1500 : 0;
       const recovered = await agentT(
         roleAgent('engineer', 'recover',
           `RECOVER ONLY candidate ${candidateId}. First confirm the timed-out writer is quiescent and ` +
-          `the lane lock is free. Read ${outDir}/candidate_result.json and completed ` +
+          `the lane lock is free. ` + (drainS ? `If not, wait up to ${drainS}s total: ` +
+          `\`flock -w ${drainS} ${laneLock} true\`, then poll every 30s until no process whose ` +
+          `cmdline or cwd references ${tree} or ${outDir} remains (excluding your own shell). Return ` +
+          `writer_quiescent=true only if both held; the wait is not a GPU command. ` : '') +
+          `Read ${outDir}/candidate_result.json and completed ` +
           `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
           `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}. ` +
           `If the writer is still active or the lock is held, return claim_complete:false.`, {
@@ -6479,10 +6485,17 @@ async function runMegaCandidateTurn(currentRound, remaining) {
             SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
           }),
         { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
-          ...(MEGA_PRODUCTION ? { timeout_ms: 180000, max_retries: 1 } : {}) });
+          ...(MEGA_PRODUCTION ? { timeout_ms: (180 + drainS) * 1000, max_retries: 1 } : {}) });
     if (recovered && recovered.claim_complete === true) {
       eng = recovered;
       laneWriterTimedOut = false;
+    }
+    if (laneWriterTimedOut && recovered && !recovered.__agent_timed_out &&
+        recovered.writer_quiescent === true) {
+      laneWriterTimedOut = false;
+      megaUnsafeTimeout = null;
+      log(`Mega round ${currentRound}: timed-out author of ${candidateId} is quiescent; its ` +
+        `committed WIP stays in the lane and the wave continues.`);
     }
   }
   if (!MEGA_RESUME_STATE && !existing && freshMegaAuthorLeak(eng)) {
