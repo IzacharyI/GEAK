@@ -87,7 +87,8 @@ Read, as reference, before writing:
   unless direct evidence resolves it.
   When enough context is
   known, run that corpus's `_select_candidates.py` for the target language, gfx, dtype, regime and
-  shape, including `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`. If
+  shape, including `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`; for a multi-case task pass
+  `TASK_DIR/meta.json` as `--workload` so each case gets its own card set. If
   `MEASURED_DECISION_OUTCOMES` is non-empty, pass it as `--outcomes`; only compatible
   single-ref results affect ordering, and even those are planner attribution rather than causal proof.
   Consume `constraint` cards first and use eligible `performance_candidate` cards only as
@@ -103,9 +104,18 @@ Read, as reference, before writing:
   `performance_decisions` vector to compare shared axes while retaining backend spelling and
   completeness. Treat the returned Top-K whole implementations as seed bundles; do not distribute their
   total speedup over individual APIs, and revalidate every adopted bundle against this task's oracle.
-  Its tuning tables turn `(gfx, variant, M bucket)` config files into explicit **seed candidate /
-  vary next** instructions, so you do not have to infer advice from occurrence counts. Measured
-  guidance remains behind the learned/expert-skill switches.
+  The page follows the order you write the kernel in (steps 1-10); each card sits under the step
+  of the question it answers and is linked from the other steps it bears on, so a choice such as
+  split-K in step 3 also shows up where its combine and host state have to be written. Pass
+  `--trait` for what your design does (for example `lds_staging`) so the cards it unlocks are not
+  left deferred. A card's *same question in other
+  implementations* block shows how Triton/Gluon/CK/ASM solve it, which is intent to transfer, not
+  spelling to copy; its evidence cites `file:line-end` where the precedent spans lines — open the
+  whole range. Its FlyDSL tables turn AITER's tuned databases into explicit **seed candidate /
+  vary next** rows per `(gfx, CUs, database, family, dtype, M bucket)` and say which backend AITER's
+  tuner selected per bucket, so you do not have to infer advice from occurrence counts. The Triton
+  seeds are on `corpus/gemm_triton_seeds.md` — Triton knob names, not FlyDSL ones. Measured guidance
+  remains behind the learned/expert-skill switches.
 - **Trace a GEMM card to source:** `KERNEL_KNOWLEDGE_DIR/corpus/gemm_source_evidence.md` — the same
   operator in FlyDSL, Triton, Gluon, CK, HIP and asm with reproducible `file:line`. Open it when you
   need the exact MFMA/LDS/layout/scheduling precedent behind a card. It is evidence, not advice; do

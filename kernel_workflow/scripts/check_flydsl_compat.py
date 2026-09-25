@@ -31,6 +31,12 @@ def python_files(paths):
                 yield candidate
 
 
+def is_flydsl_module(name):
+    # Same scope as detect_language's FlyDSL markers: FlyDSL itself, and kernels written in it that
+    # a package ships under a `flydsl` subpackage (aiter.ops.flydsl.*), which the author role reuses.
+    return "flydsl" in name.split(".")
+
+
 def collect_references(paths):
     imports = []
     attributes = []
@@ -45,7 +51,7 @@ def collect_references(paths):
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == "flydsl" or alias.name.startswith("flydsl."):
+                    if is_flydsl_module(alias.name):
                         local = alias.asname or alias.name.split(".")[0]
                         # `import flydsl.expr` binds the top-level name `flydsl`; an explicit alias
                         # (`as fx`) binds the dotted module itself.
@@ -59,7 +65,7 @@ def collect_references(paths):
                         })
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
-                if module == "flydsl" or module.startswith("flydsl."):
+                if is_flydsl_module(module):
                     for alias in node.names:
                         imports.append({
                             "file": str(path), "line": node.lineno, "module": module,
@@ -125,6 +131,11 @@ def package_info():
     }
 
 
+def yields_runtime_value(value):
+    return (not inspect.ismodule(value) and not inspect.isclass(value)
+            and hasattr(type(value), "__get__"))
+
+
 def resolve_reference(reference):
     module_name = reference["module"]
     path = reference.get("path")
@@ -146,6 +157,11 @@ def resolve_reference(reference):
             # Context merely to evaluate. This gate checks surface presence, not call semantics.
             current = inspect.getattr_static(current, name)
             module_prefix = f"{module_prefix}.{name}"
+            if index + 1 < len(path) and yields_runtime_value(current):
+                # A property such as MLIR's `ir.Context.current` produces its object only when
+                # evaluated; the remaining components name attributes of that object, which a
+                # static lookup cannot see. Present as far as it can be checked.
+                return None
             continue
         except AttributeError:
             pass

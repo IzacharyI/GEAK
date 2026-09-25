@@ -149,7 +149,10 @@ analysis below exactly as before.)
      changing one member of a coupled bundle blindly. Do not compare historical measurements unless
      every available required `comparison_context` field matches. When enough context is known, use
      `corpus/_select_candidates.py` to
-     separate eligible, deferred and rejected cards. If `MEASURED_DECISION_OUTCOMES` is non-empty,
+     separate eligible, deferred and rejected cards. For a task with several cases (decode plus
+     prefill, or several buckets) pass the task's `meta.json` as `--workload` together with `--gfx`:
+     it classifies the cards per case, so each case gets its own set and a card that only fits one
+     case is not handed to the others. If `MEASURED_DECISION_OUTCOMES` is non-empty,
      pass it as `--outcomes`, and pass `ACTIVE_FLYDSL_VERSION` as `--flydsl-version`; only
      same-language/gfx/version compatible single-ref directions may
      rank performance candidates. A rank remains a prior, never a target-box verdict. The current
@@ -159,12 +162,24 @@ analysis below exactly as before.)
      them, and which combinations fail to build — and `kk_refs` is what the engineers are handed.
      Leaving it out is how it gets missed: the operator and language cards teach the programming
      model and the levers, and neither one tells an engineer that `tile_m=16` is legal.
-     Read its ARCHITECTURE-GATE card first and carry its conclusions into the roadmap yourself. Which
-     paths the target architecture even offers is the cheapest knowledge available to you and the most
-     expensive to rediscover: a gate costs one `grep` to check and a whole funded round to trip over.
-     Note that the page also carries a large table of shipped configs from OTHER backends — those are
-     seeds for that backend's knob names, not for yours; do not hand an engineer a config whose knobs
-     your target language does not have.
+     The page follows the order a kernel is written in (steps 1-10, from the math contract to
+     validation): each card sits under the step of the question it answers and is linked from every
+     other step it bears on, and each card's *same question in other implementations* block shows the
+     Triton/Gluon/CK/ASM answer with its own source lines. It is a reading order for the engineers'
+     implementation, not a template for your plan — directions still come from the profile. Read the
+     constraint cards first, starting with the architecture gates in step 2 and build legality in
+     step 3, and carry their conclusions into the roadmap yourself. A card deferred for a missing
+     trait (listed under *Design traits* on the page) applies once the design has that property:
+     pass `--trait` for what the current or planned kernel does, and check the selector's
+     `undefined_traits` for a misspelling. Which paths the target architecture even offers is the cheapest knowledge available to
+     you and the most expensive to rediscover: a gate costs one `grep` to check and a whole funded
+     round to trip over. After the cards the page carries the FlyDSL configurations AITER shipped per
+     M bucket and a per-bucket table of which backend AITER's tuner selected: look up each case's bucket
+     to know what a FlyDSL kernel competes with in production and where FlyDSL has never been
+     selected — a bucket with no FlyDSL precedent needs structural directions, not a config lookup.
+     The Triton shipped seeds are on `corpus/gemm_triton_seeds.md`; they are the Triton baseline's
+     knob names, not yours — do not hand an engineer a config whose knobs your target language does
+     not have.
    Treat all of this as advisory input that can only *widen* the candidate set (see the contract
    above). Do not let it override the per-case data or measurement.
    - **Measured implementation bundles:** when `MEASURED_IMPLEMENTATION_REGISTRY` is non-empty, query

@@ -248,10 +248,86 @@ def test_measured_regression_ranks_after_unmeasured_candidate(tmp_path):
     performance = [
         row for row in result["eligible"] if row["type"] == "performance_candidate"
     ]
-    assert [row["id"] for row in performance[:2]] == [
-        "flydsl-splitk-hot-loop-schedule-bundle",
-        "flydsl-xor16-lds-layout-consistency",
-    ]
+    ids = [row["id"] for row in performance]
+    # The measured regression sorts after every unmeasured candidate, however many there are.
+    assert ids[-1] == "flydsl-xor16-lds-layout-consistency"
+    assert "flydsl-splitk-hot-loop-schedule-bundle" in ids[:-1]
+    assert all("measured_prior" not in row for row in performance[:-1])
+
+
+def test_a_both_regime_workload_keeps_decode_only_cards():
+    """`both` means the workload has decode AND prefill cases; rejecting a decode card for it dropped
+    the small-M family from every mixed task."""
+    card = {"match": {"operator_families": ["gemm"], "target_languages": ["flydsl"],
+                      "regimes": ["decode"]}}
+    status, _ = SELECT.classify_card(card, {
+        "operator_family": "gemm", "target_language": "flydsl", "regime": "both", "traits": [],
+    })
+    assert status == "eligible"
+
+
+def _dtype_status(card_dtypes, given):
+    card = {"match": {"operator_families": ["gemm"], "target_languages": ["flydsl"],
+                      "dtypes": card_dtypes}}
+    return SELECT.classify_card(card, {
+        "operator_family": "gemm", "target_language": "flydsl", "dtype": given, "traits": [],
+    })[0]
+
+
+@pytest.mark.parametrize("given", ["fp8_e4m3fnuz", "fp8_e4m3_fnuz", "float8_e4m3fnuz", "FP8_E4M3FNUZ"])
+def test_fp8_spellings_are_canonicalised_then_matched_exactly(given):
+    assert _dtype_status(["fp8_e4m3fnuz"], given) == "eligible"
+
+
+def test_the_scale_contract_suffix_is_a_different_dtype():
+    """A per-token card read against a block-scale task is a different math contract; a `fp8*`
+    family once made every A8 card eligible for block-scale tasks."""
+    assert _dtype_status(["fp8_e4m3fnuz"], "fp8_e4m3fnuz_blockscale") == "rejected"
+    assert _dtype_status(["fp8_e4m3fnuz_blockscale"], "fp8_e4m3_fnuz_blockscale") == "eligible"
+
+
+def test_every_card_dtype_is_already_canonical():
+    """A card spelling that canonicalises to something else can never match a request."""
+    cards = yaml.safe_load((HERE / "decisions" / "gemm.yaml").read_text())["cards"]
+    for card in cards:
+        for dtype in card["match"].get("dtypes") or []:
+            assert SELECT.normalize_dtype(dtype) == dtype, (card["id"], dtype)
+
+
+def test_an_undefined_trait_is_named_rather_than_silently_deferring():
+    result = SELECT.select(HERE / "catalog.yaml", {
+        "operator_family": "gemm", "target_language": "flydsl", "gfx": "gfx950", "dtype": "bf16",
+        "traits": ["lds_staging", "lds_stageing"],
+    })
+    assert result["undefined_traits"] == ["lds_stageing"]
+
+
+def test_every_taxonomy_gemm_operator_resolves_to_the_gemm_family():
+    catalog = yaml.safe_load((HERE / "catalog.yaml").read_text())
+    for operator in ("dense_gemm", "scaled_quant_gemm", "batched_gemm", "splitk_streamk_gemm",
+                     "skinny_gemv_decode", "gemm_epilogue_fused", "grouped_gemm_moe"):
+        assert SELECT.resolve_family(catalog, operator)["id"] == "gemm", operator
+
+
+def test_a_workload_is_classified_case_by_case():
+    meta = {"dtype": "bf16", "cases": [
+        {"sig": "decode_m8", "m": 8, "n": 4096, "k": 4096},
+        {"sig": "prefill_m16384", "m": 16384, "n": 4096, "k": 4096},
+    ]}
+    context = {"operator_family": "dense_gemm", "target_language": "flydsl", "gfx": "gfx950",
+               "dtype": "bf16", "regime": None, "traits": []}
+    result = SELECT.select_workload(HERE / "catalog.yaml", context, SELECT.workload_cases(meta))
+    by_sig = {case["sig"]: case for case in result["cases"]}
+    assert by_sig["decode_m8"]["regime"] == "decode"
+    assert "flydsl-small-m-hgemm-family" in by_sig["decode_m8"]["eligible"]
+    assert "flydsl-small-m-hgemm-family" not in by_sig["prefill_m16384"]["eligible"]
+    assert result["eligible_in_some_cases"]["flydsl-small-m-hgemm-family"] == ["decode_m8"]
+    assert "flydsl-hgemm-config-space" in result["eligible_in_every_case"]
+
+
+def test_a_malformed_shape_is_refused():
+    with pytest.raises(ValueError):
+        SELECT.workload_cases(None, ["8x4096"])
 
 
 def test_missing_gfx_defers_explicit_exclusion():

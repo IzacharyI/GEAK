@@ -48,6 +48,23 @@ QUESTIONS = {
     "waves": "How many waves cooperate on that tile",
     "split_k": "Whether K is split across workgroups, and how",
     "persistent": "Whether workgroups persist and loop over tiles",
+    "grid_mapping": "How workgroup IDs are mapped onto tiles and XCDs",
+    "scale_operand": "Which quantization-scale granularity the kernel consumes",
+    "scale_in_k_loop": "Where a per-K-block scale multiplies each partial product inside the K loop",
+    "scale_after_k_loop": "Where a per-token/per-channel scale multiplies the finished accumulator",
+    "atomic_combine": "Where partial results are accumulated into the output with atomics",
+    "grid_fill": "How the workgroup count is sized against the CU count to pick a tile or split",
+    "lane_reduction": "Where partial sums are reduced across the lanes of a wave",
+    "fragment_layout": "Which lane holds which row and column of an MFMA fragment",
+    "jit_cache": "How a compiled kernel (or a looked-up config) is cached and keyed",
+    "parity_tolerance": "Which tolerance the implementation's own test accepts against its reference",
+    "dispatch_padding": "How the dispatcher pads a shape before looking up a tuned config",
+    "config_lookup": "How a shape is mapped to a shipped tuned configuration",
+    "config_space": "Which configuration values the library declares it will build",
+    "config_limit": "Where that configuration space is capped",
+    "config_validity": "Which configurations are rejected before compilation, and why",
+    "kernel_family": "Which kernel family a shape is routed to",
+    "arch_gate": "Which code path exists only on some architectures",
     "lds_stage": "How many pipeline stages are buffered in LDS",
     "lds_swizzle": "How LDS addresses are permuted to dodge bank conflicts",
     "lds_pad": "How LDS rows are padded for the same reason",
@@ -299,7 +316,13 @@ def cite(fact):
     pair is what makes the pointer meaningful.
     """
     identity = f" (`{fact['evidence_id']}`)" if fact.get("evidence_id") else ""
-    return f"`{fact['file']}:{fact['line']}`{identity}"
+    return f"`{location(fact)}`{identity}"
+
+
+def location(fact):
+    """`file:line`, or `file:line-end` when the extractor recorded the statement's extent."""
+    end = fact.get("end_line")
+    return f"{fact['file']}:{fact['line']}" + (f"-{end}" if end else "")
 
 
 def value_of(fact):

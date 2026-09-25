@@ -65,7 +65,7 @@ Do this instead of the optimize-mode steps below:
    # captures unsynthesizable real routing / paged-KV metadata off a live server). An oracle_freezer dir
    # has no golden — it re-derives operands from meta.cases[] seeds and checks parity against the
    # frozen baseline live. The [ -e ] guards below already handle both; do not "fix" a missing file.
-   for f in meta.json unittest.py cases.py harness_lib.py leg_runner.py overlay_setup.py; do
+   for f in meta.json unittest.py cases.py harness_lib.py weight_lib.py leg_runner.py overlay_setup.py; do
      [ -e "$KERNEL_PATH_ORIG/$f" ] && cp "$KERNEL_PATH_ORIG/$f" "$EVAL_DIR/workspace/$f"
    done
    # golden is BIG (~1 GB) and IMMUTABLE — SHARE the single original via an ABSOLUTE symlink instead of
@@ -76,7 +76,7 @@ Do this instead of the optimize-mode steps below:
    for d in baseline_overlay baseline_ref baseline_src; do
      [ -d "$KERNEL_PATH_ORIG/$d" ] && cp -r "$KERNEL_PATH_ORIG/$d" "$EVAL_DIR/workspace/$d"
    done
-   chmod -w "$EVAL_DIR/workspace/unittest.py" "$EVAL_DIR/workspace/meta.json" "$EVAL_DIR/workspace/harness_lib.py" 2>/dev/null || true
+   chmod -w "$EVAL_DIR/workspace/unittest.py" "$EVAL_DIR/workspace/meta.json" "$EVAL_DIR/workspace/harness_lib.py" "$EVAL_DIR/workspace/weight_lib.py" 2>/dev/null || true
    for d in baseline_overlay baseline_ref baseline_src; do
      [ -d "$EVAL_DIR/workspace/$d" ] && chmod -R -w "$EVAL_DIR/workspace/$d" 2>/dev/null || true
    done

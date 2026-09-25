@@ -95,6 +95,68 @@ def test_dotted_import_and_from_import_attributes_are_resolved(tmp_path, monkeyp
     assert result["missing"][0]["missing_component"] == "definitely_removed_api"
 
 
+def test_attributes_of_a_property_value_are_not_reported_missing(tmp_path, monkeypatch):
+    """`ir.Context.current` is a property: `__exit__` belongs to the Context it returns at run
+    time, not to the property object. The AITER seams that run correctly use exactly this."""
+    source = tmp_path / "kernel.py"
+    source.write_text(
+        "from flydsl._mlir import ir\n"
+        "ir.Context.current.__exit__(None, None, None)\n"
+    )
+
+    class Context:
+        @property
+        def current(self):
+            return None
+
+    ir = types.SimpleNamespace(Context=Context)
+    mlir = types.SimpleNamespace(ir=ir)
+
+    def importer(name):
+        if name in {"flydsl", "flydsl._mlir"}:
+            return mlir
+        raise ImportError(name)
+
+    monkeypatch.setattr(COMPAT, "package_info", fake_package)
+    monkeypatch.setattr(COMPAT.importlib, "import_module", importer)
+    assert COMPAT.check([source])["compatible"] is True
+
+    source.write_text("from flydsl._mlir import ir\nir.Removed.current\n")
+    result = COMPAT.check([source])
+    assert result["compatible"] is False
+    assert result["missing"][0]["missing_component"] == "Removed"
+
+
+def test_a_packaged_flydsl_kernel_counts_as_a_flydsl_import(tmp_path, monkeypatch):
+    """The author role reuses aiter's production FlyDSL hgemm through its Python entry point, and
+    detect_language already reads that import as FlyDSL; the gate must check it, not reject it."""
+    source = tmp_path / "kernel.py"
+    source.write_text(
+        "from aiter.ops.flydsl.gemm_kernels import flydsl_hgemm\n"
+        "y = flydsl_hgemm(1, 2)\n"
+    )
+    gemm_kernels = types.SimpleNamespace(flydsl_hgemm=lambda a, b: a)
+
+    def importer(name):
+        if name == "aiter.ops.flydsl.gemm_kernels":
+            return gemm_kernels
+        raise ImportError(name)
+
+    monkeypatch.setattr(COMPAT, "package_info", fake_package)
+    monkeypatch.setattr(COMPAT.importlib, "import_module", importer)
+    result = COMPAT.check([source])
+    assert result["compatible"] is True
+    assert result["imports_checked"] == 1
+
+    source.write_text("from aiter.ops.flydsl.gemm_kernels import flydsl_removed\n")
+    result = COMPAT.check([source])
+    assert result["compatible"] is False
+    assert result["missing"][0]["name"] == "flydsl_removed"
+
+    source.write_text("from aiter.ops.triton.gemm import gemm_a16w16\n")
+    assert COMPAT.check([source])["reason"] == "no_flydsl_import"
+
+
 def test_no_flydsl_import_and_parse_error_are_explicit(tmp_path, monkeypatch):
     monkeypatch.setattr(COMPAT, "package_info", fake_package)
     plain = tmp_path / "plain.py"

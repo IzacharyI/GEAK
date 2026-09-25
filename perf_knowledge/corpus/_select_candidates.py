@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,13 @@ DTYPE_ALIASES = {
     "half": "f16",
     "bfloat16": "bf16",
 }
+# One fp8 format, three spellings in use: torch's `float8_e4m3fnuz`, the capability index's
+# `fp8_e4m3_fnuz` and the task specs' `fp8_e4m3fnuz[_blockscale]`. Canonicalised, then matched
+# exactly — the scale-contract suffix (`_blockscale`) is kept, because it is a different contract.
+DTYPE_SPELLINGS = (
+    (re.compile(r"^float8_"), "fp8_"),
+    (re.compile(r"_(e4m3|e5m2)_fnuz(?=_|$)"), r"_\1fnuz"),
+)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -44,7 +52,10 @@ def normalize_dtype(value: str | None) -> str | None:
     if value is None:
         return None
     value = str(value).strip().lower()
-    return DTYPE_ALIASES.get(value, value)
+    value = DTYPE_ALIASES.get(value, value)
+    for pattern, replacement in DTYPE_SPELLINGS:
+        value = pattern.sub(replacement, value)
+    return value
 
 
 def normalize_gfx(value: str | None) -> str | None:
@@ -71,6 +82,13 @@ def _dimension(match: dict[str, Any], field: str, value: str | None) -> tuple[st
         return "eligible", None
     if value is None:
         return "deferred", f"missing {field}"
+    if field == "regimes" and str(value) == "both":
+        # A `both` workload contains decode AND prefill cases. A card restricted to one of them applies
+        # to some of those cases, so it is not rejected here; per-case shape bounds (or a per-case
+        # query via --workload) decide which cases it covers.
+        if {"decode", "prefill", "both"} & {str(item) for item in allowed}:
+            return "eligible", None
+        return "rejected", f"{field}={value!r} not in {sorted(allowed)!r}"
     normalized = normalize_dtype(value) if field == "dtypes" else (
         normalize_gfx(value) if field == "gfx" else value
     )
@@ -322,11 +340,105 @@ def select(
         "performance_model": performance_model,
         "measured_bundles": compatible_bundles(outcomes, context) if outcomes else [],
         **buckets,
+        # A misspelt trait defers every card that needs it, silently; name it instead.
+        "undefined_traits": sorted(
+            set(context.get("traits") or []) - set(decision_data.get("traits") or {})
+        ),
         "contract": (
             "Static match selects applicable cards. Compatible single-ref outcomes may rank "
             "performance candidates but are planner attribution, never a target-box verdict. "
             "Shared performance axes align backend questions and spelling only; they do not make "
             "unlike representations equivalent. Constraints alone may reject impossible candidates."
+        ),
+    }
+
+
+SHAPE_TEXT = re.compile(r"^\s*(\d+)\s*[x,]\s*(\d+)\s*[x,]\s*(\d+)\s*$")
+
+
+def _case_regime(signature: str) -> str | None:
+    text = signature.lower()
+    if "decode" in text:
+        return "decode"
+    if "prefill" in text:
+        return "prefill"
+    return None
+
+
+def workload_cases(meta: dict[str, Any] | None, shapes: list[str] | None = None) -> list[dict[str, Any]]:
+    """The (M, N, K) cases of a task `meta.json` plus any `--shape MxNxK`, in order.
+
+    A case's regime is read from its signature only when the signature says so (`decode_m8`);
+    nothing is inferred from M, because where decode ends is exactly what the cards disagree on.
+    """
+    cases = []
+    for case in (meta or {}).get("cases") or []:
+        dims = [case.get(axis) for axis in ("m", "n", "k")]
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in dims):
+            continue
+        signature = str(case.get("sig") or "m{}_n{}_k{}".format(*dims))
+        cases.append({"sig": signature, "m": dims[0], "n": dims[1], "k": dims[2],
+                      "regime": _case_regime(signature)})
+    for text in shapes or []:
+        parsed = SHAPE_TEXT.match(str(text))
+        if not parsed:
+            raise ValueError(f"--shape expects MxNxK, got {text!r}")
+        m, n, k = (int(v) for v in parsed.groups())
+        cases.append({"sig": f"m{m}_n{n}_k{k}", "m": m, "n": n, "k": k, "regime": None})
+    return cases
+
+
+def select_workload(
+    catalog_path: Path,
+    context: dict[str, Any],
+    cases: list[dict[str, Any]],
+    outcomes_path: Path | None = None,
+) -> dict[str, Any]:
+    """Classify every card for every case of one workload.
+
+    Batch optimisation across shapes is the reason this exists: one static answer for a workload that
+    spans decode and prefill is either too narrow for one case or too wide for the other. The result
+    keeps each case's own eligible/deferred/rejected split and states which cards hold for every case
+    and which only for some.
+    """
+    if not cases:
+        raise ValueError("a workload needs at least one (M, N, K) case")
+    per_case = []
+    base = None
+    for case in cases:
+        ctx = dict(context, m=case["m"], n=case["n"], k=case["k"])
+        if case.get("regime") and context.get("regime") in (None, "both"):
+            ctx["regime"] = case["regime"]
+        result = select(catalog_path, ctx, outcomes_path)
+        base = base or result
+        per_case.append({
+            "sig": case["sig"], "m": case["m"], "n": case["n"], "k": case["k"],
+            "regime": ctx.get("regime"),
+            "eligible": [row["id"] for row in result["eligible"]],
+            "deferred": [{"id": row["id"], "reasons": row["reasons"]} for row in result["deferred"]],
+            "rejected": [{"id": row["id"], "reasons": row["reasons"]} for row in result["rejected"]],
+        })
+    every = set(per_case[0]["eligible"])
+    for case in per_case[1:]:
+        every &= set(case["eligible"])
+    some: dict[str, list[str]] = {}
+    for case in per_case:
+        for card_id in case["eligible"]:
+            if card_id not in every:
+                some.setdefault(card_id, []).append(case["sig"])
+    return {
+        "schema_version": 1,
+        "family": base["family"],
+        "context": context,
+        "performance_axes": base["performance_axes"],
+        "performance_model": base["performance_model"],
+        "measured_bundles": base["measured_bundles"],
+        "cases": per_case,
+        "eligible_in_every_case": sorted(every),
+        "eligible_in_some_cases": dict(sorted(some.items())),
+        "contract": base["contract"] + (
+            " A workload query classifies each case separately; a card eligible for one case says "
+            "nothing about the others."
         ),
     }
 
@@ -352,7 +464,14 @@ def main() -> int:
     parser.add_argument("--trait", action="append", default=[])
     parser.add_argument("--outcomes", type=Path,
                         help="optional output of _aggregate_decision_outcomes.py")
+    parser.add_argument("--workload", type=Path,
+                        help="a task meta.json; classify cards separately for each of its cases")
+    parser.add_argument("--shape", action="append", default=[],
+                        help="an extra MxNxK case (repeatable); implies a workload query")
     args = parser.parse_args()
+    meta = None
+    if args.workload:
+        meta = json.loads(args.workload.read_text(encoding="utf-8"))
     context = {
         "operator_family": args.operator_family,
         "target_language": args.target_language,
@@ -363,7 +482,7 @@ def main() -> int:
         "aiter_commit": args.aiter_commit,
         "rocm_version": args.rocm_version,
         "protocol_fingerprint": args.protocol_fingerprint,
-        "dtype": normalize_dtype(args.dtype),
+        "dtype": normalize_dtype(args.dtype or (meta or {}).get("dtype")),
         "regime": args.regime,
         "bottleneck": args.bottleneck,
         "m": args.m,
@@ -371,7 +490,12 @@ def main() -> int:
         "k": args.k,
         "traits": sorted(set(args.trait)),
     }
-    print(json.dumps(select(args.catalog, context, args.outcomes), indent=2, sort_keys=True))
+    if meta is not None or args.shape:
+        result = select_workload(args.catalog, context, workload_cases(meta, args.shape),
+                                 args.outcomes)
+    else:
+        result = select(args.catalog, context, args.outcomes)
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

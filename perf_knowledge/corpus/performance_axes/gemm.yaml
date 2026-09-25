@@ -38,6 +38,43 @@ comparison_context:
     - workload_weights
   contract: "A mismatch in any stated required field creates a different comparison context; missing identity yields no measured prior."
 
+# The order an author answers these axes in when writing a kernel, from its contract to validation.
+# Rendering order only: `gemm_decisions.md` places each card under the step of its first (primary)
+# axis and lists it again, by link, under every other step its axes touch. It changes no selection.
+development_order:
+  - step: 1
+    title: "Interface and math semantics"
+    axes: []
+    note: "Fixed by the task rather than chosen: `math_contract` and `dtype` in `comparison_context` above, read from the task's meta.json, with the operator's numerics.md for parity. Its consequences are placed where they are implemented — scale application in step 6, the argument and layout contract in step 9."
+  - step: 2
+    title: "Architecture capability and implementation path"
+    axes: [architecture_capability, implementation_variant]
+  - step: 3
+    title: "Grid, workgroup tile, waves and split-K"
+    axes: [workgroup_tile, work_partition, execution_geometry, configuration_constraints]
+  - step: 4
+    title: "Layout and address computation"
+    axes: [operand_layout]
+  - step: 5
+    title: "Global, LDS and register data movement"
+    axes: [memory_access]
+  - step: 6
+    title: "MFMA / dot compute"
+    axes: [compute_instruction]
+  - step: 7
+    title: "Pipeline and synchronization"
+    axes: [pipeline_schedule]
+  - step: 8
+    title: "Reduction, epilogue and write-back"
+    axes: [epilogue]
+  - step: 9
+    title: "Host configuration, ABI and launch"
+    axes: [runtime_contract]
+  - step: 10
+    title: "Correctness validation and tuning"
+    axes: [validation_contract, tunable_surface]
+    note: "The oracle, parity gate and timing protocol belong to the workflow's verify step, not to this corpus; cards here state only what a kernel's own contract changes about validation."
+
 axes:
   - id: compute_instruction
     kind: performance_choice
@@ -52,6 +89,8 @@ axes:
         representation: binary_identity
       - categories: [instance_name]
         representation: encoded_kernel_name
+      - categories: [scale_in_k_loop]
+        representation: per_k_block_scale_multiply
     knob_aliases:
       non_k_dim: [matrix_instr_nonkdim, MATRIX_INSTR_NONKDIM]
       instruction_m: [mfma_m, instr_m]
@@ -85,10 +124,19 @@ axes:
         representation: source_parameter
       - categories: [persistent]
         representation: structural_variant
+      - categories: [grid_mapping]
+        representation: workgroup_to_tile_and_xcd_mapping
+      - categories: [grid_fill]
+        representation: cu_count_fill_heuristic
+      - categories: [lane_reduction]
+        representation: intra_wave_k_split_reduction
     knob_aliases:
       split_k: [split_k, splitK, SPLIT_K, NUM_KSPLIT, ACTUAL_KSPLIT, selectedksplit, selectedsplitK]
       group_m: [GROUP_SIZE_M, group_size_m]
       persistent_tiles: [persistent_n_tiles, PERSISTENT_N_TILES]
+      n_tile_repeat: [n_tile_repeat]
+      xcd_swizzle: [xcd_swizzle, XCD_SWIZZLE]
+      num_xcds: [NUM_XCDS, num_xcds]
       grid_mn: [GRID_MN]
 
   - id: execution_geometry
@@ -121,6 +169,8 @@ axes:
       scheduler: [scheduler, pipeline_scheduler, BlockGemmPipelineScheduler]
       version: [pipeline_version, BlockGemmPipelineVersion]
       async_copy: [async_copy, use_async_copy, ASYNC_COPY]
+      lds_read_preload: [dsrd_preload]
+      global_load_preload: [dvmem_preload]
 
   - id: operand_layout
     kind: performance_choice
@@ -131,9 +181,16 @@ axes:
         representation: host_and_kernel_layout_contract
       - categories: [lds_swizzle, lds_pad]
         representation: lds_address_transform
+      - categories: [lds_alloc]
+        representation: lds_allocation
+      - categories: [fragment_layout]
+        representation: mfma_fragment_lane_mapping
     knob_aliases:
       layout: [layout, operand_layout]
-      preshuffle_b: [b_preshuffle, preshuffle_b, BPreshuffle]
+      preshuffle_b: [b_preshuffle, preshuffle_b, BPreshuffle, bpreshuffle]
+      b_via_lds: [b_to_lds]
+      b_via_lds_unroll: [b_to_lds_unroll]
+      weight_pack: [pack_n]
       lds_swizzle: [lds_swizzle, swizzle]
       lds_pad: [lds_pad, pad_k]
 
@@ -158,8 +215,13 @@ axes:
     source_mappings:
       - categories: [layout_epilogue]
         representation: epilogue_family
+      - categories: [scale_after_k_loop]
+        representation: accumulator_scale_multiply
+      - categories: [atomic_combine]
+        representation: atomic_accumulate_into_output
     knob_aliases:
       family: [epilogue, epilogue_family, CShuffle, cshuffle, use_cshuffle_epilog]
+      c_via_lds: [c_to_lds]
 
   - id: architecture_capability
     kind: hard_constraint
@@ -197,6 +259,8 @@ axes:
         representation: declared_knob
       - categories: [config_space]
         representation: legal_or_shipped_space
+      - categories: [config_lookup]
+        representation: shipped_config_lookup
     knob_aliases:
       tile_m: [BLOCK_SIZE_M, BLOCK_M, TILE_M, tile_m, tileM, TileM, SUBM, MPerBlock]
       tile_n: [BLOCK_SIZE_N, BLOCK_N, TILE_N, tile_n, tileN, TileN, SUBN, NPerBlock]
@@ -234,12 +298,31 @@ axes:
         representation: launcher_grid_and_workgroup
       - categories: [layout_preshuffle]
         representation: host_and_kernel_layout_contract
+      - categories: [scale_operand]
+        representation: scale_granularity_contract
+      - categories: [dispatch_padding]
+        representation: tuned_lookup_granularity
+      - categories: [jit_cache]
+        representation: compiled_kernel_cache
     knob_aliases:
       argument_block: [argument_block, argblock, KernelArgs]
       grid_formula: [grid_formula, launch_grid]
       workgroup_size: [workgroup_size, block_size, blockSize, blockSizeX]
       workspace_bytes: [workspace_bytes, workspace_size]
       layout: [layout, operand_layout]
+
+  - id: validation_contract
+    kind: hard_constraint
+    question: "Which reference and tolerance does the implementation's own test hold it to, and where does it relax them?"
+    comparison_contract: "A tolerance is the gate a test applies, not a claim that the kernel is exact; a relaxed case records where the implementation's numerics are known to drift. It never replaces the task's own oracle."
+    source_mappings:
+      - categories: [parity_tolerance]
+        representation: test_gate
+    knob_aliases:
+      atol: [atol, ATOL, DEFAULT_ATOL]
+      rtol: [rtol, RTOL, DEFAULT_RTOL]
+      pass_pct: [pass_pct, DEFAULT_PASS_PCT]
+      max_delta: [max_delta_limit]
 
 dependencies:
   - id: lds_layout_is_bidirectional
@@ -264,7 +347,73 @@ dependencies:
     axes: [work_partition, workgroup_tile, configuration_constraints, runtime_contract]
     relation: coupled_legality
     rule: "K must divide across split_k and leave a tile_k-divisible inner loop; the reduction workspace/counter and launch grid must match."
-    decision_refs: [flydsl-hgemm-config-space, flydsl-hgemm-tiling-validity]
+    decision_refs: [flydsl-hgemm-config-space, flydsl-hgemm-tiling-validity, flydsl-splitk-reduction-contract]
+
+  - id: split_k_combine_is_a_launch_contract
+    axes: [work_partition, runtime_contract, configuration_constraints]
+    relation: end_to_end_contract
+    rule: "Split-K partials are combined through per-stream counters whose capacity bounds the output-tile count; the launcher's semaphore allocation and state rotation are part of the kernel's contract."
+    decision_refs: [flydsl-splitk-reduction-contract, gemm-split-k-when-grid-underfills, flydsl-host-launch-contract]
+
+  - id: grid_fill_couples_tile_and_split
+    axes: [workgroup_tile, work_partition, execution_geometry]
+    relation: retune_on_change
+    rule: "The output tile count — ceil(M/tile_m)*ceil(N/tile_n) against the CU count — decides whether split-K is needed at all, and the rounds ceil(tiles*split/CUs) decide which split fills the machine; a split chosen for one tile is wrong for another, so re-decide it whenever the tile changes."
+    decision_refs: [gemm-split-k-when-grid-underfills, flydsl-hgemm-config-space, gemm-blockscale-shipped-bucket-structure, gemm-asm-tile-inventory-and-selection]
+
+  - id: a8_family_space_and_legality
+    axes: [tunable_surface, workgroup_tile, pipeline_schedule, epilogue, configuration_constraints, architecture_capability]
+    relation: coupled_legality
+    rule: "The A8 family's tile catalog, its LDS-stage/CShuffle/async/waves_per_eu sweep and its register cap are one space; validate a candidate against the family's legality rules and LDS estimate before timing it."
+    decision_refs: [flydsl-a8-preshuffle-config-space, flydsl-a8-legality]
+
+  - id: instruction_k_sets_tile_k_granularity
+    axes: [compute_instruction, workgroup_tile, architecture_capability, configuration_constraints]
+    relation: selects_or_rejects
+    rule: "The MFMA chosen for a dtype on an architecture fixes K per instruction, which fixes the legal tile_k granularity; change them together."
+    decision_refs: [flydsl-a8-mfma-selection]
+
+  - id: scale_granularity_is_a_math_contract
+    axes: [runtime_contract, compute_instruction, epilogue]
+    relation: end_to_end_contract
+    rule: "Per-token/per-channel and 128x128 block scales are different math contracts: they decide where scales are applied (epilogue versus per K block) and whether a hardware scale operand can hold them."
+    decision_refs: [flydsl-a8-scale-granularity-contract, gemm-blockscale-k-loop-scale-application]
+
+  - id: block_scale_fixes_tile_k_and_split_boundaries
+    axes: [compute_instruction, workgroup_tile, work_partition]
+    relation: coupled_legality
+    rule: "Under a 128x128 block-scale contract one K tile is one scale block (tile_k = 128) and every K split starts on a scale-block boundary; the contract fixes both, so neither is a free search axis."
+    decision_refs: [gemm-blockscale-k-loop-scale-application, gemm-blockscale-shipped-bucket-structure]
+
+  - id: async_copy_is_family_and_arch_specific
+    axes: [memory_access, architecture_capability, pipeline_schedule, implementation_variant]
+    relation: selects_or_rejects
+    rule: "Whether global-to-LDS async copy exists, and at what width, is decided per kernel family and architecture; a gate in one family is not a rule for another, and turning it on removes the ds-write group from a hand schedule."
+    decision_refs: [flydsl-async-copy-by-family, flydsl-a8-data-movement-helpers]
+
+  - id: epilogue_staging_shares_lds
+    axes: [epilogue, configuration_constraints, workgroup_tile]
+    relation: coupled_legality
+    rule: "An LDS CShuffle epilogue constrains tile_m/tile_n divisibility and adds a 2*tile_m*tile_n staging buffer to the same LDS budget as operand staging; validate them together."
+    decision_refs: [flydsl-cshuffle-epilogue]
+
+  - id: workgroup_mapping_sets_panel_reuse
+    axes: [work_partition, memory_access, execution_geometry]
+    relation: retune_on_change
+    rule: "A workgroup-to-XCD remap changes which tiles share an L2, so tile and grid choices measured without it must be re-measured with it; keep the unmapped kernel as the control."
+    decision_refs: [gemm-workgroup-xcd-mapping]
+
+  - id: a8_schedule_tracks_tile_and_arch
+    axes: [pipeline_schedule, memory_access, workgroup_tile, compute_instruction, architecture_capability]
+    relation: retune_on_change
+    rule: "The A8 hot-loop schedule is per architecture (a fixed gfx942 pattern, a table-seeded interleave elsewhere) and its counts follow the tile; changing either re-derives the schedule."
+    decision_refs: [flydsl-a8-interleaved-schedule]
+
+  - id: shipped_selection_routes_by_bucket
+    axes: [implementation_variant, workgroup_tile, work_partition]
+    relation: scenario_routing
+    rule: "Which implementation AITER shipped changes with the M bucket, gfx and dtype; route each case of a multi-shape workload separately and seed it from its own bucket. A case with no tuned row falls to AITER's default route, which also differs by gfx and dtype."
+    decision_refs: [gemm-shape-regime-routing, gemm-blockscale-shipped-bucket-structure, gemm-default-backend-routing]
 
   - id: preshuffle_is_end_to_end_layout
     axes: [operand_layout, implementation_variant, runtime_contract, configuration_constraints]
@@ -281,5 +430,23 @@ dependencies:
   - id: small_m_routes_to_a_family
     axes: [implementation_variant, architecture_capability, workgroup_tile, work_partition, execution_geometry]
     relation: scenario_routing
-    rule: "Small M can route to a distinct family with fixed M tile and different N/K, persistence and occupancy axes; architecture availability is checked first."
-    decision_refs: [flydsl-small-m-hgemm-family]
+    rule: "Small M can route to a distinct family with fixed M tile and different N/K, persistence and occupancy axes — or, by default, to another backend's decode kernels that split K across lanes instead of workgroups; architecture availability is checked first."
+    decision_refs: [flydsl-small-m-hgemm-family, gemm-skinny-decode-wave-split]
+
+  - id: fragment_layout_ties_loads_scales_and_stores
+    axes: [operand_layout, compute_instruction, epilogue]
+    relation: end_to_end_contract
+    rule: "The MFMA fixes which A rows and K offsets each lane feeds and which output rows and column it holds; operand loads, per-row scale reads and the epilogue store all use that one lane mapping, so changing the instruction re-derives all three."
+    decision_refs: [flydsl-mfma-fragment-lane-layout]
+
+  - id: split_k_changes_the_parity_gate
+    axes: [validation_contract, work_partition, epilogue]
+    relation: retune_on_change
+    rule: "Splitting K changes the accumulation order and, with an atomic combine, rounds partials to the output dtype before adding them; a gate a split_k=1 kernel passes does not carry over, so re-gate every split against the task's oracle."
+    decision_refs: [flydsl-test-parity-gate]
+
+  - id: compiled_config_is_the_launch_and_lookup_key
+    axes: [runtime_contract, work_partition, implementation_variant]
+    relation: end_to_end_contract
+    rule: "A FlyDSL configuration is compiled, cached, launched and looked up as one key: the grid comes from the tile and split the kernel was compiled with, the JIT cache is keyed on the whole configuration, and a tuned row reaches the kernel only through a name the registry parses."
+    decision_refs: [flydsl-host-launch-contract, gemm-default-backend-routing]
