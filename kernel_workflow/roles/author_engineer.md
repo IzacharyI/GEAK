@@ -100,7 +100,8 @@ Read, as reference, before writing:
   If `MEASURED_IMPLEMENTATION_REGISTRY` is non-empty, query
   `corpus/benchmarks/select_implementations.py` with the exact suite/gfx/dtype/shape and active FlyDSL
   version, plus the frozen baseline name and current AITER commit/Torch/HIP versions (or one exact
-  context fingerprint). An incomplete context must return no prior. Use each implementation's
+  context fingerprint); for a multi-case task pass `--task-dir TASK_DIR`, which derives the suite,
+  dtype, baseline and every timed case from the task. An incomplete context must return no prior. Use each implementation's
   `performance_decisions` vector to compare shared axes while retaining backend spelling and
   completeness. Treat the returned Top-K whole implementations as seed bundles; do not distribute their
   total speedup over individual APIs, and revalidate every adopted bundle against this task's oracle.
@@ -193,7 +194,9 @@ Read, as reference, before writing:
    1×. Do NOT overwrite or re-point `baseline_ms` at your seed; the win is always vs the online kernel.
    For a workload-aligned seed compute
    `Σ weight_i / Σ (weight_i / speedup_i)` from the same per-case weights; do not substitute the
-   ordinary geomean.
+   ordinary geomean. When the oracle is itself weighted (it prints `GEAK_WEIGHTED_SPEEDUP`), that
+   printed value is the seed's time-weighted speedup, and each case's `weight` is the oracle's own
+   launch count times the frozen `baseline_ms`.
 6. **Commit** the seed: `cd $WORKSPACE && git -c user.email=team@workflow -c user.name=team add -A
    && git -c user.email=team@workflow -c user.name=team commit -q -m "author seed (<lang>)"`.
    This makes HEAD the optimize loop's CODE starting point (what it diffs its edits against), while the

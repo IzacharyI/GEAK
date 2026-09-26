@@ -62,6 +62,35 @@ def normalize_gfx(value: str | None) -> str | None:
     return str(value).split(":", 1)[0] if value is not None else None
 
 
+DTYPE_TOKEN = re.compile(
+    r"^(?:f16|bf16|f32|fp32|int8|uint8|int4|mxfp4|mxfp8|fp8_\w+|fp4_\w+)$"
+)
+
+
+def workload_dtype(meta: dict[str, Any] | None) -> str | None:
+    """The operand dtype a task `meta.json` states.
+
+    Most tasks spell it canonically (`bf16`, `fp8_e4m3fnuz_blockscale`). Others describe the whole
+    contract (`bf16 in / bf16 weight / bf16 out, fp32 accumulate`); the operand dtype is then the one
+    dtype named outside the accumulator. Several different ones is a mixed-precision contract that
+    no single card dtype describes, so the answer is None rather than a guess.
+    """
+    raw = (meta or {}).get("dtype")
+    if raw is None:
+        return None
+    canonical = normalize_dtype(raw)
+    if DTYPE_TOKEN.match(canonical):
+        return canonical
+    tokens = re.findall(r"[a-z0-9_]+", str(raw).lower())
+    named = {
+        normalize_dtype(token)
+        for index, token in enumerate(tokens)
+        if DTYPE_TOKEN.match(normalize_dtype(token))
+        and not (index + 1 < len(tokens) and tokens[index + 1].startswith("acc"))
+    }
+    return named.pop() if len(named) == 1 else None
+
+
 def resolve_family(catalog: dict[str, Any], requested: str) -> dict[str, Any]:
     matches = []
     for family in catalog.get("families") or []:
@@ -164,12 +193,25 @@ def classify_card(card: dict[str, Any], context: dict[str, Any]) -> tuple[str, l
 
 
 def _op_spec_value(op_spec: dict[str, Any], key: str):
-    if key in op_spec:
-        return op_spec[key]
+    # Seam op_specs spell the fixed weight dims `N`/`K` and list every timed `M` of the run.
+    for name in (key, key.upper()):
+        if name in op_spec:
+            return op_spec[name]
     shapes = op_spec.get("shapes")
     if isinstance(shapes, dict):
-        return shapes.get(key)
+        for name in (key, key.upper()):
+            if name in shapes:
+                return shapes[name]
     return None
+
+
+def _regime_word(value: Any) -> str:
+    """`decode`, `prefill` or `both` out of a regime field that may carry prose after it."""
+    text = str(value).strip().lower()
+    found = {word for word in ("decode", "prefill") if word in text}
+    if "both" in text or found == {"decode", "prefill"}:
+        return "both"
+    return found.pop() if found else text
 
 
 def outcome_context_matches(measured: dict[str, Any], requested: dict[str, Any]) -> bool:
@@ -201,6 +243,13 @@ def outcome_context_matches(measured: dict[str, Any], requested: dict[str, Any])
             return False
         if key == "dtype":
             if normalize_dtype(str(got)) != normalize_dtype(str(want)):
+                return False
+        elif key == "regime":
+            if _regime_word(got) != _regime_word(want):
+                return False
+        elif isinstance(got, (list, tuple)):
+            # One run measured several shapes; it speaks to a requested shape it contains.
+            if str(want) not in {str(value) for value in got}:
                 return False
         elif str(got) != str(want):
             return False
@@ -368,23 +417,32 @@ def _case_regime(signature: str) -> str | None:
 def workload_cases(meta: dict[str, Any] | None, shapes: list[str] | None = None) -> list[dict[str, Any]]:
     """The (M, N, K) cases of a task `meta.json` plus any `--shape MxNxK`, in order.
 
-    A case's regime is read from its signature only when the signature says so (`decode_m8`);
-    nothing is inferred from M, because where decode ends is exactly what the cards disagree on.
+    Two meta layouts are in use. Kernel-task metas give every case `sig`, `m`, `n`, `k`. Seam metas
+    extracted from a served model give each case `name`, `m` and `regime`, keep the fixed weight
+    dims once in `model_dims` (`N`, `K`), and mark correctness-only edges `timed: false`.
+    A case's regime is its explicit `regime`, else read from its signature only when the signature
+    says so (`decode_m8`); nothing is inferred from M, because where decode ends is exactly what
+    the cards disagree on.
     """
     cases = []
+    model_dims = (meta or {}).get("model_dims") or {}
     for case in (meta or {}).get("cases") or []:
-        dims = [case.get(axis) for axis in ("m", "n", "k")]
+        dims = [case.get(axis, model_dims.get(axis.upper(), model_dims.get(axis)))
+                for axis in ("m", "n", "k")]
         if not all(isinstance(v, int) and not isinstance(v, bool) for v in dims):
             continue
-        signature = str(case.get("sig") or "m{}_n{}_k{}".format(*dims))
+        signature = str(case.get("sig") or case.get("name") or "m{}_n{}_k{}".format(*dims))
+        regime = case.get("regime")
         cases.append({"sig": signature, "m": dims[0], "n": dims[1], "k": dims[2],
-                      "regime": _case_regime(signature)})
+                      "regime": regime if regime in ("decode", "prefill") else _case_regime(signature),
+                      "timed": case.get("timed") is not False})
     for text in shapes or []:
         parsed = SHAPE_TEXT.match(str(text))
         if not parsed:
             raise ValueError(f"--shape expects MxNxK, got {text!r}")
         m, n, k = (int(v) for v in parsed.groups())
-        cases.append({"sig": f"m{m}_n{n}_k{k}", "m": m, "n": n, "k": k, "regime": None})
+        cases.append({"sig": f"m{m}_n{n}_k{k}", "m": m, "n": n, "k": k, "regime": None,
+                      "timed": True})
     return cases
 
 
@@ -413,16 +471,24 @@ def select_workload(
         base = base or result
         per_case.append({
             "sig": case["sig"], "m": case["m"], "n": case["n"], "k": case["k"],
-            "regime": ctx.get("regime"),
+            "regime": ctx.get("regime"), "timed": case.get("timed", True),
             "eligible": [row["id"] for row in result["eligible"]],
             "deferred": [{"id": row["id"], "reasons": row["reasons"]} for row in result["deferred"]],
             "rejected": [{"id": row["id"], "reasons": row["reasons"]} for row in result["rejected"]],
+            "measured_priors": {
+                row["id"]: row["measured_prior"]
+                for bucket in ("eligible", "deferred", "rejected") for row in result[bucket]
+                if "measured_prior" in row
+            },
         })
-    every = set(per_case[0]["eligible"])
-    for case in per_case[1:]:
+    # A correctness-only edge (M=1 on a decode task) still gets its own classification, but it is
+    # not part of the timed workload: a card that fails only there still holds for every timed case.
+    timed = [case for case in per_case if case["timed"]] or per_case
+    every = set(timed[0]["eligible"])
+    for case in timed[1:]:
         every &= set(case["eligible"])
     some: dict[str, list[str]] = {}
-    for case in per_case:
+    for case in timed:
         for card_id in case["eligible"]:
             if card_id not in every:
                 some.setdefault(card_id, []).append(case["sig"])
@@ -482,7 +548,7 @@ def main() -> int:
         "aiter_commit": args.aiter_commit,
         "rocm_version": args.rocm_version,
         "protocol_fingerprint": args.protocol_fingerprint,
-        "dtype": normalize_dtype(args.dtype or (meta or {}).get("dtype")),
+        "dtype": normalize_dtype(args.dtype) if args.dtype else workload_dtype(meta),
         "regime": args.regime,
         "bottleneck": args.bottleneck,
         "m": args.m,

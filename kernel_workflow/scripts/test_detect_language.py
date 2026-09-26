@@ -178,6 +178,32 @@ def test_two_declared_languages_in_equal_measure_are_refused(tmp_path):
     assert "ambiguous" in res["reason"]
 
 
+def test_a_refused_verdict_names_the_languages_it_was_refused_between(tmp_path):
+    """A seam that vendors a dispatcher carries a FlyDSL path and a Triton fallback in one file.
+    The verdict stays refused; `ambiguous_between` only says which requests it would confirm."""
+    seam = write(tmp_path, "seam.py", """\
+        import flydsl
+        import triton
+        from flydsl._mlir import ir
+        from aiter.ops.triton.gemm import gemm_a16w16
+
+        @flyc.kernel
+        def hgemm():
+            pass
+
+        @triton.jit
+        def fallback():
+            tl.program_id(0)
+        """)
+    res = DL.detect([seam])
+    assert res["language"] is None
+    assert res["ambiguous_between"] == ["flydsl", "triton"]
+    plain = write(tmp_path, "k.py", "import flydsl\nfrom flydsl.compiler import flyc\n\n@flyc.kernel\ndef k():\n    pass\n")
+    assert DL.detect([plain])["ambiguous_between"] == []
+    no_marker = write(tmp_path, "none.py", "def k():\n    return 1\n")
+    assert DL.detect([no_marker])["ambiguous_between"] == []
+
+
 def test_the_entry_file_outweighs_the_harness_around_it(tmp_path):
     write(tmp_path / "e", "kernel_impl.py",
           "import flydsl\nfrom flydsl.compiler import flyc\n\n@flyc.kernel\ndef my_op():\n    pass\n")

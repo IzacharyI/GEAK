@@ -110,6 +110,10 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 // control arm; an explicitly empty perf_knowledge_dir also stays empty rather than falling back.
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim().toLowerCase() || 'optimize';
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
+// The language the caller explicitly asked for, or null when it relied on the default. Used only to
+// confirm a detector verdict that was refused between it and another declaring language (a vendored
+// dispatcher holding a FlyDSL path and a Triton fallback in one file) — never to override a decision.
+const DECLARED_LANGUAGE = A.target_language != null ? TARGET_LANGUAGE : null;
 const OP_SPEC = A.op_spec || {};
 // When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
 // the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
@@ -133,13 +137,18 @@ const WORKLOAD_SPEC = (OP_SPEC && OP_SPEC.workload) || A.workload || null;
 const HAS_WORKLOAD = !!(WORKLOAD_SPEC_PATH ||
   (Array.isArray(WORKLOAD_SPEC) && WORKLOAD_SPEC.length) ||
   (WORKLOAD_SPEC && Array.isArray(WORKLOAD_SPEC.kernels) && WORKLOAD_SPEC.kernels.length));
-// PRIMARY-metric selector: prefer the time-weighted number when a workload spec is in play and the
-// agent reported one; otherwise fall back to the geomean (unweighted runs => unchanged behavior).
+// Whether candidates are scored on the time-weighted ratio-of-sums. A caller workload spec turns it on
+// here; a frozen oracle that is itself workload-weighted (the director's setup verdict
+// `oracle_weighted`) turns it on right after Setup — before the author seed is measured, so the seed
+// and every round are scored on the one number the COMMANDMENT names as PRIMARY.
+let WEIGHTED_PRIMARY = HAS_WORKLOAD;
+// PRIMARY-metric selector: prefer the time-weighted number when weighting is in play and the agent
+// reported one; otherwise fall back to the geomean (unweighted runs => unchanged behavior).
 const primSpeedup = (o) => {
   if (!o) return 0;
   const w = o.verified_weighted != null ? o.verified_weighted
           : (o.speedup_weighted != null ? o.speedup_weighted : null);
-  if (HAS_WORKLOAD && Number.isFinite(w)) return w;
+  if (WEIGHTED_PRIMARY && Number.isFinite(w)) return w;
   const g = o.verified_geomean != null ? o.verified_geomean : o.speedup_geomean;
   return Number.isFinite(g) ? g : 0;
 };
@@ -147,7 +156,7 @@ const hasPrimSpeedup = (o) => {
   if (!o) return false;
   const w = o.verified_weighted != null ? o.verified_weighted
           : (o.speedup_weighted != null ? o.speedup_weighted : null);
-  if (HAS_WORKLOAD && Number.isFinite(w)) return true;
+  if (WEIGHTED_PRIMARY && Number.isFinite(w)) return true;
   const g = o.verified_geomean != null ? o.verified_geomean : o.speedup_geomean;
   return Number.isFinite(g);
 };
@@ -397,6 +406,8 @@ const perCase = {
       dims: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
       dtypes: { type: 'array', items: { type: 'string' } },
       weight_source: { type: 'string' }, // trace | regime | regime_floor | prior | caller
+      // How the oracle timed this case, when it says (cuda_event_graph | cuda_event | wall).
+      timer: { type: 'string' },
     },
     required: ['name', 'speedup'],
   },
@@ -411,6 +422,9 @@ const SETUP_SCHEMA = obj({
   // never kernel_src/ (the candidate's own scaffold). The director sets baseline_frozen=true after it
   // copies baseline_src/ + confirms meta.baseline_callable; the script aborts the run if neither holds.
   baseline_frozen: { type: 'boolean' }, baseline_callable: { type: 'string' },
+  // True when the frozen oracle is itself workload-weighted (meta.json `workload`, or unittest.py
+  // prints GEAK_WEIGHTED_SPEEDUP): its time-weighted number is PRIMARY from the first measurement on.
+  oracle_weighted: { type: 'boolean' },
   // DEEP-MODE resume only: populated by the director ONLY when STATE_DIR was provided AND a prior best
   // exists there. Lets a continued wave restore its cumulative speedup + insight/ledger history so it
   // does not re-explore dead directions. Absent (undefined) on a fresh run -> no behavior change.
@@ -612,6 +626,11 @@ const VALIDATE_SCHEMA = obj({
   director_verified_speedup_weighted: { type: 'number' }, // PRIMARY when workload_aligned
   tech_lead_reported_speedup_geomean: { type: 'number' },
   validation_status: { type: 'string' }, correctness: { type: 'string' },
+  // primed | host_bound | unprimed | unknown — and one code per gate that kept the status from
+  // `accepted` (timing_receipt_absent, timer_unprimed, host_bound, below_claim, correctness_fail,
+  // patch_apply_failed, prevalidation_failed), so the manifest states the reason as data.
+  timing_basis: { type: 'string' },
+  flag_reasons: { type: 'array', items: { type: 'string' } },
   per_case: perCase, applied_to_original: { type: 'string' },
   arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
 }, ['director_verified_speedup_geomean', 'validation_status']);
@@ -720,7 +739,10 @@ async function agentT(p, o) {
 
 const LANGUAGE_SCHEMA = {
   type: 'object',
-  properties: { language: { type: ['string', 'null'] }, reason: { type: 'string' } },
+  properties: {
+    language: { type: ['string', 'null'] }, reason: { type: 'string' },
+    ambiguous_between: { type: 'array', items: { type: 'string' } },
+  },
   required: ['language'],
   additionalProperties: true,
 };
@@ -730,8 +752,19 @@ async function detectSourceLanguage(sourcePath, label, entry = KERNEL_NAME_HINT)
 \`\`\`bash
 python3 ${WORKFLOW_DIR}/scripts/detect_language.py ${JSON.stringify(sourcePath)} --entry ${JSON.stringify(entry)} --json
 \`\`\`
-Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">}.`,
+Return the command's JSON as {"language": <its "language", or null>, "reason": <its "reason">, ` +
+    `"ambiguous_between": <its "ambiguous_between", or []>}.`,
     { phase: 'Validate', label, effort: 'low', schema: LANGUAGE_SCHEMA });
+}
+// A decided verdict stands. A refused one is confirmed as the caller's declared language only when
+// the file declares that language among the ones it was refused between.
+function resolveLanguage(det) {
+  if (det && det.language) return { language: String(det.language), basis: 'detected' };
+  const tied = det && Array.isArray(det.ambiguous_between) ? det.ambiguous_between.map(String) : [];
+  if (DECLARED_LANGUAGE && tied.includes(DECLARED_LANGUAGE)) {
+    return { language: DECLARED_LANGUAGE, basis: 'caller_declared_among_detected' };
+  }
+  return { language: null, basis: 'undecided' };
 }
 
 const FLYDSL_COMPAT_SCHEMA = {
@@ -851,6 +884,10 @@ const CANONICAL = setup.workspace;       // canonical current-best workspace (ad
 const KERNEL_NAME = setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
 log(`Setup done. EVAL_DIR=${EVAL_DIR}`);
+WEIGHTED_PRIMARY = HAS_WORKLOAD || setup.oracle_weighted === true;
+if (WEIGHTED_PRIMARY && !HAS_WORKLOAD) {
+  log('Setup: the frozen oracle is workload-weighted; candidates are scored on its time-weighted ratio-of-sums.');
+}
 
 // ---------------------------------------------------------------------------
 // Enforce a FROZEN REAL-ONLINE BASELINE in BOTH modes (author AND same-language
@@ -914,7 +951,7 @@ if (MODE === 'author') {
       GPU_ID: GPU_POOL, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
       CORPUS_CATALOG, MEASURED_DECISION_OUTCOMES, MEASURED_IMPLEMENTATION_REGISTRY,
       ACTIVE_FLYDSL_VERSION: activeFlydslVersion,
-      WORKLOAD_ALIGNED: HAS_WORKLOAD,
+      WORKLOAD_ALIGNED: WEIGHTED_PRIMARY,
       WORKLOAD_SPEC_PATH, WORKLOAD_SPEC,
       PERF_KNOWLEDGE: USE_PERF_KNOWLEDGE ? 'on' : 'off',
       // The author engineer reads the learned index too, so the switch has to reach it. It is the
@@ -931,7 +968,7 @@ if (MODE === 'author') {
       reason: authored ? authored.notes || 'author produced no correct baseline' : 'author returned nothing',
     };
   }
-  const expectedSeedMetric = HAS_WORKLOAD ? 'time_weighted' : 'geomean';
+  const expectedSeedMetric = WEIGHTED_PRIMARY ? 'time_weighted' : 'geomean';
   const validSeedRows = Array.isArray(authored.seed_per_case) && authored.seed_per_case.length > 0 &&
     authored.seed_per_case.every(row => row && Number.isFinite(row.baseline_ms) && row.baseline_ms > 0 &&
       Number.isFinite(row.optimized_ms) && row.optimized_ms > 0 &&
@@ -995,8 +1032,12 @@ if (MODE === 'author') {
 if (MODE === 'optimize') {
   const initialLanguage = await detectSourceLanguage(
     `${CANONICAL}/kernel_src`, 'optimize:language', KERNEL_NAME);
-  initialObservedLanguage = initialLanguage && initialLanguage.language
-    ? String(initialLanguage.language) : null;
+  const initialResolved = resolveLanguage(initialLanguage);
+  initialObservedLanguage = initialResolved.language;
+  if (initialResolved.basis === 'caller_declared_among_detected') {
+    log(`[lang] source declares ${(initialLanguage.ambiguous_between || []).join(' and ')}; ` +
+        `confirming the declared ${DECLARED_LANGUAGE}`);
+  }
   if (initialObservedLanguage === 'flydsl') {
     const compatibility = await checkFlydslCompatibility(
       `${CANONICAL}/kernel_src`, 'optimize:flydsl-compatibility');
@@ -1058,6 +1099,11 @@ if (!bench || !bench.baseline_per_case) throw new Error('Benchmark setup failed:
 const BASELINE_PER_CASE = bench.baseline_per_case;
 const BASELINE_GEOMEAN_MS = bench.baseline_geomean_ms;
 log(`Benchmark done. ${bench.num_test_cases || BASELINE_PER_CASE.length} cases, baseline geomean ${BASELINE_GEOMEAN_MS} ms, reliable=${bench.reliable}`);
+if ((bench.workload_aligned === true) !== WEIGHTED_PRIMARY) {
+  log(`WARNING: the benchmark reports workload_aligned=${bench.workload_aligned === true} but candidates ` +
+      `are scored ${WEIGHTED_PRIMARY ? 'time-weighted' : 'on the geomean'} (fixed at Setup); the ` +
+      `COMMANDMENT and the lane disagree about PRIMARY.`);
+}
 
 // ===========================================================================
 // PHASE: Baseline profile (Profile Engineer)
@@ -1871,13 +1917,20 @@ const report = await agentT(
 // user's original tree. The Director still measures a mismatched candidate for auditability, but its
 // APPLY_TO_ORIGINAL input is forced off.
 let observedLanguage = null;
+let observedLanguageBasis = 'undecided';
 let finalFlydslApiCompatible = true;
 let finalLanguageReason = '';
 try {
   const det = await detectSourceLanguage(
     `${CANONICAL}/kernel_src`, 'lang:detect-final', KERNEL_NAME);
-  observedLanguage = det && det.language ? String(det.language) : null;
+  const resolved = resolveLanguage(det);
+  observedLanguage = resolved.language;
+  observedLanguageBasis = resolved.basis;
   finalLanguageReason = det && det.reason ? String(det.reason) : 'no detector result';
+  if (resolved.basis === 'caller_declared_among_detected') {
+    finalLanguageReason += `; confirmed the declared ${DECLARED_LANGUAGE} among ` +
+      `${(det.ambiguous_between || []).join(', ')}`;
+  }
   log(observedLanguage
     ? `[lang] winning source reads as ${observedLanguage}`
     : `[lang] undecided: ${finalLanguageReason}`);
@@ -1923,7 +1976,7 @@ const validation = await agentT(
     },
     FINAL_PATCH: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
     TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,
-    ...(HAS_WORKLOAD && report && report.final_speedup_weighted != null
+    ...(WEIGHTED_PRIMARY && report && report.final_speedup_weighted != null
         ? { TECH_LEAD_REPORTED_WEIGHTED: report.final_speedup_weighted } : {}),
     BASELINE_TIMING: BASELINE_PER_CASE,
   }),
@@ -1933,7 +1986,7 @@ const finalGeomean = validation ? validation.director_verified_speedup_geomean :
 // PRIMARY headline: the time-weighted speedup when workload-aligned, else the geomean (unchanged).
 const finalWeighted = validation && validation.director_verified_speedup_weighted != null
   ? validation.director_verified_speedup_weighted : null;
-const finalPrimary = HAS_WORKLOAD && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
+const finalPrimary = WEIGHTED_PRIMARY && Number.isFinite(finalWeighted) ? finalWeighted : finalGeomean;
 const finalDecisionRefs = normalizeDecisionRefs([
   ...authorDecisionRefs,
   ...(finalWinner && Array.isArray(finalWinner.decision_refs) ? finalWinner.decision_refs : []),
@@ -1945,9 +1998,9 @@ const effectiveValidationStatus = !languageGatePassed ? 'language_mismatch'
   : !finalFlydslApiCompatible ? 'flydsl_incompatible'
   : !performanceGatePassed ? 'no_speedup'
   : (validation ? validation.validation_status : 'unknown');
-log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geomean'} ` +
+log(`COMPLETE. ${KERNEL_NAME}: verified ${WEIGHTED_PRIMARY ? 'time-weighted' : 'geomean'} ` +
     `${finalPrimary ? finalPrimary.toFixed(2) : '?'}x` +
-    `${HAS_WORKLOAD && Number.isFinite(finalGeomean)
+    `${WEIGHTED_PRIMARY && Number.isFinite(finalGeomean)
       ? ` (unweighted geomean ${finalGeomean.toFixed(2)}x)` : ''}` +
     ` (status ${effectiveValidationStatus}). Results in ${EVAL_DIR}`);
 for (const decisionRef of authorDecisionRefs) {
@@ -1971,7 +2024,7 @@ try {
   const envMetadata = {
     kernel: KERNEL_NAME,
     mode: MODE,
-    requested_language: MODE === 'author' ? TARGET_LANGUAGE : null,
+    requested_language: MODE === 'author' ? TARGET_LANGUAGE : DECLARED_LANGUAGE,
     observed_language: observedLanguage,
     device: profileSummary ? profileSummary.device : '',
     gfx: GFX,
@@ -1987,6 +2040,9 @@ try {
       baseline_per_case: BASELINE_PER_CASE,
       baseline_geomean_ms: BASELINE_GEOMEAN_MS,
       workload_aligned: HAS_WORKLOAD,
+      // The metric every direction score in `decision_outcomes` was computed in.
+      primary_metric: WEIGHTED_PRIMARY ? 'time_weighted' : 'geomean',
+      oracle_weighted: setup.oracle_weighted === true,
       baseline_weighted_total_ms: bench ? bench.baseline_weighted_total_ms : null,
       weights_provenance: bench ? bench.weights_provenance : '',
       reliable: bench ? bench.reliable : null,
@@ -1999,6 +2055,18 @@ try {
       speedup_weighted: finalWeighted,
       speedup_arithmetic: validation ? validation.director_verified_speedup_arithmetic : null,
       per_case: validation ? validation.per_case : [],
+      observed_language_basis: observedLanguageBasis,
+      // Written only when the Director stated them, so an older verdict still falls back to
+      // director_validation.json in the aggregator instead of reading as "no reasons".
+      ...(validation && validation.timing_basis ? { timing_basis: validation.timing_basis } : {}),
+      ...(validation && Array.isArray(validation.flag_reasons)
+        ? { flag_reasons: validation.flag_reasons } : {}),
+      ...(() => {
+        const rows = validation && Array.isArray(validation.per_case) ? validation.per_case : [];
+        const timers = rows.map(row => row && row.timer).filter(Boolean);
+        return rows.length && timers.length === rows.length
+          ? { graph_timed: timers.every(timer => timer === 'cuda_event_graph') } : {};
+      })(),
     },
     decision_outcomes: decisionCitations,
     perf_knowledge_dir: KERNEL_KNOWLEDGE_DIR,
@@ -2145,7 +2213,7 @@ if (KB_WRITE_OK && kbAccepted && sourceGatePassed && observedLanguage && GFX &&
   // it would mint a unique label every time and group nothing. Unlabeled is honest — resolve treats
   // such an entry as its own direction, and a curation pass assigns the shared label later.
   const winnerDirection = kebab(warm_start.direction || '');
-  const metricKind = HAS_WORKLOAD ? 'time_weighted' : 'geomean';
+  const metricKind = WEIGHTED_PRIMARY ? 'time_weighted' : 'geomean';
   // Commas separate the list, so a case name may not contain one.
   const caseNames = (bestPerCase || []).map(c => c && String(c.name || '').replace(/,/g, ';'))
     .filter(Boolean).join(',');
@@ -2221,6 +2289,7 @@ return {
   eval_dir: EVAL_DIR,
   kernel_name: KERNEL_NAME,
   workload_aligned: HAS_WORKLOAD,
+  primary_metric: WEIGHTED_PRIMARY ? 'time_weighted' : 'geomean',
   final_speedup: finalPrimary,                 // PRIMARY metric (weighted when workload-aligned)
   final_weighted: finalWeighted,
   final_geomean: finalGeomean,

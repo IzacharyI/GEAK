@@ -2,7 +2,7 @@
 
 This is the actionable layer. It does not dump regex matches and ask the reader to infer a recommendation. Every curated card states **when it applies, what to try, why, alternatives, evidence strength and limits**. The raw, reproducible source observations remain in [`gemm_source_evidence.md`](gemm_source_evidence.md).
 
-Source baseline: AITER `a6bb499375849eec45d68c5ccaebc8865fd422c0` · 28 curated decision card(s) citing 261 of 1630 source-evidence records · 12 FlyDSL shipped-seed groups · 41 backend-selection groups · 306 Triton seed groups (on [`gemm_triton_seeds.md`](gemm_triton_seeds.md)).
+Source baseline: AITER `a6bb499375849eec45d68c5ccaebc8865fd422c0` · 30 curated decision card(s) citing 271 of 1630 source-evidence records · 12 FlyDSL shipped-seed groups · 41 backend-selection groups · 306 Triton seed groups (on [`gemm_triton_seeds.md`](gemm_triton_seeds.md)).
 
 How to read this page:
 
@@ -33,9 +33,9 @@ What this corpus holds for each target, so a plan knows how much it is standing 
 
 | gfx | cards that can apply | arch-specific source records | ASM kernels by kind | FlyDSL seed groups | backend-selection groups | Triton seed groups |
 |---|---|---|---|---|---|---|
-| `gfx950` | 27 of 28 | 6 | bf16gemm 24, f4gemm 35, fp8gemm_blockscale 6, i8gemm 8 | 12 | 24 | 176 |
-| `gfx942` | 27 of 28 | 19 | bf16gemm 22, fp8gemm_blockscale 6, i8gemm 9 | 0 | 17 | 47 |
-| `gfx1250` | 27 of 28 | 0 | — | 0 | 0 | 83 |
+| `gfx950` | 29 of 30 | 6 | bf16gemm 24, f4gemm 35, fp8gemm_blockscale 6, i8gemm 8 | 12 | 24 | 176 |
+| `gfx942` | 29 of 30 | 19 | bf16gemm 22, fp8gemm_blockscale 6, i8gemm 9 | 0 | 17 | 47 |
+| `gfx1250` | 29 of 30 | 0 | — | 0 | 0 | 83 |
 
 ## Development order
 
@@ -43,14 +43,14 @@ What this corpus holds for each target, so a plan knows how much it is standing 
 |---|---|---|---|
 | 1. Interface and math semantics | — | — | — |
 | 2. Architecture capability and implementation path | `architecture_capability`, `implementation_variant` | `flydsl-gfx942-path-gates` (constraint), `flydsl-small-m-hgemm-family` (performance_candidate), `gemm-shape-regime-routing` (performance_candidate), `gemm-default-backend-routing` (performance_candidate) | `flydsl-a8-legality`, `flydsl-half-mfma-call-forms`, `flydsl-a8-mfma-selection`, `flydsl-async-copy-by-family`, `gemm-blockscale-shipped-bucket-structure`, `flydsl-preshuffle-b-layout-contract`, `gemm-skinny-decode-wave-split`, `flydsl-host-launch-contract` |
-| 3. Grid, workgroup tile, waves and split-K | `workgroup_tile`, `work_partition`, `execution_geometry`, `configuration_constraints` | `flydsl-hgemm-tiling-validity` (constraint), `flydsl-a8-legality` (constraint), `gemm-workgroup-xcd-mapping` (performance_candidate), `gemm-split-k-when-grid-underfills` (performance_candidate), `flydsl-hgemm-config-space` (performance_candidate), `flydsl-a8-preshuffle-config-space` (performance_candidate), `gemm-blockscale-shipped-bucket-structure` (performance_candidate), `gemm-asm-tile-inventory-and-selection` (performance_candidate), `gemm-skinny-decode-wave-split` (performance_candidate) | `flydsl-a8-mfma-selection`, `gemm-blockscale-k-loop-scale-application`, `flydsl-cshuffle-epilogue`, `flydsl-xor16-lds-layout-consistency`, `flydsl-preshuffle-b-layout-contract`, `flydsl-splitk-hot-loop-schedule-bundle`, `flydsl-a8-interleaved-schedule`, `flydsl-splitk-reduction-contract`, `flydsl-small-m-hgemm-family`, `gemm-shape-regime-routing`, `flydsl-host-launch-contract`, `flydsl-test-parity-gate` |
+| 3. Grid, workgroup tile, waves and split-K | `workgroup_tile`, `work_partition`, `execution_geometry`, `configuration_constraints` | `flydsl-hgemm-tiling-validity` (constraint), `flydsl-a8-legality` (constraint), `gemm-workgroup-xcd-mapping` (performance_candidate), `gemm-split-k-when-grid-underfills` (performance_candidate), `flydsl-hgemm-config-space` (performance_candidate), `flydsl-a8-preshuffle-config-space` (performance_candidate), `gemm-blockscale-shipped-bucket-structure` (performance_candidate), `gemm-asm-tile-inventory-and-selection` (performance_candidate), `gemm-skinny-decode-wave-split` (performance_candidate) | `flydsl-a8-mfma-selection`, `gemm-blockscale-k-loop-scale-application`, `flydsl-cshuffle-epilogue`, `flydsl-xor16-lds-layout-consistency`, `flydsl-preshuffle-b-layout-contract`, `flydsl-splitk-hot-loop-schedule-bundle`, `flydsl-a8-interleaved-schedule`, `flydsl-splitk-reduction-contract`, `flydsl-small-m-hgemm-family`, `gemm-shape-regime-routing`, `flydsl-host-launch-contract`, `flydsl-test-parity-gate`, `flydsl-lds-pipeline-depth` |
 | 4. Layout and address computation | `operand_layout` | `flydsl-mfma-fragment-lane-layout` (semantic), `flydsl-xor16-lds-layout-consistency` (performance_candidate), `flydsl-preshuffle-b-layout-contract` (performance_candidate) | `flydsl-a8-data-movement-helpers` |
-| 5. Global, LDS and register data movement | `memory_access` | `flydsl-async-copy-by-family` (performance_candidate), `flydsl-a8-data-movement-helpers` (performance_candidate) | `flydsl-gfx942-path-gates`, `gemm-workgroup-xcd-mapping`, `flydsl-splitk-hot-loop-schedule-bundle`, `flydsl-a8-interleaved-schedule`, `gemm-skinny-decode-wave-split` |
+| 5. Global, LDS and register data movement | `memory_access` | `flydsl-async-copy-by-family` (performance_candidate), `flydsl-a8-data-movement-helpers` (performance_candidate), `gemm-streamed-operand-cache-policy` (performance_candidate) | `flydsl-gfx942-path-gates`, `gemm-workgroup-xcd-mapping`, `flydsl-splitk-hot-loop-schedule-bundle`, `flydsl-a8-interleaved-schedule`, `gemm-skinny-decode-wave-split` |
 | 6. MFMA / dot compute | `compute_instruction` | `flydsl-a8-scale-granularity-contract` (constraint), `flydsl-a8-mfma-selection` (semantic), `gemm-blockscale-k-loop-scale-application` (semantic), `flydsl-half-mfma-call-forms` (performance_candidate) | `flydsl-gfx942-path-gates`, `flydsl-splitk-hot-loop-schedule-bundle`, `flydsl-a8-interleaved-schedule`, `flydsl-mfma-fragment-lane-layout` |
-| 7. Pipeline and synchronization | `pipeline_schedule` | `flydsl-splitk-hot-loop-schedule-bundle` (performance_candidate), `flydsl-a8-interleaved-schedule` (performance_candidate) | `flydsl-hgemm-tiling-validity`, `flydsl-async-copy-by-family`, `flydsl-a8-preshuffle-config-space`, `flydsl-a8-data-movement-helpers` |
+| 7. Pipeline and synchronization | `pipeline_schedule` | `flydsl-splitk-hot-loop-schedule-bundle` (performance_candidate), `flydsl-a8-interleaved-schedule` (performance_candidate), `flydsl-lds-pipeline-depth` (performance_candidate) | `flydsl-hgemm-tiling-validity`, `flydsl-async-copy-by-family`, `flydsl-a8-preshuffle-config-space`, `flydsl-a8-data-movement-helpers` |
 | 8. Reduction, epilogue and write-back | `epilogue` | `flydsl-splitk-reduction-contract` (constraint), `flydsl-cshuffle-epilogue` (performance_candidate) | `flydsl-a8-scale-granularity-contract`, `gemm-split-k-when-grid-underfills`, `flydsl-a8-preshuffle-config-space`, `flydsl-mfma-fragment-lane-layout`, `flydsl-test-parity-gate` |
 | 9. Host configuration, ABI and launch | `runtime_contract` | `flydsl-host-launch-contract` (constraint) | `flydsl-a8-scale-granularity-contract`, `gemm-blockscale-k-loop-scale-application`, `gemm-split-k-when-grid-underfills`, `flydsl-preshuffle-b-layout-contract`, `flydsl-splitk-reduction-contract`, `gemm-default-backend-routing` |
-| 10. Correctness validation and tuning | `validation_contract`, `tunable_surface` | `flydsl-test-parity-gate` (constraint) | `flydsl-hgemm-config-space`, `flydsl-a8-preshuffle-config-space`, `gemm-blockscale-shipped-bucket-structure` |
+| 10. Correctness validation and tuning | `validation_contract`, `tunable_surface` | `flydsl-test-parity-gate` (constraint) | `flydsl-hgemm-config-space`, `flydsl-a8-preshuffle-config-space`, `gemm-blockscale-shipped-bucket-structure`, `gemm-streamed-operand-cache-policy` |
 
 ## 1. Interface and math semantics
 
@@ -331,7 +331,7 @@ Source-observed candidate — the cited implementation exists; no performance pr
 - `execution_geometry` — How many waves/warps and workitems cooperate on the tile?
 - `configuration_constraints` — Which combinations are legal with respect to divisibility, LDS/register budgets and fixed parameters?
 
-Also bears on this step: `flydsl-a8-mfma-selection` (step 6), `gemm-blockscale-k-loop-scale-application` (step 6), `flydsl-cshuffle-epilogue` (step 8), `flydsl-xor16-lds-layout-consistency` (step 4), `flydsl-preshuffle-b-layout-contract` (step 4), `flydsl-splitk-hot-loop-schedule-bundle` (step 7), `flydsl-a8-interleaved-schedule` (step 7), `flydsl-splitk-reduction-contract` (step 8), `flydsl-small-m-hgemm-family` (step 2), `gemm-shape-regime-routing` (step 2), `flydsl-host-launch-contract` (step 9), `flydsl-test-parity-gate` (step 10).
+Also bears on this step: `flydsl-a8-mfma-selection` (step 6), `gemm-blockscale-k-loop-scale-application` (step 6), `flydsl-cshuffle-epilogue` (step 8), `flydsl-xor16-lds-layout-consistency` (step 4), `flydsl-preshuffle-b-layout-contract` (step 4), `flydsl-splitk-hot-loop-schedule-bundle` (step 7), `flydsl-a8-interleaved-schedule` (step 7), `flydsl-splitk-reduction-contract` (step 8), `flydsl-small-m-hgemm-family` (step 2), `gemm-shape-regime-routing` (step 2), `flydsl-host-launch-contract` (step 9), `flydsl-test-parity-gate` (step 10), `flydsl-lds-pipeline-depth` (step 7).
 
 ### Which FlyDSL HGEMM configurations will fail to build at all, before any of them can be slow?
 
@@ -1224,6 +1224,58 @@ Source-observed candidate — the cited implementation exists; no performance pr
 - The helpers are the A8/MoE family's; the HGEMM stages its operands with its own code, and a block-scale kernel adds scale loads these helpers do not cover.
 - Which width is fastest for a tile is a measurement; the helpers state which widths are legal.
 
+### Which operand loads and output stores should carry a streaming (non-temporal) cache policy, and which should keep the default?
+
+**Card:** `gemm-streamed-operand-cache-policy` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only` · **axes:** `memory_access`, `tunable_surface`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+#### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `scaled_quant_gemm`, `grouped_gemm_moe`, `batched_gemm`, `splitk_streamk_gemm`, `skinny_gemv_decode`, `gemm_epilogue_fused`
+- `target_languages`: `flydsl`
+
+#### Use when
+
+- target_language=flydsl
+- one operand is read once per call while the other is reused across tiles — typically the weight B at decode, where every workgroup streams its own slice of W while the few rows of A are shared — or an output is written once and not read back by this kernel
+
+#### Try
+
+- Make the cache policy a per-operand knob on the global loads, not a kernel-wide switch: FlyDSL's `buffer_ops.buffer_load` takes `cache_modifier`, and AITER's FlyDSL MoE GEMM exposes it for its B loads only, as `b_nt` (default 0 in one of its kernels and 2 in the other), while its other loads pass `cache_modifier=0`.
+- Search the streamed operand's load policy — the default against the streaming setting — and leave the reused operand's loads at the default.
+- Store a write-once output non-temporally when nothing re-reads it soon: the FlyDSL MoE kernel writes its output with `llvm.StoreOp(..., nontemporal=True)`.
+
+#### Why this is a candidate
+
+- AITER's Triton a16w16 GEMM makes the same choice per operand: `cache_modifier` is a kernel parameter applied to the B loads only, never to A. Of the 306 shipped Triton GEMM config groups, 88 set it, and 87 of those choose `.cg`.
+- A line fetched once and never re-read only displaces lines that would have been reused; the reused operand is the one worth keeping resident.
+
+#### Keep as alternatives
+
+- The default cache policy everywhere — the control arm.
+
+#### Same question in other implementations
+
+- **triton** — `cache_modifier: tl.constexpr` on the a16w16 kernels, passed to `tl.load(b_ptrs, cache_modifier=...)` for B and never for A; the value is carried per bucket in the shipped configs. Evidence: `src_15cea189ebb33d4c` (`aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:81`), `src_92959715207084c1` (`aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:159`), `src_9667faa67584ba59` (`aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:168`)
+
+#### Evidence
+
+- `src_6a42df54a6f6b458` — `cache_policy` `cache` at `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:71`
+- `src_e93e7dd39f7adedc` — `cache_policy` `b` at `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:893`
+- `src_106bcf16a01dfc38` — `cache_policy` `b` at `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3553`
+- `src_e59fe6013e3decd4` — `cache_policy` `nontemporal=True` at `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2284`
+
+#### Background (always-on reference docs, not measurements)
+
+- [`hardware/shared/hbm_infinity_fabric.md:73`](../hardware/shared/hbm_infinity_fabric.md)
+- [`hardware/cdna3_mi300/memory_hierarchy.md:48`](../hardware/cdna3_mi300/memory_hierarchy.md)
+
+#### Limits
+
+- The spelling differs per backend — a Triton modifier string, a FlyDSL integer `cache_modifier`, an LLVM `nontemporal` store flag — and the corpus does not map one onto another; read what the target API accepts.
+- Whether streaming helps depends on the reuse the benchmark reproduces: a timing loop that re-reads the same weight from a warm cache measures a different reuse than serving, where each layer reads its own weight.
+
 ## 6. MFMA / dot compute
 
 - `compute_instruction` — Which matrix-compute family and instruction shape does the implementation request?
@@ -1607,6 +1659,55 @@ Source-observed candidate — the cited implementation exists; no performance pr
 - The table values are AITER's per-tile choices for gfx950 fp8/int8; they are seeds for that geometry only.
 - Scheduling is the most build-specific knowledge here; settle the tile and staging first.
 
+### How many LDS stages should the K loop keep in flight, and what does each one cost?
+
+**Card:** `flydsl-lds-pipeline-depth` · **type:** `performance_candidate` · **evidence:** `source_observed` · **status:** `candidate_only` · **axes:** `pipeline_schedule`, `configuration_constraints`, `workgroup_tile`
+
+Source-observed candidate — the cited implementation exists; no performance preference is implied.
+
+#### Machine match
+
+- `operator_families`: `gemm`, `dense_gemm`, `scaled_quant_gemm`, `splitk_streamk_gemm`, `skinny_gemv_decode`, `gemm_epilogue_fused`
+- `target_languages`: `flydsl`
+- `requires`: `lds_staging`
+
+#### Use when
+
+- target_language=flydsl
+- the design stages operand tiles through LDS (trait lds_staging)
+
+#### Try
+
+- Treat the stage count as a knob that competes with the tile for LDS: the split-K HGEMM allocates `STAGES * BLOCK_M * BLOCK_K` elements for A and `STAGES * BLOCK_N * BLOCK_K` for B, so every extra stage costs one more A tile and one more B tile.
+- Start from AITER's two stages — `STAGES = 2` in the split-K and small-M HGEMMs, `lds_stage=2` as the preshuffle GEMM's default — and try a deeper ring only where the tile is small enough for the LDS budget and the tiling validator to accept it.
+- Keep the stage count in the kernel name, as AITER does (`_S{STAGES}`, `_lds{lds_stage}`), so two builds that differ only in depth never share a compiled-kernel cache entry.
+
+#### Why this is a candidate
+
+- A stage is how far the loader runs ahead of the MFMAs, and it is bought with LDS that the tile, occupancy and any LDS-staged epilogue also want.
+- AITER fixes two stages in the HGEMMs and exposes the depth only on the preshuffle GEMM, where it also restricts it (FP4 with tile_k=128 supports only lds_stage=2): the depth is a design axis, not a constant.
+
+#### Keep as alternatives
+
+- More workgroups per CU instead of more stages: the same LDS spent on occupancy hides latency across workgroups rather than within one.
+
+#### Evidence
+
+- `src_dbdbdbf21af30e3c` — `lds_stage` `STAGES, 2` at `aiter/ops/flydsl/kernels/splitk_hgemm.py:142`
+- `src_8a036c537a13ff24` — `lds_stage` `STAGES, 2` at `aiter/ops/flydsl/kernels/small_m_hgemm.py:72`
+- `src_1a80adca750d9118` — `lds_stage` `lds_stage, 2` at `aiter/ops/flydsl/kernels/preshuffle_gemm.py:211`
+
+#### Background (always-on reference docs, not measurements)
+
+- [`optimization/lds_and_bank_conflicts.md:55-59`](../optimization/lds_and_bank_conflicts.md)
+- [`optimization/lds_and_bank_conflicts.md:94-96`](../optimization/lds_and_bank_conflicts.md)
+- [`operators/skinny_gemv_decode/backends/flydsl.md:59`](../operators/skinny_gemv_decode/backends/flydsl.md)
+
+#### Limits
+
+- The HGEMM families hard-code two stages; a different depth there means changing the kernel source, not passing a parameter.
+- Deeper is not monotonically better: once global latency is hidden, further stages only take LDS away from occupancy.
+
 ## 8. Reduction, epilogue and write-back
 
 - `epilogue` — How is the accumulator rearranged and written?
@@ -1819,7 +1920,7 @@ Source-observed candidate — the cited implementation exists; no performance pr
 
 The oracle, parity gate and timing protocol belong to the workflow's verify step, not to this corpus; cards here state only what a kernel's own contract changes about validation.
 
-Also bears on this step: `flydsl-hgemm-config-space` (step 3), `flydsl-a8-preshuffle-config-space` (step 3), `gemm-blockscale-shipped-bucket-structure` (step 3).
+Also bears on this step: `flydsl-hgemm-config-space` (step 3), `flydsl-a8-preshuffle-config-space` (step 3), `gemm-blockscale-shipped-bucket-structure` (step 3), `gemm-streamed-operand-cache-policy` (step 5).
 
 ### Which parity does AITER's own FlyDSL GEMM test demand, where does it relax it, and what does that say about validating an authored kernel?
 

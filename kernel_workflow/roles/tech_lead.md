@@ -185,7 +185,9 @@ analysis below exactly as before.)
    - **Measured implementation bundles:** when `MEASURED_IMPLEMENTATION_REGISTRY` is non-empty, query
      `corpus/benchmarks/select_implementations.py` using the exact suite/gfx/dtype/shape and
      `ACTIVE_FLYDSL_VERSION`, plus the frozen baseline and current AITER commit/Torch/HIP versions
-     (or an exact context fingerprint). Missing environment identity means no prior, not a fuzzy
+     (or an exact context fingerprint). For a multi-case task pass `--task-dir` with the task
+     directory instead of a suite, dtype, baseline and shape: it derives them from `meta.json` and
+     `baseline_src/` and answers every timed case separately. Missing environment identity means no prior, not a fuzzy
      match. Read each returned implementation's `performance_decisions` vector to compare the
      backend-neutral axes; use its `source_fields` to recover the exact spelling before assigning
      work. A returned Top-K bundle is a concrete seed/rewrite candidate, not proof

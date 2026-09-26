@@ -1388,3 +1388,79 @@ cards:
     measurement_evidence: []
     limitations:
       - "These are AITER's regression cases for its own kernel; an authored kernel is judged by the task's oracle, not by this test."
+
+  - id: "gemm-streamed-operand-cache-policy"
+    type: "performance_candidate"
+    axes: ["memory_access", "tunable_surface"]
+    match:
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      target_languages: ["flydsl"]
+    question: "Which operand loads and output stores should carry a streaming (non-temporal) cache policy, and which should keep the default?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "one operand is read once per call while the other is reused across tiles — typically the weight B at decode, where every workgroup streams its own slice of W while the few rows of A are shared — or an output is written once and not read back by this kernel"
+    actions:
+      - "Make the cache policy a per-operand knob on the global loads, not a kernel-wide switch: FlyDSL's `buffer_ops.buffer_load` takes `cache_modifier`, and AITER's FlyDSL MoE GEMM exposes it for its B loads only, as `b_nt` (default 0 in one of its kernels and 2 in the other), while its other loads pass `cache_modifier=0`."
+      - "Search the streamed operand's load policy — the default against the streaming setting — and leave the reused operand's loads at the default."
+      - "Store a write-once output non-temporally when nothing re-reads it soon: the FlyDSL MoE kernel writes its output with `llvm.StoreOp(..., nontemporal=True)`."
+    alternatives:
+      - "The default cache policy everywhere — the control arm."
+    why:
+      - "AITER's Triton a16w16 GEMM makes the same choice per operand: `cache_modifier` is a kernel parameter applied to the B loads only, never to A. Of the 306 shipped Triton GEMM config groups, 88 set it, and 87 of those choose `.cg`."
+      - "A line fetched once and never re-read only displaces lines that would have been reused; the reused operand is the one worth keeping resident."
+    source_evidence:
+      - "src_6a42df54a6f6b458"
+      - "src_e93e7dd39f7adedc"
+      - "src_106bcf16a01dfc38"
+      - "src_e59fe6013e3decd4"
+    solutions:
+      - backend: "triton"
+        mechanism: "`cache_modifier: tl.constexpr` on the a16w16 kernels, passed to `tl.load(b_ptrs, cache_modifier=...)` for B and never for A; the value is carried per bucket in the shipped configs"
+        source_evidence:
+          - "src_15cea189ebb33d4c"
+          - "src_92959715207084c1"
+          - "src_9667faa67584ba59"
+    references:
+      - "hardware/shared/hbm_infinity_fabric.md:73"
+      - "hardware/cdna3_mi300/memory_hierarchy.md:48"
+    measurement_evidence: []
+    limitations:
+      - "The spelling differs per backend — a Triton modifier string, a FlyDSL integer `cache_modifier`, an LLVM `nontemporal` store flag — and the corpus does not map one onto another; read what the target API accepts."
+      - "Whether streaming helps depends on the reuse the benchmark reproduces: a timing loop that re-reads the same weight from a warm cache measures a different reuse than serving, where each layer reads its own weight."
+
+  - id: "flydsl-lds-pipeline-depth"
+    type: "performance_candidate"
+    axes: ["pipeline_schedule", "configuration_constraints", "workgroup_tile"]
+    match:
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      target_languages: ["flydsl"]
+      requires: ["lds_staging"]
+    question: "How many LDS stages should the K loop keep in flight, and what does each one cost?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "the design stages operand tiles through LDS (trait lds_staging)"
+    actions:
+      - "Treat the stage count as a knob that competes with the tile for LDS: the split-K HGEMM allocates `STAGES * BLOCK_M * BLOCK_K` elements for A and `STAGES * BLOCK_N * BLOCK_K` for B, so every extra stage costs one more A tile and one more B tile."
+      - "Start from AITER's two stages — `STAGES = 2` in the split-K and small-M HGEMMs, `lds_stage=2` as the preshuffle GEMM's default — and try a deeper ring only where the tile is small enough for the LDS budget and the tiling validator to accept it."
+      - "Keep the stage count in the kernel name, as AITER does (`_S{STAGES}`, `_lds{lds_stage}`), so two builds that differ only in depth never share a compiled-kernel cache entry."
+    alternatives:
+      - "More workgroups per CU instead of more stages: the same LDS spent on occupancy hides latency across workgroups rather than within one."
+    why:
+      - "A stage is how far the loader runs ahead of the MFMAs, and it is bought with LDS that the tile, occupancy and any LDS-staged epilogue also want."
+      - "AITER fixes two stages in the HGEMMs and exposes the depth only on the preshuffle GEMM, where it also restricts it (FP4 with tile_k=128 supports only lds_stage=2): the depth is a design axis, not a constant."
+    source_evidence:
+      - "src_dbdbdbf21af30e3c"
+      - "src_8a036c537a13ff24"
+      - "src_1a80adca750d9118"
+    references:
+      - "optimization/lds_and_bank_conflicts.md:55-59"
+      - "optimization/lds_and_bank_conflicts.md:94-96"
+      - "operators/skinny_gemv_decode/backends/flydsl.md:59"
+    measurement_evidence: []
+    limitations:
+      - "The HGEMM families hard-code two stages; a different depth there means changing the kernel source, not passing a parameter."
+      - "Deeper is not monotonically better: once global latency is hidden, further stages only take LDS away from occupancy."

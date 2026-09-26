@@ -56,6 +56,8 @@ and run that earned them. The always-on corpus does not copy them and bypass tho
 | `gemm_triton_seeds.md` | generated page with the Triton shipped seeds, split out because they are another backend's knob names. |
 | `_select_candidates.py` | deterministically matches card conditions to an operator/language/gfx/dtype/regime context — or to every case of a task `meta.json` with `--workload`; it does not rank performance. |
 | `_aggregate_decision_outcomes.py` | folds run-local validation manifests into per-decision and bundle outcome summaries; a single referenced card is planner attribution, not causal proof. |
+| `_validate_products.py` | checks the corpus against implementations the workflow actually produced: per-case selection, whether the cards a run cited apply to it, which techniques the product wrote that no applicable card cites, and whether the run can feed the measured layer. |
+| `benchmarks/ingest_workflow_products.py` | turns validated workflow products into implementation-registry records, one per case and Director replicate; `select_implementations.py --task-dir` queries every case of a task. |
 | `test_corpus.py` | source reproducibility, card grounding and generated-page contracts. |
 
 The extraction/rendering split matters: extraction needs a source tree that is not part of this repo,
@@ -116,7 +118,12 @@ python3 perf_knowledge/corpus/_select_candidates.py \
 A task that spans shapes — decode plus prefill, or a batch of buckets — is classified case by case,
 because one static answer is too narrow for one case or too wide for another. `--workload` reads the
 task's `meta.json` (its `cases[]` and `dtype`), `--shape MxNxK` adds cases, and the result lists each
-case's eligible/deferred/rejected cards plus which cards hold for every case and which for some:
+case's eligible/deferred/rejected cards plus which cards hold for every case and which for some.
+Both meta layouts in use are read: kernel tasks give every case `sig`, `m`, `n`, `k`; seams extracted
+from a served model give each case `name`, `m` and `regime`, keep `N`/`K` once in `model_dims`, mark
+correctness-only edges `timed: false` (classified, but not part of "every case"), and may state the
+dtype as a whole contract (`bf16 in / bf16 weight / bf16 out, fp32 accumulate` reads as `bf16`). With
+`--outcomes`, each case also lists the measured priors that apply to it:
 
 ```bash
 python3 perf_knowledge/corpus/_select_candidates.py \
@@ -145,10 +152,68 @@ python3 perf_knowledge/corpus/_aggregate_decision_outcomes.py \
 
 `speedup_vs_frozen_baseline` is the candidate's absolute score. A single-ref direction is still
 planner attribution, not proof that the card caused the change; multi-ref directions remain bundles.
-Only finite, correctness-passing results from reliable, Director-accepted runs enter candidate
-ordering. Regressions remain valid negative evidence; failed/flagged measurements remain visible but
-do not supply a numeric prior. A quality-passing multi-ref result may rank that exact bundle in
-`measured_bundles`, but it never creates a prior for any card inside the bundle.
+Only finite, correctness-passing results from reliable runs with a `ranking_basis` enter candidate
+ordering. The basis is `accepted` when the Director accepted the run, or `graph_timed_lower_bound` when
+its only flags are the timing-receipt ones (`timing_receipt_absent`, `timer_unprimed`) and every timed
+case was a CUDA-graph replay: both legs of a replay carry the same submission bubble, which pulls the
+ratio toward 1.0, so the measured speedup is a lower bound. Eager-timed cases carry each
+implementation's own host dispatch and get no such basis. The flags are read from the manifest's
+`validation.flag_reasons` / `timing_basis` / `graph_timed`, or, for manifests older than those fields,
+from the run's `director_validation.json` and task `meta.json`. Regressions remain valid negative
+evidence; failed/flagged measurements remain visible but do not supply a numeric prior. A
+quality-passing multi-ref result may rank that exact bundle in `measured_bundles`, but it never
+creates a prior for any card inside the bundle.
+
+A run's direction scores are in the metric the lane scored candidates on, `measurement.primary_metric`
+(time-weighted when the caller passed a workload or the frozen oracle is itself weighted). A measured
+run matches a query only through its observed language; an older optimize run over a seam that
+carries two backends recorded none, and `--assume-language RUN=LANGUAGE` supplies it, recorded as
+`observed_language_basis: assumed_by_operator`. A run that measured several shapes matches a case
+whose shape it contains.
+
+## Validating the corpus against workflow products
+
+The workflow's own products are the test the corpus has to pass: an implementation that won on a
+real task, built by agents that read these cards. `_validate_products.py` takes run directories and
+plain task directories (`meta.json` plus `kernel_src/`) and reports, per product:
+
+- **selection** — every case classified, as a planner starts and with the design traits the product's
+  source shows (LDS staging, a scheduled split-K hot loop), and the cards those traits unlock;
+- **citations** — every card the run cited, where the selector places it for the product's own
+  context, and what the citing directions reached; citing a card the selector rejects there, or an ID
+  that does not exist, is a contradiction between planner and corpus;
+- **coverage** — the categories the product's own code writes (the lines its final patch adds),
+  scanned with the extractor's rules, against the evidence categories and axes of the applicable
+  cards; a category no applicable card cites is a gap for this kind of kernel;
+- **measured readiness** — the run's observed language, ranking basis, flags and metric, as the
+  aggregator reads them.
+
+```bash
+python3 perf_knowledge/corpus/_validate_products.py --runs /path/to/exp \
+  --task /path/to/merged_task --gfx gfx950 --json report.json --markdown report.md
+```
+
+It measures nothing and writes nothing into the corpus. A gap it finds is closed the usual way — with
+a card that cites AITER source evidence — never by copying the product's numbers into this layer.
+`gemm-streamed-operand-cache-policy` and `flydsl-lds-pipeline-depth` came from such a check: FlyDSL
+GEMM products wrote a per-operand cache policy and an LDS ring depth that no applicable card spoke to.
+`waves` and `tile_shape` can still be reported where a card states the same knobs as an option
+tuple (`config_space`); the axis-level coverage shows whether the question itself is covered.
+
+Validated products can also seed later runs as whole implementations, behind the same switch as
+every other registry. `benchmarks/ingest_workflow_products.py` writes one normalized result per case
+and Director replicate — suite = the task's `short_name`, baseline = a hash of its frozen
+`baseline_src/`, the case's shape, the oracle's timer — and merges them; only cases with a ranking
+basis are `measured`, the rest are kept as `not_rankable`. `select_implementations.py --task-dir`
+queries every timed case of a task with the same derivation:
+
+```bash
+python3 perf_knowledge/corpus/benchmarks/ingest_workflow_products.py --runs /path/to/exp \
+  --output measured_products.json --torch-version "$TORCH" --hip-version "$HIP"
+python3 perf_knowledge/corpus/benchmarks/select_implementations.py --registry measured_products.json \
+  --task-dir TASK_DIR --language flydsl --gfx gfx950 --flydsl-version 0.3.2 \
+  --aiter-commit "$AITER" --torch-version "$TORCH" --hip-version "$HIP"
+```
 
 ## Cards follow the development order, and carry other backends' answers
 

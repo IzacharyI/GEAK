@@ -325,6 +325,78 @@ def test_a_workload_is_classified_case_by_case():
     assert "flydsl-hgemm-config-space" in result["eligible_in_every_case"]
 
 
+def test_a_seam_meta_with_model_dims_and_explicit_regimes_is_a_workload():
+    """Seam tasks extracted from a served model keep N/K once in `model_dims`, name each case,
+    state its regime, and mark correctness-only edges untimed; `--workload` has to read that."""
+    meta = {
+        "dtype": "bf16 in / bf16 weight / bf16 out, fp32 accumulate",
+        "model_dims": {"N": 6144, "K": 2048, "hidden_size": 6144},
+        "cases": [
+            {"name": "dec_bs1", "m": 6, "regime": "decode", "timed": True},
+            {"name": "pre_M1936", "m": 1936, "regime": "prefill", "timed": True},
+            {"name": "edge_M1_single_token", "m": 1, "timed": False},
+        ],
+    }
+    cases = SELECT.workload_cases(meta)
+    assert [(c["sig"], c["m"], c["n"], c["k"], c["regime"], c["timed"]) for c in cases] == [
+        ("dec_bs1", 6, 6144, 2048, "decode", True),
+        ("pre_M1936", 1936, 6144, 2048, "prefill", True),
+        ("edge_M1_single_token", 1, 6144, 2048, None, False),
+    ]
+    assert SELECT.workload_dtype(meta) == "bf16"
+    context = {"operator_family": "dense_gemm", "target_language": "flydsl", "gfx": "gfx950",
+               "dtype": SELECT.workload_dtype(meta), "regime": None, "traits": []}
+    result = SELECT.select_workload(HERE / "catalog.yaml", context, cases)
+    assert [c["timed"] for c in result["cases"]] == [True, True, False]
+    assert "flydsl-small-m-hgemm-family" in result["eligible_in_some_cases"]
+    # The untimed edge is classified but does not shrink what holds for the timed workload.
+    assert result["eligible_in_some_cases"]["flydsl-small-m-hgemm-family"] == ["dec_bs1"]
+
+
+def test_workload_dtype_is_canonical_single_or_absent():
+    assert SELECT.workload_dtype({"dtype": "fp8_e4m3fnuz_blockscale"}) == "fp8_e4m3fnuz_blockscale"
+    assert SELECT.workload_dtype({"dtype": "bfloat16"}) == "bf16"
+    assert SELECT.workload_dtype({"dtype": "fp16 in, fp32 accumulate, fp16 out"}) == "f16"
+    assert SELECT.workload_dtype({"dtype": "bf16 activations / int4 weight"}) is None
+    assert SELECT.workload_dtype({}) is None
+
+
+def test_a_seam_meta_workload_reads_model_dims_regime_and_untimed_edges():
+    """Seam metas extracted from a served model: `name`/`m`/`regime` per case, N and K once in
+    `model_dims`, correctness-only edges `timed: false`, and a dtype stated as a whole contract."""
+    meta = {
+        "dtype": "bf16 in / bf16 weight / bf16 out, fp32 accumulate",
+        "model_dims": {"N": 6144, "K": 2048},
+        "cases": [
+            {"name": "dec_bs1", "regime": "decode", "m": 6, "timed": True},
+            {"name": "pre_M16955", "regime": "prefill", "m": 16955, "timed": True},
+            {"name": "edge_M1_single_token", "m": 1, "timed": False},
+        ],
+    }
+    cases = SELECT.workload_cases(meta)
+    assert [(c["sig"], c["m"], c["n"], c["k"], c["regime"], c["timed"]) for c in cases] == [
+        ("dec_bs1", 6, 6144, 2048, "decode", True),
+        ("pre_M16955", 16955, 6144, 2048, "prefill", True),
+        ("edge_M1_single_token", 1, 6144, 2048, None, False),
+    ]
+    assert SELECT.workload_dtype(meta) == "bf16"
+    context = {"operator_family": "dense_gemm", "target_language": "flydsl", "gfx": "gfx950",
+               "dtype": SELECT.workload_dtype(meta), "regime": None, "traits": []}
+    result = SELECT.select_workload(HERE / "catalog.yaml", context, cases)
+    by_sig = {case["sig"]: case for case in result["cases"]}
+    assert by_sig["edge_M1_single_token"]["timed"] is False
+    assert "flydsl-small-m-hgemm-family" in by_sig["dec_bs1"]["eligible"]
+    # The untimed M=1 edge is classified but does not narrow what holds for the timed workload.
+    assert result["eligible_in_some_cases"]["flydsl-small-m-hgemm-family"] == ["dec_bs1"]
+
+
+def test_workload_dtype_names_one_operand_dtype_or_none():
+    assert SELECT.workload_dtype({"dtype": "fp8_e4m3fnuz_blockscale"}) == "fp8_e4m3fnuz_blockscale"
+    assert SELECT.workload_dtype({"dtype": "bfloat16"}) == "bf16"
+    assert SELECT.workload_dtype({"dtype": "bf16 in / fp8_e4m3fnuz weight, fp32 accumulate"}) is None
+    assert SELECT.workload_dtype({}) is None
+
+
 def test_a_malformed_shape_is_refused():
     with pytest.raises(ValueError):
         SELECT.workload_cases(None, ["8x4096"])

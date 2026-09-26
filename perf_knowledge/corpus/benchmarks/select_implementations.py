@@ -146,9 +146,51 @@ def select(registry, args):
     }
 
 
+def select_task(registry, args):
+    """`select` for every timed case of a task directory, with its oracle as the suite.
+
+    The suite, operand dtype and cases come from the task's `meta.json`, and the baseline from its
+    frozen `baseline_src/`, the way `ingest_workflow_products.py` records them; the caller still
+    states the environment identity, as for a single-shape query.
+    """
+    import sys
+    corpus = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(corpus))
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import _select_candidates as SELECT
+    from ingest_workflow_products import baseline_identity
+
+    task = Path(args.task_dir)
+    meta = json.loads((task / "meta.json").read_text(encoding="utf-8"))
+    base = argparse.Namespace(**vars(args))
+    base.suite = args.suite or meta.get("short_name")
+    base.dtype = args.dtype or SELECT.workload_dtype(meta)
+    base.baseline = args.baseline or baseline_identity(task)
+    cases = []
+    for case in SELECT.workload_cases(meta):
+        if not case["timed"]:
+            continue
+        query = argparse.Namespace(**vars(base))
+        query.m, query.n, query.k = case["m"], case["n"], case["k"]
+        cases.append({"sig": case["sig"], "m": case["m"], "n": case["n"], "k": case["k"],
+                      **select(registry, query)})
+    return {
+        "schema_version": 1,
+        "task": str(task),
+        "suite": base.suite, "dtype": base.dtype, "baseline": base.baseline,
+        "cases": cases,
+        "contract": (
+            "One exact-context query per timed case. A bundle ranked for one case says nothing about "
+            "another; kernel_workflow must revalidate on the target task."
+        ),
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", required=True, type=Path)
+    parser.add_argument("--task-dir", type=Path,
+                        help="query every timed case of this task (meta.json + baseline_src/)")
     parser.add_argument("--suite")
     parser.add_argument("--language")
     parser.add_argument("--gfx")
@@ -168,7 +210,8 @@ def main(argv=None):
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     if registry.get("schema_version") != 1:
         raise ValueError("unsupported implementation registry schema")
-    print(json.dumps(select(registry, args), indent=2, sort_keys=True))
+    result = select_task(registry, args) if args.task_dir else select(registry, args)
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 

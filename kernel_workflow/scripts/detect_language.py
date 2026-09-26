@@ -252,6 +252,21 @@ def decide(scores, decisive):
     return top, f"{top!r} scored {top_score:g}{note}"
 
 
+def tied_languages(scores, decisive):
+    """The declaring languages too close to call in one file: what `decide` refused to pick among.
+
+    Empty when one language clearly leads. A caller that knows which language it asked for may use
+    this to confirm that request - never to pick a language the file does not declare.
+    """
+    suppressed = {parent for child, parent in PARENT.items() if child in decisive}
+    live = {k: v for k, v in scores.items() if k in decisive and k not in suppressed}
+    if len(live) < 2:
+        return []
+    top = max(live.values())
+    tied = sorted(k for k, v in live.items() if v >= top * 0.75)
+    return tied if len(tied) > 1 else []
+
+
 def detect(paths, entry=None):
     """Decide each file, then let the files vote. Aggregating raw scores across files is wrong.
 
@@ -262,6 +277,7 @@ def detect(paths, entry=None):
     because two of its 33 HIP files include a CK header.
     """
     votes, evidence, scanned, undecided = {}, [], 0, 0
+    tied = set()
     for path in iter_files(paths):
         s, d, e, factor = scan_file(path, entry)
         scanned += 1
@@ -269,6 +285,7 @@ def detect(paths, entry=None):
         lang, _why = decide(s, d)
         if lang is None:
             undecided += 1
+            tied.update(tied_languages(s, d))
             continue
         votes[lang] = votes.get(lang, 0) + factor
 
@@ -288,6 +305,7 @@ def detect(paths, entry=None):
             language = None
             reason = (f"ambiguous: {top!r} ({top_v:g}) and {runner!r} ({runner_v:g}) are too close "
                       f"to call across the scanned files; name a single file or pass --entry")
+            tied.update({top, runner})
 
     evidence.sort(key=lambda d: -d.get("weight", 0))
     return {
@@ -296,6 +314,9 @@ def detect(paths, entry=None):
         "files_scanned": scanned,
         "files_undecided": undecided,
         "votes": {k: round(v, 2) for k, v in ranked},
+        # Only when undecided: the declaring languages the verdict was refused between. A vendored
+        # dispatcher that carries a FlyDSL path and a Triton fallback in one file lands here.
+        "ambiguous_between": sorted(tied) if language is None else [],
         # Enough to check the verdict by hand, not the whole scan.
         "evidence": [e for e in evidence if e.get("language") == language][:5] or evidence[:5],
     }

@@ -4,6 +4,12 @@
 The recorded ratio is named ``speedup_vs_frozen_baseline`` because its denominator is the
 run's frozen baseline.  A direction citing multiple decisions is retained as a bundle-level
 observation and is not attributed to any one member of the bundle.
+
+A run's ``ranking_basis`` says why its results may order candidates: ``accepted`` by the
+Director, or ``graph_timed_lower_bound`` when the only flags are the timing-receipt ones and
+every timed case was a CUDA-graph replay.  Both legs of a graph replay carry the same
+submission bubble, which pulls the ratio toward 1.0, so a speedup measured that way is a lower
+bound.  Eager timing carries each implementation's own host dispatch and gets no such basis.
 """
 
 import argparse
@@ -78,7 +84,85 @@ def _load_manifest(path):
     return data
 
 
-def _context(manifest):
+TIMING_ONLY_REASONS = frozenset({"timing_receipt_absent", "timer_unprimed"})
+TIMING_BASIS_REASONS = {
+    "unknown": "timing_receipt_absent",
+    "unprimed": "timer_unprimed",
+    "host_bound": "host_bound",
+}
+
+
+def _read_json(path):
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _graph_timed(meta):
+    """True when every timed case of a task meta is timed as a CUDA-graph replay."""
+    cases = [case for case in (meta or {}).get("cases") or []
+             if isinstance(case, dict) and case.get("timed") is not False]
+    if not cases or any("graph" not in case for case in cases):
+        return None
+    return all(case.get("graph") is True for case in cases)
+
+
+def _flag_evidence(manifest, run_dir):
+    """Why a run is not plainly accepted, from the manifest or, for older runs, the Director's file.
+
+    Manifests written since flag reasons were recorded carry ``validation.flag_reasons``,
+    ``validation.timing_basis`` and ``validation.graph_timed``.  Older ones do not; for those the
+    same facts are read from ``director_validation.json`` and the task ``meta.json`` in the run.
+    """
+    validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
+    if any(key in validation for key in ("flag_reasons", "timing_basis", "graph_timed")):
+        return {
+            "timing_basis": validation.get("timing_basis"),
+            "flag_reasons": sorted({str(reason) for reason in validation.get("flag_reasons") or []}),
+            "graph_timed": validation.get("graph_timed"),
+            "flag_evidence": "manifest",
+        }
+    director = _read_json(run_dir / "director_validation.json") if run_dir else None
+    if director is None:
+        return {"timing_basis": None, "flag_reasons": [], "graph_timed": None,
+                "flag_evidence": "not_recorded"}
+    reasons = set()
+    basis = director.get("timing_basis")
+    if basis in TIMING_BASIS_REASONS:
+        reasons.add(TIMING_BASIS_REASONS[basis])
+    if not str(director.get("correctness") or "").lower().startswith("pass"):
+        reasons.add("correctness_fail")
+    claim = director.get("tech_lead_reported_speedup_geomean")
+    measured = director.get("director_verified_speedup_geomean")
+    if _finite_positive(claim) and _finite_positive(measured) and measured < 0.9 * claim:
+        reasons.add("below_claim")
+    gate = director.get("prevalidation_gate")
+    if isinstance(gate, dict) and gate.get("passed") is False:
+        reasons.add("prevalidation_failed")
+    meta = None
+    for candidate in ("workspace/meta.json", "validation_workspace/meta.json"):
+        meta = _read_json(run_dir / candidate)
+        if meta is not None:
+            break
+    return {"timing_basis": basis, "flag_reasons": sorted(reasons),
+            "graph_timed": _graph_timed(meta), "flag_evidence": "director_validation.json"}
+
+
+def ranking_basis(validation_status, flag_reasons, graph_timed):
+    """The reason a run's results may order candidates, or None when they may not."""
+    status = str(validation_status or "").lower()
+    if status == "accepted":
+        return "accepted"
+    if (status == "flagged" and flag_reasons and set(flag_reasons) <= TIMING_ONLY_REASONS
+            and graph_timed is True):
+        return "graph_timed_lower_bound"
+    return None
+
+
+def _context(manifest, run_dir=None):
     context = {field: manifest.get(field) for field in CONTEXT_FIELDS}
     measurement = manifest.get("measurement") if isinstance(manifest.get("measurement"), dict) else {}
     validation = manifest.get("validation") if isinstance(manifest.get("validation"), dict) else {}
@@ -89,10 +173,25 @@ def _context(manifest):
         "benchmark_iterations": measurement.get("benchmark_iterations"),
         "workload_aligned": measurement.get("workload_aligned"),
     }
+    # The lane names the metric its direction scores were computed in. Older manifests do not, and
+    # their scores are time-weighted only when a caller workload spec was in play.
+    metric_kind = measurement.get("primary_metric")
+    if metric_kind not in ("time_weighted", "geomean"):
+        metric_kind = "time_weighted" if measurement.get("workload_aligned") else "geomean"
+    evidence = _flag_evidence(manifest, run_dir)
+    observed = context.get("observed_language")
+    captured = observed not in (None, "", "not_captured")
     context.update({
-        "metric_kind": "time_weighted" if measurement.get("workload_aligned") else "geomean",
+        "observed_language": observed if captured else None,
+        "observed_language_basis": validation.get("observed_language_basis")
+        or ("detected" if captured else None),
+        "metric_kind": metric_kind,
         "measurement_reliable": measurement.get("reliable") is True,
         "validation_status": validation.get("status"),
+        **evidence,
+        "ranking_basis": ranking_basis(
+            validation.get("status"), evidence["flag_reasons"], evidence["graph_timed"],
+        ),
         "protocol_fingerprint": hashlib.sha256(
             json.dumps(protocol, sort_keys=True, default=str).encode()
         ).hexdigest()[:16],
@@ -159,7 +258,7 @@ def _quality_eligible(context, status, correctness, attribution, metric_conflict
     return (
         attribution in {"single_ref_direction", "bundle"}
         and context.get("measurement_reliable") is True
-        and str(context.get("validation_status") or "").lower() == "accepted"
+        and context.get("ranking_basis") is not None
         and measured_status
         and correct
         and not metric_conflict
@@ -223,8 +322,15 @@ def _direction_result(run, manifest_path, context, rows):
     return result
 
 
-def aggregate_decision_outcomes(run_paths):
-    """Aggregate all parseable manifests below ``run_paths`` into a stable dictionary."""
+def aggregate_decision_outcomes(run_paths, assumed_languages=None):
+    """Aggregate all parseable manifests below ``run_paths`` into a stable dictionary.
+
+    ``assumed_languages`` maps a run directory to the language its task is written in, for runs
+    whose manifest did not capture one (older optimize lanes over a seam that carries two backends).
+    It is applied only to such runs and is recorded as ``observed_language_basis: assumed_by_operator``.
+    """
+    assumed = {str(Path(path).expanduser().resolve()): str(language)
+               for path, language in (assumed_languages or {}).items()}
     manifests, errors = discover_manifests(run_paths)
     decision_stats = {}
     single_ref_results = []
@@ -248,7 +354,10 @@ def aggregate_decision_outcomes(run_paths):
         seen_run_ids.add(run_id)
         runs_scanned += 1
         run = manifest_path.parent.resolve()
-        context = _context(manifest)
+        context = _context(manifest, run)
+        if context["observed_language"] is None and str(run) in assumed:
+            context["observed_language"] = assumed[str(run)]
+            context["observed_language_basis"] = "assumed_by_operator"
         context["run_id"] = run_id
         outcomes = manifest.get("decision_outcomes") or []
         if not isinstance(outcomes, list):
@@ -409,12 +518,22 @@ def main(argv=None):
         "--runs", action="append", required=True, metavar="PATH",
         help="directory or manifest to scan; may be repeated",
     )
+    parser.add_argument(
+        "--assume-language", action="append", default=[], metavar="RUN=LANGUAGE",
+        help="language of a run whose manifest captured none; recorded as assumed_by_operator",
+    )
     output = parser.add_mutually_exclusive_group(required=True)
     output.add_argument("--json", action="store_true", help="write JSON to stdout")
     output.add_argument("--output", metavar="PATH", help="write YAML, or JSON for a .json path")
     args = parser.parse_args(argv)
 
-    result = aggregate_decision_outcomes(args.runs)
+    assumed = {}
+    for spec in args.assume_language:
+        path, sep, language = spec.rpartition("=")
+        if not sep or not path or not language:
+            parser.error(f"--assume-language expects RUN=LANGUAGE, got {spec!r}")
+        assumed[path] = language
+    result = aggregate_decision_outcomes(args.runs, assumed)
     if args.json:
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
