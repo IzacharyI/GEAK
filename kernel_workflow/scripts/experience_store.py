@@ -49,9 +49,12 @@ import time
 
 # The shared KB plane lives at the repo root as the `kb` package, not beside this file. Executed as
 # a CLI from an arbitrary cwd, so the root is derived from __file__ and never from the environment.
+# It has to come first, not merely be present: this directory holds `kb.py`, a module that shadows
+# the package from sys.path[0]. An empty PYTHONPATH entry run from the repo root already puts the
+# root at the END of sys.path, which is how the lanes invoke this, and warm start then crashed here.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+sys.path[:] = [p for p in sys.path if not p or os.path.abspath(p) != _REPO_ROOT]
+sys.path.insert(0, _REPO_ROOT)
 
 from kb.attest import OUTCOMES as _OUTCOMES
 from kb.curate import collapse_by_direction

@@ -29,6 +29,18 @@ def run(*args):
     return json.loads(p.stdout)
 
 
+def test_the_kb_package_wins_over_the_kb_module_beside_the_store(tmp_path):
+    """The lanes run the store from the repo root with a PYTHONPATH that ends in ':'. Python expands
+    that empty entry to the root at the END of sys.path, after this directory and its `kb.py`; the
+    store used to see the root "already present" and crash importing `kb.attest`."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    env = dict(os.environ, PYTHONPATH=str(tmp_path) + os.pathsep)
+    p = subprocess.run([sys.executable, STORE, "--help"], cwd=repo_root, env=env,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "kb.attest" not in p.stderr
+
+
 def patch_text(path="source/k.py", old="BLOCK = 64", new="BLOCK = 128", at=1):
     return (f"diff --git a/{path} b/{path}\nindex 111..222 100644\n"
             f"--- a/{path}\n+++ b/{path}\n@@ -{at},3 +{at},3 @@\n ctx\n-{old}\n+{new}\n")
