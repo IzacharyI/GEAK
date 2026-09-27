@@ -151,3 +151,12 @@ bench's OWN instrumentation and classify from it.
 ```
 Report a field as `null` when its run did not produce it; never invent a number. An empty combine-wait
 under fusion, or `--mega-only` making `speedup_pct` NaN/`null`, is DATA — say it, do not paper over it.
+
+---
+
+## PHASE=mega_baseline — measured per-stage baseline (generic mega, Expert Skills off)
+
+Called only when the input `MEGA_MEASUREMENT_GUIDE` is present. Follow that file's §1, not the
+PHASE=mega_analysis section above: time the frozen baseline per stage (stage timers + per-kernel
+trace split, rank-max), write `EVAL_DIR/mega_baseline_stages.json`, and return the PROFILE schema
+with measured values only.

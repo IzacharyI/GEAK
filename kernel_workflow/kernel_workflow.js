@@ -518,6 +518,9 @@ const ANALYSIS_SKILL_INPUTS = ANALYSIS_SKILL_ON ? {
   ANALYSIS_SKILL_DIR: `${WORKFLOW_DIR}/knowledge/analysis_skills/${ANALYSIS_SKILL}`,
 } : {};
 if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis only; Step-3 TechLead owns directions).`);
+// Generic mega (Expert Skills off) measures per-stage time; skill-on and non-mega runs get {}.
+const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS
+  ? { MEGA_MEASUREMENT_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_measurement.md` } : {};
 
 // ---------------------------------------------------------------------------
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
@@ -1074,14 +1077,8 @@ const ANALYZE_SCHEMA = obj({
   //    closed_axes: [{axis, ruled_out_by}],
   //    unknowns: [{what, why, what_would_settle_it}]}
   //
-  // `class` is what forecloses lever families before they cost a lease: all pipes low with a
-  // near-zero inter-kernel gap is latency_bound, where raising occupancy is the wrong medicine
-  // (adding waves creates no independent work inside a wave whose instruction stream has none, and
-  // it spends the registers software pipelining needs) and fusing for launch overhead is dead on
-  // arrival. `idle_pipe_opportunities` is what a fusion direction is actually FOR in that state: a
-  // kernel boundary is a grid-wide barrier plus a pipeline drain, so the next stage's weight loads
-  // and index preprocessing are not merely unscheduled, they are inexpressible.
-  // See knowledge/pipe_occupancy.md.
+  // `class` forecloses lever families before they cost a lease (latency_bound: occupancy and
+  // launch-overhead fusion are the wrong medicine). See knowledge/pipe_occupancy.md.
   //
   // Same rule as task_graph: what the gate reads is declared. `utilization_pct` in particular is
   // the number every direction this run proposes will be priced against, and the gate DROPS any
@@ -2206,7 +2203,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
         COMMANDMENT,
         PROFILE_SUMMARY: profileSummary,
         SKILL_DIR: WORKFLOW_DIR,
-        ...ANALYSIS_SKILL_INPUTS,
+        ...ANALYSIS_SKILL_INPUTS, ...GMI,
       },
     ),
     {
@@ -4937,6 +4934,19 @@ if (MODE === 'mega') {
     summary_path: '',
     shift_note: 'pre-candidate baseline only',
   };
+  if (GMI.MEGA_MEASUREMENT_GUIDE && !noGpuFrontMatter) {
+    const mp = await agentT(roleAgent('profile_engineer', 'mega_baseline',
+      'Measure the frozen baseline per stage: follow MEGA_MEASUREMENT_GUIDE §1, not the role file.', {
+        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
+        COMMANDMENT, BASELINE_PER_CASE, TARGET_GUARDS, REGRESSION_GUARDS, ...GMI,
+      }), { phase: 'Profile', label: 'profile_engineer:mega_baseline', schema: PROFILE_SCHEMA,
+      timeout_ms: 3600000, max_retries: 1 });
+    // Failure or timeout keeps the stub; it never ends the wave.
+    if (mp && mp.bottleneck) profileSummary = { ...profileSummary, ...mp };
+    if (mp && pipeOccupancyGate(mp.resource_timeline, []).verdict !== 'MISSING') {
+      analysis = { ...analysis, resource_timeline: { ...(analysis && analysis.resource_timeline), ...mp.resource_timeline } };
+    }
+  }
 } else if (profileCache) {
   profileSummary = profileCache.analysis;
 } else {
@@ -5122,12 +5132,7 @@ function deadEnds(rounds) {
 // <<REPLAY:candidate_shelf>>
 // THE SHELF — verified candidates that did not win their round, kept as offers instead of as numbers.
 //
-// Before this, a round kept exactly one thing: the winner, committed into CANONICAL. Every other
-// candidate that passed INDEPENDENT verification survived only as `{id, claimed, verified, status}`
-// in the round record — a number, not a patch. So a direction that verified at 1.03x in round 2 and
-// lost to a 1.09x was gone: round 5 could not combine with it, could not build on it, and would
-// cheerfully re-derive it. On this task the budget is 8 rounds of an 8-GPU collective, one lease per
-// round, so re-deriving a finished result is the most expensive mistake on the menu.
+// Before this, a verified non-winner survived only as a number, so later rounds re-derived it.
 //
 // WHAT MAKES A SHELVED PATCH STILL APPLICABLE is the whole difficulty. A patch is a diff against the
 // CANONICAL that existed when it was cut, and every round that commits a winner moves CANONICAL out
@@ -5135,9 +5140,7 @@ function deadEnds(rounds) {
 // eligibility is decided by FILE SETS: if nothing absorbed since then touches a file this patch
 // touches, it still applies and can be offered for combination.
 //
-// That test is mechanical ON PURPOSE. The alternative — asking the agent "does your patch conflict
-// with that one?" — is the failure this workflow keeps rediscovering: a question whose unanswered
-// form has a benign default. Anything derivable from the artifacts is derived, not asked.
+// Mechanical ON PURPOSE: anything derivable from the artifacts is derived, not asked.
 //
 // AN EMPTY FILE SET IS NOT ORTHOGONALITY. A verified candidate reporting no touched files has an
 // UNKNOWN footprint, and unknown must not read as "conflicts with nothing", which is precisely the
@@ -6416,7 +6419,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           UT_PATH: KERNEL_PATH_ORIG,
           BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
-          PRIOR_CANDIDATE: priorForAgent,
+          PRIOR_CANDIDATE: priorForAgent, ...GMI,
         }) +
       `\n\n${authorGpuProhibited
         ? `AUTHOR_GPU_MODE=forbidden (${MEGA_STRUCTURAL_ONLY ? 'STRUCTURAL-ONLY RUN'
@@ -6753,7 +6756,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         EXPERT_SKILL_ACCURACY_CASES,
         EXPERT_SKILL_SOURCE_FILES,
       } : {}),
-      GRAPH_CONTRACT_TOOL, ...RFI,
+      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
       GRAPH_CONTRACT_REPLAYS: 30,
       ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
     };

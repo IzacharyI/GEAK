@@ -1,0 +1,164 @@
+# Mega measurement guide — where does the time go, measured instead of read from code
+
+You get this file as `MEGA_MEASUREMENT_GUIDE` only in a whole-operator fusion run (`mode=mega`) with
+Expert Skills disabled. It adds three measurements to that run. It never changes how a candidate is
+scored: the paired, meter-off, rank-max e2e A/B stays the only number that ranks anything. Every
+number here is advisory and describes where time is spent.
+
+The rule behind all three measurements: **a number you did not measure is omitted, never
+estimated, zero-filled or copied from source-code reasoning.** "Not measured, because …" is a valid
+answer. A plausible guess is not.
+
+Read the section for your role:
+
+| role / phase | section |
+|---|---|
+| `profile_engineer`, PHASE=`mega_baseline` | §1 |
+| mega engineer (`optimize`) | §2 |
+| `verify_engineer` (`verify`) | §2 + §2.3 |
+| `analysis_engineer` (label `mega:analyze`) | §3 |
+
+---
+
+## §1 Baseline per-stage profile (profile_engineer, PHASE=mega_baseline)
+
+Your role file's `PHASE=mega_analysis` section refers to bench flags this harness may not have.
+It does **not** apply here. Follow this section instead.
+
+The frozen baseline runs as several separate, serialized launches. Before fusion, per-stage time can
+be measured directly, so measure it now: the planner needs to know which stage dominates before it
+authors anything.
+
+Inputs: `WORKSPACE`, `EVAL_DIR`, `COMMANDMENT`, `GPU_ID` (the whole multi-GPU lease),
+`BASELINE_PER_CASE`, `TARGET_GUARDS`, `REGRESSION_GUARDS`, `SKILL_DIR`.
+
+**Budget.** Finish within about 45 minutes. The orchestrator stops waiting at 60 minutes and falls
+back to an unmeasured stub, which loses everything you measured. Order of work: the target guard
+first, then the smallest regression guard, then one mid-size guard. Skip the rest if time is short
+and list them as not measured.
+
+Wrap every GPU command in `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID …`. Do not edit any tree.
+
+1. **Stage timers.** Take the frozen-baseline benchmark command for each guard from `COMMANDMENT`
+   (frozen tree, activation switch off). Run it once and parse the rank-reduced stage timers the
+   harness prints: here that is the `[RESULT]` line's `stage1=<mean>/<max>` and
+   `stage2_combine=<mean>/<max>` along with the e2e. Use the **max** (rank-max). These timers are
+   meaningful **only for the unfused baseline**. On a fused candidate, a stage that starts early
+   charges its own waiting to itself, so these timers must never be used for fused candidates.
+2. **Per-kernel split.** Stage timers usually lump stage2 and combine together. To split them, run
+   the same command with the harness's trace option (here `--profile-dir <EVAL_DIR>/mega_profile/<guard>`
+   writes one torch-profiler chrome trace per rank, covering 3 graph replays). Alternatively use the
+   per-rank rocprofv3 wrapper `SKILL_DIR/scripts/multi_rank_analysis/run_rank_kernel_trace.sh`.
+   - Bucket the kernel durations per rank with
+     `scripts/multi_rank_analysis/trace_categories.py` (`load_category_map` + `bucket_trace_events`).
+   - Use a category map with keys `stage1`, `stage2`, `combine`. Start from
+     `knowledge/analysis_skills/moe_bottleneck/default_moe_category_map.json`. If the observed
+     kernel names do not match it, write your own map from the observed names, save it under
+     `EVAL_DIR`, and record its path.
+   - Divide by the replay count, then take the rank-max per stage.
+   - Also record the median gap between consecutive kernels (per rank, rank-max): that is launch
+     and serialization cost that fusion can remove.
+3. **Pipe utilization (optional, only if time remains).** Use `run_rank_pmc.sh` on the target guard
+   to measure per-stage functional-unit utilization (valu / mfma / vmem / lds). Only measured rows go
+   into `resource_timeline.pipes`.
+4. Write `EVAL_DIR/mega_baseline_stages.json` in this shape, omitting any key you did not measure:
+   ```json
+   {"baseline_stages": [{"name": "<guard>", "e2e": 0.0, "stage1": 0.0, "stage2": 0.0,
+     "combine": 0.0, "stage2_combine": 0.0, "gap_ms": 0.0, "replays": 3,
+     "source": "<exact commands + trace/log paths>"}]}
+   ```
+   All values are rank-max ms per forward.
+5. Return the PROFILE schema:
+   - `bottleneck`: the measured dominant stage of the target guard with its share of e2e (e.g.
+     `"combine 41% of e2e"`), or `"unknown"`.
+   - `profiler_used`: the tools you actually used.
+   - `device`.
+   - `dispatch_count`: measured launches per forward.
+   - `key_metrics`: `{baseline_stages_path, stage_ms_by_guard, interkernel_gap_ms, not_measured: [...]}`.
+   - `top_kernels`: `[{name, stage, rank_max_ms, share_pct}]` for the target guard.
+   - `top_opportunities`: measured facts only, not advice copied from source.
+   - `resource_timeline`: only if step 3 ran, with shape `{pipes: [{stage, pipe, utilization_pct, source}],
+     interkernel_gap_us: {median}}`.
+   - `summary_path`, `shift_note`.
+
+---
+
+## §2 Per-stage timestamp meter for the fused candidate (engineer + verify)
+
+After fusion there is one kernel. Nothing outside the kernel can show which stage is slow or how
+long workgroups spin waiting on each other. Only an in-kernel meter can. The design and its traps
+are in `knowledge/overlap_instrument.md` (per-workgroup phase log, `s_memrealtime`, preallocated
+buffer, XCD clock skew, perturbation, rank-local clocks). This section fixes one **standard
+contract**, so every candidate is measured the same way and the numbers can be compared across rounds.
+
+### 2.1 Contract (engineer builds it, keeps it working)
+
+- **Switch.** `GEAK_MEGA_STAGE_METER=1` arms the meter. `GEAK_MEGA_STAGE_METER_OUT=<dir>` names
+  the output directory. When the switch is unset, the meter is compiled out: a compile-time
+  constant, a separate JIT identity, and zero instructions in the timed kernel. Timing always comes
+  from the meter-off build.
+- **Roles.** Each workgroup role gets one enter/leave timestamp pair, written by one lane. Every role
+  is tagged with:
+  - `stage`: one of `stage1`, `stage2`, `combine`.
+  - `kind`: `busy` means doing that stage's work (loads, MMA, stores, sends). `wait` means spinning
+    on a readiness or arrival counter, a barrier, or an empty-queue poll that belongs to that stage.
+- **Nesting.** Roles must not nest within a workgroup. The reducer rejects a workgroup whose role
+  time exceeds the kernel span.
+- **Dump.** Each rank writes `<dir>/stage_meter_rank<r>.json` with `{rank, tick_hz, n_workgroups,
+  overflow, roles:[{name,stage,kind}], events:[[wg, role_index, t_begin, t_end], ...]}`.
+  - `tick_hz` must be the counter's real rate. Confirm it once against a host timer; do not assume it.
+  - `overflow > 0` voids the dump.
+- **Engineer.** Build the meter into the first fused candidate and keep it compiling and correct in
+  every later edit (it is part of the candidate tree). State in your return notes that it is present
+  and give the env switch. A candidate without the meter is still scored normally, but its round
+  produces no stage data, so the next plan is made blind.
+
+### 2.2 What the numbers mean
+
+For each rank and stage:
+
+- `busy_ms` = Σ busy interval over all workgroups / `n_workgroups`
+- `wait_ms` = Σ wait interval / `n_workgroups`
+- `span_ms` = wall-clock union of that stage's busy intervals
+
+Each value is then reduced with **rank-max**, the same reduction as the e2e metric. How to read
+them:
+
+- High `wait_ms` means workgroups sit idle on dependencies. Look at the scheduling and ordering
+  between producers and consumers, not at the math.
+- A stage's `busy_ms` above the baseline's time for that stage means its work got slower inside the
+  fusion (tile shape, occupancy, LDS or register pressure, contention with co-resident roles).
+- Stages may overlap, so busy times need not add up to e2e. Never subtract them from e2e.
+
+### 2.3 Verify (after the score arms, never instead of them)
+
+1. Finish every meter-off timing arm first. The meter never produces a scored latency.
+2. Run the target guard once with the meter armed. If time allows, also run one small regression
+   guard. Also time the same guard meter-off once, and report
+   `meter_overhead_pct = metered / meter_off − 1`.
+3. `python3 $SKILL_DIR/scripts/multi_rank_analysis/reduce_stage_meter.py --dump '<dir>/stage_meter_rank*.json'
+   --guard <guard> --evidence '<log path>; overhead=<pct>' --output <VERIFY_DIR>/stage_meter_<guard>.json`
+4. If `valid` is true, copy its `component_breakdown` rows unchanged into your return
+   `component_breakdown` (`method: "timestamp"`, `guard` set). If `valid` is false, or the candidate
+   has no meter, return no timestamp rows and give the reason (the reducer's `problems`, or
+   "meter absent") in your notes. Never fill rows by estimate.
+
+---
+
+## §3 Analysis (analysis_engineer, label `mega:analyze`)
+
+In the route-report pre-step, add the measured inputs to the builder call. Only add the ones that
+exist:
+
+- `--baseline-stages EVAL_DIR/mega_baseline_stages.json`, if §1 wrote it.
+- `--component-breakdown <file holding candidate_evidence.component_breakdown>
+  --breakdown-guard <target guard>`, if the rows exist. Use this flag **instead of** passing those
+  rows as `--component-timings`.
+
+With these inputs, each category carries its measured baseline and candidate ms, and the fused
+candidate's in-kernel wait appears as its own `fused_wait` category. Confidence rises to `medium`
+only when stage2 and combine were split on both sides and every candidate row is `timestamp`.
+Report the confidence the builder stamps; do not raise it.
+
+For the baseline call (`analysis_engineer:baseline`, round 0) there is no candidate yet. Summarize
+the measured baseline stage shares from `PROFILE_SUMMARY` and stop there.
