@@ -122,11 +122,9 @@ const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 
 // --- mode selection. optimize improves one canonical tree; author writes a seed first; mega keeps
 // independent whole-kernel candidate lanes and selects the fastest fully verified speedup.
-// mode=optimize (default) keeps the exact original behavior (backward compatible). mode=author seeds
-// the workspace from an op task dir (immutable oracle + frozen online kernel in baseline_src/), the
-// author_engineer writes a passing seed, then the SAME optimize loop runs — always timing against the
-// frozen online kernel, never the seed. KERNEL_KNOWLEDGE_DIR is the AMD authoring knowledge base
-// (REFERENCE ONLY; the author always measures). Default: sibling perf_knowledge/; empty if WORKFLOW_DIR unset.
+// mode=optimize (default) keeps the original behavior. mode=author seeds the workspace from an op task
+// dir, the author_engineer writes a passing seed, then the SAME optimize loop runs, always timed against
+// the frozen online kernel. KERNEL_KNOWLEDGE_DIR is a reference-only AMD authoring knowledge base.
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
 if (!['optimize', 'author', 'mega'].includes(MODE)) {
   throw new Error(`args.mode must be 'optimize', 'author' or 'mega', got '${MODE}'`);
@@ -376,6 +374,8 @@ if (STRICT_AUTONOMY) {
     }
   }
 }
+const RF = Object(A.regression_floor_by_guard);
+const RFI = A.regression_floor_by_guard ? { REGRESSION_FLOORS: RF } : {};
 const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : 'false') === 'true';
 const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
 const REQUIRE_ARTIFACT_DISTINCT = String(
@@ -3748,12 +3748,13 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     for (const guard of o.regressionGuards || []) {
       const readout = pairedGuardReadout(pairs, guard, BIMODAL_GUARDS);
       const needed = Number((o.requiredPairsByGuard || {})[guard] || o.requiredPairs || 1);
+      const fl = typeof RF > 'u' ? 1 : RF[guard] || 1;
       if (readout.raw_count < needed || readout.count < Math.min(5, needed) ||
-          !(Number(readout.score) >= 1.0)) {
+          !(Number(readout.score) >= fl)) {
         fail.push(`regression paired result ${guard}`);
       }
       if (readout.bimodal && readout.raw_count < 16) fail.push(`bimodal guard ${guard} needs 16 pairs`);
-      if (!(perCase.get(String(guard)) >= 1.0) ||
+      if (!(perCase.get(String(guard)) >= fl) ||
           Math.abs(Number(perCase.get(String(guard))) - Number(readout.score)) >
             Number(o.scoreTolerance || 0.002)) fail.push(`regression guard ${guard}`);
     }
@@ -4617,7 +4618,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
     TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -5574,7 +5575,7 @@ function guardContract(result, targetGuards, regressionGuards, fallbackScore) {
     : Number(fallbackScore || 0);
   const regressed = regressions.filter((g) => {
     const v = Number((byName.get(g) || {}).speedup);
-    return Number.isFinite(v) && v < 1.0;
+    return Number.isFinite(v) && v < (typeof RF > 'u' ? 1 : RF[g] || 1);
   });
   return {
     score,
@@ -6752,7 +6753,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         EXPERT_SKILL_ACCURACY_CASES,
         EXPERT_SKILL_SOURCE_FILES,
       } : {}),
-      GRAPH_CONTRACT_TOOL,
+      GRAPH_CONTRACT_TOOL, ...RFI,
       GRAPH_CONTRACT_REPLAYS: 30,
       ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
     };
@@ -8410,7 +8411,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL,
+          GRAPH_CONTRACT_TOOL, ...RFI,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
         }),

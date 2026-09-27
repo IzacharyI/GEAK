@@ -259,3 +259,56 @@ def test_real_run_rejects_jit_cache_inside_candidate(monkeypatch, tmp_path):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# --------------------------------------------------------------------------- guard ids
+
+def test_guard_ids_carry_an_optional_mtpr():
+    m = _load()
+    assert m.parse_guard("8192_uniform") == ("8192", "uniform", None)
+    assert m.parse_guard("128_uniform") == ("128", "uniform", None)
+    assert m.parse_guard("128_uniform_mtpr128") == ("128", "uniform", "128")
+    assert m.parse_guard("512_rank-mixed-skew_mtpr512") == ("512", "rank-mixed-skew", "512")
+    with pytest.raises(ValueError):
+        m.parse_guard("uniform")
+
+
+def test_mtpr_guard_leg_is_void_unless_the_bench_ran_that_mtpr(tmp_path):
+    script = tmp_path / "bench.sh"
+    script.write_text(
+        'echo "[RESULT] route=$FAKE_ROUTE tokens=$FAKE_TOKENS mtpr=$REPORTED '
+        'mega_e2e=1.0/1.1ms stage1=0.1/0.2ms stage2_combine=0.3/0.4ms"\n')
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"arms": [{"name": "a", "tree": str(tmp_path)}],
+                                "guards": ["128_uniform_mtpr128"], "blocks": 1}))
+    docs = {}
+    for reported in ("128", "8192"):
+        out = tmp_path / f"out_{reported}.json"
+        subprocess.run([sys.executable, TOOL, "--plan", str(plan), "--out", str(out),
+                        "--fake-cmd", f"bash {script}", "--attempts", "1",
+                        "--retry-sleep", "0"],
+                       env={**os.environ, "REPORTED": reported}, check=True,
+                       capture_output=True)
+        docs[reported] = json.loads(out.read_text())
+    assert len(docs["128"]["records"]) == 1
+    assert not docs["8192"]["records"]
+    assert "mtpr=128" in docs["8192"]["dropped_legs"][0]["attempts"][0]["void"]
+
+
+def test_fallback_guard_records_markers_without_requiring_them(tmp_path):
+    script = tmp_path / "bench.sh"
+    script.write_text(
+        'echo "[RESULT] route=$FAKE_ROUTE tokens=$FAKE_TOKENS mtpr=$FAKE_MTPR '
+        'mega_e2e=1.0/1.1ms stage1=0.1/0.2ms stage2_combine=0.3/0.4ms"\n')
+    arm = {"name": "cand", "tree": str(tmp_path), "expect_markers": 8,
+           "expect_paths": ["MEGA"], "fallback_guards": ["128_uniform_mtpr128"]}
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({"arms": [arm], "blocks": 1,
+                                "guards": ["128_uniform_mtpr128", "512_uniform_mtpr512"]}))
+    out = tmp_path / "out.json"
+    subprocess.run([sys.executable, TOOL, "--plan", str(plan), "--out", str(out),
+                    "--fake-cmd", f"bash {script}", "--attempts", "1", "--retry-sleep", "0"],
+                   check=True, capture_output=True)
+    doc = json.loads(out.read_text())
+    assert [r["guard"] for r in doc["records"]] == ["128_uniform_mtpr128"]
+    assert [d["guard"] for d in doc["dropped_legs"]] == ["512_uniform_mtpr512"]

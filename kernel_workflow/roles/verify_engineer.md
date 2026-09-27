@@ -229,6 +229,8 @@ denominator.
    --runtime-file EXPERT_SKILL_RUNTIME_FILE
    --accuracy-cases <REQUIRED_ACCURACY_CASES> --liveness-cases <REQUIRED_ACCURACY_CASES>
    --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
+   --mtpr-cases <distinct tokens of every `_mtpr<M>` guard, comma-separated; omit when none>
+   --mtpr-fallback-max <largest M among `_mtpr<M>` guards in REGRESSION_FLOORS, else 0>
    --rtol <ACCURACY_THRESHOLD> --frozen-baseline-ms <BASELINE_PER_CASE latency of the first
    TARGET_GUARDS entry> --resource-evidence "$VERIFY_DIR/resources.json"
    --json-output "$VERIFY_DIR/graph_contract.json"`. `EXPERT_SKILL_RUNTIME_FILE` is the validator
@@ -449,7 +451,8 @@ denominator.
    replace the operator score. Under `changed_kernel`, attribution is the score and is therefore
    mandatory and must be measured directly against the frozen original, not the current canonical;
    set `absolute_to_frozen:true`. A round-local ratio cannot be compared to the prior round's
-   cumulative score. In strict autonomy, cover every named guard with at least `REQUIRED_PAIRS` raw
+   cumulative score. A guard listed in `REGRESSION_FLOORS` vetoes only below its floor (and may
+   run the original path); every other regression guard vetoes below 1.0. In strict autonomy, cover every named guard with at least `REQUIRED_PAIRS` raw
    `paired_readings`, using `REQUIRED_PAIRS_BY_GUARD[guard]` when present and `REQUIRED_PAIRS`
    otherwise.
 

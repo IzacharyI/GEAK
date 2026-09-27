@@ -172,6 +172,9 @@ def test_megamoe_runtime_cli_keeps_old_arguments_and_adds_optional_new_ones():
     assert options["--frozen-baseline-ms"] == {"type": "float", "default": None}
     assert options["--denominator-tolerance"] == {"type": "float", "default": 0.05}
     assert options["--path-marker"] == {"default": "path=MEGA"}
+    # Official-harness MTPR cases and their fallback bound are opt-in.
+    assert options["--mtpr-cases"] == {"default": ""}
+    assert options["--mtpr-fallback-max"] == {"type": "int", "default": 0}
     assert {
         name for name, spec in options.items() if spec.get("required")
     } == {"--candidate-tree", "--json-output"}
@@ -305,8 +308,11 @@ def test_megamoe_uniform_route_is_restored_before_launch_control_and_timing():
     assert capture_loop < restore < launch < control < timing
     loop = texts[capture_loop]
     assert "uniform_route = (route_weights.clone(), ids.clone())" in loop
+    # Route mutation lives in the shared replay helper the loop calls.
+    replay_helper = next(text for text in texts if text.startswith("def replay_routes("))
+    assert "route_weights.copy_(new_weights)" in replay_helper
     assert loop.index("uniform_route = (route_weights.clone()") < loop.index(
-        "route_weights.copy_(new_weights)"
+        "replay_routes("
     )
     after_restore = "\n".join(texts[restore + 1:timing + 1])
     assert "route_weights.copy_" not in after_restore

@@ -458,6 +458,8 @@ def main():
     parser.add_argument("--accuracy-cases", default="128,512,8192")
     parser.add_argument("--liveness-cases", default="128,512,8192")
     parser.add_argument("--routes", default="uniform,rank-mixed-skew")
+    parser.add_argument("--mtpr-cases", default="")
+    parser.add_argument("--mtpr-fallback-max", type=int, default=0)
     parser.add_argument("--replays", type=int, default=256)
     parser.add_argument("--numeric-checkpoint-interval", type=int, default=16)
     parser.add_argument("--rtol", type=float, default=0.10)
@@ -481,6 +483,7 @@ def main():
     accuracy_cases = _csv_ints(args.accuracy_cases)
     liveness_cases = _csv_ints(args.liveness_cases)
     routes = _csv_strings(args.routes)
+    mtpr_cases = _csv_ints(args.mtpr_cases) if args.mtpr_cases else []
     required_cases = {128, 512, 8192}
     if not required_cases <= set(accuracy_cases) or not required_cases <= set(liveness_cases):
         raise ValueError("runtime claims require direct 128/512/8192 cases")
@@ -559,6 +562,89 @@ def main():
         target_body = None
         target_tensors = None
         uniform_route = None
+        def check_accuracy(state, x, route_weights, ids, tokens, guard, method):
+            reference = helper._reference(
+                x,
+                route_weights,
+                ids,
+                ref_weights,
+                rank,
+                world,
+                profile_data["model_dim"],
+                profile_data["inter_dim"],
+                profile_data["experts"],
+                profile_data["swiglu_limit"],
+            )
+            rel_l2 = _relative_l2(
+                torch, dist, helper, state["output"], reference, device
+            )
+            row = {
+                "guard": guard,
+                "metric": "relL2",
+                "value": rel_l2,
+                "threshold": args.rtol,
+                "method": method,
+                "status": "pass" if rel_l2 < args.rtol else "fail",
+            }
+            result["accuracy_results"].append(row)
+            write_result(False)
+            if row["status"] != "pass":
+                raise AssertionError(f"{guard} relL2={rel_l2:.6f}")
+
+        def replay_routes(graph, state, x, route_weights, ids, tokens, suffix=""):
+            for route in routes:
+                checkpoints = []
+                for replay in range(args.replays):
+                    _, new_weights, new_ids = _make_route(
+                        torch,
+                        tokens,
+                        route,
+                        replay + 1,
+                        profile_data,
+                        rank,
+                        world,
+                        device,
+                    )
+                    route_weights.copy_(new_weights)
+                    ids.copy_(new_ids)
+                    graph.replay()
+                    if (
+                        (replay + 1) % args.numeric_checkpoint_interval == 0
+                        or replay + 1 == args.replays
+                    ):
+                        torch.cuda.synchronize()
+                        reference = helper._reference(
+                            x,
+                            route_weights,
+                            ids,
+                            ref_weights,
+                            rank,
+                            world,
+                            profile_data["model_dim"],
+                            profile_data["inter_dim"],
+                            profile_data["experts"],
+                            profile_data["swiglu_limit"],
+                        )
+                        value = _relative_l2(
+                            torch, dist, helper, state["output"], reference, device
+                        )
+                        checkpoints.append(value)
+                        if value >= args.rtol:
+                            raise AssertionError(
+                                f"{tokens}/{route}{suffix} replay relL2={value:.6f}"
+                            )
+                replay_row = {
+                    "guard": f"{tokens}_{route}{suffix}",
+                    "count": args.replays,
+                    "status": "pass",
+                    "graph_safe": "pass",
+                    "arrival_jitter": True,
+                    "routing_changes": args.replays,
+                    "max_checkpoint_relL2": max(checkpoints),
+                }
+                result["replay_results"].append(replay_row)
+                write_result(False)
+
         for tokens in cases:
             x, route_weights, ids = _make_route(
                 torch, tokens, "uniform", 0, profile_data, rank, world, device
@@ -611,87 +697,75 @@ def main():
                 target_tensors = (x, route_weights, ids, graph)
 
             if tokens in accuracy_cases:
-                reference = helper._reference(
-                    x,
-                    route_weights,
-                    ids,
-                    ref_weights,
-                    rank,
-                    world,
-                    profile_data["model_dim"],
-                    profile_data["inter_dim"],
-                    profile_data["experts"],
-                    profile_data["swiglu_limit"],
+                check_accuracy(
+                    state, x, route_weights, ids, tokens, str(tokens),
+                    "direct graph-captured candidate vs numeric reference",
                 )
-                rel_l2 = _relative_l2(
-                    torch, dist, helper, state["output"], reference, device
-                )
-                row = {
-                    "guard": str(tokens),
-                    "metric": "relL2",
-                    "value": rel_l2,
-                    "threshold": args.rtol,
-                    "method": "direct graph-captured candidate vs numeric reference",
-                    "status": "pass" if rel_l2 < args.rtol else "fail",
-                }
-                result["accuracy_results"].append(row)
-                write_result(False)
-                if row["status"] != "pass":
-                    raise AssertionError(f"tokens={tokens} relL2={rel_l2:.6f}")
 
             if tokens in liveness_cases:
-                for route in routes:
-                    checkpoints = []
-                    for replay in range(args.replays):
-                        _, new_weights, new_ids = _make_route(
-                            torch,
-                            tokens,
-                            route,
-                            replay + 1,
-                            profile_data,
-                            rank,
-                            world,
-                            device,
-                        )
-                        route_weights.copy_(new_weights)
-                        ids.copy_(new_ids)
-                        graph.replay()
-                        if (
-                            (replay + 1) % args.numeric_checkpoint_interval == 0
-                            or replay + 1 == args.replays
-                        ):
-                            torch.cuda.synchronize()
-                            reference = helper._reference(
-                                x,
-                                route_weights,
-                                ids,
-                                ref_weights,
-                                rank,
-                                world,
-                                profile_data["model_dim"],
-                                profile_data["inter_dim"],
-                                profile_data["experts"],
-                                profile_data["swiglu_limit"],
-                            )
-                            value = _relative_l2(
-                                torch, dist, helper, state["output"], reference, device
-                            )
-                            checkpoints.append(value)
-                            if value >= args.rtol:
-                                raise AssertionError(
-                                    f"{tokens}/{route} replay relL2={value:.6f}"
-                                )
-                    replay_row = {
-                        "guard": f"{tokens}_{route}",
-                        "count": args.replays,
-                        "status": "pass",
-                        "graph_safe": "pass",
-                        "arrival_jitter": True,
-                        "routing_changes": args.replays,
-                        "max_checkpoint_relL2": max(checkpoints),
-                    }
-                    result["replay_results"].append(replay_row)
-                    write_result(False)
+                replay_routes(graph, state, x, route_weights, ids, tokens)
+
+        # Official-harness shapes: each case owns an operator sized like the op test
+        # (max_tok_per_rank = next power of two of the batch), so small batches run
+        # their own MTPR class instead of the 8192 class shared above.
+        result["mtpr_activation"] = []
+        for tokens in mtpr_cases:
+            mtpr = _next_power_of_two(tokens)
+            suffix = f"_mtpr{mtpr}"
+            small = factory(
+                rank=rank,
+                world_size=world,
+                quant="a8w4",
+                w1=w1,
+                w1_scale=w1_scale,
+                w2=w2,
+                w2_scale=w2_scale,
+                max_tok_per_rank=mtpr,
+                **profile_data,
+            )
+            x, route_weights, ids = _make_route(
+                torch, tokens, "uniform", 0, profile_data, rank, world, device
+            )
+            state = {}
+            small_markers = []
+
+            def body(
+                op=small, x=x, route_weights=route_weights, ids=ids, tokens=tokens,
+                state=state,
+            ):
+                state["output"] = op(x, route_weights, ids)[:tokens]
+
+            def warmup(body=body, tokens=tokens, small_markers=small_markers):
+                with _captured_output_fds(
+                    output_path.parent, f"{capture_prefix}.mtpr{tokens}"
+                ) as captured:
+                    body()
+                small_markers.append(captured["text"].count(args.path_marker))
+
+            graph = _capture(torch, helper, body, warmup)
+            observed_sum, observed_min, per_rank = _reduce_marker_observation(
+                torch, dist, device, small_markers[0], world
+            )
+            activation = {
+                **_activation_summary(
+                    args.path_marker, world, observed_sum, observed_min, per_rank
+                ),
+                "window": f"first eager forward (tokens={tokens}, mtpr={mtpr})",
+                "fallback_allowed": mtpr <= args.mtpr_fallback_max,
+            }
+            result["mtpr_activation"].append(activation)
+            write_result(False)
+            # An MTPR at or below --mtpr-fallback-max may run the unfused path; it
+            # still owes accuracy and replay liveness below.
+            if activation["status"] != "pass" and not activation["fallback_allowed"]:
+                raise AssertionError(f"tokens={tokens} mtpr={mtpr} path marker missing")
+            check_accuracy(
+                state, x, route_weights, ids, tokens, f"{tokens}_uniform{suffix}",
+                f"direct graph-captured candidate at max_tok_per_rank={mtpr} "
+                "vs numeric reference",
+            )
+            replay_routes(graph, state, x, route_weights, ids, tokens, suffix)
+            del graph, small
 
         if target_body is None or target_tensors is None or uniform_route is None:
             raise AssertionError("8192 target graph was not produced")

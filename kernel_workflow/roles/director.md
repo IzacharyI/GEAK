@@ -294,6 +294,8 @@ batch may contain all finalists for one exhaustive comparison.
      the detached candidate environment with `--accuracy-cases <REQUIRED_ACCURACY_CASES>`,
      `--runtime-file EXPERT_SKILL_RUNTIME_FILE`,
      `--liveness-cases <REQUIRED_ACCURACY_CASES>`, caller-supplied routes,
+     `--mtpr-cases`/`--mtpr-fallback-max` exactly as the verify role derives them from the guards
+     and `REGRESSION_FLOORS`,
      `--replays <GRAPH_CONTRACT_REPLAYS>`, `--frozen-baseline-ms` (the frozen target-guard latency) and
      `--resource-evidence` (emitted-kernel metadata in the Skill's documented format). Accept only
      its atomic complete JSON. When the optional
@@ -450,7 +452,7 @@ run all steps below as before.
 6b. **Strict autonomy arbitration.** When `STRICT_AUTONOMY` is present, set
    `autonomy_acceptance_confirmed:true` only if all of these are independently present in the final
    tree/evidence: the final patch applies to the frozen original; exact `TARGET_GUARDS` are faster
-   and every `REGRESSION_GUARDS` entry is at least baseline; per-rank launch count is at most
+   and every `REGRESSION_GUARDS` entry is at least its `REGRESSION_FLOORS` floor (default 1.0 = baseline); per-rank launch count is at most
    `LAUNCH_TARGET`; numeric accuracy passes; graph/liveness evidence reports at least
    `REQUIRED_REPLAYS`; JIT artifact hashes prove base and candidate differ; every required paired
    guard has its `REQUIRED_PAIRS_BY_GUARD` count (or `REQUIRED_PAIRS` fallback); controlled on-edge

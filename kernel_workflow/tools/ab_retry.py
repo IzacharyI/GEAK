@@ -13,6 +13,7 @@ Measurement contract:
   3. MARKER GATE: --expect-markers N asserts N '[megamoe] path=...' lines per leg
      (one per rank); --expect-path / arm.expect_paths asserts their exact values.
      A FUSED arm that prints eight SCATTERED markers is VOID, not a valid count.
+     Guards listed in arm.fallback_guards record markers without asserting them.
   4. INCREMENTAL: the full aggregate doc (records + pairs + dropped legs +
      claim_complete) is rewritten after EVERY leg, so a kill at any point leaves a
      complete, readable claim rather than a fragment.
@@ -60,6 +61,19 @@ GUARDS = {
     "512_uniform": ("512", "uniform"),
     "512_rank-mixed-skew": ("512", "rank-mixed-skew"),
 }
+# Any other guard id is `<tokens>_<route>[_mtpr<M>]`; without the suffix the bench
+# keeps its own default max-tokens-per-rank.
+GUARD_RE = re.compile(r"^(\d+)_([A-Za-z][A-Za-z0-9-]*?)(?:_mtpr(\d+))?$")
+
+
+def parse_guard(guard):
+    """Return (tokens, route, mtpr-or-None) for a guard id."""
+    if guard in GUARDS:
+        return (*GUARDS[guard], None)
+    m = GUARD_RE.match(guard)
+    if not m:
+        raise ValueError(f"unknown guard id {guard!r}: expected <tokens>_<route>[_mtpr<M>]")
+    return m.group(1), m.group(2), m.group(3)
 
 
 def pool_free_gib():
@@ -100,7 +114,7 @@ def wait_for_pool(min_free_gib, wait_s, poll_s=15):
 
 
 def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, timeout):
-    tokens, route = GUARDS[guard]
+    tokens, route, mtpr = parse_guard(guard)
     env = dict(os.environ)
     # Runtime roots are supplied by the caller/environment. Never bake a checkout
     # or cache path into this repository.
@@ -134,6 +148,7 @@ def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, time
         env["FAKE_GUARD"] = guard
         env["FAKE_TOKENS"] = tokens
         env["FAKE_ROUTE"] = route
+        env["FAKE_MTPR"] = mtpr or ""
         env["FAKE_ATTEMPT"] = str(attempt)
         env["FAKE_TAG"] = tag
     else:
@@ -142,6 +157,8 @@ def _attempt(tree, env_extra, guard, iters, logdir, tag, attempt, fake_cmd, time
             "op_tests/multigpu_tests/bench_mega_moe_v2.py",
             "--tokens", tokens, "--route", route, "--iters", str(iters), "--mega-only",
         ]
+        if mtpr:
+            cmd += ["--mtpr", mtpr]
     t0 = time.time()
     try:
         # Keep stdout/stderr in one pipe so `[RESULT]` -> teardown ordering is real.
@@ -173,6 +190,7 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
             expect_paths=None):
     """Return (record_or_None, dropped_or_None). A leg counts only if an attempt succeeded."""
     tries = []
+    mtpr = parse_guard(guard)[2]
     for k in range(1, attempts + 1):
         ok, sample = wait_for_pool(min_free_gib, pool_wait_s)
         if not ok:
@@ -202,6 +220,8 @@ def run_leg(tree, env_extra, guard, iters, logdir, tag, attempts, retry_sleep,
             void = f"rc={rc}"
         elif not m:
             void = "no [RESULT] line"
+        elif mtpr and not re.search(rf"\bmtpr={mtpr}\b", m.group(0)):
+            void = f"[RESULT] line does not report mtpr={mtpr}"
         elif expect_markers is not None and len(paths) != expect_markers:
             void = f"marker count {len(paths)} != {expect_markers}"
         expected_paths = ({str(expect_paths)} if isinstance(expect_paths, str)
@@ -362,6 +382,8 @@ def main():
         plan["sequence"] = rotate_sequence(plan["guards"],
                                            [x["name"] for x in plan["arms"]],
                                            plan.get("blocks", 2))
+    for guard in {g for g, _ in plan["sequence"]}:
+        parse_guard(guard)
     records, dropped = [], []
     n = len(plan["sequence"])
     # write an (empty) complete-shaped doc up front: a kill before leg 1 still leaves a readable file
@@ -372,6 +394,9 @@ def main():
         print(f"[ab_retry] {tag} ({i+1}/{n}) ...", flush=True)
         em = arm.get("expect_markers", a.expect_markers)
         ep = arm.get("expect_paths", a.expect_path)
+        if guard in arm.get("fallback_guards", []):
+            # The unfused path is allowed here: path markers are recorded, not required.
+            em, ep = None, []
         rec, drop = run_leg(arm["tree"], arm.get("env", {}), guard, iters, a.logdir,
                             tag, a.attempts, a.retry_sleep, em, a.fake_cmd, a.timeout,
                             a.min_free_gib, a.pool_wait_s, ep)

@@ -153,6 +153,13 @@ The COMMANDMENT MUST contain, with concrete commands (not placeholders):
     Write both lists and `PROMOTION_METRIC` verbatim into COMMANDMENT. Under strict autonomy collect
     `REQUIRED_PAIRS_BY_GUARD[guard]` raw interleaved pairs when present, otherwise at least
     `REQUIRED_PAIRS`.
+  - A guard id `<tokens>_<route>_mtpr<M>` is measured with the operator built for `max_tok_per_rank=M`
+    (bench `--tokens <tokens> --route <route> --mtpr <M>`); without the suffix the harness default
+    applies. Baseline and candidate use the same M, and a result line that does not report `mtpr=M`
+    is void. `REGRESSION_FLOORS` (when present) maps a regression guard to its veto floor; that guard
+    may run the original unfused path, so list it under the candidate arm's `fallback_guards` (its
+    path markers are recorded, not required). Write the floors verbatim into COMMANDMENT; every other
+    regression guard's floor is 1.0.
 - **If the harness reports per-stage / per-kernel sub-timers, `METRIC` must say they are diagnostic
   and are never summed.** Sub-timers are only additive while the stages are serialized. Any change
   that makes two stages run concurrently — fusion, streams, a dependent-launch mechanism — makes each
