@@ -25,6 +25,8 @@ ok(Object.keys(gmi('mega', true)).length === 0, 'skill-on mega gets no measureme
 ok(Object.keys(gmi('optimize', false)).length === 0, 'non-mega gets no measurement inputs');
 ok(gmi('mega', false).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement.md',
   'generic mega gets the guide');
+ok(gmi('mega', false).MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lessons.md',
+  'generic mega gets the lessons');
 
 // The generic graph-contract runner is the default only for generic mega; a pinned skill keeps its
 // runtime, and an explicit graph_contract_tool arg still wins.
@@ -42,14 +44,14 @@ ok(tool('mega', false, false, { graph_contract_tool: '/x.py' }) === '/x.py', 'ex
 
 // Every use is either a spread (adds nothing when {}) or the guard of the generic-only Profile call.
 const uses = src.split('\n').filter((l) => /\bGMI\b/.test(l) && !/const GMI =/.test(l));
-// profile guard + profile, analysis, benchmark setup, engineer, verify, finalist spreads.
-ok(uses.length === 7, `GMI used at 7 sites (got ${uses.length})`);
+// profile guard + profile, analysis, benchmark setup, planner, engineer, verify, finalist spreads.
+ok(uses.length === 8, `GMI used at 8 sites (got ${uses.length})`);
 ok(uses.every((l) => /\.\.\.GMI\b/.test(l) || /if \(GMI\.MEGA_MEASUREMENT_GUIDE && /.test(l)),
   'every GMI use is a spread or the generic-only guard');
 ok(/profileSummary = \{ \.\.\.profileSummary, \.\.\.mp \}/.test(src) &&
   !/mp\.__agent_timed_out/.test(src), 'a failed baseline measurement keeps the stub, never ends the wave');
 
-for (const f of ['knowledge/mega_measurement.md',
+for (const f of ['knowledge/mega_measurement.md', 'knowledge/mega_generic_lessons.md',
   'scripts/multi_rank_analysis/reduce_stage_meter.py', 'tools/generic_graph_contract.py']) {
   ok(fs.existsSync(path.join(WF, f)), `${f} exists`);
 }

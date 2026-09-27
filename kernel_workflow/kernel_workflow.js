@@ -522,7 +522,8 @@ if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis 
 // Generic mega (Expert Skills off) only; skill-on and non-mega runs get {}.
 const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   MEGA_MEASUREMENT_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_measurement.md`,
-  GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table before acting; it applies to your role here.',
+  GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
+  MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
 } : {};
 
 // ---------------------------------------------------------------------------
@@ -6072,7 +6073,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
         CUMULATIVE_SPEEDUP: cumulative, BASELINE_GEOMEAN_MS,
-        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary,
+        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary, ...GMI,
         CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: searchHistory,
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
