@@ -332,7 +332,8 @@ if (USE_EXPERT_SKILLS && PINNED_MEGA_SKILL) {
   }
 }
 const GRAPH_CONTRACT_TOOL = PINNED_MEGA_SKILL
-  ? `${WORKFLOW_DIR}/tools/expert_skill_runtime.py` : String(A.graph_contract_tool || '');
+  ? `${WORKFLOW_DIR}/tools/expert_skill_runtime.py` : String(A.graph_contract_tool ||
+    (MODE === 'mega' && !USE_EXPERT_SKILLS ? `${WORKFLOW_DIR}/tools/generic_graph_contract.py` : ''));
 const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
 const BENCH_HARNESS = String(A.benchmark_harness || '');
 const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
@@ -518,9 +519,11 @@ const ANALYSIS_SKILL_INPUTS = ANALYSIS_SKILL_ON ? {
   ANALYSIS_SKILL_DIR: `${WORKFLOW_DIR}/knowledge/analysis_skills/${ANALYSIS_SKILL}`,
 } : {};
 if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis only; Step-3 TechLead owns directions).`);
-// Generic mega (Expert Skills off) measures per-stage time; skill-on and non-mega runs get {}.
-const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS
-  ? { MEGA_MEASUREMENT_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_measurement.md` } : {};
+// Generic mega (Expert Skills off) only; skill-on and non-mega runs get {}.
+const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
+  MEGA_MEASUREMENT_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_measurement.md`,
+  GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table before acting; it applies to your role here.',
+} : {};
 
 // ---------------------------------------------------------------------------
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
@@ -2043,12 +2046,8 @@ const setup = await agentT(
     ...(STATE_DIR ? { STATE_DIR, MEGA_RESUME_STATE } : {}),
   }),
   { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA,
-    // 300000 (5min) was too tight once STATE grew across waves: the mega director reproduces prior_state
-    // verbatim (candidate_registry + a 34KB+ ledger + scalar fields) and hit exactly 300s — cut off right
-    // as it was about to emit eval_dir (Wave 3 wf_e8ad03cc-180, 2026-09-10). Setup is a pre-loop real-time
-    // phase drawing ZERO MEGA_CLOCK, and timeout_ms is stripped from the agentT cache key, so raising this
-    // ceiling costs no candidate rounds and doesn't invalidate caches — same safe class as the Analyze/
-    // Profile/Benchmark caps (see memory mega-production-agent-timeouts). 900000 (15min) = 3x headroom.
+    // 5min cut the mega director off while reproducing a grown prior_state (wf_e8ad03cc-180). Setup draws
+    // no MEGA_CLOCK and timeout_ms is not in the agentT cache key, so 15min costs no rounds or caches.
     ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) });
 if (!setup || !setup.eval_dir) throw new Error('Setup failed: director did not return an eval_dir');
 const EVAL_DIR = setup.eval_dir;
@@ -4615,7 +4614,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
     TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI,
+    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -4639,8 +4638,7 @@ let benchR = bench;
 // that work AND, worse, reads to the operator as an unrecoverable failure. So do NOT short-circuit:
 // fall THROUGH to the RECOVERY attempt below (which reads the on-disk artifacts and never touches a
 // GPU). Only if recovery also finds nothing on disk do we surface the timeout as terminal.
-// (Regression fixed 2026-09-09 after wf_afc743de-008/cont9 died here with "no recovery was started"
-// despite control pair 1 being on disk.)
+// (Regression fixed 2026-09-09: wf_afc743de-008 died here with control pair 1 on disk.)
 const benchTimedOut = !!(MODE === 'mega' && benchR && benchR.__agent_timed_out);
 if (benchTimedOut) {
   log('Benchmark setup hit its full timeout window without returning. Its measurements are usually ' +
@@ -8414,7 +8412,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL, ...RFI,
+          GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
         }),

@@ -1,7 +1,8 @@
 # Mega measurement guide — where does the time go, measured instead of read from code
 
 You get this file as `MEGA_MEASUREMENT_GUIDE` only in a whole-operator fusion run (`mode=mega`) with
-Expert Skills disabled. It adds three measurements to that run. It never changes how a candidate is
+Expert Skills disabled. It adds three measurements to that run, plus an operator-neutral graph
+contract runner (§4). It never changes how a candidate is
 scored: the paired, meter-off, rank-max e2e A/B stays the only number that ranks anything. Every
 number here is advisory and describes where time is spent.
 
@@ -17,6 +18,9 @@ Read the section for your role:
 | mega engineer (`optimize`) | §2 |
 | `verify_engineer` (`verify`) | §2 + §2.3 |
 | `analysis_engineer` (label `mega:analyze`) | §3 |
+| `benchmark_engineer`, PHASE=`setup` | §4.1 |
+| `verify_engineer` (`verify`), `director` (`select_mega`) | §4.2 |
+| mega engineer (`optimize`), optional self-check | §4.3 |
 
 ---
 
@@ -162,3 +166,118 @@ Report the confidence the builder stamps; do not raise it.
 
 For the baseline call (`analysis_engineer:baseline`, round 0) there is no candidate yet. Summarize
 the measured baseline stage shares from `PROFILE_SUMMARY` and stop there.
+
+---
+
+## §4 Graph contract runner (the generic `GRAPH_CONTRACT_TOOL`)
+
+In this run `GRAPH_CONTRACT_TOOL` is `tools/generic_graph_contract.py`. The runner knows nothing
+about the operator. It owns the measurement:
+
+- graph-captured accuracy per case (relL2, rank-max);
+- replay liveness with fresh inputs on every replay;
+- per-capacity (`_mtpr<M>`) cases;
+- path-marker activation on every rank;
+- launches per forward;
+- rank-max graph timing;
+- a hang watchdog that names the stuck phase.
+
+All operator knowledge lives in one task-owned **contract adapter**,
+`EVAL_DIR/commandment_tools/graph_contract_adapter.py`, written once at setup. The protocol
+(5 functions) is in the runner's docstring:
+
+- `setup()`
+- `build(capacity)`
+- `make_inputs(tokens, route, iteration)`
+- `forward(op, inputs)`
+- `reference(inputs)`
+- `cleanup()` (optional)
+
+### 4.1 benchmark_engineer, PHASE=setup: write and prove the adapter
+
+1. **Write the adapter from the task's own test/reference code.**
+   - Load test helpers (reference, weight preparation, distributed setup) **by file path from the
+     frozen tree** `EVAL_DIR/baseline`, using `importlib.util.spec_from_file_location`, never from a
+     candidate tree. That way a candidate can never change its own reference.
+   - Import the operator class normally. It resolves to the tree under test, because the runner puts
+     `--candidate-tree` first on `sys.path`.
+   - `build(capacity)` uses the official test's sizing convention. A `_mtpr<M>` guard is capacity `M`.
+   - `make_inputs`:
+     - accepts every route named in the guard ids (`<tokens>_<route>[_mtpr<M>]`);
+     - is deterministic per (rank, tokens, route, iteration);
+     - iteration 0 gives the canonical inputs, and every later iteration gives different values with
+       the same shapes and dtypes.
+   - `forward` returns this rank's valid output rows. `reference` returns the same rows.
+2. **Prove it on the frozen tree, in one lease.** Use the COMMANDMENT environment and the lease
+   wrapper:
+   `torchrun --standalone --nproc_per_node=<ranks> $SKILL_DIR/tools/generic_graph_contract.py --self-test
+   --candidate-tree $EVAL_DIR/baseline --runtime-file <adapter> --accuracy-cases <REQUIRED_ACCURACY_CASES>
+   --routes <all guard routes> --mtpr-cases <tokens of every _mtpr guard> --control-env <baseline switch-off KEY=VALUE>
+   --import-modules <CANDIDATE_IMPORT_MODULES> --json-output $EVAL_DIR/graph_contract_selftest.json`.
+   - Require `self_test_pass: true`, with every accuracy and replay row passing.
+   - For reference: on an 8-rank operator of this size, a self-test typically takes about a minute.
+3. **Record it.** Add a `## GRAPH_CONTRACT` section to COMMANDMENT with:
+   - the adapter path and its sha256;
+   - the routes;
+   - the self-test JSON path;
+   - the §4.2 command with the run's values filled in.
+
+   The adapter is immutable from then on, like COMMANDMENT.
+4. **If it fails.** If the self-test does not pass within about 30 minutes:
+   - do not ship a half adapter: `mv` it to `graph_contract_adapter.py.broken`;
+   - say so in COMMANDMENT.
+
+   Verification then uses the COMMANDMENT correctness command. Nothing else in setup depends on
+   the adapter.
+
+### 4.2 verify_engineer (verify) and director (select_mega): the candidate claim
+
+**When this command applies.** Use it when both hold:
+
+- the adapter exists;
+- its sha256 equals the COMMANDMENT record.
+
+In that case it **replaces** the role's `GRAPH_CONTRACT_TOOL` command line. There is no
+`EXPERT_SKILL_RUNTIME_FILE` in this run; the adapter takes its place. Otherwise take the role's
+empty-tool branch (the COMMANDMENT graph-capable correctness command for every required case and
+replay count). Say which branch you used.
+
+```
+torchrun --standalone --nproc_per_node=<ranks> GRAPH_CONTRACT_TOOL --candidate-tree "$WS"
+  --runtime-file EVAL_DIR/commandment_tools/graph_contract_adapter.py
+  --accuracy-cases <REQUIRED_ACCURACY_CASES> --liveness-cases <REQUIRED_ACCURACY_CASES>
+  --routes <COMMANDMENT GRAPH_CONTRACT routes> --replays <GRAPH_CONTRACT_REPLAYS>
+  --mtpr-cases <as the role derives them> --mtpr-fallback-max <as the role derives it>
+  --rtol <ACCURACY_THRESHOLD> --frozen-baseline-ms <BASELINE_PER_CASE latency of the first TARGET_GUARDS entry>
+  --path-marker <candidate ACTIVATION marker> --activation-env <each candidate switch KEY=VALUE>
+  --control-env <BASELINE_ACTIVATION switch KEY=VALUE> --launch-target <LAUNCH_TARGET>
+  --import-modules <CANDIDATE_IMPORT_MODULES, comma-separated> --hang-timeout-s 600
+  --json-output "$VERIFY_DIR/graph_contract.json"
+```
+
+Run it in one lease with the COMMANDMENT environment (`$WS` first on `PYTHONPATH`) and an outer
+wall timeout.
+
+**Reading the JSON:**
+
+- **Claim status.** `claim_complete: true` exactly when `claim_blockers` is empty. Exit 1 with
+  blockers is incomplete evidence to report, not a harness crash.
+- **Evidence rows.** Copy these unchanged as your evidence:
+  - `accuracy_results` and `replay_results` rows;
+  - per-rank `activation` / `mtpr_activation`;
+  - `launch_count`.
+- **Hangs.** `hang_phase` means liveness failed in that phase. Quote it verbatim; it is the
+  cheapest hang localization you will get.
+- **Timing.** `paired_readings`, `absolute_speedup` and `incremental_switch_speedup` are in-process
+  graph timings. They are diagnostic only; the scored number stays the COMMANDMENT paired A/B. Report
+  any disagreement over 5% and any `denominator_mismatch`.
+- **Adapter integrity.** `adapter_sha256` different from the COMMANDMENT record voids the run.
+- **Resources.** `--resource-evidence` is not gated here. Do not build a Skill resources file.
+
+### 4.3 mega engineer: optional self-check
+
+Before handing off, you may run the §4.2 command on your own candidate with `--replays 30`. It
+catches accuracy, replay and activation failures early, and the watchdog names the phase of a hang.
+
+Never edit the adapter. If the adapter cannot drive your candidate (for example, a changed
+constructor or call signature), your candidate broke the operator's interface; fix the candidate.
