@@ -84,6 +84,17 @@ Which sections to read:
    - Measure accuracy per selected configuration (shape class), with fresh buffers (§1.4).
 6. **Direct evidence only.** Compare the graph-captured candidate output with the task's numeric
    reference. "Equal to another variant that was correct" is not correctness evidence.
+7. **Compare the first call after an input change with a repeated call.**
+   - A consumer that reads per-launch metadata (an ordering, a grouping table, counts) before it
+     is published sees the previous launch's value. Only the first call after the input changes
+     goes wrong; a repeated call heals.
+   - The damage can stay under an accuracy gate against the reference (measured: whole rows wrong,
+     relL2 0.045–0.107 against a 0.10 gate), or show as a hang.
+   - Symmetric inputs hide it, even when the heavy part moves: every rank's stale metadata still
+     looks like its current one. Measured on one defect: all ranks skewed alike, 0/32 caught;
+     one hot source rank that moves on every call, 32/32 (or a hang).
+   - Gate on the first call against a repeated call of the same input at a tight tolerance, and
+     make every reader of the metadata wait for it, not only the ones in a particular role.
 
 ## §3 Code generation and compiler traps
 
