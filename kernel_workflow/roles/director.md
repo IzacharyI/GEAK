@@ -296,7 +296,9 @@ batch may contain all finalists for one exhaustive comparison.
      `--liveness-cases <REQUIRED_ACCURACY_CASES>`, caller-supplied routes,
      `--mtpr-cases`/`--mtpr-fallback-max` exactly as the verify role derives them from the guards
      and `REGRESSION_FLOORS`,
-     `--replays <GRAPH_CONTRACT_REPLAYS>`, `--frozen-baseline-ms` (the frozen target-guard latency) and
+     `--replays <GRAPH_CONTRACT_REPLAYS>`, `--target-guard` (the first TARGET_GUARDS entry),
+     `--frozen-baseline-ms` (that guard's frozen latency), `--min-speedup <MIN_TARGET_SPEEDUP>` only
+     when MIN_TARGET_SPEEDUP is given, and
      `--resource-evidence` (emitted-kernel metadata in the Skill's documented format). Accept only
      its atomic complete JSON. When the optional
      tool is empty, use COMMANDMENT's graph-capable correctness/liveness command for the same cases

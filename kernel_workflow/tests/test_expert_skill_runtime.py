@@ -176,6 +176,8 @@ def test_megamoe_runtime_cli_keeps_old_arguments_and_adds_optional_new_ones():
     # Official-harness MTPR cases and their fallback bound are opt-in.
     assert options["--mtpr-cases"] == {"default": ""}
     assert options["--mtpr-fallback-max"] == {"type": "int", "default": 0}
+    # The timed guard defaults to the validated 8192 target.
+    assert options["--target-guard"] == {"default": "8192_uniform"}
     assert {
         name for name, spec in options.items() if spec.get("required")
     } == {"--candidate-tree", "--json-output"}
@@ -205,6 +207,25 @@ def test_megamoe_min_speedup_gates_frozen_absolute_ratio_not_same_tree_ratio():
     matched = summary(4.70, [4.0] * 3, [4.8] * 3, 1.03, 0.05)
     assert "denominator_mismatch" not in matched
     assert matched["denominator_deviation_pct"] == pytest.approx(100 * 0.1 / 4.70)
+
+
+def test_megamoe_speedup_gate_never_passes_at_parity():
+    summary = _runtime_namespace()["_speedup_summary"]
+    assert summary(4.0, [4.0] * 3, [4.0] * 3, 1.0, 0.05)["speedup_gate"] == "fail"
+    assert summary(4.1, [4.0] * 3, [4.1] * 3, 1.0, 0.05)["speedup_gate"] == "pass"
+    assert summary(4.1, [4.0] * 3, [4.1] * 3, 1.03, 0.05)["speedup_gate"] == "fail"
+
+
+def test_megamoe_target_guard_names_tokens_and_optional_mtpr():
+    parse = _runtime_namespace()["_parse_target_guard"]
+    assert parse("8192_uniform") == (8192, None)
+    assert parse("64_uniform_mtpr64") == (64, 64)
+    for bad in (
+        "64_uniform_mtpr128", "64_rank-mixed-skew_mtpr64", "8192_rank-mixed-skew",
+        "uniform", "64_uniform_mtprX",
+    ):
+        with pytest.raises(ValueError):
+            parse(bad)
 
 
 @pytest.mark.parametrize("frozen", [None, 0.0, -4.7, float("nan"), float("inf")])
@@ -531,11 +552,14 @@ class _FakeRank:
 
     world = 8
 
-    def __init__(self, marker, fused_ms, unfused_ms, stale_first_call=False):
+    def __init__(
+        self, marker, fused_ms, unfused_ms, stale_first_call=False, fallback_max=0
+    ):
         self.marker = marker
         self.stale_first_call = stale_first_call
+        # Operators built with max_tok_per_rank <= fallback_max run unfused.
+        self.fallback_max = fallback_max
         self.last_route = None
-        self.marker_printed = False
         self.fused_ms = fused_ms
         self.unfused_ms = unfused_ms
         self.clock = 0.0
@@ -660,11 +684,16 @@ class _FakeRank:
                 swiglu_limit=0.0,
             ):
                 self.output = _FakeTensor(("empty",))
+                self.capacity = max_tok_per_rank
+                self.marker_printed = False
 
             def __call__(self, x, route_weights, ids):
-                fused = os.environ.get("AITER_MEGAMOE_FUSE_ALL") == "1"
-                if fused and fake.marker and not fake.marker_printed:
-                    fake.marker_printed = True
+                fused = (
+                    os.environ.get("AITER_MEGAMOE_FUSE_ALL") == "1"
+                    and self.capacity > fake.fallback_max
+                )
+                if fused and fake.marker and not self.marker_printed:
+                    self.marker_printed = True
                     os.write(2, fake.marker.encode())
                 kernel = functools.partial(self._run, fused, x, route_weights, ids)
                 if fake.capturing is None:
@@ -689,6 +718,7 @@ class _FakeRank:
                 fake.runs.append({
                     "fused": fused,
                     "tokens": x.shape[0],
+                    "capacity": self.capacity,
                     "route": (route_weights.tag, ids.tag),
                     "timed": fake.timing,
                 })
@@ -713,9 +743,9 @@ class _FakeRank:
 
 def _fake_megamoe_main(
     tmp_path, monkeypatch, *, marker="[megamoe] path=MEGA\n", fused_ms=4.0,
-    unfused_ms=11.0, extra=(), stale_first_call=False,
+    unfused_ms=11.0, extra=(), stale_first_call=False, fallback_max=0,
 ):
-    fake = _FakeRank(marker, fused_ms, unfused_ms, stale_first_call)
+    fake = _FakeRank(marker, fused_ms, unfused_ms, stale_first_call, fallback_max)
     for name, module in {
         **fake.torch_modules(), "_megamoe_runtime_fake": fake.adapter_module()
     }.items():
@@ -880,3 +910,63 @@ def test_megamoe_runtime_main_fails_absolute_gate_despite_same_tree_win(
     assert data["incremental_switch_speedup"] == pytest.approx(11.0 / 4.0)
     assert data["absolute_speedup"] == pytest.approx(3.9 / 4.0)
     assert data["error"].startswith("AssertionError: absolute speedup")
+
+
+def test_megamoe_runtime_main_times_an_mtpr_target_on_its_own_operator(
+    tmp_path, monkeypatch
+):
+    fake, output, main = _fake_megamoe_main(
+        tmp_path,
+        monkeypatch,
+        extra=(
+            "--target-guard", "64_uniform_mtpr64",
+            "--min-speedup", "1.0",
+            "--mtpr-fallback-max", "1024",
+            "--frozen-baseline-ms", "4.70",
+            "--resource-evidence", str(_resource_evidence(tmp_path)),
+        ),
+    )
+    assert main() == 0
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is True
+    assert data["target_guard"] == "64_uniform_mtpr64"
+    assert {row["guard"] for row in data["paired_readings"]} == {"64_uniform_mtpr64"}
+    assert data["launch_count"] == data["target_launch_count"] == 2
+    [activation] = data["mtpr_activation"]
+    assert activation["target_guard"] == "64_uniform_mtpr64"
+    assert activation["fallback_allowed"] is False
+    assert activation["status"] == "pass"
+    guards = {row["guard"] for row in data["accuracy_results"]}
+    assert {"128", "512", "8192", "64_uniform_mtpr64"} <= guards
+
+    uniform = next(run["route"] for run in fake.runs if run["capacity"] == 64)
+    timed = [run for run in fake.runs if run["timed"]]
+    assert {run["fused"] for run in timed} == {True, False}
+    assert all(
+        run["tokens"] == 64 and run["capacity"] == 64 and run["route"] == uniform
+        for run in timed
+    )
+
+
+def test_megamoe_runtime_main_rejects_an_mtpr_target_that_falls_back(
+    tmp_path, monkeypatch
+):
+    # 128 may fall back under --mtpr-fallback-max; the 64 target may not.
+    _, output, main = _fake_megamoe_main(
+        tmp_path,
+        monkeypatch,
+        fallback_max=128,
+        extra=(
+            "--target-guard", "64_uniform_mtpr64",
+            "--mtpr-cases", "128,64",
+            "--mtpr-fallback-max", "1024",
+            "--frozen-baseline-ms", "4.70",
+        ),
+    )
+    with pytest.raises(AssertionError, match="tokens=64 mtpr=64 path marker missing"):
+        main()
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is False
+    first, target = data["mtpr_activation"]
+    assert (first["status"], first["fallback_allowed"]) == ("fail", True)
+    assert (target["status"], target["fallback_allowed"]) == ("fail", False)

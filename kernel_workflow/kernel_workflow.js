@@ -376,7 +376,8 @@ if (STRICT_AUTONOMY) {
   }
 }
 const RF = Object(A.regression_floor_by_guard);
-const RFI = A.regression_floor_by_guard ? { REGRESSION_FLOORS: RF } : {};
+const RFI = { ...(A.regression_floor_by_guard ? { REGRESSION_FLOORS: RF } : {}),
+  ...(A.mega_min_speedup ? { MIN_TARGET_SPEEDUP: +A.mega_min_speedup } : {}) };
 const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : 'false') === 'true';
 const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
 const REQUIRE_ARTIFACT_DISTINCT = String(

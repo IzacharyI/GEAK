@@ -229,10 +229,13 @@ denominator.
    --runtime-file EXPERT_SKILL_RUNTIME_FILE
    --accuracy-cases <REQUIRED_ACCURACY_CASES> --liveness-cases <REQUIRED_ACCURACY_CASES>
    --routes uniform,rank-mixed-skew --replays <GRAPH_CONTRACT_REPLAYS>
-   --mtpr-cases <distinct tokens of every `_mtpr<M>` guard, comma-separated; omit when none>
+   --mtpr-cases <distinct tokens of every `_mtpr<M>` guard in TARGET_GUARDS and REGRESSION_GUARDS,
+   comma-separated; omit when none>
    --mtpr-fallback-max <largest M among `_mtpr<M>` guards in REGRESSION_FLOORS, else 0>
-   --rtol <ACCURACY_THRESHOLD> --frozen-baseline-ms <BASELINE_PER_CASE latency of the first
-   TARGET_GUARDS entry> --resource-evidence "$VERIFY_DIR/resources.json"
+   --rtol <ACCURACY_THRESHOLD> --target-guard <the first TARGET_GUARDS entry>
+   --frozen-baseline-ms <BASELINE_PER_CASE latency of that same entry>
+   [--min-speedup <MIN_TARGET_SPEEDUP>, only when MIN_TARGET_SPEEDUP is given]
+   --resource-evidence "$VERIFY_DIR/resources.json"
    --json-output "$VERIFY_DIR/graph_contract.json"`. `EXPERT_SKILL_RUNTIME_FILE` is the validator
    itself (never the `validation.yaml` data file); build `resources.json` in the format the Skill's
    acceptance section documents before the run. A JSON with `claim_blockers` and exit status 1 is

@@ -189,8 +189,8 @@ Done: no Stage2/Combine tail launch remains.
 - Clear claim heads, increment generation, pre-arm omitted tokens, keep arrivals
   monotone.
 - Verify active `path=MEGA` ×8 and two launches before using numerical evidence.
-- Then run 128→512→8192 accuracy, route-changing replay, and finally 8192 paired
-  performance.
+- Then run 128→512→8192 accuracy, route-changing replay, and finally paired
+  performance on the target guard (8192-uniform unless the workflow names another).
 
 After a source edit, CPU checks are preflight only. The next independent Verify
 must execute the exact HEAD on eight GPUs.
@@ -224,7 +224,9 @@ and persists across Workflow waves; never substitute a per-workspace cache.
    including the `moving-hot-rank` route: the first replay after a route change
    must match a repeated replay (relL2 < 0.01), not only the reference (< 0.10).
 6. Tune only after correctness; accept only a frozen-relative 8192-uniform
-   speedup >=1.03x (frozen `BASELINE_PER_CASE` latency / candidate latency). A
+   speedup >=1.03x (frozen `BASELINE_PER_CASE` latency / candidate latency), or
+   the workflow's own target guard and minimum when it names one (always >1.0x;
+   an `_mtpr<M>` target must run `path=MEGA` with two launches). A
    same-tree switch-off arm is a diagnostic and must stay within noise of the
    frozen latency.
 

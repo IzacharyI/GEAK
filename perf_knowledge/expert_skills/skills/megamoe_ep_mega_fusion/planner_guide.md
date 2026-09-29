@@ -70,7 +70,8 @@ one concrete on-card blocker that the later stage is necessary to expose.
 3. `path=MEGA` on all ranks and exactly two launches.
 4. relL2 correctness at 128, 512, then 8192.
 5. Same-instance graph replay and distributed liveness.
-6. Paired 8192-uniform rank-max performance.
+6. Paired rank-max performance on the target guard (8192-uniform unless the
+   workflow names another target).
 
 When Verify returns a traceback or hang classification, route only that concrete
 failure to Author. Preserve all already-passing source and runtime evidence.

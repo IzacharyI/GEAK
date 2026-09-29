@@ -47,6 +47,25 @@ def _next_power_of_two(value):
     return 1 << (int(value) - 1).bit_length()
 
 
+def _parse_target_guard(guard):
+    """``<T>_uniform`` or ``<T>_uniform_mtpr<M>`` -> (tokens, mtpr or None).
+
+    Without the suffix the target is timed on the shared operator; with it the
+    target owns an operator built with max_tok_per_rank=M, as the official test
+    sizes it, so M must be next_pow2(T).
+    """
+    head, _, mtpr = guard.partition("_mtpr")
+    tokens, _, route = head.partition("_")
+    if not tokens.isdigit() or route != "uniform" or (mtpr and not mtpr.isdigit()):
+        raise ValueError(f"target guard must be <T>_uniform[_mtpr<M>], got {guard!r}")
+    tokens = int(tokens)
+    if not mtpr:
+        return tokens, None
+    if int(mtpr) != _next_power_of_two(tokens):
+        raise ValueError(f"target guard {guard}: mtpr must be next_pow2({tokens})")
+    return tokens, int(mtpr)
+
+
 def _load_module(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -341,7 +360,8 @@ def _speedup_summary(frozen_ms, cand_ms_list, switch_off_ms_list, min_speedup, t
         absolute_speedup=absolute,
         paired_rank_max_speedup=absolute,
         denominator_deviation_pct=100.0 * deviation,
-        speedup_gate="pass" if absolute >= min_speedup else "fail",
+        # Never pass at or below parity, even when min_speedup is 1.0.
+        speedup_gate="pass" if absolute >= min_speedup and absolute > 1.0 else "fail",
     )
     if abs(deviation) > tol:
         direction = "regressed" if deviation > 0 else "changed"
@@ -507,6 +527,9 @@ def main():
     parser.add_argument("--perf-iters", type=int, default=20)
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--min-speedup", type=float, default=1.03)
+    # The guard timed against --frozen-baseline-ms; an _mtpr<M> target must run
+    # path=MEGA with two launches even when M <= --mtpr-fallback-max.
+    parser.add_argument("--target-guard", default="8192_uniform")
     parser.add_argument("--frozen-baseline-ms", type=float, default=None)
     parser.add_argument("--denominator-tolerance", type=float, default=0.05)
     parser.add_argument("--path-marker", default="path=MEGA")
@@ -531,6 +554,12 @@ def main():
     required_cases = {128, 512, 8192}
     if not required_cases <= set(accuracy_cases) or not required_cases <= set(liveness_cases):
         raise ValueError("runtime claims require direct 128/512/8192 cases")
+    target_tokens, target_mtpr = _parse_target_guard(args.target_guard)
+    if target_mtpr is None:
+        if target_tokens not in set(accuracy_cases) | set(liveness_cases):
+            raise ValueError(f"target {args.target_guard} is not an accuracy/liveness case")
+    elif target_tokens not in mtpr_cases:
+        mtpr_cases.append(target_tokens)
     if args.replays <= 0 or args.pairs <= 0 or args.perf_iters <= 0:
         raise ValueError("replays, pairs and perf-iters must be positive")
     if not args.path_marker:
@@ -550,6 +579,7 @@ def main():
         "replay_results": [],
         "paired_readings": [],
         "replay_routes": routes,
+        "target_guard": args.target_guard,
     }
 
     def write_result(complete):
@@ -606,9 +636,12 @@ def main():
         output_path = Path(args.json_output).resolve()
         capture_prefix = f"{output_path.name}.rank{rank}.activation"
         marker_counts = []
-        target_body = None
-        target_tensors = None
+        launch_body = None
+        launch_tensors = None
         uniform_route = None
+        # (body, (x, route_weights, ids, graph), uniform route, operator capacity)
+        # of the --target-guard shape, timed against the frozen baseline below.
+        timed = None
         def check_accuracy(state, x, route_weights, ids, tokens, guard, method):
             reference = helper._reference(
                 x,
@@ -715,6 +748,9 @@ def main():
             )
             if tokens == 8192:
                 uniform_route = (route_weights.clone(), ids.clone())
+            timed_here = target_mtpr is None and tokens == target_tokens
+            if timed_here:
+                timed_route = (route_weights.clone(), ids.clone())
             state = {}
 
             def body(
@@ -757,8 +793,10 @@ def main():
                 }
                 write_result(False)
             if tokens == 8192:
-                target_body = body
-                target_tensors = (x, route_weights, ids, graph)
+                launch_body = body
+                launch_tensors = (x, route_weights, ids, graph)
+            if timed_here:
+                timed = (body, (x, route_weights, ids, graph), timed_route, max_tokens)
 
             if tokens in accuracy_cases:
                 check_accuracy(
@@ -790,6 +828,9 @@ def main():
             x, route_weights, ids = _make_route(
                 torch, tokens, "uniform", 0, profile_data, rank, world, device
             )
+            is_target = target_mtpr is not None and tokens == target_tokens
+            if is_target:
+                timed_route = (route_weights.clone(), ids.clone())
             state = {}
             small_markers = []
 
@@ -815,12 +856,14 @@ def main():
                     args.path_marker, world, observed_sum, observed_min, per_rank
                 ),
                 "window": f"first eager forward (tokens={tokens}, mtpr={mtpr})",
-                "fallback_allowed": mtpr <= args.mtpr_fallback_max,
+                "fallback_allowed": mtpr <= args.mtpr_fallback_max and not is_target,
             }
+            if is_target:
+                activation["target_guard"] = args.target_guard
             result["mtpr_activation"].append(activation)
             write_result(False)
-            # An MTPR at or below --mtpr-fallback-max may run the unfused path; it
-            # still owes accuracy and replay liveness below.
+            # An MTPR at or below --mtpr-fallback-max may run the unfused path unless
+            # it is the target; it still owes accuracy and replay liveness below.
             if activation["status"] != "pass" and not activation["fallback_allowed"]:
                 raise AssertionError(f"tokens={tokens} mtpr={mtpr} path marker missing")
             check_accuracy(
@@ -829,16 +872,28 @@ def main():
                 "vs numeric reference",
             )
             replay_routes(graph, state, x, route_weights, ids, tokens, suffix)
+            if is_target:
+                timed = (body, (x, route_weights, ids, graph), timed_route, mtpr)
             del graph, small
 
-        if target_body is None or target_tensors is None or uniform_route is None:
-            raise AssertionError("8192 target graph was not produced")
-        x, route_weights, ids, candidate_graph = target_tensors
+        if launch_body is None or launch_tensors is None or uniform_route is None:
+            raise AssertionError("8192 graph was not produced")
+        if timed is None:
+            raise AssertionError(f"target {args.target_guard} graph was not produced")
+        x, route_weights, ids, _ = launch_tensors
         _restore_route((route_weights, ids), uniform_route)
         launch_count = _profile_launch_count(
-            torch, dist, helper, target_body, device
+            torch, dist, helper, launch_body, device
         )
         result["launch_count"] = launch_count
+        target_body, target_tensors, target_route, target_capacity = timed
+        x, route_weights, ids, candidate_graph = target_tensors
+        _restore_route((route_weights, ids), target_route)
+        if target_mtpr is not None:
+            # The target owns its operator, which must be fused like the shared one.
+            result["target_launch_count"] = _profile_launch_count(
+                torch, dist, helper, target_body, device
+            )
         result["resources"] = _resource_checks(args.resource_evidence)
 
         os.environ["AITER_MEGAMOE_FUSE_ALL"] = "0"
@@ -850,13 +905,13 @@ def main():
             w1_scale=w1_scale,
             w2=w2,
             w2_scale=w2_scale,
-            max_tok_per_rank=max_tokens,
+            max_tok_per_rank=target_capacity,
             **profile_data,
         )
         control_state = {}
 
         def control_body():
-            control_state["output"] = control(x, route_weights, ids)[:8192]
+            control_state["output"] = control(x, route_weights, ids)[:target_tokens]
 
         control_graph = _capture(torch, helper, control_body)
         os.environ["AITER_MEGAMOE_FUSE_ALL"] = "1"
@@ -881,7 +936,7 @@ def main():
             switch_off_readings.append(base_ms)
             result["paired_readings"].append(
                 {
-                    "guard": "8192_uniform",
+                    "guard": args.target_guard,
                     "base_arm": "same_tree_switch_off",
                     "base": base_ms,
                     "cand": cand_ms,

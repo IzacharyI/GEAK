@@ -356,7 +356,8 @@ storage without stale reads. Validate in order:
 4. route-changing graph replay and liveness, including a route with one hot
    source rank that moves on every replay; the first replay after each change
    must match a repeated replay of the same route;
-5. paired 8192-uniform rank-max speedup at least 1.03x.
+5. paired rank-max speedup on the target guard (8192-uniform and at least
+   1.03x unless the workflow names another target; see Acceptance).
 
 ### Construction checkpoints
 
@@ -852,7 +853,7 @@ Run one normal `mode=mega` lane:
    smaller-to-larger graph-generation check with route mutation.
 6. Complete the same chain with eight path markers, exactly two BF16-path
    launches, direct numerical parity, liveness, the four established route
-   guards, and paired 8192-uniform rank-max performance.
+   guards, and paired rank-max performance on the target guard.
 7. Return any concrete failure to this one candidate. Do not replace the
    canonical target with diagnostics, partial fusion, or open-ended search.
 
@@ -891,10 +892,14 @@ The Skill succeeds only when its independently authored candidate has:
   latency divided by the candidate latency, paired against a frozen-tree base
   arm) close to the measured 1.0448x reference and at least 1.03x after the
   established noise allowance. A same-tree switch-off pair is a diagnostic only.
+  When the workflow names another target guard and minimum, that guard and
+  minimum replace 8192-uniform and 1.03x here; everything else above still
+  applies, and the speedup must stay above 1.0x.
 
 The runtime validator (`runtime_validation.py`, executed through the
-workflow's runtime tool) takes `--frozen-baseline-ms` (the frozen 8192-uniform
-rank-max latency) and `--resource-evidence <json>`, where the JSON is
+workflow's runtime tool) takes `--target-guard` (default `8192_uniform`),
+`--frozen-baseline-ms` (the frozen rank-max latency of that guard) and
+`--resource-evidence <json>`, where the JSON is
 `{"cases": {"fixed_128": {...}, "large_8192": {...}}}` and each case reports
 `threads`, `group_segment`, `kernarg`, `vgpr`, `sgpr`, `vgpr_spills`,
 `sgpr_spills`, `private` and `resident_workgroups` read from the emitted
@@ -902,7 +907,13 @@ code-object metadata of the persistent kernel. It gates `--min-speedup` only on
 `absolute_speedup` (frozen latency / candidate median), reports the same-tree
 pair as `incremental_switch_speedup`, requires the path marker on every rank,
 and keeps `claim_complete=false` with `claim_blockers` (exit 1) when the
-marker, the frozen latency or the resource evidence is missing.
+marker, the frozen latency or the resource evidence is missing. The gate never
+passes at or below 1.0x, whatever `--min-speedup` is. A `<T>_uniform` target is
+timed on the shared operator; a `<T>_uniform_mtpr<M>` target (M = next_pow2(T))
+is timed on its own operator built with max_tok_per_rank=M, which must print
+the path marker on every rank and emit exactly two launches even when M is at
+or below `--mtpr-fallback-max`. The switch-off control uses the target's
+operator capacity.
 
 ## Sources
 
