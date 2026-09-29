@@ -172,6 +172,7 @@ def test_megamoe_runtime_cli_keeps_old_arguments_and_adds_optional_new_ones():
     assert options["--frozen-baseline-ms"] == {"type": "float", "default": None}
     assert options["--denominator-tolerance"] == {"type": "float", "default": 0.05}
     assert options["--path-marker"] == {"default": "path=MEGA"}
+    assert options["--replay-consistency-rtol"] == {"type": "float", "default": 0.01}
     # Official-harness MTPR cases and their fallback bound are opt-in.
     assert options["--mtpr-cases"] == {"default": ""}
     assert options["--mtpr-fallback-max"] == {"type": "int", "default": 0}
@@ -465,6 +466,23 @@ class _FakeTensor:
     def __sub__(self, other):
         return self._derive("sub", other)
 
+    def __floordiv__(self, other):
+        return self._derive("floordiv", other)
+
+    def __mod__(self, other):
+        return self._derive("mod", other)
+
+    def __eq__(self, other):
+        return self._derive("eq", other)
+
+    def __and__(self, other):
+        return self._derive("and", other)
+
+    def __or__(self, other):
+        return self._derive("or", other)
+
+    __hash__ = object.__hash__
+
     def __truediv__(self, other):
         return _FakeTensor(value=self.value / other.value)
 
@@ -513,8 +531,10 @@ class _FakeRank:
 
     world = 8
 
-    def __init__(self, marker, fused_ms, unfused_ms):
+    def __init__(self, marker, fused_ms, unfused_ms, stale_first_call=False):
         self.marker = marker
+        self.stale_first_call = stale_first_call
+        self.last_route = None
         self.marker_printed = False
         self.fused_ms = fused_ms
         self.unfused_ms = unfused_ms
@@ -609,6 +629,7 @@ class _FakeRank:
         torch.randn = draw("randn")
         torch.rand = draw("rand")
         torch.randint = draw("randint")
+        torch.arange = lambda n, device=None: _FakeTensor(("arange", n), shape=(n,))
         torch.topk = lambda tensor, k, dim=-1: types.SimpleNamespace(
             indices=_FakeTensor(("topk", tensor.tag, k), shape=(*tensor.shape[:-1], k))
         )
@@ -659,7 +680,12 @@ class _FakeRank:
                         ["quant", "mega"] if fused
                         else ["quant", "dispatch", "gemm1", "gemm2", "combine"]
                     )
-                self.output.tag = ("moe", x.tag, route_weights.tag, ids.tag)
+                route = (route_weights.tag, ids.tag)
+                used = route
+                if fake.stale_first_call and fake.last_route not in (None, route):
+                    used = fake.last_route  # previous launch's route metadata
+                fake.last_route = route
+                self.output.tag = ("moe", x.tag, *used)
                 fake.runs.append({
                     "fused": fused,
                     "tokens": x.shape[0],
@@ -687,9 +713,9 @@ class _FakeRank:
 
 def _fake_megamoe_main(
     tmp_path, monkeypatch, *, marker="[megamoe] path=MEGA\n", fused_ms=4.0,
-    unfused_ms=11.0, extra=(),
+    unfused_ms=11.0, extra=(), stale_first_call=False,
 ):
-    fake = _FakeRank(marker, fused_ms, unfused_ms)
+    fake = _FakeRank(marker, fused_ms, unfused_ms, stale_first_call)
     for name, module in {
         **fake.torch_modules(), "_megamoe_runtime_fake": fake.adapter_module()
     }.items():
@@ -761,6 +787,38 @@ def test_megamoe_runtime_main_claims_with_frozen_gate_marker_and_uniform_timing(
     assert sorted(path.name for path in output.parent.iterdir()) == [
         "graph_contract.json"
     ]
+
+
+def test_megamoe_runtime_main_replays_the_moving_hot_route_and_checks_consistency(
+    tmp_path, monkeypatch
+):
+    # The fake is rank 0 of 8, so it becomes the hot source on replay 8.
+    fake, output, main = _fake_megamoe_main(
+        tmp_path, monkeypatch,
+        extra=("--routes", "uniform,rank-mixed-skew", "--replays", "9"),
+    )
+    main()
+    data = json.loads(output.read_text())
+    assert data["replay_routes"] == ["uniform", "rank-mixed-skew", "moving-hot-rank"]
+    rows = {row["guard"]: row for row in data["replay_results"]}
+    for tokens in (128, 512, 8192):
+        row = rows[f"{tokens}_moving-hot-rank"]
+        assert row["max_first_vs_repeat_relL2"] == 0.0
+        assert row["consistency_threshold"] == 0.01
+    routes = [repr(run["route"][1]) for run in fake.runs if run["tokens"] == 8192]
+    hot = [route for route in routes if "arange" in route]
+    assert hot and len(hot) < len(routes)  # hot on its own turn only
+
+
+def test_megamoe_runtime_main_rejects_stale_first_call_after_route_change(
+    tmp_path, monkeypatch
+):
+    _, output, main = _fake_megamoe_main(tmp_path, monkeypatch, stale_first_call=True)
+    with pytest.raises(AssertionError, match="previous launch's route metadata"):
+        main()
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is False
+    assert "first call after the route change" in data["error"]
 
 
 def test_megamoe_runtime_main_old_arguments_never_gate_on_same_tree_ratio(

@@ -353,7 +353,9 @@ storage without stale reads. Validate in order:
 1. active-path trace/JIT at bs=128;
 2. `path=MEGA` on eight ranks and exactly two launches;
 3. relL2 below 0.10 at 128, 512 and 8192;
-4. route-changing graph replay and liveness;
+4. route-changing graph replay and liveness, including a route with one hot
+   source rank that moves on every replay; the first replay after each change
+   must match a repeated replay of the same route;
 5. paired 8192-uniform rank-max speedup at least 1.03x.
 
 ### Construction checkpoints
@@ -880,6 +882,8 @@ The Skill succeeds only when its independently authored candidate has:
 - `relL2 < 0.10` at 128, 512 and 8192 tokens;
 - same-instance graph replay with route mutation and a smaller-to-larger token
   transition, proving generation padding;
+- on every route, including `moving-hot-rank`, the first replay after a route
+  change within relL2 0.01 of a repeated replay (no stale route metadata);
 - emitted 128 and 8192 resource envelopes within the values above and at least
   one resident workgroup per CU;
 - no regression on fixed, compact or skew guards;

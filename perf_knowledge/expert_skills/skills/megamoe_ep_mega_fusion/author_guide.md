@@ -220,7 +220,9 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 2. FlyDSL trace/JIT must complete for the selected profile.
 3. All ranks must report `path=MEGA`; profiler must observe two launches.
 4. Pass relL2 <0.10 at 128, 512, and 8192.
-5. Pass changing-route and smaller→larger graph replays without stale reads/hang.
+5. Pass changing-route and smaller→larger graph replays without stale reads/hang,
+   including the `moving-hot-rank` route: the first replay after a route change
+   must match a repeated replay (relL2 < 0.01), not only the reference (< 0.10).
 6. Tune only after correctness; accept only a frozen-relative 8192-uniform
    speedup >=1.03x (frozen `BASELINE_PER_CASE` latency / candidate latency). A
    same-tree switch-off arm is a diagnostic and must stay within noise of the
@@ -246,6 +248,13 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 - Arrival counters are monotone. Reset only the rank-local claim head; increment
   Combine generation and pad omitted tokens before PLAN_READY/startup publication.
 - LDS uses max-of-role-lifetimes and must remain <=163840 bytes.
+- Every workgroup that reads per-launch route metadata (pair order, grouping
+  table, dispatch counts) waits on that launch's readiness flag itself. Do not
+  put the wait inside a role or grouping branch: with a heavy source-to-expert
+  pair (more than 4 payload producers per destination) some payload producers
+  sit outside adaptive grouping. They then read the previous launch's order,
+  which corrupts rows silently or hangs on a changed route. The frozen tree's
+  dispatch has this defect; keep the wait unconditional in any dispatch you carry.
 
 ## Failure handling
 

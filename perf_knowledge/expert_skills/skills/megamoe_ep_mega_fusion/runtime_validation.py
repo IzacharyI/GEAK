@@ -25,6 +25,14 @@ PROFILE = {
     "swiglu_limit": 10.0,
 }
 FROZEN_BASELINE_MISSING = "not_evaluated: missing --frozen-baseline-ms"
+# One source rank sends most of its rows to five experts on five destination ranks;
+# the hot source moves on every replay and the other ranks stay uniform. A producer
+# that reads per-launch route metadata before it is ready then sees the previous
+# launch's, so the first call after the switch goes wrong (or hangs) and a repeated
+# call heals. Symmetric skew, even with the hot experts moving, did not show it
+# (0/32 against 32/32 for this route on the same defect).
+MOVING_HOT_ROUTE = "moving-hot-rank"
+MOVING_HOT_EXPERTS = 5
 
 
 def _csv_ints(value):
@@ -122,6 +130,35 @@ def _make_route(torch, tokens, route, iteration, profile, rank, world, device):
         dim=-1,
     ).indices
     local_experts = profile["experts"] // world
+    if route == MOVING_HOT_ROUTE:
+        scores = torch.randn(
+            (tokens, profile["experts"]),
+            dtype=torch.float32,
+            device=device,
+            generator=generator,
+        )
+        if rank == iteration % world:
+            column = torch.arange(profile["experts"], device=device)
+            hot_column = None
+            for hot in range(MOVING_HOT_EXPERTS):
+                expert = ((rank + iteration + 3 * hot) % world) * local_experts + (
+                    iteration * 7 + hot
+                ) % local_experts
+                hit = column == expert
+                hot_column = hit if hot_column is None else hot_column | hit
+            hot_row = (
+                torch.rand((tokens, 1), device=device, generator=generator) < 0.75
+            )
+            scores = scores + (hot_row & hot_column) * 1.0e4
+        ids = torch.topk(scores, profile["topk"], dim=-1).indices
+        logits = torch.randn(
+            destination.shape, dtype=torch.float32, device=device, generator=generator
+        )
+        return (
+            x.contiguous(),
+            logits.softmax(dim=-1).contiguous(),
+            ids.to(torch.int32).contiguous(),
+        )
     if route == "uniform":
         local = torch.randint(
             0, local_experts, destination.shape, device=device, generator=generator
@@ -457,11 +494,15 @@ def main():
     parser.add_argument("--profile", default="v4_pro")
     parser.add_argument("--accuracy-cases", default="128,512,8192")
     parser.add_argument("--liveness-cases", default="128,512,8192")
-    parser.add_argument("--routes", default="uniform,rank-mixed-skew")
+    parser.add_argument("--routes", default="uniform,rank-mixed-skew,moving-hot-rank")
     parser.add_argument("--mtpr-cases", default="")
     parser.add_argument("--mtpr-fallback-max", type=int, default=0)
     parser.add_argument("--replays", type=int, default=256)
     parser.add_argument("--numeric-checkpoint-interval", type=int, default=16)
+    # relL2 of the first call after a route change against a repeated call of the
+    # same route. Stale route reads corrupt whole rows (>=0.045 measured) yet can
+    # stay under --rtol against the reference.
+    parser.add_argument("--replay-consistency-rtol", type=float, default=0.01)
     parser.add_argument("--rtol", type=float, default=0.10)
     parser.add_argument("--perf-iters", type=int, default=20)
     parser.add_argument("--pairs", type=int, default=5)
@@ -483,6 +524,9 @@ def main():
     accuracy_cases = _csv_ints(args.accuracy_cases)
     liveness_cases = _csv_ints(args.liveness_cases)
     routes = _csv_strings(args.routes)
+    # Required for every claim, so an explicit --routes list cannot drop it.
+    if MOVING_HOT_ROUTE not in routes:
+        routes.append(MOVING_HOT_ROUTE)
     mtpr_cases = _csv_ints(args.mtpr_cases) if args.mtpr_cases else []
     required_cases = {128, 512, 8192}
     if not required_cases <= set(accuracy_cases) or not required_cases <= set(liveness_cases):
@@ -491,6 +535,8 @@ def main():
         raise ValueError("replays, pairs and perf-iters must be positive")
     if not args.path_marker:
         raise ValueError("path-marker must be non-empty")
+    if not 0 < args.replay_consistency_rtol <= args.rtol:
+        raise ValueError("replay-consistency-rtol must be in (0, rtol]")
     if not math.isfinite(args.denominator_tolerance) or args.denominator_tolerance < 0:
         raise ValueError("denominator-tolerance must be a finite non-negative fraction")
 
@@ -503,6 +549,7 @@ def main():
         "accuracy_results": [],
         "replay_results": [],
         "paired_readings": [],
+        "replay_routes": routes,
     }
 
     def write_result(complete):
@@ -594,6 +641,7 @@ def main():
         def replay_routes(graph, state, x, route_weights, ids, tokens, suffix=""):
             for route in routes:
                 checkpoints = []
+                drifts = []
                 for replay in range(args.replays):
                     _, new_weights, new_ids = _make_route(
                         torch,
@@ -613,6 +661,20 @@ def main():
                         or replay + 1 == args.replays
                     ):
                         torch.cuda.synchronize()
+                        first = state["output"].clone()
+                        graph.replay()
+                        torch.cuda.synchronize()
+                        drift = _relative_l2(
+                            torch, dist, helper, first, state["output"].float(), device
+                        )
+                        drifts.append(drift)
+                        if drift >= args.replay_consistency_rtol:
+                            raise AssertionError(
+                                f"{tokens}/{route}{suffix} replay {replay + 1}: first "
+                                f"call after the route change differs from a repeated "
+                                f"call (relL2={drift:.6f}); a producer read the "
+                                f"previous launch's route metadata"
+                            )
                         reference = helper._reference(
                             x,
                             route_weights,
@@ -626,7 +688,7 @@ def main():
                             profile_data["swiglu_limit"],
                         )
                         value = _relative_l2(
-                            torch, dist, helper, state["output"], reference, device
+                            torch, dist, helper, first, reference, device
                         )
                         checkpoints.append(value)
                         if value >= args.rtol:
@@ -641,6 +703,8 @@ def main():
                     "arrival_jitter": True,
                     "routing_changes": args.replays,
                     "max_checkpoint_relL2": max(checkpoints),
+                    "max_first_vs_repeat_relL2": max(drifts),
+                    "consistency_threshold": args.replay_consistency_rtol,
                 }
                 result["replay_results"].append(replay_row)
                 write_result(False)
