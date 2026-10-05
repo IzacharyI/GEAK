@@ -111,7 +111,8 @@ invented reference-parity failures.
   machine-enforced campaign contract. When `STRICT_AUTONOMY` is true, missing evidence is a failed
   terminal contract, not a benign default.
 - `SEARCH_ACCEPTS_PARTIAL_FUSION=1` means a search candidate may score with a
-  launch count between `LAUNCH_TARGET` and the frozen baseline count. It must
+  launch count below the frozen baseline count (reaching or beating `LAUNCH_TARGET`
+  is fine; the target is a ceiling). It must
   still be a complete runnable operator and strictly reduce launches; this flag
   is omitted when a candidate explicitly claims the exact full-fusion target.
 - `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
@@ -567,7 +568,7 @@ launches per rank for one operator call, both arms, in the same collection:
 candidate. Compare against the supplied `LAUNCH_TARGET`. With
 `SEARCH_ACCEPTS_PARTIAL_FUSION=1`, a measured launch reduction that remains
 above the target may score if it is a complete operator and faster than frozen;
-without the flag it must equal the target.
+without the flag it must be at most the target (the target is a ceiling).
 Omitting the count leaves fusion unjudged. `how_counted` is the evidence — a
 trace record count or launch-marker tally — because a count with no method is
 a guess.

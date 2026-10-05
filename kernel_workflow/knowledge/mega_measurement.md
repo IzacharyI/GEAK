@@ -43,6 +43,20 @@ and list them as not measured.
 
 Wrap every GPU command in `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID …`. Do not edit any tree.
 
+0. **Regime map (no GPU, a minute).** Place every guard on the shape's roofline before measuring
+   stages (MEGA_GENERIC_LESSONS §5.1):
+   ```
+   python3 $SKILL_DIR/tools/mega_regime.py --guards <TARGET_GUARDS + REGRESSION_GUARDS>
+     --experts-per-rank <E/world> --topk <k> --world <ranks> --hidden <model dim> --inter <inter dim>
+     --weight-bits <stored bits per weight incl. scales> --dispatch-bytes <b> --combine-bytes <b>
+     --hbm-tbps <achieved> --math-tflops <peak for the operand type> --link-gbps <per rank>
+     --hardware-source "<measured how / datasheet>" --baseline-ms <guard=BASELINE_PER_CASE ms ...>
+     --json-output $EVAL_DIR/regime.json
+   ```
+   - Take the shape from the task's test or COMMANDMENT, never guess it.
+   - Prefer measured bandwidth (a large device copy, or a link copy between two ranks) over
+     datasheet peaks. If you only have a datasheet figure, say so in `--hardware-source`.
+   - The baseline figures are the rank-max e2e of `BASELINE_PER_CASE`.
 1. **Stage timers.** Take the frozen-baseline benchmark command for each guard from `COMMANDMENT`
    (frozen tree, activation switch off). Run it once and parse the rank-reduced stage timers the
    harness prints: here that is the `[RESULT]` line's `stage1=<mean>/<max>` and
@@ -78,7 +92,9 @@ Wrap every GPU command in `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID …`. Do 
    - `profiler_used`: the tools you actually used.
    - `device`.
    - `dispatch_count`: measured launches per forward.
-   - `key_metrics`: `{baseline_stages_path, stage_ms_by_guard, interkernel_gap_ms, not_measured: [...]}`.
+   - `key_metrics`: `{baseline_stages_path, stage_ms_by_guard, interkernel_gap_ms, regime_path,
+     regime_by_guard: {<guard>: {regime, binding_resource, baseline_over_bound, unexplained_share}},
+     buckets: [{regime, guards}], not_measured: [...]}`.
    - `top_kernels`: `[{name, stage, rank_max_ms, share_pct}]` for the target guard.
    - `top_opportunities`: measured facts only, not advice copied from source.
    - `resource_timeline`: only if step 3 ran, with shape `{pipes: [{stage, pipe, utilization_pct, source}],
@@ -176,7 +192,9 @@ about the operator. It owns the measurement:
 
 - graph-captured accuracy per case (relL2, rank-max);
 - replay liveness with fresh inputs on every replay;
-- per-capacity (`_mtpr<M>`) cases;
+- per-capacity (`_mtpr<M>`) cases, with fallback allowed only where declared;
+- a cross-bucket switch test (every operator and size interleaved, graph and eager, ragged ranks);
+- a repeat-same-input bitwise check per operator;
 - path-marker activation on every rank;
 - launches per forward;
 - rank-max graph timing;
@@ -192,6 +210,8 @@ All operator knowledge lives in one task-owned **contract adapter**,
 - `forward(op, inputs)`
 - `reference(inputs)`
 - `cleanup()` (optional)
+- `RAGGED = True` (optional) when `make_inputs` works with a different token count on each rank.
+  Set it whenever the official test or bench supports per-rank token counts.
 
 ### 4.1 benchmark_engineer, PHASE=setup: write and prove the adapter
 
@@ -212,9 +232,14 @@ All operator knowledge lives in one task-owned **contract adapter**,
    wrapper:
    `torchrun --standalone --nproc_per_node=<ranks> $SKILL_DIR/tools/generic_graph_contract.py --self-test
    --candidate-tree $EVAL_DIR/baseline --runtime-file <adapter> --accuracy-cases <REQUIRED_ACCURACY_CASES>
-   --routes <all guard routes> --mtpr-cases <tokens of every _mtpr guard> --control-env <baseline switch-off KEY=VALUE>
+   --routes <all guard routes> --mtpr-cases <tokens of every _mtpr guard> --target-guard <first TARGET_GUARDS entry>
+   --switch-rounds 2 --control-env <baseline switch-off KEY=VALUE>
    --import-modules <CANDIDATE_IMPORT_MODULES> --json-output $EVAL_DIR/graph_contract_selftest.json`.
    - Require `self_test_pass: true`, with every accuracy and replay row passing.
+   - Record `switch_test.status` and every `determinism` row. If the **frozen baseline** fails the
+     switch test, the test cannot gate candidates: record the failing step in COMMANDMENT and add
+     `--switch-advisory` to the §4.2 command (the result is then reported, not gated). If the
+     frozen baseline is not bit-exact on repeated input, do not add `--require-deterministic`.
    - For reference: on an 8-rank operator of this size, a self-test typically takes about a minute.
 3. **Record it.** Add a `## GRAPH_CONTRACT` section to COMMANDMENT with:
    - the adapter path and its sha256;
@@ -248,12 +273,23 @@ torchrun --standalone --nproc_per_node=<ranks> GRAPH_CONTRACT_TOOL --candidate-t
   --accuracy-cases <REQUIRED_ACCURACY_CASES> --liveness-cases <REQUIRED_ACCURACY_CASES>
   --routes <COMMANDMENT GRAPH_CONTRACT routes> --replays <GRAPH_CONTRACT_REPLAYS>
   --mtpr-cases <as the role derives them> --mtpr-fallback-max <as the role derives it>
+  --target-guard <first TARGET_GUARDS entry> --fallback-capacities <see below>
+  --switch-rounds 2 [--switch-advisory, only if COMMANDMENT says so]
   --rtol <ACCURACY_THRESHOLD> --frozen-baseline-ms <BASELINE_PER_CASE latency of the first TARGET_GUARDS entry>
+  --min-speedup <MEGA_MIN_SPEEDUP or 1.0>
   --path-marker <candidate ACTIVATION marker> --activation-env <each candidate switch KEY=VALUE>
   --control-env <BASELINE_ACTIVATION switch KEY=VALUE> --launch-target <LAUNCH_TARGET>
   --import-modules <CANDIDATE_IMPORT_MODULES, comma-separated> --hang-timeout-s 600
   --json-output "$VERIFY_DIR/graph_contract.json"
 ```
+
+**Fallback buckets.** `--fallback-capacities` lists the capacities (`_mtpr<M>`, or the shared
+capacity) of the buckets the candidate's own notes declare as honest baseline fallbacks. A capacity
+that belongs to the target guard is never a fallback; the runner refuses it. Leave it empty when the
+candidate declares none. A fallback bucket still has to pass accuracy, replay, the switch test and
+its regression floor in the scored A/B.
+
+**Launch target.** `--launch-target` is a ceiling: fewer launches per forward pass, more fail.
 
 Run it in one lease with the COMMANDMENT environment (`$WS` first on `PYTHONPATH`) and an outer
 wall timeout.
@@ -266,6 +302,9 @@ wall timeout.
   - `accuracy_results` and `replay_results` rows;
   - per-rank `activation` / `mtpr_activation`;
   - `launch_count`.
+- **Shape adaptivity.** Quote `switch_test` (status, steps, `failed_step` if any), the
+  `determinism` rows, `target_activation`, and `launch_count_by_capacity`. A `switch_test_failed`
+  blocker means one path corrupts another; it is a correctness failure of the candidate.
 - **Hangs.** `hang_phase` means liveness failed in that phase. Quote it verbatim; it is the
   cheapest hang localization you will get.
 - **Timing.** `paired_readings`, `absolute_speedup` and `incremental_switch_speedup` are in-process

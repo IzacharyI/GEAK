@@ -10,11 +10,17 @@ reference. The runner owns the measurement:
   * replay liveness: N replays per (case, route) with fresh inputs copied into the captured
     tensors, numeric checkpoints every K replays;
   * per-capacity cases (``--mtpr-cases``): a fresh operator sized for each case, fallback allowed
-    only at or below ``--mtpr-fallback-max``;
+    only at or below ``--mtpr-fallback-max`` or at a capacity listed in ``--fallback-capacities``
+    (a bucket that honestly keeps the baseline path), never at the target guard's capacity;
+  * a cross-bucket switch test: every captured graph and every operator, interleaved in forward and
+    reverse order with fresh inputs and every route, both eager and replayed, checked against the
+    reference at each step (serving alternates batch sizes; state left by one size must not leak
+    into the next);
+  * a repeat-same-input check per operator: the same inputs replayed twice, compared bitwise;
   * path-marker activation on every rank (fd 1/2 capture of the first eager forward);
   * launches per forward (torch profiler, MIN/MAX over ranks);
-  * rank-max graph timing vs the frozen baseline, with the same-tree switch-off arm as a
-    diagnostic only;
+  * rank-max graph timing of ``--target-guard`` (its own capacity for a ``_mtpr<M>`` guard) vs the
+    frozen baseline, with the same-tree switch-off arm as a diagnostic only;
   * a hang watchdog that writes the stuck phase and exits, instead of waiting for the lease reaper.
 
 Adapter protocol (a plain .py file, loaded by path):
@@ -27,6 +33,8 @@ Adapter protocol (a plain .py file, loaded by path):
   forward(op, inputs) -> Tensor             one operator call on this rank, no host sync
   reference(inputs) -> Tensor               the task's numeric reference for that output
   cleanup()                                 optional
+  RAGGED = True                             optional: make_inputs accepts a different token count
+                                            on each rank (the switch test then adds ragged steps)
 
 The command line accepts the argument names of the Expert-Skill runtime (``--runtime-file`` is the
 adapter), so a verify role written for that runtime drives this runner unchanged.
@@ -64,6 +72,34 @@ def csv_strings(value):
 
 def next_power_of_two(value):
     return 1 << (int(value) - 1).bit_length()
+
+
+def parse_guard(guard):
+    """``<tokens>_<route>[_mtpr<M>]`` -> (tokens, route, capacity or None)."""
+    head, _, rest = str(guard).strip().partition("_")
+    if not head.isdigit() or not rest:
+        raise ValueError(f"guard {guard!r} is not <tokens>_<route>[_mtpr<M>]")
+    route, mtpr = rest, None
+    if "_mtpr" in rest:
+        route, _, cap = rest.rpartition("_mtpr")
+        if not cap.isdigit() or not route:
+            raise ValueError(f"guard {guard!r} has a malformed _mtpr suffix")
+        mtpr = int(cap)
+    return int(head), route, mtpr
+
+
+def fallback_allowed(capacity, fallback_max, fallback_capacities, target_capacity):
+    """A bucket may keep the baseline path only where the run says so, never at the target."""
+    if target_capacity is not None and capacity == target_capacity:
+        return False
+    return capacity <= fallback_max or capacity in set(fallback_capacities or ())
+
+
+def ragged_tokens(tokens, rank, world):
+    """Per-rank token count for a ragged step: rank 0 keeps ``tokens``, later ranks get fewer."""
+    if world <= 1:
+        return tokens
+    return max(1, tokens - (rank * tokens) // (2 * world))
 
 
 def parse_env(pairs):
@@ -169,16 +205,28 @@ def speedup_summary(frozen_ms, cand_list, control_list, min_speedup, tolerance):
     return summary
 
 
-def claim_blockers(result, launch_target):
+def claim_blockers(result, launch_target, require_deterministic=False):
     """Anything missing or failed keeps ``claim_complete`` false."""
     blockers = []
     if "activation" not in result:
         blockers.append("activation_not_run")
-    elif result["activation"].get("status") != "pass":
+    elif (result["activation"].get("status") != "pass"
+          and not result["activation"].get("fallback_allowed")):
         blockers.append("activation_marker_missing")
     for row in result.get("mtpr_activation") or []:
         if row.get("status") != "pass" and not row.get("fallback_allowed"):
             blockers.append(f"activation_marker_missing:{row.get('case')}")
+    target_activation = result.get("target_activation")
+    if target_activation is not None and target_activation.get("status") != "pass":
+        blockers.append("target_activation_marker_missing")
+    switch = result.get("switch_test")
+    if not switch:
+        blockers.append("switch_test_not_run")
+    elif switch.get("status") != "pass" and not switch.get("advisory"):
+        blockers.append("switch_test_failed")
+    if require_deterministic and any(not row.get("bit_exact")
+                                     for row in result.get("determinism") or []):
+        blockers.append("not_deterministic")
     launches = result.get("launch_count") or {}
     if launch_target and not launches:
         blockers.append("launch_count_not_run")
@@ -290,10 +338,23 @@ def build_parser():
     p.add_argument("--numeric-checkpoint-interval", type=int, default=16)
     p.add_argument("--mtpr-cases", default="")
     p.add_argument("--mtpr-fallback-max", type=int, default=0)
+    p.add_argument("--fallback-capacities", default="",
+                   help="capacities whose bucket may keep the baseline path (never the target's)")
     p.add_argument("--capacity", type=int, default=0,
                    help="shared operator capacity; default next pow2 of the largest case")
     p.add_argument("--rtol", type=float, default=0.10)
     p.add_argument("--target-tokens", type=int, default=0)
+    p.add_argument("--target-guard", default="",
+                   help="<T>_<route>[_mtpr<M>]: timed guard; an _mtpr guard is timed on its own "
+                        "capacity-M operator and may never fall back")
+    p.add_argument("--switch-rounds", type=int, default=2,
+                   help="forward+reverse passes of the cross-bucket switch test (0 = not run, "
+                        "which blocks a claim)")
+    p.add_argument("--switch-advisory", action="store_true",
+                   help="record a switch-test failure without blocking; only for a run whose "
+                        "frozen-baseline self-test already fails the switch test")
+    p.add_argument("--require-deterministic", action="store_true",
+                   help="block the claim when a repeat of the same inputs is not bit-exact")
     p.add_argument("--perf-iters", type=int, default=20)
     p.add_argument("--pairs", type=int, default=5)
     p.add_argument("--min-speedup", type=float, default=1.0)
@@ -323,6 +384,11 @@ def validate_args(args):
         raise ValueError("replays, pairs and perf-iters must be positive")
     if args.numeric_checkpoint_interval <= 0:
         raise ValueError("numeric-checkpoint-interval must be positive")
+    if args.switch_rounds < 0:
+        raise ValueError("switch-rounds must be >= 0")
+    if args.target_guard:
+        parse_guard(args.target_guard)
+    csv_ints(args.fallback_capacities)
     if not args.self_test and not args.path_marker:
         raise ValueError(f"--path-marker is required for a candidate claim ({GUIDE_HINT})")
     if not math.isfinite(args.denominator_tolerance) or args.denominator_tolerance < 0:
@@ -339,12 +405,24 @@ def main(argv=None):
     accuracy_cases = validate_args(args)
     liveness_cases = csv_ints(args.liveness_cases) or list(accuracy_cases)
     routes = csv_strings(args.routes)
-    mtpr_cases = csv_ints(args.mtpr_cases)
+    fallback_caps = csv_ints(args.fallback_capacities)
+    if args.target_guard:
+        target, target_route, target_cap = parse_guard(args.target_guard)
+        if target_route not in routes:
+            routes.append(target_route)
+    else:
+        target, target_route, target_cap = args.target_tokens, routes[0], None
     cases = sorted(set(accuracy_cases + liveness_cases))
-    target = args.target_tokens or max(cases)
-    if target not in cases:
-        cases = sorted(set(cases + [target]))
+    if target_cap is None:
+        target = target or max(cases)
+        if target not in cases:
+            cases = sorted(set(cases + [target]))
     capacity = args.capacity or next_power_of_two(max(cases))
+    # (tokens, capacity) of every per-capacity operator; an _mtpr target owns one of them.
+    mtpr_pairs = [(tokens, next_power_of_two(tokens)) for tokens in csv_ints(args.mtpr_cases)]
+    if target_cap is not None and (target, target_cap) not in mtpr_pairs:
+        mtpr_pairs.append((target, target_cap))
+    mtpr_pairs = list(dict.fromkeys(mtpr_pairs))
     cand_env = parse_env(args.activation_env)
     control_env = parse_env(args.control_env)
 
@@ -357,6 +435,7 @@ def main(argv=None):
 
     rank, world, device = adapter.setup()
     output_path = Path(args.json_output).resolve()
+    timed_capacity = target_cap if target_cap is not None else capacity
     result = {
         "schema_version": SCHEMA,
         "mode": "self_test" if args.self_test else "claim",
@@ -365,7 +444,9 @@ def main(argv=None):
         "adapter_sha256": hashlib.sha256(Path(args.adapter).read_bytes()).hexdigest(),
         "world": world,
         "capacity": capacity,
-        "target": {"tokens": target, "route": routes[0]},
+        "target": {"tokens": target, "route": target_route, "capacity": timed_capacity,
+                   "guard": args.target_guard or f"{target}_{target_route}"},
+        "fallback_capacities": fallback_caps,
         "activation_env": cand_env,
         "control_env": control_env,
         "accuracy_results": [],
@@ -447,18 +528,20 @@ def main(argv=None):
         if row["status"] != "pass":
             raise AssertionError(f"{guard} relL2={value:.6f} >= {args.rtol}")
 
+    def load(inputs, fresh):
+        if len(fresh) != len(inputs):
+            raise AssertionError("make_inputs changed its tensor count between iterations")
+        for dst, src in zip(inputs, fresh):
+            if dst.shape != src.shape or dst.dtype != src.dtype:
+                raise AssertionError("make_inputs changed a tensor shape/dtype")
+            dst.copy_(src)
+
     def replay_routes(graph, state, inputs, tokens, suffix, replays):
         for route in routes:
             progress(f"replay {tokens}_{route}{suffix}")
             checkpoints = []
             for replay in range(replays):
-                fresh = adapter.make_inputs(tokens, route, replay + 1)
-                if len(fresh) != len(inputs):
-                    raise AssertionError("make_inputs changed its tensor count between iterations")
-                for dst, src in zip(inputs, fresh):
-                    if dst.shape != src.shape or dst.dtype != src.dtype:
-                        raise AssertionError("make_inputs changed a tensor shape/dtype")
-                    dst.copy_(src)
+                load(inputs, adapter.make_inputs(tokens, route, replay + 1))
                 graph.replay()
                 if (replay + 1) % args.numeric_checkpoint_interval == 0 or replay + 1 == replays:
                     torch.cuda.synchronize()
@@ -476,6 +559,69 @@ def main(argv=None):
                 "guard": f"{tokens}_{route}{suffix}", "count": replays, "status": "pass",
                 "input_changes": replays, "max_checkpoint_relL2": max(checkpoints)})
             write_result()
+
+    def switch_test(entries):
+        """Interleave every operator and token count, graph and eager, forward then reverse."""
+        ragged = bool(getattr(adapter, "RAGGED", False))
+        summary = {"status": "pass", "rounds": args.switch_rounds, "steps": 0,
+                   "max_relL2": 0.0, "modes": ["graph", "eager"] + (["ragged"] if ragged else []),
+                   "sequence": [e["label"] for e in entries],
+                   "ragged": "run" if ragged else "not_supported_by_adapter",
+                   "advisory": bool(args.switch_advisory)}
+        result["switch_test"] = summary
+        iteration = 10000
+        for rnd in range(args.switch_rounds):
+            for entry in entries + entries[::-1]:
+                for route in routes:
+                    iteration += 1
+                    steps = [("graph", entry["tokens"]), ("eager", entry["tokens"])]
+                    if ragged:
+                        steps.append(("ragged", ragged_tokens(entry["tokens"], rank, world)))
+                    for mode, tokens in steps:
+                        label = f"round{rnd + 1} {mode} {entry['label']} {route}"
+                        progress(f"switch {label}")
+                        fresh = adapter.make_inputs(tokens, route, iteration)
+                        if mode == "graph":
+                            load(entry["inputs"], fresh)
+                            entry["graph"].replay()
+                            torch.cuda.synchronize()
+                            output, used = entry["state"]["output"], entry["inputs"]
+                        else:
+                            output = adapter.forward(entry["op"], fresh)
+                            torch.cuda.synchronize()
+                            used = fresh
+                        value = rel_l2(output, adapter.reference(used))
+                        summary["steps"] += 1
+                        summary["max_relL2"] = max(summary["max_relL2"], value)
+                        if value >= args.rtol:
+                            summary.update(status="fail", failed_step=label, failed_relL2=value,
+                                           steps_before_failure=summary["steps"] - 1)
+                            write_result()
+                            return summary
+        write_result()
+        return summary
+
+    def determinism(entries):
+        rows = []
+        for entry in entries:
+            progress(f"determinism {entry['label']}")
+            fresh = adapter.make_inputs(entry["tokens"], routes[0], 777)
+            outs = []
+            for _ in range(2):
+                load(entry["inputs"], fresh)
+                entry["graph"].replay()
+                torch.cuda.synchronize()
+                outs.append(entry["state"]["output"].clone())
+            same = int(torch.equal(outs[0], outs[1]))
+            diff = float((outs[0].float() - outs[1].float()).abs().max().item()) \
+                if outs[0].numel() else 0.0
+            rows.append({"guard": entry["label"], "bit_exact": min(gather_int(same)) == 1,
+                         "max_abs_diff": reduce(diff if math.isfinite(diff) else float("inf"),
+                                                dist.ReduceOp.MAX),
+                         "method": "same inputs, two graph replays, torch.equal on every rank"})
+        result["determinism"] = rows
+        write_result()
+        return rows
 
     def time_rank_max(graph):
         barrier()
@@ -521,10 +667,12 @@ def main(argv=None):
             result["import_identity"] = identity
 
         arm_env = control_env if args.self_test else cand_env
+        entries = []
         with scoped_env(arm_env):
             progress(f"build capacity={capacity}")
             op = adapter.build(capacity)
-            target_graph = None
+            shared_fallback = fallback_allowed(capacity, 0, fallback_caps,
+                                               target_cap if target_cap is not None else capacity)
             for index, tokens in enumerate(cases):
                 progress(f"capture {tokens}")
                 inputs = adapter.make_inputs(tokens, routes[0], 0)
@@ -535,21 +683,20 @@ def main(argv=None):
                 if counts is not None:
                     result["activation"] = {
                         **activation_summary(args.path_marker, world, counts),
-                        "window": f"first eager forward (tokens={tokens}, capacity={capacity})"}
+                        "window": f"first eager forward (tokens={tokens}, capacity={capacity})",
+                        "fallback_allowed": shared_fallback}
                     write_result()
                 if tokens in accuracy_cases:
                     check_accuracy(state, inputs, str(tokens),
                                    "graph-captured candidate vs the adapter's numeric reference")
                 if tokens in liveness_cases:
                     replay_routes(graph, state, inputs, tokens, "", replays)
-                if tokens == target:
-                    target_graph = (graph, inputs, state)
-                else:
-                    del graph
+                entries.append({"label": f"{tokens}@cap{capacity}", "op": op, "graph": graph,
+                                "inputs": inputs, "state": state, "tokens": tokens,
+                                "capacity": capacity})
 
             result["mtpr_activation"] = []
-            for tokens in mtpr_cases:
-                cap = next_power_of_two(tokens)
+            for tokens, cap in mtpr_pairs:
                 suffix = f"_mtpr{cap}"
                 progress(f"build capacity={cap}")
                 small = adapter.build(cap)
@@ -558,16 +705,26 @@ def main(argv=None):
                 graph, counts = capture(small, inputs, state,
                                         None if args.self_test
                                         else f"{output_path.name}.rank{rank}.mtpr{tokens}")
+                is_target = target_cap is not None and (tokens, cap) == (target, target_cap)
                 if counts is not None:
-                    result["mtpr_activation"].append({
-                        **activation_summary(args.path_marker, world, counts),
-                        "case": f"{tokens}{suffix}",
-                        "fallback_allowed": cap <= args.mtpr_fallback_max})
+                    row = {**activation_summary(args.path_marker, world, counts),
+                           "case": f"{tokens}{suffix}",
+                           "fallback_allowed": fallback_allowed(
+                               cap, args.mtpr_fallback_max, fallback_caps, target_cap)}
+                    result["mtpr_activation"].append(row)
+                    if is_target:
+                        result["target_activation"] = row
                     write_result()
                 check_accuracy(state, inputs, f"{tokens}_{routes[0]}{suffix}",
                                f"graph-captured candidate at capacity={cap} vs reference")
                 replay_routes(graph, state, inputs, tokens, suffix, replays)
-                del graph, small
+                entries.append({"label": f"{tokens}@cap{cap}", "op": small, "graph": graph,
+                                "inputs": inputs, "state": state, "tokens": tokens,
+                                "capacity": cap, "target": is_target})
+
+            if args.switch_rounds > 0:
+                switch_test(entries)
+            determinism(entries)
 
             if args.self_test:
                 result["self_test_pass"] = True
@@ -576,17 +733,28 @@ def main(argv=None):
                 write_result(False)
                 return 0
 
-            graph, inputs, state = target_graph
-            fresh = adapter.make_inputs(target, routes[0], 0)
-            for dst, src in zip(inputs, fresh):
-                dst.copy_(src)
+            if target_cap is None:
+                timed = next(e for e in entries if e["capacity"] == capacity
+                             and e["tokens"] == target)
+            else:
+                timed = next(e for e in entries if e.get("target"))
+            graph, inputs, timed_op = timed["graph"], timed["inputs"], timed["op"]
+            load(inputs, adapter.make_inputs(target, target_route, 0))
             progress("launch count")
-            result["launch_count"] = launch_count(op, inputs)
+            result["launch_count"] = launch_count(timed_op, inputs)
+            by_capacity = {}
+            for entry in entries:
+                if entry["capacity"] not in by_capacity and entry is not timed:
+                    progress(f"launch count capacity={entry['capacity']}")
+                    by_capacity[entry["capacity"]] = launch_count(entry["op"], entry["inputs"])
+            by_capacity[timed_capacity] = result["launch_count"]
+            result["launch_count_by_capacity"] = {str(k): v for k, v in sorted(by_capacity.items())}
             write_result()
+            load(inputs, adapter.make_inputs(target, target_route, 0))
 
         progress("control build")
         with scoped_env(control_env):
-            control = adapter.build(capacity)
+            control = adapter.build(timed_capacity)
             control_state = {}
             control_graph, _ = capture(control, inputs, control_state)
 
@@ -602,7 +770,7 @@ def main(argv=None):
             cand_ms.append(c)
             control_ms.append(b)
             result["paired_readings"].append({
-                "guard": f"{target}_{routes[0]}", "base_arm": "same_tree_switch_off",
+                "guard": result["target"]["guard"], "base_arm": "same_tree_switch_off",
                 "base": b, "cand": c})
             write_result()
         result.update(speedup_summary(args.frozen_baseline_ms, cand_ms, control_ms,
@@ -610,7 +778,7 @@ def main(argv=None):
         if args.resource_evidence:
             result["resource_evidence"] = {"path": args.resource_evidence,
                                            "status": "recorded_not_gated"}
-        blockers = claim_blockers(result, args.launch_target)
+        blockers = claim_blockers(result, args.launch_target, args.require_deterministic)
         result["claim_blockers"] = blockers
         result["progress"] = "done"
         dog.stop()
@@ -618,8 +786,9 @@ def main(argv=None):
         return 1 if blockers else 0
     except BaseException as error:
         result["error"] = f"{type(error).__name__}: {error}"
-        result.setdefault("claim_blockers", claim_blockers(result, args.launch_target)
-                          if not args.self_test else ["self_test_failed"])
+        result.setdefault("claim_blockers", claim_blockers(
+            result, args.launch_target, args.require_deterministic)
+            if not args.self_test else ["self_test_failed"])
         dog.stop()
         write_result(False)
         raise

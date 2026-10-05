@@ -60,8 +60,8 @@ ok(/validation\.materialization_matches === true/.test(src) &&
 ok(src.lastIndexOf('persistMegaCandidateState(round, true)') >
    src.indexOf("roleAgent('director', 'validate'"),
   'finalist state is persisted only after independent final validation');
-ok(/realizedLaunches >= targetLaunches[\s\S]*realizedLaunches < baselineLaunches/.test(src),
-  'a faster complete partial fusion may pass final search arbitration');
+ok(/realizedLaunches > 0 && realizedLaunches < baselineLaunches/.test(src),
+  'a faster complete fusion with fewer launches than the baseline (the target is a ceiling) may pass final search arbitration');
 
 console.log(failures === 0
   ? '\nPASS: final Mega output is the fastest fully verified workflow-authored speedup.'

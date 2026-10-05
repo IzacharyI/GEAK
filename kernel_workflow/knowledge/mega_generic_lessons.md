@@ -12,8 +12,8 @@ Which sections to read:
 | role | sections |
 |---|---|
 | planner (`mega_search_lead`) | all |
-| engineer | §1 – §4 |
-| verify / director | §1, §2 |
+| engineer | §1 – §5 |
+| verify / director | §1, §2, §5.4 – §5.6 |
 
 ---
 
@@ -146,3 +146,65 @@ Which sections to read:
    - flow (budget or timeout).
 
    The next plan should target that class, not repeat the previous plan with a new name.
+
+## §5 Adapting to the shape
+
+The same operator is a different problem at different sizes. The guards of one run can span two or
+three of them, so a single design rarely wins everywhere.
+
+1. **Place every guard on the regime map before planning.**
+   - From the shape alone you can compute, per guard: rows per expert (or per group), the bytes
+     that must be read once (weights), the math, and the cross-rank bytes.
+   - Each gives a lower bound on time. The largest is the *binding* resource. A measured baseline far
+     above every bound means fixed costs (launches, syncs, handshakes, start latency) dominate.
+   - `tools/mega_regime.py` does this from explicit inputs (MEGA_MEASUREMENT_GUIDE §1 step 0). The
+     profile writes it to `EVAL_DIR/regime.json` and `PROFILE_SUMMARY.key_metrics.regime_by_guard`.
+   - Guards with the same regime form a bucket. A bucket is a hypothesis; the paired A/B decides.
+2. **Choose the lever family from the regime, not from the largest guard.**
+   - Bound by a fixed read (few rows per expert): every expert's weights are read whatever the row
+     count. Keep that stream at achieved bandwidth on every compute unit, and hide or remove
+     everything else. Faster math changes little.
+   - Bound by math (many rows per expert): tile shapes, occupancy, operand reuse, overlap of
+     dependent stages.
+   - Bound by links: overlap transfers with math, send fewer bytes, balance ranks.
+   - Fixed-cost dominated: count launches, syncs and handshakes on the critical path of one call;
+     shrink that count before tuning any throughput.
+3. **Fixed costs do not shrink with the problem.**
+   - A handshake, a barrier, a cache-maintenance operation or a launch costs about the same at 32
+     rows as at 32 000. At small sizes they are a large share of the time; at large sizes they hide.
+   - Measure them at the small guards. A design that is "overhead-free" at the largest guard can
+     lose at the smallest one for this reason alone.
+   - Synchronization scope is a cost too. A wider memory scope than the data needs (device-wide
+     instead of the cache level the producer and consumer share, or invalidating caches that the
+     data never went through) is pure fixed cost. Place producer and consumer so the narrowest
+     correct scope suffices, and read the hardware's memory model for what each scope flushes.
+   - Do not compute padding. A tile far larger than the real rows of an expert multiplies the work;
+     check the tile-efficiency column of the regime map.
+4. **One path per bucket, chosen by an explicit rule.**
+   - It is normal for the fastest design at a small size to differ from the fastest at a large size
+     (different tiles, different stage overlap, even a different launch structure).
+   - Implement the bucket paths behind a dispatch rule that depends only on quantities known at
+     call time (token count, capacity), and state the rule.
+   - A bucket that cannot beat the baseline keeps the baseline path *honestly*: report it as a
+     fallback with its measured ratio (§1.7). Never let a fallback bucket hide inside a geomean.
+5. **Switching between buckets must not leak state.**
+   - A serving process alternates sizes. State left by one path (counters, flags, queue heads,
+     cached metadata, buffers sized for another capacity) must not corrupt the next call on another
+     path, eager or graph-replayed.
+   - Ranks can receive different token counts in the same call (ragged). The dispatch rule must give
+     every rank a consistent decision, or the ranks must tolerate mixed paths.
+   - The graph-contract runner's switch test interleaves every operator and size, forward and
+     reverse, graph and eager, with ragged ranks when the adapter supports it. It must pass on the
+     candidate.
+6. **Per-bucket constraints, not one global one.**
+   - The target guard has a speedup goal; every other guard has its own floor. Satisfy each.
+   - A launch target is a ceiling: fewer launches is fine, more is not.
+   - Report the per-guard ratio, the path that ran, and the launches per forward for every guard.
+7. **Residency of waiting work.** A workgroup that waits on another (§2.2) must not occupy a slot
+   the producer needs. Count residency per scheduling domain (per chiplet / per cache domain where
+   the hardware has them), not only per device.
+8. **Planner: say it per bucket.** In every plan, name the bucket of each guard (from the regime
+   map, or "unmapped" if the profile did not produce one), the path each bucket will run (new, tuned,
+   or the baseline as a declared fallback), the dispatch rule between them, and the lever family you
+   chose for the target's bucket and why. A plan that changes only the largest guard's path must say
+   what keeps the small guards at or above their floors.

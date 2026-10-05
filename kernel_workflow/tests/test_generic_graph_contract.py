@@ -22,6 +22,7 @@ def _passing(**extra):
         "launch_count": {"min": 2, "max": 2},
         "accuracy_results": [{"status": "pass"}],
         "replay_results": [{"status": "pass"}],
+        "switch_test": {"status": "pass"},
         "speedup_gate": "pass",
     }
     result.update(extra)
@@ -42,11 +43,15 @@ class TestClaimLogic(unittest.TestCase):
             "frozen_baseline_missing": {"speedup_gate": ggc.FROZEN_BASELINE_MISSING},
             "speedup_gate_failed": {"speedup_gate": "fail"},
             "timing_not_run": {"speedup_gate": None},
+            "switch_test_not_run": {"switch_test": None},
+            "switch_test_failed": {"switch_test": {"status": "fail"}},
+            "target_activation_marker_missing": {"target_activation": {"status": "fail"}},
         }
         for blocker, patch in cases.items():
             result = _passing(**patch)
-            if patch.get("activation", 1) is None:
-                del result["activation"]
+            for key in ("activation", "switch_test"):
+                if key in patch and patch[key] is None:
+                    del result[key]
             self.assertIn(blocker, ggc.claim_blockers(result, 2), blocker)
 
     def test_ranks_disagreeing_on_launches_block(self):
@@ -61,6 +66,43 @@ class TestClaimLogic(unittest.TestCase):
                                                "case": "2048_uniform_mtpr2048"}])
         self.assertIn("activation_marker_missing:2048_uniform_mtpr2048",
                       ggc.claim_blockers(forbidden, 2))
+
+    def test_switch_failure_is_advisory_only_when_declared(self):
+        advisory = _passing(switch_test={"status": "fail", "advisory": True})
+        self.assertEqual(ggc.claim_blockers(advisory, 2), [])
+
+    def test_determinism_blocks_only_when_required(self):
+        loose = _passing(determinism=[{"guard": "64@cap64", "bit_exact": False}])
+        self.assertEqual(ggc.claim_blockers(loose, 2), [])
+        self.assertIn("not_deterministic", ggc.claim_blockers(loose, 2, require_deterministic=True))
+
+    def test_fewer_launches_than_the_target_pass(self):
+        self.assertEqual(ggc.claim_blockers(_passing(launch_count={"min": 1, "max": 1}), 2), [])
+
+    def test_shared_operator_may_fall_back_only_when_its_bucket_allows(self):
+        allowed = _passing(activation={"status": "fail", "fallback_allowed": True})
+        self.assertEqual(ggc.claim_blockers(allowed, 2), [])
+
+    def test_guard_parsing(self):
+        self.assertEqual(ggc.parse_guard("64_uniform_mtpr64"), (64, "uniform", 64))
+        self.assertEqual(ggc.parse_guard("8192_rank-mixed-skew"), (8192, "rank-mixed-skew", None))
+        self.assertEqual(ggc.parse_guard("64_rank-mixed-skew_mtpr64"), (64, "rank-mixed-skew", 64))
+        for bad in ("uniform_64", "64", "64_uniform_mtprX"):
+            with self.assertRaises(ValueError):
+                ggc.parse_guard(bad)
+
+    def test_fallback_is_per_bucket_and_never_at_the_target(self):
+        self.assertTrue(ggc.fallback_allowed(8192, 0, [8192, 16384], 64))
+        self.assertFalse(ggc.fallback_allowed(64, 1024, [64], 64))
+        self.assertTrue(ggc.fallback_allowed(128, 1024, [], None))
+        self.assertFalse(ggc.fallback_allowed(2048, 1024, [], None))
+
+    def test_ragged_tokens_differ_per_rank_and_stay_positive(self):
+        counts = [ggc.ragged_tokens(64, r, 8) for r in range(8)]
+        self.assertEqual(counts[0], 64)
+        self.assertEqual(len(set(counts)), 8)
+        self.assertTrue(all(c >= 1 for c in counts))
+        self.assertEqual(ggc.ragged_tokens(1, 7, 8), 1)
 
     def test_activation_needs_every_rank(self):
         self.assertEqual(ggc.activation_summary("m", 4, [1, 1, 1, 1])["status"], "pass")
@@ -202,6 +244,15 @@ class TestGpuSmoke(unittest.TestCase):
             self.assertTrue(good["claim_complete"])
             self.assertEqual(len(good["accuracy_results"]), 3)
             self.assertEqual(len(good["replay_results"]), 6)
+            self.assertEqual(good["switch_test"]["status"], "pass")
+            self.assertGreater(good["switch_test"]["steps"], 0)
+            self.assertTrue(all(row["bit_exact"] for row in good["determinism"]))
+            rc, mtpr = self._run(d, "--activation-env", "GGC_TOY_ON=1",
+                                 "--target-guard", "16_other_mtpr16")
+            self.assertEqual(rc, 0, mtpr.get("error"))
+            self.assertEqual(mtpr["target"]["capacity"], 16)
+            self.assertEqual(mtpr["target_activation"]["status"], "pass")
+            self.assertEqual(mtpr["paired_readings"][0]["guard"], "16_other_mtpr16")
             rc, off = self._run(d)
             self.assertIn("activation_marker_missing", off["claim_blockers"])
             rc, wrong = self._run(d, "--activation-env", "GGC_TOY_ON=1",

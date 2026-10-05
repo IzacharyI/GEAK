@@ -3775,10 +3775,9 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       fail.push('candidate path marker');
     }
     const realizedLaunches = Number(r.launches);
-    const targetLaunches = Number(o.launchTarget || 2);
     const baselineLaunches = Number(r.launches_base || o.baselineLaunches);
     const launchPass = Number.isInteger(realizedLaunches) &&
-      realizedLaunches >= targetLaunches && realizedLaunches < baselineLaunches;
+      realizedLaunches > 0 && realizedLaunches < baselineLaunches;
     if (!launchPass) fail.push('no measured partial/full fusion');
     if (String(r.graph_safe || '').toLowerCase() !== 'pass') fail.push('graph safety');
     const hb = String(r.artifact_hash_base || ''), hc = String(r.artifact_hash_candidate || '');
@@ -3904,8 +3903,8 @@ function megaCandidateFromVerification(meta, ver, opts) {
   const targetLaunches = Number(o.launchTarget || 2);
   const launchPass = o.allowPartialFusion === true
     ? (Number.isInteger(launches) && Number.isInteger(baseLaunches) &&
-       launches >= targetLaunches && launches < baseLaunches)
-    : (Number.isInteger(launches) && launches === targetLaunches);
+       launches > 0 && launches < baseLaunches)
+    : (Number.isInteger(launches) && launches > 0 && launches <= targetLaunches);
   const accuracy = Array.isArray(v.accuracy_results) ? v.accuracy_results : [];
   const metricAccuracy = accuracy.filter((a) =>
     !o.accuracyMetric || String(a.metric) === String(o.accuracyMetric));

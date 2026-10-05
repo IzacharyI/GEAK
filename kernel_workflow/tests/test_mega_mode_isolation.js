@@ -220,8 +220,9 @@ ok(/complete runnable operator/.test(searchLead) &&
    /external operator is complete, correctness passes/.test(engineer),
   'partial fusion means a complete operator, not half-implemented source');
 ok(/allowPartialFusion: ALLOW_PARTIAL_FUSION/.test(src) &&
-   /launches >= targetLaunches && launches < baseLaunches/.test(src),
-  'caller policy controls whether a measured partial launch reduction may score');
+   /launches > 0 && launches < baseLaunches/.test(src) &&
+   /launches > 0 && launches <= targetLaunches/.test(src),
+  'caller policy controls whether a measured partial launch reduction may score; without it the target is a ceiling');
 ok(/let analysis = await agentT\(/.test(src) &&
    /roleAgent\(MODE === 'mega' \? 'mega_search_lead' : 'tech_lead'/.test(src),
   'Mega still performs its real Analyze phase');
