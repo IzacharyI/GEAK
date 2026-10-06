@@ -152,6 +152,26 @@ ok(!verdict({
   },
 }, plan, false).pass,
 'exact-target campaigns reject partial terminals even when a deviation is declared');
+ok(verdict({
+  step_role: 'terminal',
+  target_topology: {
+    launch_count: 1,
+    included_regions: ['producer', 'consumer'],
+    included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'],
+  },
+}, plan, false).pass,
+'the launch target is a ceiling: fewer launches than planned is not partial fusion');
+ok(!verdict({
+  step_role: 'terminal',
+  target_topology: {
+    launch_count: 1,
+    included_regions: ['producer'],
+    included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'],
+  },
+}, plan, false).pass,
+'a terminal below the launch target must still include every required region');
 ok(/const MEGA_PLAN_SCHEMA = \{[\s\S]*'candidate_id'[\s\S]*'candidate_source'[\s\S]*'target_topology'/.test(src) &&
    /label: `mega:plan r\$\{currentRound\}`, schema: MEGA_PLAN_SCHEMA/.test(src),
   'Mega plan StructuredOutput requires complete candidate identity and topology');

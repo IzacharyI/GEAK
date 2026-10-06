@@ -924,12 +924,12 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
   }
   const terminal = String(direction.step_role || 'terminal') === 'terminal';
   const planned = Number(planIr && planIr.target && planIr.target.launch_count);
-  if (terminal && Number.isFinite(planned) && launches !== planned &&
+  if (terminal && Number.isFinite(planned) && launches > planned &&
       !allowPartialFusion) {
     return { pass: false, reason:
       `partial fusion is disabled: terminal declares ${launches} launches, target is ${planned}` };
   }
-  if (terminal && Number.isFinite(planned) && launches !== planned &&
+  if (terminal && Number.isFinite(planned) && launches > planned &&
       !String(direction.rung_deviation || '').trim()) {
     return { pass: false, reason:
       `terminal topology declares ${launches} launches but mega_plan_ir target is ${planned}; ` +
@@ -942,7 +942,7 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
       .map(String).filter((value) => !have.has(value));
     return missing.length ? `${label} missing ${missing.join(',')}` : '';
   };
-  if (terminal && launches === planned) {
+  if (terminal && launches <= planned) {
     const regionError = requireAll(regions, target.required_regions, 'included_regions');
     if (regionError) return { pass: false, reason: regionError };
     const queueError = requireAll(
