@@ -527,27 +527,9 @@ const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
 } : {};
 
-// ---------------------------------------------------------------------------
-// DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
-// When none are passed (every normal/fast e2e run, and every standalone run) these are '' / the
-// current defaults and are NEVER threaded into a prompt — so behavior is byte-identical to the
-// pre-feature build. They are set ONLY by e2e_workflow's deep_mode head scheduler.
-//   STATE_DIR        a STABLE dir for THIS (kernel,backend) ACROSS deep waves. When set the run
-//                    RESUMES: director seeds the canonical from STATE_DIR/best (the cumulative-best
-//                    code) and returns prior_state (cumulative + history) so re-invocation CONTINUES
-//                    instead of restarting (no lost experience, no re-explored directions). The frozen
-//                    oracle baseline (immutable unittest.py/meta.json) stays the reference, so speedups
-//                    remain comparable to the TRUE baseline across waves. update_memory writes STATE.json
-//                    + syncs best/ each round.
-//   SHARED_KB        cross-backend blackboard file (read by plan+engineers, appended by update_memory).
-//   GLOBAL_KB        run-global cross-KERNEL technique blackboard (deep): techniques that generalize
-//                    across head ops/backends. Optional; unset (default/fast) => byte-identical prompts.
-//   E2E_FEEDBACK     path to the latest end-to-end A/B result + problems from e2e_workflow (engaged?,
-//                    cudagraph behavior, mem footprint, decode regression, e2e delta) — steers planning.
-//   HARNESS_ADDENDUM path to an e2e-refined harness addendum (timing-weight / cudagraph-capture / hard
-//                    constraint gates). The IMMUTABLE oracle is NEVER touched; this only refines what the
-//                    perf bench emphasizes so the isolated target aligns with e2e.
-//   MAX_NO_IMPROVE   consecutive non-improving rounds before stopping (default 2 = current behavior).
+// DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL; unset => byte-identical
+// prompts. STATE_DIR resumes a stable per-(kernel,backend) state across waves; SHARED_KB/GLOBAL_KB are
+// blackboards; E2E_FEEDBACK/HARNESS_ADDENDUM steer planning/bench emphasis (oracle never touched).
 const STATE_DIR = String(A.state_dir || '').replace(/\/+$/, '');
 const MEGA_RESUME_STATE = MODE === 'mega' && !!STATE_DIR &&
   String(A.mega_resume_state != null ? A.mega_resume_state : 'false') === 'true';
@@ -1314,26 +1296,9 @@ const BENCH_SCHEMA = obj({
   workload_aligned: { type: 'boolean' },
   baseline_weighted_total_ms: { type: 'number' },
   weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
-  // Result of args.positive_control, when one was supplied. `measured_pct` is the delta the harness
-  // actually recovered for a change whose effect is already known; `passed` is whether it landed in
-  // the expected band. This is the run's evidence that its own measurement loop can SEE a real win.
-  //   {ran, switch_present, switch_checked, measured_pct, expected_lo, expected_hi, passed, reps,
-  //    null_arm_pct, note}
-  // `switch_present` is the pre-flight: does the knob `how` names actually EXIST in the tree the
-  // control will run in? It is separated from the reading because the failure it catches produces
-  // a perfectly well-formed reading. A prescribed control named an env var absent from every tree
-  // in the run; both arms therefore executed the same code; it measured -1.00%, a base-vs-base null
-  // wearing a control's costume, and the only reason the wave did not proceed on a dead instrument
-  // is that an engineer went looking. Absent switch => the control did not run, whatever number
-  // came back.
-  // `control_pairs_pct` and `null_pairs_pct` — the individual paired deltas, not just their medians —
-  // are read by the gate: sign agreement across pairs and the WORST null pair are what separate a
-  // small real effect from a small piece of drift, and a median hides both.
-  // Declared, not merely described above. The gate reads seven fields off this object and every one
-  // of them has a DEFAULT that reads as success when the field is absent: `ran` missing means it
-  // ran (`pc.ran !== false`), `switch_present` missing means the pre-flight is inert, `null_arm_pct`
-  // missing makes the overshoot check silently non-quiet. An opaque object lets a renamed or
-  // dropped field validate and then be interpreted as a passing control.
+  // Result of args.positive_control. switch_present=false means both arms ran the same code; the
+  // gate reads per-pair deltas (sign agreement, worst null). Fields are declared so a renamed or
+  // dropped field cannot validate and then read as a passing control.
   positive_control: obj({
     ran: { type: 'boolean' },
     claim_complete: { type: 'boolean' },
@@ -2284,6 +2249,7 @@ let megaStall = 0;
 let megaLastBlocker = '';
 // A refused plan re-plans with the reason instead of ending the wave; 3 in a row still stops.
 let megaRefusal = null;
+let megaPcRemeasured = 0;
 let megaMeasurementCalibration = {
   ready: false, candidate_id: '', attempt_id: '', evidence_manifest: '', note: 'not measured',
 };
@@ -4904,6 +4870,9 @@ if (MODE === 'mega' && PC_PASSED) {
     note: `independent synthetic control passed at ${Number(pc.measured_pct).toFixed(2)}%`,
   };
 }
+if (MODE === 'mega' && !PC_PASSED) {
+  await remeasureMegaCalibration('after-setup', benchR.positive_control);
+}
 
 // ===========================================================================
 // PHASE: Baseline profile (Profile Engineer)
@@ -5821,6 +5790,39 @@ if (setup.resumed && setup.prior_state) {
   }
 }
 
+// A COMPLETE control that failed the gate is re-measured fresh (bounded); the gate never changes.
+async function remeasureMegaCalibration(label, prior) {
+  if (MODE !== 'mega' || megaMeasurementCalibration.ready || !POSITIVE_CONTROL ||
+      MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY || megaPcRemeasured >= 2 ||
+      !prior || prior.claim_complete !== true) return;
+  megaPcRemeasured += 1;
+  const r = await agentT(
+    roleAgent('benchmark_engineer', 'recalibrate',
+      `RE-MEASURE the positive control fresh (attempt ${megaPcRemeasured}/2): the last complete ` +
+      `attempt failed the gate. Same gate; never re-gate, drop or reuse pairs.`, {
+        WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
+        ANALYSIS: analysis, POSITIVE_CONTROL, PREVIOUS_CONTROL: prior,
+        TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+        REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+      }),
+    { phase: 'Benchmark', label: `mega recalibration ${label}`, schema: BENCH_SCHEMA,
+      ...(MEGA_PRODUCTION ? { timeout_ms: 7200000, timeout_marker: true, max_retries: 1 } : {}) });
+  const pc = r && r.positive_control;
+  const ok = megaCalibrationClaimPass(pc, POSITIVE_CONTROL);
+  log(`MEGA recalibration ${megaPcRemeasured}/2 (${label}): ` + (pc ? `${pc.measured_pct}%, ` +
+    `worst null ${Math.max(...(pc.null_pairs_pct || [NaN]).map(Math.abs))}% -> ` : '') +
+    (ok ? 'PASS' : 'FAIL'));
+  if (ok) {
+    megaMeasurementCalibration = {
+      ready: true, candidate_id: 'synthetic_control',
+      attempt_id: pc.attempt_id || `recalibrated:${label}`,
+      evidence_manifest: pc.evidence_manifest || '',
+      note: `re-measured synthetic control passed at ${Number(pc.measured_pct).toFixed(2)}% ` +
+        `(attempt ${megaPcRemeasured}; earlier failed attempts kept on disk)`,
+    };
+  }
+}
+
 async function recoverMegaCalibration(label) {
   if (MODE !== 'mega' || megaMeasurementCalibration.ready || !POSITIVE_CONTROL) return;
   const recovered = await agentT(
@@ -5844,7 +5846,7 @@ async function recoverMegaCalibration(label) {
       note: `recovered completed synthetic control at ${Number(pc.measured_pct).toFixed(2)}%`,
     };
     log(`MEGA measurement calibration RECOVERED (${label}): ${megaMeasurementCalibration.note}.`);
-  }
+  } else await remeasureMegaCalibration(label, pc);
 }
 
 async function persistMegaCandidateState(currentRound, finalizing) {
@@ -6116,11 +6118,19 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         KERNEL_KNOWLEDGE_DIR: '', KK_OPERATOR: '', KK_LANGUAGE: '', KK_REFS: [], ...KB_INPUTS,
       }),
     { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
-      ...(MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
-  if (!plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length) {
-    return megaWipContinuationDirection(currentRound);
-  }
-  let raw = plan.directions[0];
+      // Late-round plans read a large registry and ran 6-7 min; a 5 min guard nulled them.
+      ...(MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) });
+  const noPlan = !plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length;
+  const wipDir = noPlan ? megaWipContinuationDirection(currentRound) : null;
+  // A planner that returned nothing never decided to stop: optimize the best scored lane.
+  const best = noPlan && !wipDir && !plan ? selectMegaSearchParent(megaCandidateRegistry) : null;
+  if (noPlan && !best) return wipDir;
+  let raw = best ? { id: `r${currentRound}_child_${best.id}`, candidate_id: best.id,
+    candidate_source: best.source, base_candidate_id: best.id, title: `optimize ${best.id}`,
+    specialty: MEGA_DEFAULT_SPECIALTY, step_role: 'terminal', focus_files: [],
+    roadmap_rung: 'off_ladder', target_topology: best.topology,
+    prompt: best.next_blocker || 'Continue the first unresolved measured blocker.' }
+    : plan.directions[0];
   const freshLane = !MEGA_RESUME_STATE && megaCandidateRegistry.length === 0;
   if (freshLane && freshMegaDirectionLeak(raw)) {
     const requestedId = String(raw && (raw.candidate_id || raw.id) || '');

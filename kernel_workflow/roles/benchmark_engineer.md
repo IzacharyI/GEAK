@@ -549,7 +549,9 @@ Read `EVAL_DIR` — `baseline_timing.json`, `COMMANDMENT.md`, `setup_ab_*.json`,
 reconstruct the Return JSON below from what is there. Specifically:
 
 - A `setup_ab_control*.json` with `claim_complete: true` **is** the positive-control result. Report
-  its measured median and its null arm. Do not re-run it.
+  its measured median and its null arm. Do not re-run it. If several complete attempts exist
+  (`PHASE=recalibrate` writes `setup_ab_control_recal<N>.json`), report the NEWEST complete attempt
+  as it stands — never pick an older one because it reads better — and name the others in `note`.
 - If the measurements exist but `baseline_timing.json` / `COMMANDMENT.md` were never written, write
   them from the measurements. That is transcription, not measurement.
 - If the measurements genuinely are not there, return `baseline_per_case: []` and say so in `notes`.
@@ -563,6 +565,27 @@ first attempt failed. It is a failure, not a fallback.
 The reason this path exists at all: on 2026-08-21 an unreturned baseline aborted a run and discarded
 40 baseline runs plus a complete 6-pair positive control — about 70 minutes of an 8-card lease —
 after every number had already been written to `setup_ab_*.json`.
+
+## PHASE=recalibrate — re-measure a COMPLETE positive control that failed the gate (mega only)
+
+The previous control attempt in `EVAL_DIR` (`PREVIOUS_CONTROL`) finished with `claim_complete:true`
+but did not pass the gate — typically one null pair far outside the rest made `|median| >= 3x worst
+null pair` impossible. This is a fresh measurement of the SAME instrument, not a re-reading:
+
+- Keep the previous `setup_ab_control*.json` and its manifest on disk untouched (audit trail). Write
+  the new attempt to a NEW file (`setup_ab_control_recal<N>.json` + its own evidence manifest) with a
+  new `attempt_id`.
+- Follow 5b exactly (isolated `/tmp` control workspace, foreground `gpu_lock.sh` lease, JIT-keyed
+  switch, distinct ISA hashes, device trace, quarantine afterwards). Measure a FRESH set of >=
+  `required_null_pairs` null pairs and >= `required_control_pairs` control pairs in the same lease.
+  Never reuse, drop, or cherry-pick pairs from any attempt; every pair you measured is reported.
+- You MAY re-dose inside the declared band (aim nearer its far edge for headroom) and reduce per-leg
+  noise (more replays/iterations per leg, the same for both arms). You may NOT change the gate, the
+  band, the guard, or the `magnitude` declaration.
+- Set `passed` by the same rule the gate uses (sign-unanimous, inside the band, `|median| >= 3x` the
+  worst null pair). A failed re-measurement is a valid, honest result: return it with `passed:false`.
+- Return the Return JSON with `baseline_per_case` etc. transcribed from `baseline_timing.json`
+  (do not re-measure the baseline) and `positive_control` from the NEW attempt only.
 
 ## PHASE=fast_test_load — reuse a prior wave's front matter, GATED on a validity key, measure nothing
 
