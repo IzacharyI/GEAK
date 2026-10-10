@@ -2014,8 +2014,8 @@ const setup = await agentT(
   }),
   { phase: 'Setup', label: 'director:setup', schema: SETUP_SCHEMA,
     // 5min cut the mega director off while reproducing a grown prior_state (wf_e8ad03cc-180). Setup draws
-    // no MEGA_CLOCK and timeout_ms is not in the agentT cache key, so 15min costs no rounds or caches.
-    ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) });
+    // no MEGA_CLOCK and timeout_ms is not in the agentT cache key; 15min cut an 18-row resume (wf_7c4d86ee).
+    ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 1800000, max_retries: 1 } : {}) });
 if (!setup || !setup.eval_dir) throw new Error('Setup failed: director did not return an eval_dir');
 const EVAL_DIR = setup.eval_dir;
 const CANONICAL = setup.workspace;       // canonical current-best workspace (advances each round)
@@ -2292,12 +2292,9 @@ let analysis = await agentT(
   { phase: 'Analyze', label: 'tech_lead:analyze',
     schema: MODE === 'mega' ? MEGA_ANALYZE_SCHEMA : ANALYZE_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
-      // 900s, not 300s: the mega REQUIRE_TASK_GRAPH analysis reads four knowledge docs
-      // (tile_task_graph, fusion_preconditions, resource_partition, distributed_fusion) plus the
-      // kernel source and emits a structured task-graph DAG. A prior wave cut this agent off AT the
-      // StructuredOutput call (analysis.json was already written on disk) at the 5-min mark. This is
-      // a one-time pre-loop cost and does not draw from MEGA_CLOCK_MS (the candidate-turn budget).
-      ? { timeout_ms: 900000, timeout_marker: true, max_retries: 1 } : {}) });
+      // 30 min: the task-graph analysis (four docs + source + DAG) took 13.5 min fresh and was cut
+      // AT StructuredOutput at 15 min on a resumed wave. One-time; not drawn from MEGA_CLOCK_MS.
+      ? { timeout_ms: 1800000, timeout_marker: true, max_retries: 1 } : {}) });
 if (MODE === 'mega' && analysis && analysis.__agent_timed_out) {
   return {
     mode: MODE, mega_deliverable: false, eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
@@ -5711,11 +5708,13 @@ if (setup.resumed && setup.prior_state) {
     for (const k of Object.keys(ps.absorbed_files)) for (const f of (ps.absorbed_files[k] || [])) prior.push(f);
     if (prior.length) absorbedByRound[0.5] = [...new Set(prior.map(shelfFile))];
   }
+  const megaRestoreRejected = [];
   if (MODE === 'mega' && Array.isArray(ps.candidate_registry)) {
     for (const c of ps.candidate_registry) {
       const n = normalizeMegaCandidate(c);
       if (!n.id_valid || !n.source_valid || !n.source_id_valid) {
         log(`MEGA candidate state rejected: id=${n.id || '(empty)'} source=${String(c && c.source || '')}.`);
+        megaRestoreRejected.push(n.id || '(empty)');
         continue;
       }
       const staleIdentityReasons = [];
@@ -5776,6 +5775,11 @@ if (setup.resumed && setup.prior_state) {
         tree: megaLaneTree(n.id),
       });
     }
+  }
+  // A resume whose rows were compacted past validity (wf_64e6eee8: `source` dropped) silently ran fresh.
+  if (megaRestoreRejected.length) {
+    throw new Error(`MEGA RESUME REFUSED: setup returned invalid candidate_registry rows ` +
+      `(${megaRestoreRejected.join(', ')}); rows must keep id/source/base_id/tree/head/status.`);
   }
   if (MODE === 'mega' && Number.isFinite(Number(ps.state_sequence))) {
     megaStateSequenceBase = Math.max(0, Number(ps.state_sequence));
@@ -6503,16 +6507,17 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         { phase: 'Optimize', label: `mega:recover:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
           ...(MEGA_PRODUCTION ? { timeout_ms: (180 + drainS) * 1000, max_retries: 1 } : {}) });
     megaAdvanceMs(drainS * 1000);
-    if (recovered && recovered.claim_complete === true) {
-      eng = recovered;
-      laneWriterTimedOut = false;
-    }
+    // Before the claim branch, else megaUnsafeTimeout survives and skips the finalist (wf_e517ced0).
     if (laneWriterTimedOut && recovered && !recovered.__agent_timed_out &&
         recovered.writer_quiescent === true) {
       laneWriterTimedOut = false;
       megaUnsafeTimeout = null;
       log(`Mega round ${currentRound}: timed-out author of ${candidateId} is quiescent; its ` +
         `committed WIP stays in the lane and the wave continues.`);
+    }
+    if (recovered && recovered.claim_complete === true) {
+      eng = recovered;
+      laneWriterTimedOut = false;
     }
   }
   if (!MEGA_RESUME_STATE && !existing && freshMegaAuthorLeak(eng)) {

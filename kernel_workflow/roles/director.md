@@ -66,7 +66,12 @@ continued wave build on the cumulative best instead of restarting. Handle it as 
   exists and return `resumed:true` plus `prior_state` containing its `candidate_registry`,
   `measurement_calibration`, `state_sequence`, and other STATE fields verbatim, even when
   `STATE_DIR/best` is absent. Do not put those fields at setup's top level: the orchestrator restores
-  only `prior_state`. Always return
+  only `prior_state`. If the registry is too large to copy whole, you may drop bulky evidence fields
+  from a row (e.g. `paired_readings`, `per_case`, long notes) but every row MUST keep, copied exactly:
+  `id`, `source`, `base_id`, `tree`, `head`, `working_head`, `working_status`, `status`, `attempts`,
+  `attempt_id`, `next_blocker`, `topology_sig`, `topology`, `working_snapshot`. A row missing `source` is
+  rejected and the orchestrator refuses the resume. A row with evidence dropped is re-verified fresh;
+  never invent or restate a score. Always return
   `mega_workspace_from_original:true` and `mega_candidate_state_checked:true` (also when no prior
   state exists). Candidate lanes resume from their own
   `STATE_DIR/candidates/<id>/tree` paths and must never be collapsed into best.
