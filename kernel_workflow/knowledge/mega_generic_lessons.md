@@ -115,6 +115,14 @@ Which sections to read:
 5. **JIT caches are per machine, not per tree.**
    - A flag- or environment-gated arm must prove it compiled to a distinct binary.
    - Run every arm in its own fresh process.
+6. **Read the metadata for three common code-generation losses** (§3.2 says where to look):
+   - a compile-time-constant address offset that the compiler hoists out of the loop and then
+     spills; anchor it to a per-tile runtime base;
+   - a value uniform across the workgroup held in vector registers, which costs a
+     `readfirstlane` loop per use; load it into a scalar register;
+   - an in-order memory-count wait that also drains a prefetch, because an independent load was
+     issued after it; issue independent loads before the barrier.
+   - Each fix can help one bucket and hurt another. Measure every bucket it reaches.
 
 ## §4 Choosing what to build next
 
@@ -146,6 +154,32 @@ Which sections to read:
    - flow (budget or timeout).
 
    The next plan should target that class, not repeat the previous plan with a new name.
+6. **In a persistent kernel, the claim order is a tuning surface.**
+   - The persistent scheduler replaces the original grid's block-to-tile mapping. That mapping
+     often gave operand reuse in cache; a plain linear claim order loses it, and the fused stage can
+     end up no faster than the unfused one even with every wait removed.
+   - Group claims so that the workers running at the same time share one operand slice, and sweep
+     the group size on fresh inputs.
+   - Keep the mapping a bijection over all units. If some worker can never claim some unit, a
+     worker that waits on that unit never finishes.
+   - measured: on one operator the claim order alone was worth more than all the fusion's removed
+     waiting.
+7. **Chunk size trades tail balance against reuse.**
+   - Larger claims cut claim atomics and can extend reuse, but when units per worker are few they
+     quantize the tail.
+   - Chunk size and claim order interact: sweep them together, not one with the other fixed at a
+     value tuned for a different order.
+8. **A reuse-friendly order can collapse on skewed input.**
+   - With one hot item, the same grouping can send all concurrent work to one link, one peer or
+     one memory channel.
+   - Measure every order on the skewed routes as well, and gate the order on a runtime skew measure
+     so balanced inputs keep the tuned order.
+9. **Credit efficiency changes to the right cause.**
+   - An edit inside the fused candidate may also speed the unfused path (shared code), or could
+     apply to it just as well (scheduling, codegen).
+   - Measure the same tree with fusion off. A gain that shows in both arms is kernel efficiency,
+     not fusion; fusion itself still only removes waiting.
+   - Both kinds ship. Mixing them up sends the next plan to the wrong lever.
 
 ## §5 Adapting to the shape
 
