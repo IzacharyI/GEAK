@@ -4591,7 +4591,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
       // Baseline/control setup has a separate production window and can recover artifacts on timeout.
-      ? { timeout_ms: 7200000, timeout_marker: true, max_retries: 1 } : {}) });
+      ? { timeout_ms: 10800000, timeout_marker: true, max_retries: 1 } : {}) });
 // A bench agent that dies without returning has usually NOT failed to measure — it has failed to
 // report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
 // EVAL_DIR is invisible here and used to abort the run outright. On 2026-08-21 that discarded 40
@@ -4600,13 +4600,8 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
 // So before throwing, spend one cheap agent asking whether the measurements exist on disk. It may
 // only RECOVER — re-measuring here would silently double the phase's cost and hide the failure.
 let benchR = bench;
-// A timed-out setup agent is the CANONICAL "died without returning but left measurements on disk"
-// case — it ran the full timeout window, so its baseline (and any completed control pairs) are
-// almost certainly already in EVAL_DIR/setup_ab_*.json. Terminating here without looking discards
-// that work AND, worse, reads to the operator as an unrecoverable failure. So do NOT short-circuit:
-// fall THROUGH to the RECOVERY attempt below (which reads the on-disk artifacts and never touches a
-// GPU). Only if recovery also finds nothing on disk do we surface the timeout as terminal.
-// (Regression fixed 2026-09-09: wf_afc743de-008 died here with control pair 1 on disk.)
+// A timed-out setup agent usually left its baseline/control on disk: fall through to the GPU-free
+// RECOVERY below; only an empty disk makes the timeout terminal (wf_afc743de-008, 2026-09-09).
 const benchTimedOut = !!(MODE === 'mega' && benchR && benchR.__agent_timed_out);
 if (benchTimedOut) {
   log('Benchmark setup hit its full timeout window without returning. Its measurements are usually ' +
@@ -4625,13 +4620,15 @@ if (!benchR || !benchR.baseline_per_case) {
       'failure, not a fallback. Write baseline_timing.json / COMMANDMENT.md if measurements exist ' +
       'but the file does not. A setup_ab_control*.json with claim_complete:true IS the positive ' +
       'control result — report its measured median and null arm rather than re-running it. If the ' +
-      'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes.',
+      'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes. ' +
+      'The timed-out agent may still be writing: if setup_ab_* files changed in the last 10 min, ' +
+      'poll up to 12 min for baseline_timing.json before concluding.',
       { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
         TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
         STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
     { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA,
-      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 1200000, max_retries: 1 } : {}) });
   if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
     if (benchTimedOut) {
       // Setup genuinely produced nothing recoverable within its window — surface a clean, honest
@@ -4675,12 +4672,9 @@ if (POSITIVE_CONTROL) {
   const got = Number(pc.measured_pct);
   // The two bounds are NOT symmetric, because they fail for opposite reasons.
   //
-  //   below `lo`  -> the instrument CANNOT SEE the effect. This is the failure the gate was built
-  //                  for: it makes every later number, 1.000x included, uninterpretable. HARD ABORT.
-  //   above `hi`  -> the instrument saw the effect and read it BIGGER than recorded. That is a scale
-  //                  concern, not a blindness one, and a run that can over-read a 4.7% win can still
-  //                  resolve a 1.5% one. Treat as PASS WITH OVERSHOOT and carry the caveat forward.
-  //   absurd/wrong sign -> the instrument is measuring something else entirely. HARD ABORT.
+  //   below `lo`  -> the instrument cannot see the effect; every later number is uninterpretable. ABORT.
+  //   above `hi`  -> it saw the effect and over-read it: a scale caveat, PASS WITH OVERSHOOT.
+  //   absurd/wrong sign -> it measures something else. ABORT.
   //
   // (A symmetric band once killed a run whose control read +5.13% against a recorded +4.71%.)
   //
@@ -6456,7 +6450,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           `${tree}; the old HEAD stays recoverable through that tag. ` : '') +
       `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
-      `through the final commit/manifest write. If the lock is held, return incomplete without editing. ` +
+      `through the final commit/manifest write, then release it with exec 9>&-. Start every background ` +
+      `command or timer with 9>&- so no orphan inherits the lock. If the lock is held, return incomplete without editing. ` +
       `Candidate-lane setup is part of this task. If ${tree}/.git does not exist, create ${tree}. ` +
       (baseHead
         ? `Export exact parent commit ${baseHead} from ${baseTree} with git archive into the lane. `
@@ -6835,6 +6830,14 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           if (retry && retry.claim_complete === true) {
             ver = retry;
             verifierTimedOut = false;
+          } else if (retry && !retry.__agent_timed_out) {
+            // Quiescence was confirmed twice and the bounded retry returned: nothing is left
+            // running, so the round ends unscored and the wave continues (it used to stop here).
+            verifierTimedOut = false;
+            meta.next_blocker = `independent Verify of HEAD ${expectedHead} timed out before ` +
+              `sealing (retry: ${retry.status || 'unscored'}); route a fresh full Verify of this ` +
+              `HEAD before new edits`;
+            megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
           } else {
             megaUnsafeTimeout = retry || { label: `mega:verify-timeout-retry:${candidateId}` };
           }
