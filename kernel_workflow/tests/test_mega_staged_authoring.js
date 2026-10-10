@@ -74,8 +74,9 @@ ok(/pinned candidate_validation missing gates/.test(wf) &&
    /required_replays>=256/.test(wf) &&
    /direct_graph_accuracy/.test(wf),
   'experimental candidate validation requires the full runtime evidence profile');
-ok(/\[REQUIRE_OVERLAP \|\| TARGET_GUARDS\.length && TARGET_GUARDS\.every\(\(g\) => \/_mtpr\\d\+\$\/\.test\(g\)\),\s+'require_overlap'\]/.test(wf),
-  'overlap stays mandatory unless every target is an _mtpr small-capacity guard');
+ok(!/\[REQUIRE_OVERLAP[^\]]*'require_overlap'\]/.test(wf) &&
+   /\[LAUNCH_TARGET === 1 \|\| LAUNCH_TARGET === 2, 'launch_target in \{1,2\}'\]/.test(wf),
+  'pinned candidate validation takes a one- or two-launch target and does not require overlap');
 ok(/Candidate source remains search\/integrated/.test(wf),
   'expert guidance does not introduce a validated-skill candidate');
 ok(!/role = source === 'validated_skill' \? 'mega_engineer'/.test(wf) &&

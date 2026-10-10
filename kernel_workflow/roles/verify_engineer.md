@@ -110,11 +110,12 @@ invented reference-parity failures.
   `LAUNCH_TARGET` carry the
   machine-enforced campaign contract. When `STRICT_AUTONOMY` is true, missing evidence is a failed
   terminal contract, not a benign default.
-- `SEARCH_ACCEPTS_PARTIAL_FUSION=1` means a search candidate may score with a
-  launch count below the frozen baseline count (reaching or beating `LAUNCH_TARGET`
-  is fine; the target is a ceiling). It must
-  still be a complete runnable operator and strictly reduce launches; this flag
-  is omitted when a candidate explicitly claims the exact full-fusion target.
+- `LAUNCH_TARGET` is an upper bound: a candidate with 1..`LAUNCH_TARGET`
+  launches per call meets it (fusing further than the target is allowed).
+  `SEARCH_ACCEPTS_PARTIAL_FUSION=1` means a search candidate may also score with
+  a launch count above `LAUNCH_TARGET` but below the frozen baseline count. It
+  must still be a complete runnable operator and strictly reduce launches; this
+  flag is omitted when a candidate explicitly claims the full-fusion target.
 - `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
   provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
   content digests and reveal neither source location nor reference-only filenames.
@@ -574,7 +575,7 @@ launches per rank for one operator call, both arms, in the same collection:
 candidate. Compare against the supplied `LAUNCH_TARGET`. With
 `SEARCH_ACCEPTS_PARTIAL_FUSION=1`, a measured launch reduction that remains
 above the target may score if it is a complete operator and faster than frozen;
-without the flag it must be at most the target (the target is a ceiling).
+without the flag it must be between 1 and the target.
 Omitting the count leaves fusion unjudged. `how_counted` is the evidence — a
 trace record count or launch-marker tally — because a count with no method is
 a guess.

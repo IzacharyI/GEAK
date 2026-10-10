@@ -262,7 +262,8 @@ for three waves while every round re-planned from the profile.
    readiness edge back in as a terminal rung.
 
    Under `STRICT_AUTONOMY`, at least one terminal rung must also carry
-   `target_shape: {launches: LAUNCH_TARGET, stages_fused:[...], require_overlap:REQUIRE_OVERLAP}`.
+   `target_shape: {launches: <1..LAUNCH_TARGET>, stages_fused:[...], require_overlap:REQUIRE_OVERLAP}`
+   (`LAUNCH_TARGET` is an upper bound; fusing further is allowed).
    The workflow refuses a proof run without it: otherwise a three-launch partial and the requested
    two-launch terminal have the same machine state.
 

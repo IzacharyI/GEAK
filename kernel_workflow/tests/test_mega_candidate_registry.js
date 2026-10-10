@@ -255,7 +255,14 @@ console.log('\n# search may score a complete partial fusion');
     ...opts, allowPartialFusion: false,
   });
   ok(fullOnly.status !== 'scored' && !fullOnly.launch_pass,
-    'exact two-launch enforcement remains available for a full-fusion target');
+    'the launch-target upper bound remains enforced for a full-fusion target');
+  const withLaunches = (n, base = 4) => api.megaCandidateFromVerification(meta,
+    { ...ver, launch_shape: { launches_base: base, launches_cand: n } },
+    { ...opts, allowPartialFusion: false });
+  ok(withLaunches(2).launch_pass && withLaunches(1).launch_pass,
+    'launch_target 2 is an upper bound: 2 and 1 launches both pass without partial fusion');
+  ok(!withLaunches(0).launch_pass && !withLaunches(2, 2).launch_pass,
+    'zero launches or no reduction from the baseline never passes');
 }
 
 console.log('\n# completed hardware failures remain authoritative');

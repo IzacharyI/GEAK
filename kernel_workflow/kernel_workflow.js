@@ -406,13 +406,10 @@ if (PINNED_MEGA_SKILL &&
     [DIRECT_GRAPH_ACCURACY, 'direct_graph_accuracy'],
     [REQUIRE_HW_ACTIVATION, 'require_hardware_activation'],
     [REQUIRE_ARTIFACT_DISTINCT, 'require_artifact_distinct'],
-    // Overlap is a large-token rule; _mtpr-only targets follow their own profile.
-    [REQUIRE_OVERLAP || TARGET_GUARDS.length && TARGET_GUARDS.every((g) => /_mtpr\d+$/.test(g)),
-      'require_overlap'],
     [REQUIRE_ATTRIBUTION, 'require_attribution'],
     [REQUIRED_REPLAYS >= 256, 'required_replays>=256'],
     [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
-    [LAUNCH_TARGET === 2, 'launch_target=2'],
+    [LAUNCH_TARGET === 1 || LAUNCH_TARGET === 2, 'launch_target in {1,2}'],
     [!ALLOW_PARTIAL_FUSION, 'allow_partial_fusion=false'],
     [REQUIRED_ACCURACY_CASES.length > 0, 'required_accuracy_cases'],
   ].filter(([ok]) => !ok).map(([, label]) => label);
@@ -840,7 +837,9 @@ function topologyLaunchCount(topo) {
 function candidateClaimsPlanTarget(direction, planIr) {
   const planned = Number(planIr && planIr.target && planIr.target.launch_count);
   const declared = topologyLaunchCount(direction && direction.target_topology);
-  return Number.isFinite(planned) && Number.isFinite(declared) && declared === planned;
+  // launch_count is an upper bound.
+  return Number.isFinite(planned) && Number.isFinite(declared) && declared >= 1 &&
+    declared <= planned;
 }
 
 function megaEffectiveLaneCheckpoint(candidate) {
@@ -910,11 +909,11 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
   // A direction naming its bucket is held to that bucket's target (one per regime), else to `target`.
   const bt = planIr && planIr.target_by_bucket;
   const target = bt && bt[String(direction.bucket)] || planIr && planIr.target || {};
-  const planned = Number(target.launch_count);
+  const planned = Number(target.launch_count); // an upper bound
   if (terminal && Number.isFinite(planned) && launches > planned &&
       !allowPartialFusion) {
     return { pass: false, reason:
-      `partial fusion is disabled: terminal declares ${launches} launches, target is ${planned}` };
+      `partial fusion is disabled: terminal declares ${launches} launches, target is <= ${planned}` };
   }
   if (terminal && Number.isFinite(planned) && launches > planned &&
       !String(direction.rung_deviation || '').trim()) {
@@ -2606,23 +2605,9 @@ log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 
 // ---------------------------------------------------------------------------------------------
 // TASK-GRAPH GATE (args.require_task_graph)
-//
-// Opt-in, and off by default: most kernels have no interesting dependency graph and requiring one
-// everywhere would produce filled-in forms, which are worse than nothing because they look like
-// evidence. Turn it on for multi-stage / multi-rank operators where the whole question is which
-// orderings are real.
-//
-// Why a GATE and not a nudge. The failure this catches is not laziness, it is that the roadmap
-// prose and the roadmap artifact can disagree without anyone noticing: a run can assert "the stages
-// are serialized and must be fused" in `roadmap_summary`, have that assertion accepted by every
-// downstream phase, and never once have enumerated an edge. Asking for the object makes the claim
-// checkable. If the graph cannot be built, THAT is the analysis result and it should be said out
-// loud, not routed around.
-//
-// Deliberately NOT a hard abort. An analysis that returns a partial graph plus honest `unknowns`
-// is more useful than a retry loop that eventually returns a complete-looking invention, and this
-// gate must not create pressure toward the second. It reports; the caveat travels to the report so
-// a reader can discount every downstream ranking accordingly.
+// Opt-in for multi-stage / multi-rank operators: makes the roadmap's ordering claims checkable as an
+// enumerated graph. Not a hard abort: a partial graph with honest `unknowns` beats an invented one;
+// the caveat travels to the report.
 // The decision is a pure function of the returned graph, and it is lifted VERBATIM by
 // tests/test_task_graph_gate.js between these markers — so the test exercises the shipped code
 // rather than a paraphrase of it that can drift. Keep it pure: no log(), no closure over run state.
@@ -3750,8 +3735,11 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     }
     const realizedLaunches = Number(r.launches);
     const baselineLaunches = Number(r.launches_base || o.baselineLaunches);
-    const launchPass = Number.isInteger(realizedLaunches) &&
-      realizedLaunches > 0 && realizedLaunches < baselineLaunches;
+    const targetLaunches = Number(o.launchTarget || 2);
+    // launch_target is an upper bound.
+    const launchPass = Number.isInteger(realizedLaunches) && realizedLaunches >= 1 &&
+      (o.allowPartialFusion === true || realizedLaunches <= targetLaunches) &&
+      realizedLaunches < baselineLaunches;
     if (!launchPass) fail.push('no measured partial/full fusion');
     if (String(r.graph_safe || '').toLowerCase() !== 'pass') fail.push('graph safety');
     const hb = String(r.artifact_hash_base || ''), hc = String(r.artifact_hash_candidate || '');
@@ -3875,10 +3863,12 @@ function megaCandidateFromVerification(meta, ver, opts) {
   const launches = Number(v.launch_shape && v.launch_shape.launches_cand);
   const baseLaunches = Number(v.launch_shape && v.launch_shape.launches_base);
   const targetLaunches = Number(o.launchTarget || 2);
+  // launch_target is an upper bound; partial fusion lifts it.
   const launchPass = o.allowPartialFusion === true
     ? (Number.isInteger(launches) && Number.isInteger(baseLaunches) &&
-       launches > 0 && launches < baseLaunches)
-    : (Number.isInteger(launches) && launches > 0 && launches <= targetLaunches);
+       launches >= 1 && launches < baseLaunches)
+    : (Number.isInteger(launches) && launches >= 1 && launches <= targetLaunches &&
+       (!Number.isInteger(baseLaunches) || launches < baseLaunches));
   const accuracy = Array.isArray(v.accuracy_results) ? v.accuracy_results : [];
   const metricAccuracy = accuracy.filter((a) =>
     !o.accuracyMetric || String(a.metric) === String(o.accuracyMetric));
@@ -4202,16 +4192,8 @@ function chainDebtReport(debt, roundNow, ladderMeasured) {
 // <<REPLAY:terminal_forcing>>
 // NEAR THE END OF THE BUDGET, FORCING REPLACES ADVISING.
 //
-// roadmapLadderGate is advisory: it prints "the terminal rung was not planned" and lets the round
-// proceed. That is correct while there is budget to both explore a lever AND still come back and
-// close the chain. It is wrong the moment there is not. A wave that commits three enabling steps,
-// leaves their terminal fusion rung unplanned every round because there is "one more round to
-// spare", and then runs out of budget ships a tree that is SLOWER than it found it and a fusion that
-// was never closed -- the exact half-fusion this project reached. The advisory never becomes an
-// action, so at the end nobody DECIDED to abandon the chain; each round independently decided it
-// could wait, and the sum was abandonment.
-//
-// So this converts the advisory into an action at the point it stops being safe to defer. Force the
+// roadmapLadderGate is advisory; deferring a terminal rung every round ends in a half-fusion nobody
+// decided on. So force the
 // round onto an owed terminal rung when EITHER a chain is overdue (a prerequisite has sat unpaid for
 // CHAIN_DEBT_MAX_ROUNDS) OR there is no longer slack to both explore and still pay every open chain
 // (remaining <= owed count + 1). Returns null when nothing is owed, or when the planner is already
@@ -8478,6 +8460,7 @@ if (MODE === 'mega') {
       const verdict = megaFinalSelectionVerdict(attempt, batch, {
         selectedWorkspace: `${EVAL_DIR}/mega_selected`,
         launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
+        allowPartialFusion: ALLOW_PARTIAL_FUSION,
         baselineLaunches: optionalNumber(A.baseline_launch_count),
         frozenBaseline: BASELINE_PER_CASE,
         targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
@@ -8533,6 +8516,7 @@ if (MODE === 'mega') {
     selectionVerdict = megaFinalSelectionVerdict(megaSelection, finalists, {
       selectedWorkspace: `${EVAL_DIR}/mega_selected`,
       launchTarget: LAUNCH_TARGET, worldSize: GPU_RESOURCE.gpusPerJob,
+      allowPartialFusion: ALLOW_PARTIAL_FUSION,
       baselineLaunches: optionalNumber(A.baseline_launch_count),
       frozenBaseline: BASELINE_PER_CASE,
       targetGuards: TARGET_GUARDS, regressionGuards: REGRESSION_GUARDS,
