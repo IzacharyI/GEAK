@@ -525,6 +525,16 @@ const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
   MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
 } : {};
+// MoE regime guide + paired graph A/B for MoE mega runs; args.mega_regimes='true'|'false' overrides.
+const MEGA_REGIMES_ON = MODE === 'mega' && (A.mega_regimes != null
+  ? String(A.mega_regimes) === 'true'
+  : (ANALYSIS_SKILL === 'moe_bottleneck' || /^megamoe/.test(EXPERT_SKILL_ID)));
+const MRI = MEGA_REGIMES_ON ? {
+  MEGA_REGIMES_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_regimes.md`,
+  MEGA_AB_TOOL: `${WORKFLOW_DIR}/tools/mega_graph_ab.py`,
+  MEGA_REGIME_NOTE: 'Read MEGA_REGIMES_GUIDE for the target size\'s regime before choosing a direction; use MEGA_AB_TOOL for fast paired graph A/B while iterating.',
+  ...(USE_EXPERT_SKILLS ? { MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md` } : {}),
+} : {};
 
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL; unset => byte-identical
 // prompts. STATE_DIR resumes a stable per-(kernel,backend) state across waves; SHARED_KB/GLOBAL_KB are
@@ -1942,7 +1952,10 @@ function expertSkillsBlock(role, phase) {
           ? 'Use its canonical Planner Extension to derive MegaPlanIR.'
           : 'Do not read or restate the full Skill contract; independent Verify owns it.'
       } ` +
-      `independent Verify owns it. validation_status=${
+      `The Skill is one validated solution for its stated size range (its skill.md "When to use"): ` +
+      `inside that range treat it as a seed recipe — reproduce it first, then search beyond it; ` +
+      `outside the range use it only for mechanisms${MRI.MEGA_REGIMES_GUIDE ? ' and let MEGA_REGIMES_GUIDE decide what transfers' : ''}. ` +
+      `validation_status=${
         EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, usage=${
         EXPERT_SKILL_USAGE || 'legacy'}. Candidate source remains search/integrated.` +
       (role === 'mega_search_lead' && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
@@ -2172,7 +2185,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
         COMMANDMENT,
         PROFILE_SUMMARY: profileSummary,
         SKILL_DIR: WORKFLOW_DIR,
-        ...ANALYSIS_SKILL_INPUTS, ...GMI,
+        ...ANALYSIS_SKILL_INPUTS, ...GMI, ...MRI,
       },
     ),
     {
@@ -4569,7 +4582,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
     TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI,
+    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI, ...MRI,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -4894,7 +4907,7 @@ if (MODE === 'mega') {
     const mp = await agentT(roleAgent('profile_engineer', 'mega_baseline',
       'Measure the frozen baseline per stage: follow MEGA_MEASUREMENT_GUIDE §1, not the role file.', {
         WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
-        COMMANDMENT, BASELINE_PER_CASE, TARGET_GUARDS, REGRESSION_GUARDS, ...GMI,
+        COMMANDMENT, BASELINE_PER_CASE, TARGET_GUARDS, REGRESSION_GUARDS, ...GMI, ...MRI,
       }), { phase: 'Profile', label: 'profile_engineer:mega_baseline', schema: PROFILE_SCHEMA,
       timeout_ms: 3600000, max_retries: 1 });
     // Failure or timeout keeps the stub; it never ends the wave.
@@ -6071,7 +6084,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
         CUMULATIVE_SPEEDUP: cumulative, BASELINE_GEOMEAN_MS,
-        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary, ...GMI,
+        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary, ...GMI, ...MRI,
         CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: searchHistory,
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
@@ -6424,7 +6437,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           UT_PATH: KERNEL_PATH_ORIG,
           BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
-          PRIOR_CANDIDATE: priorForAgent, ...GMI,
+          PRIOR_CANDIDATE: priorForAgent, ...GMI, ...MRI,
         }) +
       `\n\n${authorGpuProhibited
         ? `AUTHOR_GPU_MODE=forbidden (${MEGA_STRUCTURAL_ONLY ? 'STRUCTURAL-ONLY RUN'
@@ -6762,7 +6775,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         EXPERT_SKILL_ACCURACY_CASES,
         EXPERT_SKILL_SOURCE_FILES,
       } : {}),
-      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
+      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
       GRAPH_CONTRACT_REPLAYS: 30,
       ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
     };
@@ -8417,7 +8430,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
+          GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
         }),
