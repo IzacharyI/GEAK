@@ -3532,13 +3532,9 @@ function megaHistoryForSearch(sourceHistory, registry) {
 function megaCandidateHardPass(c) {
   const n = normalizeMegaCandidate(c);
   const configuredTarget = typeof TARGET_GUARDS === 'undefined'
-    ? '' : String(TARGET_GUARDS[0] || '');
-  const targetGuard = n.target_guard || configuredTarget;
-  const targetReadout = targetGuard
-    ? pairedGuardReadout(
-      n.paired_readings, targetGuard,
-      typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS)
-    : { count: 0, score: null, sign_p: 1 };
+    ? '' : TARGET_GUARDS.join(',');
+  const targetReadout = megaTargetsReadout(n.paired_readings,
+    String(configuredTarget || n.target_guard).split(','));
   const structuralPass = typeof STRUCTURAL_CONTRACT_BLOCKING === 'undefined' ||
     !STRUCTURAL_CONTRACT_BLOCKING || n.structural_verified;
   return structuralPass &&
@@ -3552,7 +3548,7 @@ function megaCandidateHardPass(c) {
     targetReadout.count >= 5 && Number(targetReadout.score) > 0 &&
     Math.abs(Number(targetReadout.score) - Number(n.absolute_score)) <= 0.002 &&
     targetReadout.sign_p <= 0.05 &&
-    (Number(targetReadout.score) - 1) * 100 > Math.abs(n.null_arm_pct) &&
+    (Number(targetReadout.min) - 1) * 100 > Math.abs(n.null_arm_pct) &&
     Number.isFinite(n.absolute_score) && n.absolute_score > 0;
 }
 
@@ -3649,6 +3645,17 @@ function pairedGuardReadout(rows, guard, bimodalGuards = []) {
     raw_count: rawPairs.length, count: ratios.length, score: median,
     favorable, sign_p: signP, bimodal, split,
   };
+}
+
+// Each target passes alone; headline = geomean.
+function megaTargetsReadout(rows, guards) {
+  const rs = guards.filter(Boolean).map((g) => pairedGuardReadout(rows, g,
+    typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS));
+  if (rs.length < 2) return { ...(rs[0] || { count: 0, score: null, sign_p: 1 }), min: rs[0] ? rs[0].score : null };
+  const s = rs.map((r) => Number(r.score));
+  return { count: Math.min(...rs.map((r) => r.count)), sign_p: Math.max(...rs.map((r) => r.sign_p)),
+    score: s.every((v) => v > 0) ? Math.exp(s.reduce((a, v) => a + Math.log(v), 0) / s.length) : null,
+    min: Math.min(...s) };
 }
 
 function megaFinalSelectionVerdict(selection, finalists, opts) {
@@ -3887,10 +3894,8 @@ function megaCandidateFromVerification(meta, ver, opts) {
       Number(a.value) >= 0 && Number(a.value) < Number(o.accuracyThreshold || a.threshold));
   const livenessPass = String(v.liveness || '').toLowerCase() === 'pass';
   const guards = guardContract(v, o.targetGuards || [], o.regressionGuards || [], score);
-  const targetGuard = (o.targetGuards || [])[0];
-  const targetReadout = pairedGuardReadout(
-    v.paired_readings, targetGuard,
-    typeof BIMODAL_GUARDS === 'undefined' ? [] : BIMODAL_GUARDS);
+  const targetGuard = (o.targetGuards || []).join(',');
+  const targetReadout = megaTargetsReadout(v.paired_readings, o.targetGuards || []);
   const nullArm = v.null_arm_pct == null ? null : Number(v.null_arm_pct);
   const measurementPass = !!targetGuard &&
     targetReadout.count >= Number(o.requiredPairs || 1) &&
@@ -3898,7 +3903,7 @@ function megaCandidateFromVerification(meta, ver, opts) {
     Math.abs(Number(targetReadout.score) - Number(score)) <= Number(o.scoreTolerance || 0.002) &&
     targetReadout.sign_p <= 0.05 &&
     Number.isFinite(nullArm) &&
-    (Number(targetReadout.score) - 1) * 100 > Math.abs(nullArm);
+    (Number(targetReadout.min) - 1) * 100 > Math.abs(nullArm);
   const verificationStatusPass = String(v.status || '').toLowerCase() === 'verified';
   const verificationFailed = v.claim_complete === true && !verificationStatusPass;
   const record = normalizeMegaCandidate({
@@ -8541,8 +8546,7 @@ if (MODE === 'mega') {
     FINAL_WORKSPACE = megaSelection.selected_tree;
     const selectedRecord = selectionVerdict.source;
     const finalRow = selectionVerdict.row;
-    const finalTargetReadout = pairedGuardReadout(
-      finalRow.paired_readings, TARGET_GUARDS[0], BIMODAL_GUARDS);
+    const finalTargetReadout = megaTargetsReadout(finalRow.paired_readings, TARGET_GUARDS);
     selectedRecord.status = 'finalist';
     selectedRecord.absolute_score = Number(finalTargetReadout.score);
     selectedRecord.per_case = Array.isArray(finalRow.per_case) ? finalRow.per_case : [];

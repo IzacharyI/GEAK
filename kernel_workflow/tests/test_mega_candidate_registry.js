@@ -25,8 +25,10 @@ const api = new Function(`
   }
   function promotionScore(v, metric, targets, regressions, fallback) {
     if (!targets.length) return Number(fallback || 0);
-    const row = (v.per_case || []).find((r) => r.name === targets[0]);
-    return row ? Number(row.speedup) : 0;
+    const vals = targets.map((g) => Number(((v.per_case || []).find((r) => r.name === g) || {}).speedup));
+    if (!vals.every((x) => x > 0)) return 0;
+    return vals.length === 1 ? vals[0]
+      : Math.exp(vals.reduce((a, x) => a + Math.log(x), 0) / vals.length);
   }
   ${topology[1]}
   ${match[1]}
@@ -34,7 +36,7 @@ const api = new Function(`
     validMegaCandidateId, megaChildCandidateId, normalizeMegaCandidate, upsertMegaCandidate,
     megaCandidateHardPass, selectMegaCandidate, selectMegaSearchParent,
     megaCalibrationClaimPass, pairedGuardReadout, megaCandidateFromVerification,
-    megaRegistryForSearch,
+    megaRegistryForSearch, megaTargetsReadout,
   };
 `)();
 
@@ -290,6 +292,58 @@ console.log('\n# completed hardware failures remain authoritative');
   ok(planner.gpu_executed && planner.verification_status === 'correctness_failed' &&
      planner.notes.includes('nil-base'),
     'the next Planner receives the completed hardware failure verbatim');
+}
+
+console.log('\n# every target guard must clear 1.0 on its own');
+{
+  const pairs = (guard, s) => Array.from({ length: 5 }, (_, i) => ({
+    guard, base: 1 + i * 0.001, cand: (1 + i * 0.001) / s,
+  }));
+  const single = pairs('64_uniform_mtpr64', 1.13);
+  ok(api.megaTargetsReadout(single, ['64_uniform_mtpr64']).score ===
+     api.pairedGuardReadout(single, '64_uniform_mtpr64').score,
+    'one target guard keeps the exact single-guard readout');
+  const run = (s64, s8k) => {
+    const ver = {
+      status: 'verified', claim_complete: true, attempt_id: 'two:1',
+      evidence_manifest: '/eval/two.json', candidate_head: 'two-head',
+      per_case: [{ name: '64_uniform_mtpr64', speedup: s64 }, { name: '8192_uniform', speedup: s8k }],
+      paired_readings: [...pairs('64_uniform_mtpr64', s64), ...pairs('8192_uniform', s8k)],
+      null_arm_pct: 0.1, reps: 5,
+      accuracy_results: ['64_uniform_mtpr64', '8192_uniform'].map((guard) =>
+        ({ guard, metric: 'relL2', value: 0.05, threshold: 0.1 })),
+      correctness: 'pass', activation_confirmed: 'yes', activation_on_hardware: 'yes',
+      launch_shape: { launches_base: 4, launches_cand: 2 },
+      liveness: 'pass', replay_count: 30, graph_safe: 'pass',
+      artifact_distinct: 'yes', artifact_hash_base: 'base', artifact_hash_candidate: 'two',
+    };
+    return api.megaCandidateFromVerification({
+      id: 'two', source: 'search', status: 'authoring', tree: '/state/two',
+      head: 'two-head', attempt_id: 'two:1',
+    }, ver, {
+      targetGuards: ['64_uniform_mtpr64', '8192_uniform'], regressionGuards: [], launchTarget: 2,
+      promotionMetric: 'operator_e2e', accuracyMetric: 'relL2', accuracyThreshold: 0.1,
+      requiredReplays: 30, requiredPairs: 5,
+    });
+  };
+  const both = run(1.10, 1.05);
+  ok(both.status === 'scored' && Math.abs(both.absolute_score - Math.sqrt(1.10 * 1.05)) < 1e-6,
+    'two passing targets score at their geomean');
+  ok(both.target_guard === '64_uniform_mtpr64,8192_uniform' && api.megaCandidateHardPass(both),
+    'the record carries every target guard and stays selectable');
+  const twoTargetApi = new Function('src', `const TARGET_GUARDS = ['64_uniform_mtpr64', '8192_uniform'];
+    function guardContract() { return { complete: true, regression_pass: true }; }
+    function promotionScore() { return 0; }
+    ${topology[1]}
+    ${match[1]}
+    return { megaCandidateHardPass };`)();
+  const oldRow = { ...both, target_guard: '64_uniform_mtpr64', absolute_score: 1.10,
+    paired_readings: pairs('64_uniform_mtpr64', 1.10) };
+  ok(api.megaCandidateHardPass(oldRow) && !twoTargetApi.megaCandidateHardPass(oldRow),
+    'a resumed row scored on fewer targets than configured is not selectable');
+  const one = run(1.13, 0.999);
+  ok(one.status !== 'scored' && !one.measurement_pass,
+    'a geomean above 1.0 cannot hide a target guard at or below 1.0');
 }
 
 console.log('\n# calibration remains fail-closed');

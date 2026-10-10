@@ -137,7 +137,9 @@ invented reference-parity failures.
 
 When `VERIFY_TIER` is present:
 
-- `score`: run the supplied target guard paired A/B, artifact/path/launch checks, accuracy and the supplied
+- `score`: run the paired A/B of EVERY supplied target guard (each with its own `per_case` row and
+  `paired_readings`; `verified_geomean` is the geomean of the target guards' paired medians, and each
+  target must clear 1.0 on its own), artifact/path/launch checks, accuracy and the supplied
   short liveness count (normally 30). This makes the whole candidate rankable. Do not spend the three
   regression guards, overlap meter or 256-replay terminal contract here.
   **The score tier MUST include its own null arm.** In the same lease and the same interleave as the
