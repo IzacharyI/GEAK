@@ -46,4 +46,11 @@ measured:
     partitions_per_token: 1
     reduction_width: 4
     total_items: 8192
+  best_known_8192:
+    speedup: 1.155
+    g2_claim_order: column_grouped
+    g2_claim_group_m: 32
+    g2_chunk: 1
+    g2_skew_interleave: gated
+    stacked_with_g1_codegen: false
   timed_diagnostics: false

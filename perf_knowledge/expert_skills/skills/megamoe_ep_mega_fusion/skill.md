@@ -144,11 +144,15 @@ The second launch is one CTA-local state machine:
   unready G2 claim is pending work, not an empty queue. A CTA reaches Combine
   only after it owns no continuation and its G2 shard head is out of range;
   consequently every valid G2 chunk has already been claimed by some CTA.
-- G2 claims are contiguous. For shard `s`, local claim `q`, shard count `S`,
-  and chunk `C`: `claim_id = s + q*S`, `base = claim_id*C`, and the claim owns
-  `[base, min(base+C,total_g2_units))`. `C=1` for `run_tokens<4096`; `C=16`
-  otherwise. Readiness of the last in-range unit dominates the contiguous
-  claim. The continuation carries only two block-uniform scalars,
+- G2 claims are contiguous in claim-position space. For shard `s`, local claim
+  `q`, shard count `S`, and chunk `C`: `claim_id = s + q*S`, `base = claim_id*C`,
+  and the claim owns positions `[base, min(base+C,total_g2_units))`. A position
+  maps to a `(m_block,n_block)` unit through the G2 claim order (Scheduling
+  blueprint); the unit id stays `m_block*g2_n_blocks + n_block`, and close
+  counters and dependencies use that id. With the column-grouped order use
+  `C=1` at every bucket. `C=16` at `run_tokens>=4096` belongs only to the
+  m-major reference order. Readiness of the last in-range unit dominates the
+  contiguous claim. The continuation carries only two block-uniform scalars,
   `next_unit` and `units_remaining`; it performs no further head atomic,
   readiness poll, or LDS handoff.
 - The G2 single-unit body owns all route, weight, peer, and readiness
@@ -504,7 +508,9 @@ through bucket 128 only; persistent striding is on for buckets 512 through
 and the configured spatial code is 402.
 
 The persistent body, not standalone Stage2, owns work distribution. It
-therefore forces Stage2 persistence off and spatial remapping to zero, uses
+therefore forces Stage2 persistence off and spatial remapping to zero; the G2
+claim order (Scheduling blueprint) must restore the W2 reuse that the
+standalone mapping provided. It also uses
 one slab, sets `NW=Stage1 waves`, and widens the configured Stage2 BN by
 `Stage1 waves/4`. GEMM2 uses FP8 A, FP4 B, scaled 16x16x128 MFMA, `BK=256`,
 two 128-K halves, three A LDS stages, `wave_n=BN/NW`, and
@@ -519,7 +525,9 @@ Stage1: SBM=128, tile_n=512, tile_k=256, waves=8, grid=256 CTAs
          dispatch=96, shards=4, payload_rows=384, B cache=0
 Stage2: BM=64, BN=512, BK=256, NW=8, one slab, 14 N blocks
          B non-temporal=off, B-hoist=on, A-scale-prefetch=on
-Scheduler: preemption modulus=6, skew ratio=5/4, G2 chunk=16
+Scheduler: preemption modulus=6, skew ratio=5/4,
+           G2 order=column-grouped GM=32 (skew interleave when gated),
+           G2 chunk=1   (reference m-major order: chunk=16)
 ```
 
 ### Host ABI and persistent state
@@ -614,6 +622,52 @@ This is safe because no unclaimed G2 unit remains. Combine uses:
 
 The next loop-top barrier is the post-item barrier. The item contains no
 workgroup barrier and no CTA-wide readiness mask or retry frame.
+
+### G2 claim order (W2 reuse)
+
+The claim position decides which W2 slice the concurrently running CTAs read.
+The m-major order (`unit = position`) streams every n-block's weights once per
+m-block and leaves the fused GEMM2 no faster than standalone Stage2. Walk a
+group of `GM` m-blocks down one n-block column before moving to the next
+column, so concurrent claims share one W2 slice in L2:
+
+```text
+group    = position // (GM * g2_n_blocks)
+r        = position - group * GM * g2_n_blocks
+gm_eff   = clamp(total_m_blocks - group*GM, 1, GM)   # last group is short
+n_block  = r // gm_eff
+m_block  = group*GM + (r - n_block*gm_eff)
+unit     = m_block * g2_n_blocks + n_block
+```
+
+Measured at 8192 uniform with `C=1` (rank-max e2e): GM=1 (m-major) 4.681 ms,
+GM=8 4.419, GM=16 4.089, GM=32 4.047, GM=64 4.023. G2 span fell from 2.05 to
+1.36 ms while G1/G2 overlap stayed at about 3%, so the gain is G2 efficiency,
+not overlap. An n-major order (one n-block column per claim range, the claim
+ranges kept local to a chiplet) measured the same direction. With this order,
+larger chunks lose: at GM=16, C=1 4.089, C=2 4.202, C=4 4.424, C=16 4.880 ms
+(tail quantization over about 11.6k units on 256 CTAs). For a drain smaller
+than about 64 units per shard, keep the m-major order.
+
+The Host passes the chunk (`fused_g2_chunk`) and the group size
+(`fused_g2_group_m`) into the cached compile spec; both are part of the JIT
+identity, so a sweep never reuses another variant's kernel. The contract's
+advisory `host_specializes_g2_chunk` hint still describes the m-major
+reference mapping (16 at `>=4096` tokens); a `C=1` candidate reports it as an
+advisory miss, which is expected.
+
+The mapping must be a bijection over `[0, total_g2_units)`: every CTA must be
+able to claim every unit, or a CTA waits on a unit no one will run. A subset
+drain that excluded some CTAs deadlocked.
+
+On a rank-mixed-skew route one expert holds most rows. Its rows are laid out
+by source rank, so consecutive m-blocks all return to one peer and the
+column-grouped order serializes the P2P stores on one link: skew fell to
+0.58x. Gate on the plan's `max_expert_tiles * 4 > num_m_tiles` and, when it
+holds, permute the m-block index across `npes` equal segments before the
+column grouping (`m' = (m % npes) * (total_m // npes) + m // npes` for
+`m < npes*(total_m // npes)`, else `m`). That restored skew to 1.21x and leaves
+a balanced rank's order unchanged.
 
 ## Memory-order blueprint
 
@@ -755,7 +809,10 @@ resident workgroups = 1 per CU
 
 These are emitted-resource envelopes, not exact source-contract values. The
 large measured path has controlled spill/private storage, so a blanket
-zero-spill rule is wrong. For every bucket, collect group-segment, VGPR, SGPR,
+zero-spill rule is wrong. Controlled is not free, though: anchoring G1's last
+K-step A offset to the per-tile row base (author guide, codegen) cut the 8192
+VGPR spills from 53 to 20 and private storage from 216 to 84 B, and was worth
+about 1%. For every bucket, collect group-segment, VGPR, SGPR,
 spill, private-segment and occupancy metadata. Require LDS within the gfx950
 limit, at least one resident workgroup per CU, and no unexplained growth beyond
 the corresponding measured envelope. Constructing Stage2 descriptors in the
@@ -809,11 +866,26 @@ be avoided.
 Measured on the validated profile (8192 uniform, rank-max):
 
 - Frozen four-launch baseline ~4.70 ms; Stage1+Stage2 persistent with a
-  separate Combine launch ~4.62 ms; complete fusion ~4.50 ms. The whole gain is
-  ~0.2 ms, so one expensive construct erases it.
-- Single costs that erase it: two lockstep Stage2 halves +0.53 ms; per-block L2
-  writeback instead of cache-19 write-through P2P stores +0.41 ms; skew
-  preemption on a uniform route +0.30 ms (it saves 0.51 ms on skew);
+  separate Combine launch ~4.62 ms; complete fusion with the m-major reference
+  order ~4.50 ms (1.0448x). The fusion gain alone is ~0.2 ms, so one expensive
+  construct erases it.
+- Best known: the same two-launch structure with the column-grouped G2 order
+  and `C=1` reached ~4.05-4.07 ms (~1.155x). G1 stays at frozen-Stage1 parity
+  (ends ~2.55 ms); G2 plus transport plus Combine fell from ~2.31 to ~1.42 ms;
+  G1/G2 overlap is ~3%. The extra ~10% is G2 efficiency, not removed waiting.
+- Measured separately, on other builds, not yet stacked with the order above:
+  the G1 codegen items in the author guide cut G1 time by ~170 us per
+  workgroup (~4.24 to ~4.07 ms on an n-major build), and issuing G2's B and
+  A-scale loads before the barrier and the next A DMA was worth ~3%. The G1
+  items also speed the unfused path, because GEMM1 code is shared.
+- Combine readiness is not decisive once G2 reuses W2: an n-major build reached
+  ~1.154x with per-token readiness, and a column-grouped build reached ~1.155x
+  with a coarse pre-Combine barrier, where per-row readiness measured ~10%
+  slower.
+- Single costs that erase the fusion gain: two lockstep Stage2 halves
+  +0.53 ms; per-block L2 writeback instead of cache-19 write-through P2P
+  stores +0.41 ms; skew preemption on a uniform route +0.30 ms (it saves
+  0.51 ms on skew);
   quantization work-stealing atomics +0.30 ms; a nested G2 loop around the
   GEMM2 body spills (~2.6x). Stage2 plus Combine measured separately ~2.08 ms.
 - Hot-path budget per unit of work: G2 continuation 0 atomics and 0 polls; new
@@ -821,6 +893,9 @@ Measured on the validated profile (8192 uniform, rank-max):
   close at most 1 atomic per n-block plus at most BM remote arrivals per m-block;
   Combine 1 claim per NW items, 1 lane-0 poll per item, no fence.
 - Fusion removes waiting (launch gaps, tails, cross-rank barriers), never work.
+  The work's cost still moves: the claim order, chunking and codegen inside the
+  fused kernel decide how fast each unit runs, in either direction. Attribute
+  such changes with the same tree's unfused control; they are not fusion gains.
   A fused candidate that misses the target is attributed per component as work
   versus wait (ablation of one component in a diagnostic build, or per-CTA
   phase timestamps) before any tuning, and a component whose work exceeds its
@@ -890,8 +965,9 @@ The Skill succeeds only when its independently authored candidate has:
 - no regression on fixed, compact or skew guards;
 - frozen-relative 8192-uniform rank-max speedup (frozen `BASELINE_PER_CASE`
   latency divided by the candidate latency, paired against a frozen-tree base
-  arm) close to the measured 1.0448x reference and at least 1.03x after the
-  established noise allowance. A same-tree switch-off pair is a diagnostic only.
+  arm) of at least 1.03x after the established noise allowance. The m-major
+  reference order measured 1.0448x and the column-grouped order ~1.155x. A
+  same-tree switch-off pair is a diagnostic only.
   When the workflow names another target guard and minimum, that guard and
   minimum replace 8192-uniform and 1.03x here; everything else above still
   applies, and the speedup must stay above 1.0x.

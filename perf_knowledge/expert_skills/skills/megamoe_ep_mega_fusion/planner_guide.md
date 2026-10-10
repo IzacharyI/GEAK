@@ -88,8 +88,9 @@ failure to Author. Preserve all already-passing source and runtime evidence.
   is the PERFORMANCE target (blocker step 6 below); introduce it only after Stage A passes
   relL2 at all three sizes. Do not gate the Stage-A correctness smoke on the no-barrier
   schedule being present.
-- 8192 profile: 256 CTAs, 8 waves, G2 `64x512x256`, chunk 16, skew 5/4,
-  Combine P=1/U=4.
+- 8192 profile: 256 CTAs, 8 waves, G2 `64x512x256`, G2 claim order column-grouped GM=32
+  (gated skew interleave), chunk 1, skew 5/4, Combine P=1/U=4. The m-major order with chunk 16
+  is the 1.045x reference; the column-grouped order measured ~1.155x.
 - Acceptance: relL2 < 0.10 and a frozen-relative rank-max speedup >=1.03x (frozen
   `BASELINE_PER_CASE` latency / candidate). A lane carrying `denominator_mismatch` has a
   same-tree switch-off path that drifted from the frozen baseline: route that shared-code
@@ -98,6 +99,10 @@ failure to Author. Preserve all already-passing source and runtime evidence.
   `author_guide.md`. A component whose work exceeds its budget is fixed in place; missing
   breakdown means the next direction is an ablation measurement, not a knob sweep. When
   `MEGA_STALL` reaches its limit, route an on-card measurement of the banked HEAD.
+- Lever order at 8192 once correctness passes: (1) G2 claim order and chunk, measured on both
+  uniform and rank-mixed-skew; (2) the G1 codegen items in `author_guide.md`, checked against
+  emitted spill metadata; (3) the G2 K-loop load order. Readiness and overlap changes come after
+  these: G1/G2 overlap measured ~3%, and Combine readiness was not decisive.
 
 The complete declarative contract belongs to independent Verify. Planner should
 reference failed check IDs or GPU evidence paths instead of copying its contents.

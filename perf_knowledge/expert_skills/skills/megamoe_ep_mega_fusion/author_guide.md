@@ -50,9 +50,12 @@ optimization is built on it. Verify reports them as `semantic`-tier contract fai
    (`claim = shard + local * SHARDS`). Each stripe publishes its own completion: cache-17 stores,
    `s_waitcnt` in every wave, one block barrier, ONE thread-0 system increment. Never claim a whole
    m-tile and run its stripes serially in one CTA.
-2. G2 claims come from sharded 64-byte heads in contiguous chunks (C16 at >=4096 tokens, else C1);
-   a new chunk waits only on its last in-range unit. The continuation carries two block-uniform
-   scalars (next, remaining) and issues NO atomic, NO readiness poll and NO LDS round-trip.
+2. G2 claims come from sharded 64-byte heads in contiguous chunks of claim positions; a new chunk
+   waits only on its last in-range unit. The continuation carries two block-uniform scalars (next,
+   remaining) and issues NO atomic, NO readiness poll and NO LDS round-trip. Positions map to units
+   through the G2 claim order (skill.md, "G2 claim order"): column-grouped GM=32 with C1 is the
+   measured best; C16 at >=4096 tokens belongs only to the m-major reference order. The mapping is
+   a bijection over all units, so every CTA can claim every unit.
 3. Skew preemption happens only when `ticket % 6 == 0` AND
    `max_expert_tiles * experts_per_rank * stage1_tile_m * 4 > valid_rows * 5` (the hottest expert's
    padded rows exceed 5/4 of the balanced share). About 1/6 of CTAs are eligible, and on a uniform
@@ -105,7 +108,11 @@ costs to judge a design before tuning knobs:
 |---|---|
 | frozen 4-launch baseline | ~4.70 ms |
 | Stage1+Stage2 persistent, Combine still a separate launch | ~4.62 ms |
-| full fusion target (Combine as third queue) | ~4.50 ms (~1.045x) |
+| full fusion target (Combine as third queue), m-major G2 order | ~4.50 ms (~1.045x) |
+| same structure, column-grouped G2 order (GM=32, C1) | ~4.05-4.07 ms (~1.155x) |
+| G2 order GM=1 / 8 / 16 / 32 / 64 at C1 | 4.681 / 4.419 / 4.089 / 4.047 / 4.023 ms |
+| G2 chunk C1 / C2 / C4 / C16 at GM=16 | 4.089 / 4.202 / 4.424 / 4.880 ms |
+| column-grouped order on rank-mixed-skew, without / with the gated interleave | 0.58x / 1.21x |
 | Stage2 + Combine, measured separately | ~2.08 ms |
 | two lockstep Stage2 halves instead of one NW8 slab | +0.53 ms |
 | per-block L2 writeback instead of cache-19 write-through P2P stores | +0.41 ms |
@@ -118,7 +125,9 @@ wait; G1 stripe 1 claim and 1 system increment; Stage2 m-block close <= 1 atomic
 BM remote arrivals; Combine 1 claim per NW items and 1 lane-0 poll per item, no fences. When the
 candidate misses the target, first measure where the time goes (ablation: disable one component in a
 diagnostic build and re-time; or per-CTA phase timestamps) and compare each component with the
-budget above; do not tune occupancy, chunk sizes or barriers blind.
+budget above; do not tune occupancy, chunk sizes or barriers blind. A fused G2 whose span is still
+near standalone Stage2 (~2.0 ms at 8192) is not yet reusing W2; check the G2 claim order and chunk
+(sweep GM and C on fresh inputs) before any other G2 lever.
 
 ## Dependency-ordered build recipe
 
@@ -257,6 +266,28 @@ and persists across Workflow waves; never substitute a per-workspace cache.
   sit outside adaptive grouping. They then read the previous launch's order,
   which corrupts rows silently or hangs on a changed route. The frozen tree's
   dispatch has this defect; keep the wait unconditional in any dispatch you carry.
+- The fused G2 BN is `block_n * NW / 4`, exactly 512 at 8192. The emitter covers at most 512
+  columns per unit; a wider BN silently leaves columns unwritten, and a sequential sweep that
+  reuses the same input buffers hides it behind the previous variant's output. Assert BN <= 512
+  and give every sweep variant fresh inputs.
+
+## Codegen levers (measured at 8192)
+
+Read the emitted VGPR/SGPR, spill and private-segment metadata first; each item below was found
+that way and kept the output bit-identical.
+
+- G1 last K-step A offset: a compile-time-constant ping/pong offset let LLVM hoist the address out
+  of the loop and spill it (32 extra scratch reloads per tile). Anchor it to the per-tile row base:
+  VGPR spills 53 -> 20, private 216 -> 84 B, about +1%.
+- G1 SiluQuant epilogue: process 8 columns per lane (one 8-byte FP8 store, 2 amax shuffles per 8
+  columns): epilogue 245 -> 164 us per workgroup, about +1.5%.
+- G1 A-tile start row is uniform across the workgroup. Kept in a VGPR it costs 4 `readfirstlane`
+  waterfall loops per K iteration; load it into an SGPR: G1 K-loop -57 us per workgroup, about
+  +0.85% at 8192, but about -1.4% at bs128@mtpr8192, so gate it by bucket.
+- G2 K-loop: the in-order `vmcnt` wait drained the A prefetch behind later loads. Issue B and the
+  A scales before the barrier and before the next A DMA: about +3%.
+- These GEMM1 edits live in shared code, so they also speed the unfused path. Credit them with the
+  same tree's switch-off control, not as fusion gains.
 
 ## Failure handling
 

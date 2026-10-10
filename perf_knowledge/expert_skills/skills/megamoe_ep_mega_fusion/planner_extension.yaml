@@ -105,7 +105,8 @@ ir_bindings:
       g1_store_visibility: sc0_sc1_then_waitcnt_barrier_system_add
       g2_preempt_cohort: ticket_mod_6_eq_0
       g2_preempt_skew: max_expert_tiles_times_epr_times_tile_m_times_4_gt_valid_rows_times_5
-      g2_chunk: contiguous_compile_time_1_below_4096_else_16
+      g2_chunk: contiguous_compile_time_1_with_column_grouped_order_16_only_with_m_major_reference
+      g2_claim_order: column_grouped_gm32_bijection_with_gated_skew_interleave
       g2_continuation: two_block_uniform_scalars_no_atomic_poll_or_lds_handoff
       scheduler_semantics: continuation_then_skew_mod6_ready_g2_else_g1_then_blocking_g2_contiguous_c1_c16
       stage2_geometry: one_native_stage1_wave_cohort_one_slab
@@ -160,7 +161,11 @@ candidate_templates:
         g2_preempt_modulus: 6
         g2_preempt_skew_ratio: 5/4
         g2_chunk_small: 1
-        g2_chunk_large: 16
+        g2_chunk_large: 1
+        g2_chunk_large_m_major_reference: 16
+        g2_claim_order: column_grouped
+        g2_claim_group_m: 32
+        g2_skew_interleave_gate: max_expert_tiles_times_4_gt_num_m_tiles
         g2_chunks_are_contiguous: true
         g2_continuation_scalars: 2
         g1_store_cache: 17
