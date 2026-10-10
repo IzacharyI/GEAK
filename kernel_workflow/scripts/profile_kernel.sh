@@ -15,7 +15,7 @@
 #                      (default: "rocprof-compute omniperf rocprofv3 rocprof")
 #   WARMUP_RUNS        number of warmup runs before profiling (default: 3)
 #   RPC_PROFILE_ARGS   extra args passed to rocprof-compute/omniperf `profile` (default: "--no-roof")
-#   RPV3_TRACE_ARGS    args passed to rocprofv3 (default: "--kernel-trace --stats --output-format csv")
+#   RPV3_TRACE_ARGS    args passed to rocprofv3 (default: "--kernel-trace --stats --output-format csv --disable-signal-handlers true")
 #   RPROF_ARGS         args passed to legacy rocprof (default: "--stats")
 #   METRIX_ARGS        args passed to metrix (default: ""; override per `metrix --help` for this toolchain)
 #
@@ -40,7 +40,9 @@ GPU_LOCK="$SCRIPT_DIR/gpu_lock.sh"
 WARMUP_RUNS="${WARMUP_RUNS:-3}"
 PROFILER_PRIORITY="${PROFILER_PRIORITY:-rocprof-compute omniperf rocprofv3 rocprof metrix}"
 RPC_PROFILE_ARGS="${RPC_PROFILE_ARGS:---no-roof}"
-RPV3_TRACE_ARGS="${RPV3_TRACE_ARGS:---kernel-trace --stats --output-format csv}"
+# --disable-signal-handlers: rocprofv3's own SIGABRT handler deadlocks multi-rank (torchrun) workloads
+# whose teardown aborts; letting the app's handler run keeps the trace and the exit code.
+RPV3_TRACE_ARGS="${RPV3_TRACE_ARGS:---kernel-trace --stats --output-format csv --disable-signal-handlers true}"
 RPROF_ARGS="${RPROF_ARGS:---stats}"
 METRIX_ARGS="${METRIX_ARGS:-}"
 
@@ -106,7 +108,7 @@ run_rocprof_compute() {  # rocprof-compute / omniperf: profile -> analyze, dump 
     echo "=== Profiling with $tool (profile $RPC_PROFILE_ARGS) ==="
     local rc=0
     bash "$GPU_LOCK" "$GPU_ID" \
-        "$tool" profile $RPC_PROFILE_ARGS -n "$workload" -- bash -c "$BENCHMARK_CMD" \
+        "$tool" profile $RPC_PROFILE_ARGS $( [ "$tool" = rocprof-compute ] && echo -d || echo -n ) "$workload" -- bash -c "$BENCHMARK_CMD" \
         > "$OUTPUT_DIR/${tool}_profile_raw.log" 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then emit_profiler_failure "$tool" "$rc" RPC_PROFILE_ARGS "$OUTPUT_DIR/${tool}_profile_raw.log"; fi
     if [ -d "$workload" ]; then
