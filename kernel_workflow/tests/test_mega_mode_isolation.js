@@ -49,6 +49,7 @@ const makeBlock = (enabled) => new Function(`
   const WORKFLOW_DIR = '/workflow';
   const MODE = 'mega';
   const CAPABILITY_EVAL = false;
+  const MRI = {};
   ${functionText}
   return expertSkillsBlock;
 `)();

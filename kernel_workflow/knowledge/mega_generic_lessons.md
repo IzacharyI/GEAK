@@ -1,6 +1,9 @@
 # Generic lessons for whole-operator fusion runs
 
-You get this file as `MEGA_GENERIC_LESSONS` only in a `mode=mega` run with Expert Skills disabled.
+You get this file as `MEGA_GENERIC_LESSONS` in a `mode=mega` run with Expert Skills disabled, and in
+a MoE `mode=mega` run with a pinned Expert Skill. With a pinned Skill, where a lesson below points at
+`MEGA_MEASUREMENT_GUIDE` or the generic graph contract, use the Skill's runtime and the workflow's
+Verify instead; the process lessons themselves still apply.
 
 Each lesson below cost at least one full round in an earlier run. None of them names an operator or
 a design. They are failure patterns of the *process*: measuring, debugging, and choosing what to

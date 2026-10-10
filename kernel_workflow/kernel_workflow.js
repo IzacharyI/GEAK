@@ -525,28 +525,25 @@ const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
   MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
 } : {};
+// MoE regime guide + paired graph A/B for MoE mega runs; args.mega_regimes='true'|'false' overrides.
+const MEGA_REGIMES_ON = MODE === 'mega' && (A.mega_regimes != null
+  ? String(A.mega_regimes) === 'true'
+  : (ANALYSIS_SKILL === 'moe_bottleneck' || /^megamoe/.test(EXPERT_SKILL_ID)));
+const MRI = MEGA_REGIMES_ON ? {
+  MEGA_REGIMES_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_regimes.md`,
+  MEGA_AB_TOOL: `${WORKFLOW_DIR}/tools/mega_graph_ab.py`,
+  MEGA_REGIME_NOTE: 'Read MEGA_REGIMES_GUIDE for the target size\'s regime before choosing a direction; use MEGA_AB_TOOL for fast paired graph A/B while iterating.',
+  ...(USE_EXPERT_SKILLS ? { MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md` } : {}),
+} : {};
 
 // ---------------------------------------------------------------------------
-// DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
-// When none are passed (every normal/fast e2e run, and every standalone run) these are '' / the
-// current defaults and are NEVER threaded into a prompt — so behavior is byte-identical to the
-// pre-feature build. They are set ONLY by e2e_workflow's deep_mode head scheduler.
-//   STATE_DIR        a STABLE dir for THIS (kernel,backend) ACROSS deep waves. When set the run
-//                    RESUMES: director seeds the canonical from STATE_DIR/best (the cumulative-best
-//                    code) and returns prior_state (cumulative + history) so re-invocation CONTINUES
-//                    instead of restarting (no lost experience, no re-explored directions). The frozen
-//                    oracle baseline (immutable unittest.py/meta.json) stays the reference, so speedups
-//                    remain comparable to the TRUE baseline across waves. update_memory writes STATE.json
-//                    + syncs best/ each round.
-//   SHARED_KB        cross-backend blackboard file (read by plan+engineers, appended by update_memory).
-//   GLOBAL_KB        run-global cross-KERNEL technique blackboard (deep): techniques that generalize
-//                    across head ops/backends. Optional; unset (default/fast) => byte-identical prompts.
-//   E2E_FEEDBACK     path to the latest end-to-end A/B result + problems from e2e_workflow (engaged?,
-//                    cudagraph behavior, mem footprint, decode regression, e2e delta) — steers planning.
-//   HARNESS_ADDENDUM path to an e2e-refined harness addendum (timing-weight / cudagraph-capture / hard
-//                    constraint gates). The IMMUTABLE oracle is NEVER touched; this only refines what the
-//                    perf bench emphasizes so the isolated target aligns with e2e.
-//   MAX_NO_IMPROVE   consecutive non-improving rounds before stopping (default 2 = current behavior).
+// DEEP-MODE / e2e-feedback hooks, ALL OPTIONAL (unset => byte-identical prompts; set by e2e deep mode).
+//   STATE_DIR        stable dir across deep waves: resume from STATE_DIR/best + prior_state; the frozen
+//                    oracle stays the reference. update_memory writes STATE.json + best/ each round.
+//   SHARED_KB / GLOBAL_KB  cross-backend / cross-kernel technique blackboards.
+//   E2E_FEEDBACK     latest e2e A/B result + problems; steers planning.
+//   HARNESS_ADDENDUM e2e-refined harness addendum (never touches the immutable oracle).
+//   MAX_NO_IMPROVE   consecutive non-improving rounds before stopping (default 2).
 const STATE_DIR = String(A.state_dir || '').replace(/\/+$/, '');
 const MEGA_RESUME_STATE = MODE === 'mega' && !!STATE_DIR &&
   String(A.mega_resume_state != null ? A.mega_resume_state : 'false') === 'true';
@@ -1976,7 +1973,10 @@ function expertSkillsBlock(role, phase) {
           ? 'Use its canonical Planner Extension to derive MegaPlanIR.'
           : 'Do not read or restate the full Skill contract; independent Verify owns it.'
       } ` +
-      `independent Verify owns it. validation_status=${
+      `The Skill is one validated solution for its stated size range (its skill.md "When to use"): ` +
+      `inside that range treat it as a seed recipe — reproduce it first, then search beyond it; ` +
+      `outside the range use it only for mechanisms${MRI.MEGA_REGIMES_GUIDE ? ' and let MEGA_REGIMES_GUIDE decide what transfers' : ''}. ` +
+      `validation_status=${
         EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, usage=${
         EXPERT_SKILL_USAGE || 'legacy'}. Candidate source remains search/integrated.` +
       (role === 'mega_search_lead' && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
@@ -2206,7 +2206,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
         COMMANDMENT,
         PROFILE_SUMMARY: profileSummary,
         SKILL_DIR: WORKFLOW_DIR,
-        ...ANALYSIS_SKILL_INPUTS, ...GMI,
+        ...ANALYSIS_SKILL_INPUTS, ...GMI, ...MRI,
       },
     ),
     {
@@ -4600,7 +4600,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
     WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
     ANALYSIS: analysis,
     TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI,
+    STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI, ...MRI,
     ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
     ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
     ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -4922,7 +4922,7 @@ if (MODE === 'mega') {
     const mp = await agentT(roleAgent('profile_engineer', 'mega_baseline',
       'Measure the frozen baseline per stage: follow MEGA_MEASUREMENT_GUIDE §1, not the role file.', {
         WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
-        COMMANDMENT, BASELINE_PER_CASE, TARGET_GUARDS, REGRESSION_GUARDS, ...GMI,
+        COMMANDMENT, BASELINE_PER_CASE, TARGET_GUARDS, REGRESSION_GUARDS, ...GMI, ...MRI,
       }), { phase: 'Profile', label: 'profile_engineer:mega_baseline', schema: PROFILE_SCHEMA,
       timeout_ms: 3600000, max_retries: 1 });
     // Failure or timeout keeps the stub; it never ends the wave.
@@ -6058,7 +6058,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
         CUMULATIVE_SPEEDUP: cumulative, BASELINE_GEOMEAN_MS,
-        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary, ...GMI,
+        SKILL_DIR: WORKFLOW_DIR, PROFILE_SUMMARY: profileSummary, ...GMI, ...MRI,
         CURRENT_BEST_PER_CASE: bestPerCase, HISTORY: searchHistory,
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
@@ -6403,7 +6403,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           UT_PATH: KERNEL_PATH_ORIG,
           BASELINE_OPERATOR_MAP: analysis && analysis.baseline_operator_map || [],
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
-          PRIOR_CANDIDATE: priorForAgent, ...GMI,
+          PRIOR_CANDIDATE: priorForAgent, ...GMI, ...MRI,
         }) +
       `\n\n${authorGpuProhibited
         ? `AUTHOR_GPU_MODE=forbidden (${MEGA_STRUCTURAL_ONLY ? 'STRUCTURAL-ONLY RUN'
@@ -6740,7 +6740,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         EXPERT_SKILL_ACCURACY_CASES,
         EXPERT_SKILL_SOURCE_FILES,
       } : {}),
-      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
+      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
       GRAPH_CONTRACT_REPLAYS: 30,
       ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
     };
@@ -8398,7 +8398,7 @@ if (MODE === 'mega') {
             EXPERT_SKILL_ACCURACY_CASES,
             EXPERT_SKILL_SOURCE_FILES,
           } : {}),
-          GRAPH_CONTRACT_TOOL, ...RFI, ...GMI,
+          GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
           GRAPH_CONTRACT_REPLAYS: REQUIRED_REPLAYS,
           SELECTED_WORKSPACE: `${EVAL_DIR}/mega_selected`,
         }),
