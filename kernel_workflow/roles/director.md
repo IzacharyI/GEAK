@@ -270,7 +270,8 @@ batch may contain all finalists for one exhaustive comparison.
    promotion metric, and run every supplied regression guard. Recheck the supplied accuracy metric,
    candidate-path activation on every rank,
    graph safety and required liveness. Every finalist may be a complete partial fusion: require a measured
-   launch reduction satisfying `LAUNCH_TARGET <= launches_cand < launches_base`; record both
+   launch reduction satisfying `1 <= launches_cand < launches_base` (and `launches_cand <= LAUNCH_TARGET`
+   unless partial fusion is allowed); record both
    `launches` and `launches_base` in its evidence row. Do not reject a
    faster partial candidate merely because it has not reached the launch target. When requested, also require controlled non-zero overlap,
    launch-change attribution on a named target guard (absolute to the frozen baseline) and distinct

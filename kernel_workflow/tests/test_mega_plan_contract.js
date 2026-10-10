@@ -36,6 +36,19 @@ ok(claimsTarget({ target_topology: { launches: 2 } }, plan),
   'the historical launches spelling remains a compatibility input');
 ok(!claimsTarget({ target_topology: { launch_count: 3 } }, plan),
   'a partial target does not bypass the full-target structural contract');
+ok(claimsTarget({ target_topology: { launch_count: 1 } }, plan),
+  'fusing further than the planned launch count still claims the target');
+{
+  const fewer = verdict({ target_topology: { launch_count: 1,
+    included_regions: ['producer', 'consumer'], included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'], require_overlap: true } }, plan, false);
+  ok(fewer.pass, `a 1-launch terminal passes a 2-launch plan without partial fusion: ${fewer.reason || ''}`);
+  const more = verdict({ target_topology: { launch_count: 3,
+    included_regions: ['producer', 'consumer'], included_queues: ['upstream', 'downstream'],
+    capabilities: ['item_overlap'], require_overlap: true } }, plan, false);
+  ok(!more.pass && /partial fusion is disabled/.test(more.reason),
+    'a 3-launch terminal is refused when partial fusion is disabled');
+}
 ok(needsPreflight(
   { target_topology: { launch_count: 2 } }, plan, null, true,
 ), 'a new full-target candidate is GPU-forbidden before structural Verify');
