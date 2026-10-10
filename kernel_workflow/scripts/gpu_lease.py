@@ -182,12 +182,16 @@ class GpuLease:
         idle_checker: Optional[Callable[[int], bool]] = None,
         reap_root: Optional[Path] = None,
         reap_interval_s: float = 10.0,
+        stale_idle_checker: Optional[Callable[[int], bool]] = None,
     ):
         self.request = request
         self.lock_dir = Path(lock_dir)
         self.wait_timeout_s = max(0.0, float(wait_timeout_s))
         self.poll_interval_s = max(0.001, float(poll_interval_s))
         self.idle_checker = idle_checker
+        # Fail-closed by default. When set, a lease left by another PID namespace (e.g. a
+        # restarted container) is reclaimed only if every overlapping GPU is verifiably idle.
+        self.stale_idle_checker = stale_idle_checker
         # Where OUR leaked orphans live (the run's state_dir). Default: the lock_dir's
         # parent, which is under state_dir, so candidates/*/tree resolves inside it.
         # A busy pool triggers a reap of our own leaks before we ever dead-wait.
@@ -357,7 +361,13 @@ class GpuLease:
                 continue
             stale_namespace = metadata.get("pid_namespace")
             if stale_namespace and stale_namespace != _pid_namespace():
-                return True
+                # Its pids cannot be probed from here. We already hold the GPU flocks, so its
+                # manager is gone; orphaned children could still run, hence the idle proof.
+                overlap = requested.intersection(stale_ids)
+                if self.stale_idle_checker is None or not all(
+                    self.stale_idle_checker(gpu_id) for gpu_id in overlap
+                ):
+                    return True
             if child_pgid > 0 and _process_group_exists(child_pgid):
                 return True
             try:
@@ -576,6 +586,7 @@ def run_command(
     env: Optional[Mapping[str, str]] = None,
     idle_checker: Optional[Callable[[int], bool]] = None,
     reap_root: Optional[Path] = None,
+    stale_idle_checker: Optional[Callable[[int], bool]] = None,
 ) -> int:
     if not command:
         raise ValueError("command must not be empty")
@@ -602,6 +613,7 @@ def run_command(
             wait_timeout_s=wait_timeout_s,
             idle_checker=idle_checker,
             reap_root=reap_root,
+            stale_idle_checker=stale_idle_checker,
         ) as lease:
             visible = ",".join(str(gpu_id) for gpu_id in lease.selected_ids)
             child_env.update(
@@ -855,6 +867,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 device_map=device_map,
                 fail_open=False,
             )
+        stale_idle_checker = SysfsIdleChecker(
+            drm_root=Path(args.sysfs_root),
+            max_busy_pct=args.max_busy_pct,
+            # orphaned children hold VRAM, so the stale proof always checks it
+            max_vram_mb=args.max_vram_mb if args.max_vram_mb >= 0 else 1024,
+            device_map=(
+                idle_checker.device_map if idle_checker is not None
+                else discover_amd_smi_device_map()
+                if Path(args.sysfs_root) == Path("/sys/class/drm") else {}
+            ),
+            fail_open=False,
+        )
         return run_command(
             request,
             command,
@@ -864,6 +888,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             term_grace_s=args.term_grace,
             idle_checker=idle_checker,
             reap_root=Path(args.reap_root) if args.reap_root else None,
+            stale_idle_checker=stale_idle_checker,
         )
     except CommandStartError as error:
         print(f"ERROR: {error}", file=sys.stderr)
