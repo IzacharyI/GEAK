@@ -4609,7 +4609,7 @@ const bench = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench
   { phase: 'Benchmark', label: 'benchmark_engineer', schema: BENCH_SCHEMA,
     ...(MODE === 'mega' && MEGA_PRODUCTION
       // Baseline/control setup has a separate production window and can recover artifacts on timeout.
-      ? { timeout_ms: 7200000, timeout_marker: true, max_retries: 1 } : {}) });
+      ? { timeout_ms: 10800000, timeout_marker: true, max_retries: 1 } : {}) });
 // A bench agent that dies without returning has usually NOT failed to measure — it has failed to
 // report. Workflow scripts cannot read the filesystem, so an unreturned baseline that is sitting in
 // EVAL_DIR is invisible here and used to abort the run outright. On 2026-08-21 that discarded 40
@@ -4643,13 +4643,15 @@ if (!benchR || !benchR.baseline_per_case) {
       'failure, not a fallback. Write baseline_timing.json / COMMANDMENT.md if measurements exist ' +
       'but the file does not. A setup_ab_control*.json with claim_complete:true IS the positive ' +
       'control result — report its measured median and null arm rather than re-running it. If the ' +
-      'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes.',
+      'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes. ' +
+      'The timed-out agent may still be writing: if setup_ab_* files changed in the last 10 min, ' +
+      'poll up to 12 min for baseline_timing.json before concluding.',
       { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
         TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
         STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
     { phase: 'Benchmark', label: 'benchmark_recover', schema: BENCH_SCHEMA,
-      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 300000, max_retries: 1 } : {}) });
+      ...(MODE === 'mega' && MEGA_PRODUCTION ? { timeout_ms: 1200000, max_retries: 1 } : {}) });
   if (!benchR || !Array.isArray(benchR.baseline_per_case) || !benchR.baseline_per_case.length) {
     if (benchTimedOut) {
       // Setup genuinely produced nothing recoverable within its window — surface a clean, honest
@@ -6422,7 +6424,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           `${tree}; the old HEAD stays recoverable through that tag. ` : '') +
       `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
       `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
-      `through the final commit/manifest write. If the lock is held, return incomplete without editing. ` +
+      `through the final commit/manifest write, then release it with exec 9>&-. Start every background ` +
+      `command or timer with 9>&- so no orphan inherits the lock. If the lock is held, return incomplete without editing. ` +
       `Candidate-lane setup is part of this task. If ${tree}/.git does not exist, create ${tree}. ` +
       (baseHead
         ? `Export exact parent commit ${baseHead} from ${baseTree} with git archive into the lane. `
@@ -6800,6 +6803,14 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           if (retry && retry.claim_complete === true) {
             ver = retry;
             verifierTimedOut = false;
+          } else if (retry && !retry.__agent_timed_out) {
+            // Quiescence was confirmed twice and the bounded retry returned: nothing is left
+            // running, so the round ends unscored and the wave continues (it used to stop here).
+            verifierTimedOut = false;
+            meta.next_blocker = `independent Verify of HEAD ${expectedHead} timed out before ` +
+              `sealing (retry: ${retry.status || 'unscored'}); route a fresh full Verify of this ` +
+              `HEAD before new edits`;
+            megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
           } else {
             megaUnsafeTimeout = retry || { label: `mega:verify-timeout-retry:${candidateId}` };
           }
