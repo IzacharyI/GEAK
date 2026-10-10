@@ -1425,3 +1425,52 @@ def test_reap_own_orphans_only_kills_our_reparented_leaks(tmp_path, monkeypatch)
     assert sorted(reaped) == [11, 12]
     assert sorted(pid for pid, _ in killed) == [11, 12]
     assert all(sig == signal.SIGKILL for _, sig in killed)
+
+
+def _write_other_namespace_lease(path):
+    path.write_text(
+        json.dumps(
+            {
+                "lease_id": "other-namespace",
+                "manager_pid": 1,
+                "child_pgid": 999999,
+                "pid_namespace": "pid:[different]",
+                "gpu_ids": [0],
+                "lock_ids": [0],
+            }
+        )
+    )
+
+
+def test_other_namespace_lease_reclaimed_when_gpus_verifiably_idle(tmp_path):
+    gpu_lease = load_gpu_lease()
+    stale_path = tmp_path / "lease_other_namespace.json"
+    _write_other_namespace_lease(stale_path)
+    request = gpu_lease.GpuRequest.from_fixed_ids("0", count=1)
+
+    with gpu_lease.GpuLease(
+        request,
+        lock_dir=tmp_path,
+        wait_timeout_s=0.5,
+        poll_interval_s=0.005,
+        stale_idle_checker=lambda gpu_id: True,
+    ) as lease:
+        assert lease.selected_ids == (0,)
+    assert not stale_path.exists()
+
+
+def test_other_namespace_lease_kept_when_gpu_not_idle(tmp_path):
+    gpu_lease = load_gpu_lease()
+    stale_path = tmp_path / "lease_other_namespace.json"
+    _write_other_namespace_lease(stale_path)
+    request = gpu_lease.GpuRequest.from_fixed_ids("0", count=1)
+
+    with pytest.raises(gpu_lease.LeaseTimeout), gpu_lease.GpuLease(
+        request,
+        lock_dir=tmp_path,
+        wait_timeout_s=0.02,
+        poll_interval_s=0.005,
+        stale_idle_checker=lambda gpu_id: False,
+    ):
+        raise AssertionError("a busy GPU keeps the cross-namespace lease blocking")
+    assert stale_path.exists()
