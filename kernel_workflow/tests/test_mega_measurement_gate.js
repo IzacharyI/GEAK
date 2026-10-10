@@ -17,16 +17,20 @@ const ok = (cond, msg) => {
 
 const def = src.match(/const GMI = ([\s\S]*?);\n/);
 ok(!!def, 'GMI is defined');
-const gmi = (MODE, USE_EXPERT_SKILLS) =>
+const gmi = (MODE, USE_EXPERT_SKILLS, A = {}) =>
   // eslint-disable-next-line no-new-func
-  new Function('MODE', 'USE_EXPERT_SKILLS', 'WORKFLOW_DIR', `return ${def[1]};`)(
-    MODE, USE_EXPERT_SKILLS, '/wf');
+  new Function('MODE', 'USE_EXPERT_SKILLS', 'WORKFLOW_DIR', 'A', `return ${def[1]};`)(
+    MODE, USE_EXPERT_SKILLS, '/wf', A);
 ok(Object.keys(gmi('mega', true)).length === 0, 'skill-on mega gets no measurement inputs');
 ok(Object.keys(gmi('optimize', false)).length === 0, 'non-mega gets no measurement inputs');
 ok(gmi('mega', false).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement.md',
   'generic mega gets the guide');
 ok(gmi('mega', false).MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lessons.md',
   'generic mega gets the lessons');
+ok(!('MEGA_KNOWLEDGE' in gmi('mega', false)), 'no mega_knowledge arg leaves the inputs unchanged');
+ok(gmi('mega', false, { mega_knowledge: 'read /k.md' }).MEGA_KNOWLEDGE === 'read /k.md' &&
+   !('MEGA_KNOWLEDGE' in gmi('mega', true, { mega_knowledge: 'read /k.md' })),
+  'mega_knowledge reaches generic mega roles only');
 
 // The generic graph-contract runner is the default only for generic mega; a pinned skill keeps its
 // runtime, and an explicit graph_contract_tool arg still wins.

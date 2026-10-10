@@ -264,6 +264,9 @@ evidence, and its `limit`). A Skill-enabled run may additionally provide
 `EXPERT_SKILL_PLANNER_EXTENSION`, Skill identity, and the bundle/component
 digests listed for Analyze.
 
+When `MEGA_KNOWLEDGE` is present, Read the files it names before planning work in the bucket it
+covers, and name those files in that direction's instructions so the author reads them too.
+
 Plan exactly one complete candidate direction:
 
 1. Continue recoverable WIP before opening a duplicate lane. The controller binds every round to

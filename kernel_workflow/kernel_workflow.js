@@ -525,6 +525,7 @@ const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   MEGA_MEASUREMENT_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_measurement.md`,
   GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
   MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
+  ...(A.mega_knowledge ? { MEGA_KNOWLEDGE: String(A.mega_knowledge) } : {}),
 } : {};
 
 // DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL; unset => byte-identical

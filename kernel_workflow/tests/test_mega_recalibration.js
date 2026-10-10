@@ -63,6 +63,8 @@ ok(/every row MUST keep, copied exactly:[\s\S]{0,80}`id`, `source`, `base_id`, `
   'director keeps lane identity fields when compacting registry rows');
 ok(/Analyze'[\s\S]{0,600}timeout_ms: 1800000/.test(src), 'Analyze guard is 30 min');
 ok(/label: 'director:setup'[\s\S]{0,400}timeout_ms: 1800000/.test(src), 'mega setup guard is 30 min');
+ok(/const GMI = [\s\S]{0,400}\.\.\.\(A\.mega_knowledge \? \{ MEGA_KNOWLEDGE: String\(A\.mega_knowledge\) \} : \{\}\)/.test(src),
+  'optional mega_knowledge reaches every generic-mega role through GMI and is absent when unset');
 ok(/writer_quiescent === true\) \{\s*laneWriterTimedOut = false;\s*megaUnsafeTimeout = null;[\s\S]{0,300}\}\s*if \(recovered && recovered\.claim_complete === true\)/.test(src),
   'a quiescent recovered author clears megaUnsafeTimeout even when its result is complete');
 
