@@ -209,6 +209,14 @@ ok(rebound.candidate_id === 'same_lane' &&
    rebound.target_topology.included_regions.includes('persistent') &&
    !rebound.prompt.includes('replacement_lane'),
   'a Planner rename is rebound to the existing WIP identity without its stale lane prompt');
+const replanned = bindWipDirection(3, {
+  id: 'same_lane_r3', candidate_id: 'same_lane', prompt: 'continue same_lane',
+  target_topology: { launch_count: 2, included_regions: ['quant', 'g1', 'g2_p2p', 'combine'] },
+});
+ok(replanned.candidate_id === 'same_lane' &&
+   replanned.target_topology.included_regions.includes('g2_p2p') &&
+   !replanned.target_topology.included_regions.includes('persistent'),
+  'a Planner continuing the same WIP lane may restate its topology (a stale stored one was refused every round)');
 ok(/const bound = parkedNow \? raw : bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
   'every planned round binds to a recoverable WIP unless the Planner parked it this round');
 ok(/const continuation = megaWipContinuationDirection\(currentRound\);[\s\S]{0,420}continuing resumable WIP lane[\s\S]{0,260}raw = continuation/.test(src),

@@ -6070,10 +6070,11 @@ function bindMegaDirectionToWip(currentRound, direction) {
     ...(planned.target_shape ? { target_shape: planned.target_shape } : {}),
     ...(planned.rewind_head ? { rewind_head: planned.rewind_head,
       rewind_reason: planned.rewind_reason } : {}),
-    // Keep the Planner's task (unless it names a replacement lane/base) and attach the lane state.
+    // Keep the Planner's task (unless it renames the lane/base) and, for the same lane, its topology.
     prompt: keepAsk ? `${ask}\n\nLANE STATE (${continuation.candidate_id}): ${continuation.prompt}`
       : continuation.prompt,
-    target_topology: continuation.target_topology,
+    target_topology: other === continuation.candidate_id && planned.target_topology ||
+      continuation.target_topology,
   };
 }
 

@@ -304,7 +304,11 @@ Plan exactly one complete candidate direction:
    semantics unless current-run correctness validates an intentional change. A matched Skill is an
    evidence-qualified prior at its declared validation status, not a special lane.
 4. Preserve the operator-neutral `target_topology` fields. A partial terminal
-   must declare `rung_deviation`; it remains a complete runnable operator.
+   must declare `rung_deviation`; it remains a complete runnable operator. A terminal at or under
+   the plan's launch count is refused before authoring unless its `included_regions`,
+   `included_queues` and `capabilities` contain every id in `MEGA_PLAN_IR.target.required_regions`,
+   `required_queues` and `required_capabilities`, spelled exactly; copy those ids verbatim every
+   round (add your own after them), including when you continue a lane.
 5. Keep any verified above-baseline candidate as fallback. While budget remains,
    continue toward the configured Skill target; budget exhaustion is a normal
    stop.
