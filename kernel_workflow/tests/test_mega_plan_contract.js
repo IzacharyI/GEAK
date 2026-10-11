@@ -196,6 +196,28 @@ ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*r
   'only a quiescent timed-out writer continues the wave; a live one still stops it');
 ok(/megaTopologyVerdict\(\s*d, analysis && analysis\.mega_plan_ir, ALLOW_PARTIAL_FUSION\)/.test(src),
   'the caller-owned exact-target policy reaches the pre-author topology gate');
+const byBucket = {
+  target: plan.target,
+  target_by_bucket: {
+    64: { launch_count: 1, required_regions: ['merged'], required_queues: ['merged_q'],
+      required_capabilities: ['single_launch'] },
+  },
+};
+const small = {
+  step_role: 'terminal', bucket: 64,
+  target_topology: { launch_count: 1, included_regions: ['merged'], included_queues: ['merged_q'],
+    capabilities: ['single_launch'] },
+};
+ok(verdict(small, byBucket, false).pass,
+  'a direction naming its bucket is held to that bucket\'s target');
+ok(!verdict({ ...small, bucket: 8192 }, byBucket, false).pass,
+  'a bucket without its own target falls back to the shared target');
+ok(!verdict({ ...small, bucket: undefined }, byBucket, false).pass &&
+   verdict({ ...small, bucket: undefined, target_topology: {
+     launch_count: 2, included_regions: ['producer', 'consumer'],
+     included_queues: ['upstream', 'downstream'], capabilities: ['item_overlap'] } }, byBucket, false).pass,
+  'a direction without a bucket keeps the shared-target behaviour');
+
 ok(/allow_partial_fusion=false/.test(src) &&
    /SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION \? '1' : '0'/.test(src) &&
    /allowPartialFusion: ALLOW_PARTIAL_FUSION/.test(src),

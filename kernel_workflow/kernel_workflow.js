@@ -906,7 +906,10 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
       `${JSON.stringify(topo)}` };
   }
   const terminal = String(direction.step_role || 'terminal') === 'terminal';
-  const planned = Number(planIr && planIr.target && planIr.target.launch_count);
+  // A direction naming its bucket is held to that bucket's target (one per regime), else to `target`.
+  const bt = planIr && planIr.target_by_bucket;
+  const target = bt && bt[String(direction.bucket)] || planIr && planIr.target || {};
+  const planned = Number(target.launch_count);
   if (terminal && Number.isFinite(planned) && launches > planned &&
       !allowPartialFusion) {
     return { pass: false, reason:
@@ -918,7 +921,6 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
       `terminal topology declares ${launches} launches but mega_plan_ir target is ${planned}; ` +
       'declare rung_deviation for an intentional partial-fusion terminal' };
   }
-  const target = planIr && planIr.target || {};
   const requireAll = (declared, required, label) => {
     const have = new Set(Array.isArray(declared) ? declared.map(String) : []);
     const missing = (Array.isArray(required) ? required : [])
@@ -8320,11 +8322,8 @@ exact_patch, transaction_valid, note}.`,
   }
 }
 
-// Which of the four stops fired, in the loop's own order of evaluation. Recorded rather than
-// inferred: the budget is denominated in DIRECTIONS while the scarce resource is GPU leases, so
-// "the budget was not exhausted" and "there was still hardware to spend" are the same sentence
-// only by accident, and a reader looking at the artifacts a day later cannot tell which stop it
-// was. One wave ended with a lease in hand and the next round already named in its own plan.
+// Record which stop fired, in loop order: the budget counts directions, not GPU leases, so the
+// artifacts alone cannot tell "budget spent" from "hardware left".
 if (!stopReason) {
   const left = BUDGET - dispatched;
   if (dispatched >= BUDGET) {

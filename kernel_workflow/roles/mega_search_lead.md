@@ -51,6 +51,12 @@ unlocalized. Current lane identity and completed Verify evidence belong to
    `owned_subdomain` is a direct `work_domains[]` field; never place it under
    that domain's `parameters`, because contract paths and downstream relation
    checks address `work_domains[id=...].owned_subdomain`.
+   When the target guards fall in different regimes on the regime map, the
+   regimes need their own structures. Add `target_by_bucket`, keyed by each
+   target's capacity (e.g. `"64"`, `"8192"`), with one complete `target` per
+   bucket derived from that bucket's measured regime, and keep `target` for a
+   direction that names no bucket. A Skill's structure applies only to the
+   buckets its evidence covers; do not impose it on a bucket in another regime.
 7. When `EXPERT_SKILL_PLANNER_EXTENSION` is the canonical Skill file, read its
    embedded YAML and require `schema_version=expert-skill-planner-extension-v1`, matching
    `revision`, and `plan_version=mega-plan-v2`. Bind its `ir_bindings` into
@@ -308,7 +314,9 @@ Plan exactly one complete candidate direction:
    the plan's launch count is refused before authoring unless its `included_regions`,
    `included_queues` and `capabilities` contain every id in `MEGA_PLAN_IR.target.required_regions`,
    `required_queues` and `required_capabilities`, spelled exactly; copy those ids verbatim every
-   round (add your own after them), including when you continue a lane.
+   round (add your own after them), including when you continue a lane. When
+   `MEGA_PLAN_IR.target_by_bucket` exists, set the direction's `bucket` to the capacity it
+   changes and satisfy that bucket's target instead.
 5. Keep any verified above-baseline candidate as fallback. While budget remains,
    continue toward the configured Skill target; budget exhaustion is a normal
    stop.
