@@ -242,3 +242,17 @@ three of them, so a single design rarely wins everywhere.
    or the baseline as a declared fallback), the dispatch rule between them, and the lever family you
    chose for the target's bucket and why. A plan that changes only the largest guard's path must say
    what keeps the small guards at or above their floors.
+9. **Targets in different regimes: one regime per run, then integrate.**
+   - Do not build one shared structure for buckets in different regimes to reuse code. The
+     structure that wins in one regime carries its fixed costs into the other. measured: a run that
+     did this reached its large-bucket goal early, but held its small bucket within about 1% of the
+     baseline for thirteen rounds and after fifteen was still below what a run targeting that
+     bucket alone had reached with a different launch structure.
+   - Prefer one run per regime: that regime's buckets are the targets, every other guard is a
+     regression guard at its floor (an honest fallback is allowed). The plan, the round budget and
+     the attribution then belong to one regime.
+   - Finish with an integration step: put each regime's path behind the dispatch rule (§5.4) in
+     one operator and verify every target, every floor and the switch test (§5.5) together. Shared
+     code is where the regimes conflict; re-measure every bucket after any change to it.
+   - When one run must cover several regimes, give each its own structure: the plan carries a
+     target per bucket, and each direction names the bucket it changes.
