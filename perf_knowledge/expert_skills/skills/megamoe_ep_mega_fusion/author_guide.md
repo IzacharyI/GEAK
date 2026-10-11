@@ -197,7 +197,8 @@ Done: no Stage2/Combine tail launch remains.
 
 - Clear claim heads, increment generation, pre-arm omitted tokens, keep arrivals
   monotone.
-- Verify active `path=MEGA` ×8 and two launches before using numerical evidence.
+- Verify active `path=MEGA` ×8 and the bucket profile's launch count (two for large tokens, one in
+  the small-token profile) before using numerical evidence.
 - Then run 128→512→8192 accuracy, route-changing replay, and finally paired
   performance on the target guard (8192-uniform unless the workflow names another).
 
@@ -227,7 +228,7 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 
 1. Host construction must create every Stage2/Combine buffer and pointer table.
 2. FlyDSL trace/JIT must complete for the selected profile.
-3. All ranks must report `path=MEGA`; profiler must observe two launches.
+3. All ranks must report `path=MEGA`; profiler must observe the bucket profile's launch count.
 4. Pass relL2 <0.10 at 128, 512, and 8192.
 5. Pass changing-route and smaller→larger graph replays without stale reads/hang,
    including the `moving-hot-rank` route: the first replay after a route change
@@ -235,7 +236,7 @@ and persists across Workflow waves; never substitute a per-workspace cache.
 6. Tune only after correctness; accept only a frozen-relative 8192-uniform
    speedup >=1.03x (frozen `BASELINE_PER_CASE` latency / candidate latency), or
    the workflow's own target guard and minimum when it names one (always >1.0x;
-   an `_mtpr<M>` target must run `path=MEGA` with two launches). A
+   an `_mtpr<M>` target must run `path=MEGA` with at most two launches). A
    same-tree switch-off arm is a diagnostic and must stay within noise of the
    frozen latency.
 
@@ -288,6 +289,31 @@ that way and kept the output bit-identical.
   A scales before the barrier and before the next A DMA: about +3%.
 - These GEMM1 edits live in shared code, so they also speed the unfused path. Credit them with the
   same tree's switch-off control, not as fusion gains.
+
+## Small-token build notes (MTPR 64)
+
+The structure and its measured lineage are in `skill.md`, "Small-token profile". These are the
+invariants that broke on the way; each cost at least one round.
+
+- Select the path from `max_tok_per_rank` passed as a keyword; a positional capacity silently ran
+  the fallback.
+- Key every cross-rank counter on units that are the same on every rank and every call. Stage2 BN
+  is chosen per rank (128 below 48 tokens), so per-(token, n-block) cells disagreed between ranks:
+  the ragged switch test read relL2 0.394, then every later call hit the spin bound. 256-column
+  units with a bump weight of `BN/128` fixed it.
+- A role that runs before the epoch gate may read only what was published under the epoch it waits
+  on. Publishing parity at the gate while pre-gate producers had already read it hung.
+- No per-claim agent release fence on the GEMM1 path: it lowers to a full L2 writeback and added
+  73 us, which alone made the first single launch 0.856x. Use write-through stores (cache 17/19)
+  and `s_waitcnt 0` instead.
+- Broadcast one work id through LDS and derive `has_work` from it on every lane. A separate LDS
+  flag raced with the id and made repeated runs non-bit-exact.
+- Keep `waves_per_eu=3` on the merged kernel: lower values break co-residency and the spins time
+  out; a persistent Stage2 at 4 blocks per CU hung for the same reason.
+- A Combine wait that hits its bound must still advance its shadow by the full step, or one timeout
+  poisons every later call.
+- Spin diagnostics: a value created under a compile-time branch is not loop-carried; a "timeout"
+  read from it was a false positive.
 
 ## Failure handling
 
@@ -344,7 +370,10 @@ that way and kept the output bit-identical.
   stays one flat stripe and its completion is still published once per stripe, in the same
   outer-loop iteration, right after the per-unit body returns. Move the GEMM body and its
   accumulators into a `@flyc.jit` per-unit helper so they die before the publish, keep
-  descriptors inside the unit frame, and keep the continuation as carried scalars. Never
+  descriptors inside the unit frame, and keep the continuation as carried scalars. If the
+  publish right after the body still faults (seen in the small-token single launch), publish
+  at the head of the next claim instead: keep the previous work id in an LDS word, then
+  `s_waitcnt 0`, barrier, agent atomic. That is still once per stripe. Never
   "fix" a frame fault by claiming a whole m-tile or publishing once after a multi-stripe
   loop: that removes the G1/G2 overlap the fusion exists for, and every later round then
   optimizes a structure that cannot reach the target.

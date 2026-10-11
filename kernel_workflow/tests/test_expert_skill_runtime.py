@@ -559,6 +559,8 @@ class _FakeRank:
         self.stale_first_call = stale_first_call
         # Operators built with max_tok_per_rank <= fallback_max run unfused.
         self.fallback_max = fallback_max
+        # Fused operators built with these capacities emit one kernel instead of two.
+        self.single_launch_caps = set()
         self.last_route = None
         self.fused_ms = fused_ms
         self.unfused_ms = unfused_ms
@@ -706,7 +708,8 @@ class _FakeRank:
                 fake.clock += fake.fused_ms if fused else fake.unfused_ms
                 if fake.profiler is not None:
                     fake.profiler.names.extend(
-                        ["quant", "mega"] if fused
+                        (["mega"] if self.capacity in fake.single_launch_caps
+                         else ["quant", "mega"]) if fused
                         else ["quant", "dispatch", "gemm1", "gemm2", "combine"]
                     )
                 route = (route_weights.tag, ids.tag)
@@ -910,6 +913,42 @@ def test_megamoe_runtime_main_fails_absolute_gate_despite_same_tree_win(
     assert data["incremental_switch_speedup"] == pytest.approx(11.0 / 4.0)
     assert data["absolute_speedup"] == pytest.approx(3.9 / 4.0)
     assert data["error"].startswith("AssertionError: absolute speedup")
+
+
+def test_megamoe_runtime_mtpr_target_may_fuse_to_one_launch(tmp_path, monkeypatch):
+    fake, output, main = _fake_megamoe_main(
+        tmp_path,
+        monkeypatch,
+        extra=(
+            "--target-guard", "64_uniform_mtpr64",
+            "--min-speedup", "1.0",
+            "--mtpr-fallback-max", "1024",
+            "--frozen-baseline-ms", "4.70",
+            "--resource-evidence", str(_resource_evidence(tmp_path)),
+        ),
+    )
+    fake.single_launch_caps = {64}
+    assert main() == 0
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is True
+    assert data["launch_count"] == 2
+    assert data["target_launch_count"] == 1
+
+
+def test_megamoe_runtime_shared_operator_still_needs_exactly_two_launches(
+    tmp_path, monkeypatch
+):
+    fake, output, main = _fake_megamoe_main(
+        tmp_path,
+        monkeypatch,
+        extra=(
+            "--frozen-baseline-ms", "4.70",
+            "--resource-evidence", str(_resource_evidence(tmp_path)),
+        ),
+    )
+    fake.single_launch_caps = set(range(1, 1 << 16))
+    with pytest.raises(AssertionError, match="must emit 2 kernels per rank"):
+        main()
 
 
 def test_megamoe_runtime_main_times_an_mtpr_target_on_its_own_operator(

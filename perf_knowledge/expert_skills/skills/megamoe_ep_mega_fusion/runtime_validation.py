@@ -236,7 +236,7 @@ def _time_rank_max(torch, dist, helper, graph, device, iters):
     )
 
 
-def _profile_launch_count(torch, dist, helper, body, device):
+def _profile_launch_count(torch, dist, helper, body, device, ceiling=False):
     from torch.profiler import ProfilerActivity, profile
 
     helper._barrier()
@@ -257,12 +257,15 @@ def _profile_launch_count(torch, dist, helper, body, device):
     hi = lo.clone()
     dist.all_reduce(lo, op=dist.ReduceOp.MIN)
     dist.all_reduce(hi, op=dist.ReduceOp.MAX)
-    if int(lo.item()) != 2 or int(hi.item()) != 2:
+    # The shared large-token operator follows the two-launch recipe exactly. A target built at its
+    # own capacity may fuse further (one launch); two is then a ceiling, the same on every rank.
+    allowed = (1, 2) if ceiling else (2,)
+    if int(lo.item()) != int(hi.item()) or int(lo.item()) not in allowed:
         raise AssertionError(
-            f"BF16 path must emit exactly two kernels per rank, got "
+            f"BF16 path must emit {' or '.join(map(str, allowed))} kernels per rank, got "
             f"{int(lo.item())}..{int(hi.item())}"
         )
-    return 2
+    return int(lo.item())
 
 
 def _resource_checks(path):
@@ -528,7 +531,7 @@ def main():
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("--min-speedup", type=float, default=1.03)
     # The guard timed against --frozen-baseline-ms; an _mtpr<M> target must run
-    # path=MEGA with two launches even when M <= --mtpr-fallback-max.
+    # path=MEGA with at most two launches even when M <= --mtpr-fallback-max.
     parser.add_argument("--target-guard", default="8192_uniform")
     parser.add_argument("--frozen-baseline-ms", type=float, default=None)
     parser.add_argument("--denominator-tolerance", type=float, default=0.05)
@@ -892,7 +895,7 @@ def main():
         if target_mtpr is not None:
             # The target owns its operator, which must be fused like the shared one.
             result["target_launch_count"] = _profile_launch_count(
-                torch, dist, helper, target_body, device
+                torch, dist, helper, target_body, device, ceiling=True
             )
         result["resources"] = _resource_checks(args.resource_evidence)
 

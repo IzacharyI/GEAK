@@ -112,7 +112,12 @@ module names are neither requirements nor evidence of the Pattern.
 
 ## Mechanism
 
-The canonical BF16 path has exactly two launches per rank:
+This structure is validated at large token counts (the 8192 profile); its
+performance at small token counts is not. A small-token bucket in a different
+regime uses its own structure (Small-token profile); never carry this one into
+it for code reuse.
+
+The canonical large-token BF16 path has exactly two launches per rank:
 
 1. the existing BF16-to-MXFP8 `per_1x32` quantizer;
 2. one persistent grid containing dispatch, GEMM1, GEMM2, weighted P2P
@@ -574,6 +579,93 @@ requires `topk <= 2^8`; the Stage2 payload resource must remain below `2^31`
 bytes. Disabled diagnostic roles may use zero placeholders only when
 compile-time eliminated.
 
+## Small-token profile (measured at MTPR 64)
+
+At 64 tokens per rank the operator is bound by streaming every expert's W1 and
+W2 once (about 8 rows per expert, tile efficiency 0.25 at 32-row tiles). The
+frozen four-launch path spends 0.3501 ms rank-max: Stage1 233.2, Stage2 99.5,
+Combine 23.9 (including its barrier wait) and quant 5.0 us. The bytes are fixed,
+so only the time around the stream is addressable: launches, the pre-GEMM1
+chain, the reducer barrier chain. The large-token structure does not win here:
+a quant launch plus a persistent grid measured 0.999x at best on this guard,
+and the large-token fused kernel at 128 tokens measured 0.885x.
+
+The measured structure is ONE launch per rank (frozen: four), selected when the
+operator is constructed with `max_tok_per_rank == 64`, passed as a keyword (a
+positional capacity silently selected the fallback). Every other capacity keeps
+the frozen modules byte-identical and prints `path=FALLBACK`. Roles, in order:
+
+1. Owner (ticket 0): cross-rank launch handshake. Before the handshake it
+   publishes parity and expected values together with a per-slot params-ready
+   epoch, then resets the per-launch counter lines (m-tile done, G2 head,
+   epoch, Combine ticket). It finalizes the plan with write-through stores
+   (cache 17), `s_waitcnt 0`, then a relaxed system `plan_ready`; no L2
+   writeback. Metadata only GEMM2 needs is written after `plan_ready`.
+2. Fixed-slot producers (224 CTAs) run before the gate: they preload routes,
+   issue both routes' remote slot atomics together, quantize their own rows
+   inline from BF16 (1x32 MXFP8, coalesced lane pairs, 16 B per lane, xor
+   shuffle amax) and store FP8 rows and E8M0 scales straight into the remote
+   slot with cache 17. Anything a pre-gate role reads must be published under
+   the epoch it waits on.
+3. GEMM1 claim loop: 48 m-tiles x 48 n-tiles, sharded heads, one work id
+   broadcast through LDS from which every lane derives `has_work`. Outputs use
+   cache 17. The m-tile completion bump is issued at the head of the next claim
+   (previous work id kept in LDS, then `s_waitcnt 0`, barrier, agent atomic, no
+   fence).
+4. GEMM2 queue, entered when the GEMM1 head is exhausted: 1344 m-major items,
+   each gated on its m-tile's GEMM1 completion (bounded spin, agent acquire).
+   P2P rows use cache 19, then `s_waitcnt 0` and a barrier, then one relaxed
+   system add of `BN/128` per row on the destination's per-(token, 256-column
+   unit) counter. Counter cells are keyed on these BN-invariant units because
+   Stage2 BN is chosen per rank.
+5. Combine queue: items are (token, CG=7 units), so 28 units per token make 4
+   items. An item waits until its counters reach `shadow + 2*topk`, sums top-k
+   in FP32 in the frozen k order and stores BF16. Counters are monotone and
+   never reset; a timed-out wait still advances the shadow by the full step.
+
+Constants: the frozen fixed-slot bucket-64 GEMM1 configuration (SBM 32, tile_n
+128, tile_k 256, 4 waves, grid multiplier 3, 224 dispatch CTAs, B non-temporal
+3, 8 work shards); 768 workgroups of 256 threads, 3 per CU with
+`waves_per_eu=3` (below 3 the spins time out); Stage2 BM32/BN256/BK256 with
+non-temporal loads and BF16 P2P. Measured resources: 168 VGPR, 4 spills (20 B),
+LDS 40304 B.
+
+Measured progression against the frozen baseline (rank-max, paired):
+
+```text
+two launches (dispatch+quant+GEMM1 | GEMM2+Combine), persistent G2     0.922x
+non-persistent launch B, sharded done counter, highest-id reducers     1.028x
+write-through quant stores, no per-block L2 writeback                  1.054x
+route preload, batched slot atomics, single release                    1.042x
+pre-gate producers + params-ready epoch                                1.054x
+write-through plan finalize, relaxed plan_ready/count_done             1.066x
+quantization inline in the producers (no pre-phase)                    1.087x
+single launch, write-through m-tile publish                            1.105x
+per-token arrival Combine on BN-invariant units, no per-item release   1.125x
+Combine column group CG 4 -> 7                                         1.1315x
+```
+
+Rows come from different leases (drift up to ~2.7%), so read the same-lease
+increments: route preload/batched atomics +1.8%, pre-gate producers +3.9%,
+write-through finalize +1.7%, inline quantization +2.1%, single launch +0.8%,
+arrival Combine +2.1%, CG 7 +0.56%.
+
+The single launch first measured 0.856x: a per-claim agent release fence (a
+full L2 writeback) added 73 us to GEMM1. Per-token arrival readiness wins here
+(+2.1%), the reverse of the large-token finding. In the final kernel GEMM1
+streams W1 at 6.12 TB/s (98.5% of its 6.22 TB/s asymptote); GEMM2 starts inside
+the GEMM1 tail; the merged kernel takes 304 us against 339 us for the four
+frozen kernels, and the rest of the 41 us gain is removed launch gaps.
+
+Measured losses at this profile: W1 warm, prefetch or MALL re-read during the
+plan wait (the latency-bound pre-chain slows by more than GEMM1 gains);
+dispatch dedup (ceiling +0.38%); a depth-2 W1 register pipe (-7.0%); GEMM1
+tile_n 256 (-11%); direct-to-LDS A gather (-2.8%); GEMM2 BN128 (-2.4%); a GEMM2
+tail split (-1.2%); source-owned slots (-3.7%); cross-shard GEMM1 stealing
+(-4.0%, and early versions hung on replay); GEMM2 claimers starting before
+their GEMM1 m-tiles were ready on a skewed route (they spun up to 159 us per
+workgroup while GEMM1 still ran).
+
 ## Scheduling blueprint
 
 Launch tickets are monotone per grid-multiplier slot. The owner toggles the
@@ -908,8 +1000,10 @@ Run one normal `mode=mega` lane:
 1. Analyze the supplied baseline's semantic fingerprint and discover current
    bindings for every stage and state edge. Report mismatches and derived
    replacements to Planner; the workflow owns applicability selection.
-2. Lower the one topology and the exact configuration/state-machine rules
-   above. Do not create alternative schedules or tuning branches.
+2. Lower the topology of the target's bucket and its exact configuration and
+   state-machine rules: the two-launch recipe above for large-token buckets,
+   the Small-token profile for buckets in that regime. Do not create
+   alternative schedules or tuning branches within a bucket.
 3. Intermediate WIP commits are permitted and required in the same lane. Each
    authoring turn closes a coherent subset of required failures, commits that
    checkpoint, and continues the same candidate/head lineage. For that
@@ -926,8 +1020,9 @@ Run one normal `mode=mega` lane:
 5. In the later hardware phase, compile the exact artifacts, inspect resources,
    validate bs=128, then 512 and 8192, and use the same operator instance for a
    smaller-to-larger graph-generation check with route mutation.
-6. Complete the same chain with eight path markers, exactly two BF16-path
-   launches, direct numerical parity, liveness, the four established route
+6. Complete the same chain with eight path markers, the bucket profile's
+   launch count (two for large tokens, one in the small-token profile), direct
+   numerical parity, liveness, the four established route
    guards, and paired rank-max performance on the target guard.
 7. Return any concrete failure to this one candidate. Do not replace the
    canonical target with diagnostics, partial fusion, or open-ended search.
@@ -953,7 +1048,8 @@ Run one normal `mode=mega` lane:
 The Skill succeeds only when its independently authored candidate has:
 
 - `path=MEGA` from all eight ranks;
-- exactly two launches on the BF16 path;
+- exactly two launches on the large-token BF16 path, and at most two (one in the
+  measured small-token profile) for a target operator built at its own capacity;
 - no JIT or device fault;
 - `relL2 < 0.10` at 128, 512 and 8192 tokens;
 - same-instance graph replay with route mutation and a smaller-to-larger token
@@ -987,8 +1083,9 @@ marker, the frozen latency or the resource evidence is missing. The gate never
 passes at or below 1.0x, whatever `--min-speedup` is. A `<T>_uniform` target is
 timed on the shared operator; a `<T>_uniform_mtpr<M>` target (M = next_pow2(T))
 is timed on its own operator built with max_tok_per_rank=M, which must print
-the path marker on every rank and emit exactly two launches even when M is at
-or below `--mtpr-fallback-max`. The switch-off control uses the target's
+the path marker on every rank and emit at most two launches (the same count on
+every rank) even when M is at or below `--mtpr-fallback-max`; the shared
+operator still emits exactly two. The switch-off control uses the target's
 operator capacity.
 
 ## Sources

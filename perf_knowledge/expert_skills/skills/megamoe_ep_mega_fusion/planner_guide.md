@@ -67,7 +67,8 @@ one concrete on-card blocker that the later stage is necessary to expose.
 
 1. Host construction and argument allocation.
 2. FlyDSL trace/JIT construction.
-3. `path=MEGA` on all ranks and exactly two launches.
+3. `path=MEGA` on all ranks and the bucket profile's launch count (two for large tokens, one in
+   the small-token profile).
 4. relL2 correctness at 128, 512, then 8192.
 5. Same-instance graph replay and distributed liveness.
 6. Paired rank-max performance on the target guard (8192-uniform unless the
@@ -77,6 +78,11 @@ When Verify returns a traceback or hang classification, route only that concrete
 failure to Author. Preserve all already-passing source and runtime evidence.
 
 ## Fixed target
+
+The target below is the large-token profile. A small-token bucket (measured at MTPR 64) has its
+own profile in `skill.md` ("Small-token profile": one launch, quantization inline in the
+dispatch producers) and its own lever order; plan it separately and never carry the large-token
+structure into it. When the guards span both regimes, give each bucket its own target in the plan.
 
 - Launch 1: existing BF16→MXFP8 per-1x32 quantization.
 - Launch 2: one persistent grid containing dispatch, GEMM1, GEMM2, weighted
