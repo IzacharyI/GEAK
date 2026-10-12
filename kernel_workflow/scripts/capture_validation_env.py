@@ -24,6 +24,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_flydsl_compat import pin_task_stack  # noqa: E402  (sibling script, path-run)
+
 NOT_CAPTURED = "not_captured"
 
 
@@ -121,6 +124,13 @@ def decision_registry(perf_knowledge_dir):
 
 
 def build_manifest(metadata, workspace, workflow_dir, gpu_ids):
+    # Probe the stack the BENCHMARK pins, not the box's ambient one. The oracle pins its roots
+    # internally (geak_pythonpath.txt next to it), so a capture run from a plain shell records a
+    # different stack than the one that produced the numbers in the same file. Measured: a GLM-5.2
+    # MXFP4 MoE run whose oracle pins pyoverlay flydsl 0.3.4.1 + aiter_main@4faf8713 was recorded as
+    # flydsl 0.1.5.dev504 + aiter@a6bb4993 -- the ambient /opt/venv and /sgl-workspace/aiter. A
+    # provenance block naming the wrong commit is worse than `not_captured`: it reads as verified.
+    stack_pinned = pin_task_stack([workspace])
     flydsl = package_probe("flydsl")
     aiter = package_probe("aiter")
     aiter_git = package_git(aiter)
@@ -168,6 +178,7 @@ def build_manifest(metadata, workspace, workflow_dir, gpu_ids):
             "unresolved_refs": [ref for ref in cited_ids if ref not in registry],
         },
         "software_detail": {
+            "stack_pinned": stack_pinned or NOT_CAPTURED,
             "flydsl_module": flydsl["module_path"],
             "aiter_version": aiter["version"],
             "aiter_module": aiter["module_path"],

@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -120,6 +121,37 @@ def test_decision_registry_resolves_curated_and_config_ids(tmp_path):
         "flydsl-half-mfma-call-forms", "flydsl-wave-reduction",
         "cfg_0123456789abcdef", "cfg_fedcba9876543210",
     }
+
+
+def test_probe_resolves_against_the_workspace_pinned_stack(tmp_path, monkeypatch):
+    """The manifest must describe the stack the benchmark pinned, not the ambient one.
+
+    Regression: a run whose oracle pinned flydsl 0.3.4.1 + aiter_main was recorded as the box's
+    ambient flydsl 0.1.5.dev504 + an older aiter, because the probe read the capture process's own
+    sys.path. A provenance block naming the wrong commit reads as verified, so this is load-bearing.
+    """
+    pinned = tmp_path / "pyoverlay"
+    (pinned / "pinnedpkg").mkdir(parents=True)
+    (pinned / "pinnedpkg" / "__init__.py").write_text("")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "geak_pythonpath.txt").write_text(f"# task stack\n{pinned}\n")
+
+    monkeypatch.setattr(sys, "path", list(sys.path))  # restored when the test ends
+    seen = {}
+    monkeypatch.setattr(
+        ENV, "package_probe",
+        lambda name: seen.setdefault(
+            name,
+            {"version": "0", "module_path": str(
+                (importlib.util.find_spec("pinnedpkg") or SPEC).origin,
+            )},
+        ),
+    )
+    manifest = ENV.build_manifest({}, str(workspace), str(tmp_path), "0")
+
+    assert manifest["software_detail"]["stack_pinned"] == [str(pinned)]
+    assert manifest["software_detail"]["flydsl_module"].startswith(str(pinned))
 
 
 if __name__ == "__main__":

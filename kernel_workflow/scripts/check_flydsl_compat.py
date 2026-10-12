@@ -37,6 +37,44 @@ def is_flydsl_module(name):
     return "flydsl" in name.split(".")
 
 
+def guarded_imports(tree):
+    """Import nodes the source itself declares optional, i.e. wrapped in `try/except ImportError`.
+
+    Such an import is NOT a compatibility claim -- the author already wrote what happens when the
+    module is absent, and the except branch is reached, not an exception. Reporting it as a missing
+    API fails a kernel for a module it never required. Measured: a fused-MoE seam guarding
+    `from aiter.ops.flydsl.utils import is_flydsl_available` with a `def is_flydsl_available():
+    return False` fallback was failed by this gate on a stack where that module does not exist,
+    while the kernel imported, compiled and ran.
+
+    A handler counts as a guard when it catches ImportError (or its subclass ModuleNotFoundError),
+    Exception, BaseException, or is bare -- the same set that actually swallows a failed import.
+    """
+    guard_names = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+
+    def catches_import_error(handler):
+        if handler.type is None:
+            return True
+        exceptions = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        for exception in exceptions:
+            # `except ImportError` and `except builtins.ImportError` both reach here.
+            name = exception.attr if isinstance(exception, ast.Attribute) else getattr(
+                exception, "id", None)
+            if name in guard_names:
+                return True
+        return False
+
+    guarded = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try) or not any(map(catches_import_error, node.handlers)):
+            continue
+        for statement in node.body:
+            for child in ast.walk(statement):
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    guarded.add(id(child))
+    return guarded
+
+
 def collect_references(paths):
     imports = []
     attributes = []
@@ -48,7 +86,12 @@ def collect_references(paths):
             parse_errors.append({"file": str(path), "error": str(exc)})
             continue
         aliases = {}
+        # A guarded import binds nothing we can check: the name may come from the except branch's
+        # fallback, so its attributes are skipped along with the import itself.
+        optional = guarded_imports(tree)
         for node in ast.walk(tree):
+            if id(node) in optional:
+                continue
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if is_flydsl_module(alias.name):
@@ -90,6 +133,59 @@ def collect_references(paths):
                     "name": ".".join(path_parts), "path": path_parts,
                 })
     return imports, attributes, parse_errors
+
+
+# Both spellings are accepted, nearest-first within a directory. The visible one is listed first
+# because a workspace is usually populated with `cp -r task/* workspace/`, which silently drops
+# dotfiles -- and a stack declaration that does not survive the copy is worse than none, since the
+# gate then answers on the ambient stack without saying so.
+STACK_FILES = ("geak_pythonpath.txt", ".geak_pythonpath")
+
+
+def pin_task_stack(paths):
+    """Resolve imports against the stack the TASK pins, not the box's ambient one.
+
+    A task dir may declare the exact aiter/FlyDSL tree its kernel was written against by dropping a
+    `.geak_pythonpath` next to its oracle: one absolute directory per line, `#` comments allowed,
+    highest priority first. Every such directory is prepended to `sys.path` here, before any
+    resolution happens.
+
+    Without this the gate silently answers a different question than the benchmark does. Measured:
+    a GLM-5.2 MXFP4 fused-MoE task whose oracle pins aiter_main + flydsl 0.3.4.1 was failed by this
+    gate as `missing_api` (no `buffer_ops`, no `mxfp4_kname`, ...) purely because the box's ambient
+    PYTHONPATH pointed at an older aiter that predates those modules. The kernel imported and ran
+    fine. A gate that rejects a working kernel on the wrong stack is worse than no gate: it spends
+    the whole budget on nothing and reports a false incompatibility.
+
+    Returns the directories actually pinned, so the caller can report what it resolved against.
+    """
+    roots, pinned = [], []
+    for raw in paths or [Path.cwd()]:
+        path = Path(raw).resolve()
+        roots.extend([path] if path.is_dir() else [path.parent])
+    for root in roots:
+        found = False
+        for directory in [root, *root.parents]:
+            for name in STACK_FILES:
+                stack = directory / name
+                if not stack.is_file():
+                    continue
+                try:
+                    lines = stack.read_text(encoding="utf-8").splitlines()
+                except OSError:
+                    continue
+                for line in lines:
+                    entry = line.split("#", 1)[0].strip()
+                    if entry and Path(entry).is_dir() and entry not in pinned:
+                        pinned.append(entry)
+                found = True
+            if found:
+                break  # nearest declaration wins; do not merge stacks up the tree
+    for entry in reversed(pinned):
+        while entry in sys.path:
+            sys.path.remove(entry)
+        sys.path.insert(0, entry)
+    return pinned
 
 
 @contextlib.contextmanager
@@ -243,7 +339,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not args.package_only and not args.paths:
         parser.error("paths are required unless --package-only is set")
+    pinned = pin_task_stack(args.paths)
     result = check_package_only() if args.package_only else check(args.paths)
+    result["stack_pinned"] = pinned
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:

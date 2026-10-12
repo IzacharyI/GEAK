@@ -204,3 +204,80 @@ def test_package_only_reports_availability_without_source(tmp_path, monkeypatch,
     output = capsys.readouterr().out
     assert '"compatible": true' in output
     assert '"reason": "package_available"' in output
+
+
+def test_a_guarded_optional_import_is_not_a_compatibility_claim(tmp_path):
+    source = tmp_path / "kernel.py"
+    source.write_text(
+        "try:\n"
+        "    from flydsl.maybe import helper\n"
+        "except ImportError:\n"
+        "    def helper():\n"
+        "        return None\n"
+        "from flydsl.expr import arith\n"
+        "z = helper()\n"
+    )
+    imports, _attributes, errors = COMPAT.collect_references([source])
+    assert errors == []
+    # Only the unguarded import is a requirement; the guarded one has a working fallback.
+    assert {(row["module"], row["name"]) for row in imports} == {("flydsl.expr", "arith")}
+
+
+def test_guard_forms_that_do_not_swallow_an_import_error_still_count(tmp_path):
+    source = tmp_path / "kernel.py"
+    source.write_text(
+        "try:\n"
+        "    from flydsl.a import one\n"
+        "except ValueError:\n"
+        "    one = None\n"
+        "try:\n"
+        "    from flydsl.b import two\n"
+        "except (OSError, ModuleNotFoundError):\n"
+        "    two = None\n"
+        "try:\n"
+        "    from flydsl.c import three\n"
+        "except:\n"
+        "    three = None\n"
+    )
+    imports, _attributes, _errors = COMPAT.collect_references([source])
+    # `except ValueError` does not catch a failed import, so flydsl.a remains a requirement;
+    # ModuleNotFoundError in a tuple and a bare except both do.
+    assert {(row["module"], row["name"]) for row in imports} == {("flydsl.a", "one")}
+
+
+def test_task_declared_stack_is_pinned_ahead_of_the_ambient_path(tmp_path):
+    task = tmp_path / "task"
+    (task / "kernel_src").mkdir(parents=True)
+    stack = tmp_path / "pinned_stack"
+    stack.mkdir()
+    (task / "geak_pythonpath.txt").write_text(
+        f"# the tree this kernel was written against\n{stack}\n{tmp_path / 'absent'}\n"
+    )
+    source = task / "kernel_src" / "kernel.py"
+    source.write_text("from flydsl.expr import arith\n")
+    old = list(sys.path)
+    try:
+        pinned = COMPAT.pin_task_stack([source])
+        # Declared from a parent of the scanned file, and a directory that does not exist is dropped
+        # rather than pinned -- a stale line must not shadow a real one.
+        assert pinned == [str(stack)]
+        assert sys.path[0] == str(stack)
+    finally:
+        sys.path[:] = old
+
+
+def test_the_nearest_stack_declaration_wins_and_stacks_are_not_merged(tmp_path):
+    outer, inner = tmp_path / "outer", tmp_path / "outer" / "inner"
+    inner.mkdir(parents=True)
+    far, near = tmp_path / "far", tmp_path / "near"
+    far.mkdir()
+    near.mkdir()
+    (outer / "geak_pythonpath.txt").write_text(f"{far}\n")
+    (inner / ".geak_pythonpath").write_text(f"{near}\n")
+    source = inner / "kernel.py"
+    source.write_text("from flydsl.expr import arith\n")
+    old = list(sys.path)
+    try:
+        assert COMPAT.pin_task_stack([source]) == [str(near)]
+    finally:
+        sys.path[:] = old
