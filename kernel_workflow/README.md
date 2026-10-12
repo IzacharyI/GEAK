@@ -29,7 +29,25 @@ by an agent returning **structured JSON**.
    baseline and can flag / request a corrective round.
 8. **FlyDSL compatibility gate** — author and existing-FlyDSL optimize lanes statically resolve the
    candidate's imports/API attributes against the installed FlyDSL before funding optimization;
-   compilation/correctness remains the final semantic gate.
+   compilation/correctness remains the final semantic gate. Two things keep the gate honest:
+   an import the source itself wraps in `try/except ImportError` is **not** treated as a
+   requirement (the author already wrote the fallback), and a task may **pin the stack it was
+   written against** — see below.
+
+### Pinning a task's aiter/FlyDSL stack
+A task dir may declare the exact trees its kernel resolves against, in a `geak_pythonpath.txt`
+(or `.geak_pythonpath`) beside its oracle: one absolute directory per line, `#` comments allowed,
+highest priority first. The compatibility gate prepends them to `sys.path` and reports what it
+pinned in `stack_pinned`; the nearest declaration to the scanned file wins and stacks are not
+merged up the tree. Prefer the **visible** filename: a workspace populated with `cp -r task/* ws/`
+silently drops dotfiles, and a stack declaration that does not survive the copy is worse than none
+because the gate then answers on the ambient stack without saying so.
+
+Use this whenever the box's ambient `PYTHONPATH` is not the stack the kernel targets. Without it
+the gate answers a different question than the benchmark does — a kernel that imports, compiles
+and runs is failed as `missing_api` against a library version it never claimed, burning the whole
+budget on a false incompatibility. The task's `unittest.py` should pin the same roots internally so
+the oracle is correct whatever the caller's shell says.
 
 ## Roles → workflow mapping
 - **Director** = the script's orchestration + a setup agent + a final validation/arbitration agent.

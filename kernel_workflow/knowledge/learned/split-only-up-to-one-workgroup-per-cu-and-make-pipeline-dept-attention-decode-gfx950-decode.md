@@ -1,14 +1,14 @@
 ---
 key: bf16 paged MLA-style split-KV decode attention, Triton on gfx950/MI355X, where small batch underfills the CUs and large batch already saturates DRAM
 type: lever
-confidence: ★★
+confidence: ★
 effect: 1.63x isolated geomean, director-verified over two independent runs agreeing within 0.03%; per case batch=2 1.65x, batch=32 1.69x, batch=64 1.54x
 confirms_cited: 1
-confirms_blind: 0
-losses: 0
-attempts: 3
+confirms_blind: 1
+losses: 3
+attempts: 8
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-24
 name: split-only-up-to-one-workgroup-per-cu-and-make-pipeline-dept-attention-decode-gfx950-decode
 description: Cap the parallelism split at one workgroup per CU and make pipeline depth a function of launched WGs: 1.63x geomean on paged split-KV decode attention.
 keywords: ['paged-decode', 'attention-decode', 'split-kv', 'num-stages', 'waves-per-eu', 'launch-shape', 'occupancy', 'gfx950', 'triton']
@@ -36,3 +36,5 @@ origin_kernels: ['_fwd_grouped_kernel_stage1']
 Retiling the KV block or swapping in exp2 re-rounded the online softmax -> parity gate blew up golden-vs-golden (max_rel 46.9 for one retile, 2.1e-2 for exp2) -> only math-preserving knobs (warps, pipeline depth, waves_per_eu, split) clear this gate.
 - caution: Inherited backend guidance for this decode family claimed deeper pipelining hurts and single-warp launches win; here the opposite measured best and single-warp was the worst point at 0.660x - also verify pipeline depth and warp count on your own box before carrying that guidance over. Also verify the cap above one WG/CU: a two-dispatch paged-decode family on the same arch measured a flat 4-6 WG/CU plateau (2 waves/SIMD) and only collapsed past 8, so sweep the target rather than assuming the CU line is the peak.
 - source: run _fwd_grouped_kernel_stage1-own16h, 2026-08-08, director-validated geomean 1.6337
+
+- caution: cited 7 time(s) with 3 non-improving outcome(s) as of 2026-09-26 — also verify it engages on your shapes before spending a round on it.

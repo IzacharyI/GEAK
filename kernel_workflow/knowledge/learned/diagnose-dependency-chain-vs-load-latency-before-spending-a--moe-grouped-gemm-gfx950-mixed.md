@@ -6,9 +6,9 @@ effect: closed axis: ~1.00x cumulative across four pipeline/occupancy directions
 confirms_cited: 1
 confirms_blind: 0
 losses: 0
-attempts: 6
+attempts: 7
 toolchain: unknown
-last_seen: 2026-08-12
+last_seen: 2026-10-11
 name: diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed
 description: At occupancy 1 with a dequant->MFMA dependency chain, pipeline-depth and occupancy levers return ~1.00x or regress; a regressing double-buffer is the tell
 keywords: ['moe', 'grouped-gemm', 'fp4', 'software-prefetch', 'num-stages', 'occupancy', 'l2-residency', 'dep-chain', 'anti-pattern']

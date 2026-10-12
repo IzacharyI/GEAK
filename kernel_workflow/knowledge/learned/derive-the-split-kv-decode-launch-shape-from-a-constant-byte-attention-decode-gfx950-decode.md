@@ -5,10 +5,10 @@ confidence: ★★
 effect: 1.71x geomean isolated vs frozen baseline (director-verified, 10/10 parity), 1.59x time-weighted; per case 1.96x at head_size 64, 1.95x at head_size 128, 2.09x on the fp8-KV head_size 128 case, 1.50x at head_size 512, and 1.23x on the one case pinned at the measured HBM roof. Reproduced on a second, independent lane (window-alternating decode, 4/4 parity, all cases graph-captured): 1.84x geomean, per case 1.13x and 1.15x on the two sliding-window cases and 2.75x / 3.24x on the two full-attention cases
 confirms_cited: 0
 confirms_blind: 0
-losses: 0
-attempts: 1
+losses: 1
+attempts: 3
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-25
 name: derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode
 description: Constant-byte KV tile, exact-fill the decode grid, then re-sweep launch meta on top: 1.71x and 1.84x geomean on two split-KV decode-attention lanes.
 keywords: ['launch-shape', 'split-kv', 'tile-size', 'occupancy', 'cu-underfill', 'empty-workgroups', 'grid-occupancy', 'constexpr-promotion', 'waves-per-eu', 'num-stages', 'sliding-window', 'roofline', 'hardware-counters', 'attention-decode', 'paged-attention', 'decode', 'cache-modifier', 'triton', 'gfx950']

@@ -12,7 +12,7 @@ A learned card is one run's conclusion. This file is the part no single card can
 
 Read it as a **prior about where to look first**, never as a verdict. [`README.md`](../README.md) applies unchanged: this base proposes candidates, the box decides.
 
-Corpus: **158 active cards** across kernel=135 (135 with keywords), e2e=23 (0 with keywords) · **93 axes published** (>= 3 distinct kernels), 146 below threshold.
+Corpus: **160 active cards** across kernel=136 (136 with keywords), e2e=24 (0 with keywords) · **94 axes published** (>= 3 distinct kernels), 149 below threshold.
 
 ## Cross-operator axes
 
@@ -96,16 +96,16 @@ Concentrated (>= 80% of the axis's kernels in one class) and therefore knowledge
 | [`fused_moe_grouped_gemm`](../operators/fused_moe_grouped_gemm/) | `m-bucket` | 3 | 0 | 3 | 3 |
 | [`fused_moe_grouped_gemm`](../operators/fused_moe_grouped_gemm/) | `mfma-nonkdim` | 1 | 2 | 3 | 3 |
 
-Kernel classes with cards but no operator id, left unfiled rather than filed plausibly: `composable` (1 cards), `fused_norm_gemm` (3 cards), `memory_movement` (4 cards), `method` (19 cards), `other` (23 cards). `method` and `composable` have no operator by construction — they are about how to measure, and a method row filed under an operator would be read as being about that operator. `other` is the parser's fallback for a card with no `kernel_class` at all, which is every e2e card. Anything else here wants a line in `CLASS_TO_OPERATOR`.
+Kernel classes with cards but no operator id, left unfiled rather than filed plausibly: `composable` (1 cards), `fused_norm_gemm` (3 cards), `memory_movement` (4 cards), `method` (20 cards), `other` (24 cards). `method` and `composable` have no operator by construction — they are about how to measure, and a method row filed under an operator would be read as being about that operator. `other` is the parser's fallback for a card with no `kernel_class` at all, which is every e2e card. Anything else here wants a line in `CLASS_TO_OPERATOR`.
 
 ## By authoring language
 
 The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed by the card `language:` field, which is deliberately NOT backfilled onto older cards — a guessed language is worse than an absent one. Which write paths require it is not uniform; the breakdown below says which.
 
-**Empty, and not because nothing was measured:** 0 of 158 active cards carry a `language:` field. It fills from one side only, so which side matters:
+**Empty, and not because nothing was measured:** 0 of 160 active cards carry a `language:` field. It fills from one side only, so which side matters:
 
-- **kernel** (135 cards today): `language:` is required. `kb.py propose` refuses a new card without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced source rather than echoing the request.
-- **e2e** (23 cards today): `language:` is **not** required — these cards are hand-maintained markdown with no lint gate and no detection step on the write path, so they will keep arriving without one. A real gap, named here rather than averaged away.
+- **kernel** (136 cards today): `language:` is required. `kb.py propose` refuses a new card without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced source rather than echoing the request.
+- **e2e** (24 cards today): `language:` is **not** required — these cards are hand-maintained markdown with no lint gate and no detection step on the write path, so they will keep arriving without one. A real gap, named here rather than averaged away.
 
 So this lane will populate for `kernel` cards as they land, and will stay silent for `e2e` ones until that write path gains the same gate. Read a future entry here as evidence from `kernel` specifically — not as the whole corpus having been language-tagged.
 
@@ -113,14 +113,14 @@ So this lane will populate for `kernel` cards as they land, and will stay silent
 
 Axes whose verdict differs across `gfx` targets — the rows worth carrying into [`hardware/`](../hardware/). Needs one axis measured on two platforms.
 
-**Structurally empty on this corpus, not measured-and-equal:** the platform census is `gfx950`=135. A row here needs one axis measured on two gfx targets; with a single-platform corpus no comparison exists to report. Read this as *unmeasured*, not as *no difference*.
+**Structurally empty on this corpus, not measured-and-equal:** the platform census is `gfx950`=136. A row here needs one axis measured on two gfx targets; with a single-platform corpus no comparison exists to report. Read this as *unmeasured*, not as *no difference*.
 
 ## Below threshold
 
 Seen, but on fewer than 3 distinct kernels. Listed so the pipeline is visible: an axis absent from this file entirely has never been tried, which is a different thing from tried twice.
 
-- **2 kernel(s)**: `bottleneck-shift` · `config-sweep` · `counter-guided` · `cshuffle` · `dependency-chain` · `dispatch-bound` · `dtype-emulation` · `gated-lever` · `grid-fill` · `grid-gating` · `harness-artifact` · `host-dispatch` · `instruction-schedule` · `isa-census` · `measurement-floor` · `measurement-rig` · `memoization` · `mfma-tiling` · `oracle` · `packed-valu` · `pipeline-version` · `prefetch` · `skinny-m` · `small-effect` · `static-isa-screen` · `tile-shape` · `verification` · `w4a16` · `workgroup-mapping`
-- **1 kernel(s)**: `ab-harness` · `ab-protocol` · `accumulator` · `agpr` · `amortization` · `argmin-dispatch` · `assembly-inspection` · `async-copy` · `atomic-combine` · `backend-routing` · `bit-exact-gate` · `bit-reinterpret` · `bitcast` · `block-m` · `block-scaled` · `block-scaled-gemm` · `block-size-k` · `bucket-routing` · `cache-line` · `caching` · `co-residency` · `code-size` · `convert-layout` · `counter-falsification` · `cpu-locate-gpu-price` · `critical-path` · `cshuffle-epilogue` · `ctypes` · `dep-chain` · `dep-stall` · `dequant-hoist` · `dispatch-cache` · `dispatch-overhead` · `dispatch-shim` · `division` · `dot-scaled` · `double-buffer` · `dtype-bitcast` · `emulation-fallback` · `false-negative` · `flash-decode` · `fnuz` · `fp8-kv-cache` · `fp8-mfma` · `fusion-width` · `gemv` · `gqa-head-sharing` · `grid-collapse` · `grid-dedup` · `hbm-bound` · `host-overhead` · `host-shim` · `host-submit` · `host-tuning` · `hot-loop` · `ilp` · `int4-dequant` · `jit` · `jit-rebuild` · `k-loop` · `l2-reuse` · `l2-swizzle` · `launch-meta` · `launch-tuning` · `lds` · `lds-bank-conflict` · `lds-capacity` · `m-coarsening` · `measurement-noise` · `mfma-interlock` · `mfma-nonkdim16` · `moe-router` · `native-convert` · `numerics` · `packed-loads` · `paged-decode` · `parity-gate` · `per-bucket-tuning` · `percent-of-peak` · `persistent-grid` · `ping-pong` · `pipeline-variant` · `power-cap` · `preshuffle` · `profiling-method` · `quantization-contract` · `read-only-twin` · `reciprocal` · `reduction-order` · `register-math` · `register-spill` · `register-staging` · `scale-operand` · `search-strategy` · `serialisation` · `sign-consistency` · `split-entry` · `stale-binary` · `store-bandwidth` · `store-vectorization` · `sub-k-coarsening` · `sub-variance` · `super-tile` · `thermal-drift` · `threadfence` · `tile-selection` · `timing-drift` · `tiny-kernel` · `triton-pipeliner` · `varlen` · `vendor-library` · `weight-only-quant` · `weight-quantization` · `wg-geometry` · `wrapper-overhead` · `wrapper-relaunch` · `xcd-partitioning`
+- **2 kernel(s)**: `ab-protocol` · `bottleneck-shift` · `config-sweep` · `counter-guided` · `cshuffle` · `dependency-chain` · `dispatch-bound` · `dtype-emulation` · `gated-lever` · `grid-fill` · `grid-gating` · `harness-artifact` · `host-dispatch` · `instruction-schedule` · `isa-census` · `measurement-floor` · `measurement-rig` · `memoization` · `mfma-tiling` · `packed-valu` · `pipeline-version` · `prefetch` · `skinny-m` · `small-effect` · `static-isa-screen` · `tile-shape` · `verification` · `w4a16` · `workgroup-mapping`
+- **1 kernel(s)**: `ab-harness` · `accumulator` · `agpr` · `amortization` · `argmin-dispatch` · `assembly-inspection` · `async-copy` · `atomic-combine` · `backend-routing` · `bit-exact-gate` · `bit-reinterpret` · `bitcast` · `block-m` · `block-scaled` · `block-scaled-gemm` · `block-size-k` · `bucket-routing` · `cache-line` · `caching` · `co-residency` · `code-size` · `convert-layout` · `counter-falsification` · `cpu-locate-gpu-price` · `critical-path` · `cshuffle-epilogue` · `ctypes` · `custom-op` · `dep-chain` · `dep-stall` · `dequant-hoist` · `dispatch-cache` · `dispatch-overhead` · `dispatch-shim` · `division` · `dot-scaled` · `double-buffer` · `dtype-bitcast` · `emulation-fallback` · `false-negative` · `flash-decode` · `fnuz` · `fp8-kv-cache` · `fp8-mfma` · `fusion-width` · `gemv` · `gqa-head-sharing` · `grid-collapse` · `grid-dedup` · `harness` · `hbm-bound` · `host-overhead` · `host-shim` · `host-submit` · `host-tuning` · `hot-loop` · `ilp` · `int4-dequant` · `jit` · `jit-rebuild` · `k-loop` · `l2-reuse` · `l2-swizzle` · `launch-meta` · `launch-tuning` · `lds` · `lds-bank-conflict` · `lds-capacity` · `m-coarsening` · `measurement-noise` · `mfma-interlock` · `mfma-nonkdim16` · `module-aliasing` · `moe-router` · `native-convert` · `numerics` · `packed-loads` · `paged-decode` · `parity-gate` · `per-bucket-tuning` · `percent-of-peak` · `persistent-grid` · `ping-pong` · `pipeline-variant` · `power-cap` · `preshuffle` · `profiling-method` · `quantization-contract` · `read-only-twin` · `reciprocal` · `reduction-order` · `register-math` · `register-spill` · `register-staging` · `scale-operand` · `search-strategy` · `serialisation` · `sign-consistency` · `split-entry` · `stale-binary` · `store-bandwidth` · `store-vectorization` · `sub-k-coarsening` · `sub-variance` · `super-tile` · `thermal-drift` · `threadfence` · `tile-selection` · `timing-drift` · `tiny-kernel` · `torch-library` · `triton-pipeliner` · `varlen` · `vendor-library` · `weight-only-quant` · `weight-quantization` · `wg-geometry` · `wrapper-overhead` · `wrapper-relaunch` · `xcd-partitioning`
 
 ## Evidence
 
@@ -1193,6 +1193,15 @@ One card per line on purpose: this file is regenerated on every run that writes 
 **closed** — 2 kernels, 2 cards:
 - [axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound.md)
 - [axes-that-stayed-closed-on-a-bf16-fused-moe-with-a-decode-we-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-stayed-closed-on-a-bf16-fused-moe-with-a-decode-we-moe-grouped-gemm-gfx950-both.md)
+
+### `oracle`
+3 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
+
+**closed** — 1 kernels, 1 cards:
+- [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
+**how to measure** — 2 kernels, 2 cards:
+- [a-b-protocol-and-oracle-confounds-on-a-power-capped-gpu-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-b-protocol-and-oracle-confounds-on-a-power-capped-gpu-method-gfx950-n-a.md)
+- [the-baseline-seam-can-be-aliased-to-the-candidate-by-a-share-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/the-baseline-seam-can-be-aliased-to-the-candidate-by-a-share-method-gfx950-n-a.md)
 
 ### `partition`
 3 distinct kernels · 2 classes · scope `narrow` · platforms gfx950

@@ -6,9 +6,9 @@ effect: 1.26x geomean isolated vs frozen baseline, mean of 3, parity clean on al
 confirms_cited: 0
 confirms_blind: 0
 losses: 0
-attempts: 1
+attempts: 2
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-10-11
 name: delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both
 description: Tune the per-M-bucket launch config first, then buy the tail by deleting satellite dispatches into grids that already exist: 1.26x on bf16 Triton fused-MoE
 keywords: ['moe', 'grouped-gemm', 'dispatch-collapse', 'kernel-fusion', 'launch-overhead', 'm-bucket', 'prologue', 'bf16', 'triton', 'gfx950']

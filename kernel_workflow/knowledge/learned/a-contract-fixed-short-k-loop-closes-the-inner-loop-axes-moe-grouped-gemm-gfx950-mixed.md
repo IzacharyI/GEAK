@@ -6,9 +6,9 @@ effect: ~1.00x across eight directions: seven schedule variants plus an accumula
 confirms_cited: 1
 confirms_blind: 0
 losses: 0
-attempts: 1
+attempts: 2
 toolchain: unknown
-last_seen: 2026-08-12
+last_seen: 2026-10-11
 name: a-contract-fixed-short-k-loop-closes-the-inner-loop-axes-moe-grouped-gemm-gfx950-mixed
 description: With K trips pinned by the operator contract and full-rate MFMA already emitted, inner-loop levers all returned ~1.00x; the wins sat in mapping and routing.
 keywords: ['anti-pattern', 'closed-axis', 'instruction-schedule', 'double-buffering', 'atomic-combine', 'moe', 'grouped-gemm', 'fp8-blockscale']

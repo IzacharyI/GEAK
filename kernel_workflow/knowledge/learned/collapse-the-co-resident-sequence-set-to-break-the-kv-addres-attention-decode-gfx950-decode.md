@@ -6,9 +6,9 @@ effect: 1.240x isolated standalone vs frozen baseline (1.2489x after integrating
 confirms_cited: 1
 confirms_blind: 0
 losses: 0
-attempts: 1
+attempts: 2
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-26
 name: collapse-the-co-resident-sequence-set-to-break-the-kv-addres-attention-decode-gfx950-decode
 description: Sequence-major workgroup dispatch collapses the co-resident sequence set and breaks the power-of-two KV base-address phase: 1.24x, read spread 27%->7.4%.
 keywords: ['attention-decode', 'paged-attention', 'paged-kv', 'workgroup-mapping', 'l2-locality', 'co-residency', 'decode', 'memory-bound', 'gfx950', 'raw-hip']
