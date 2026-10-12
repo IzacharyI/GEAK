@@ -170,6 +170,18 @@ candidates:
       - https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html
       - https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/workload.html
   - operator: grouped_gemm_moe
+    backend: asm
+    gens: [gfx942, gfx950]
+    dtypes: [fp8_e4m3_fnuz, int8, bf16, fp16, fp4_e2m1]
+    regimes: [prefill, decode]
+    card: ../operators/grouped_gemm_moe/backends/asm.md
+    sources:
+      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_moe_2stage.cu
+      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_fmoe.cu
+      - ROCm/aiter@4faf8713:aiter/fused_moe.py
+      - ROCm/aiter@4faf8713:hsa/codegen.py
+      - https://rocm.blogs.amd.com/software-tools-optimization/matrix-cores-cdna/README.html
+  - operator: grouped_gemm_moe
     backend: aiter
     gens: [gfx942, gfx950]
     dtypes: [bf16, fp16, fp8_e4m3_fnuz, fp4_e2m1]
@@ -201,6 +213,16 @@ candidates:
       - ROCm/aiter@a6bb4993:aiter/ops/flydsl/kernels/moe_gemm_2stage.py
       - ROCm/aiter@a6bb4993:aiter/ops/flydsl/__init__.py
       - https://rocm.blogs.amd.com/artificial-intelligence/kimi-k2.5-optimize/README.html
+  - operator: grouped_gemm_moe
+    backend: gluon
+    gens: [gfx1250, gfx950, gfx942]
+    dtypes: [fp4_e2m1, mxfp4, fp8_e4m3, mxfp8, bf16, int8]
+    regimes: [prefill, decode]
+    card: ../operators/grouped_gemm_moe/backends/gluon.md
+    sources:
+      - ROCm/aiter@4faf8713:aiter/ops/triton/_gluon_kernels/gfx1250/moe/
+      - ROCm/aiter@4faf8713:aiter/ops/triton/moe/moe_op_gemm_a16w4.py
+      - https://rocm.blogs.amd.com/software-tools-optimization/gluon-gemm-tutorial/README.html
   - operator: grouped_gemm_moe
     backend: hip
     gens: [gfx942, gfx950]

@@ -74,6 +74,17 @@ enumerated tunables come from `get_flydsl_stage1_kernels` / `get_flydsl_stage2_k
 | `xcd_swizzle` | 0 / 4 | XCD remap for CDNA multi-die scheduling | 0 |
 | `doweight_stage{1,2}` | bool | apply per-expert routing weight in this stage | from `sorted_weights is not None` |
 
+**Selecting vs. authoring.** Everything above is the *dispatch* surface. When you are writing or tuning the
+kernel rather than calling it, the authoring space — what is legal, what is derived, and what is merely a
+heuristic — is stated with file:line citations in
+[`../../../corpus/gemm_decisions.md`](../../../corpus/gemm_decisions.md). The cross-stage cards apply to
+this standard path too: `grouped-moe-sort-block-m-couples-both-stages` (moe_sorting's `block_m` is shared
+state between the two stages, not a per-stage tunable), `grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag`
+(atomic vs reduce compiles a different kernel, so it belongs in the candidate set, not in a runtime if),
+and `grouped-moe-shared-expert-fusion-is-a-cross-stage-identity-contract` (a fused shared expert changes
+`experts`, and both stages must agree). The mxfp4-specific cards (`grouped-moe-mxfp4-*`) are indexed from
+[[operators/fused_moe_grouped_gemm/backends/flydsl]].
+
 ## Numerics / parity
 GEMM accumulates in fp32 (MFMA), output bf16/fp16. Stage2 `mode`: `"atomic"` accumulates partials into a
 zeroed output via atomics (`accumulate=True`); `"reduce"` writes per-(token,slot) partials then
@@ -95,6 +106,8 @@ re-raising, to keep later JitFunction calls on the correct path.
 - Weights must be pre-shuffled in the layout the kernel expects (stage1 gate+up, stage2 down); passing
   un-shuffled weights gives wrong results, not an error.
 - `tile_m` must match the `block_size` used by moe_sorting unless `sort_block_m` is set explicitly on stage2.
+  Treat this as a **joint** choice across both stages: changing one stage's `tile_m` in isolation either
+  mis-reads the sorted layout or silently re-sorts (`grouped-moe-sort-block-m-couples-both-stages`).
 - `out_dtype="f16"` atomics can overflow to ±inf for bf16-magnitude activations — use f32 atomics or bf16
   output if you see inf.
 - First-call JIT latency per unique shape; warm up before timing.

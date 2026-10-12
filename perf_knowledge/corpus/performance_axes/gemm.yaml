@@ -450,3 +450,81 @@ dependencies:
     relation: end_to_end_contract
     rule: "A FlyDSL configuration is compiled, cached, launched and looked up as one key: the grid comes from the tile and split the kernel was compiled with, the JIT cache is keyed on the whole configuration, and a tuned row reaches the kernel only through a name the registry parses."
     decision_refs: [flydsl-host-launch-contract, gemm-default-backend-routing]
+
+  - id: cache_policy_follows_operand_reuse
+    axes: [memory_access, tunable_surface]
+    relation: selects_or_rejects
+    rule: "Whether an operand's loads carry a streaming (non-temporal) cache policy is a per-operand decision driven by reuse, not a kernel-wide switch: the operand this kernel reuses across tiles keeps the default policy, while an operand streamed once per call — and an output written once and never read back — take the non-temporal path."
+    decision_refs: [gemm-streamed-operand-cache-policy]
+
+  - id: lds_stage_depth_competes_with_tile_for_lds
+    axes: [pipeline_schedule, configuration_constraints, workgroup_tile]
+    relation: coupled_legality
+    rule: "The LDS pipeline depth (STAGES / lds_stage) is a budget axis, not a constant: each extra stage costs one more A tile and one more B tile of LDS, so depth trades directly against the tile size and against occupancy, and a tiling validator can reject a depth the LDS budget no longer fits."
+    decision_refs: [flydsl-lds-pipeline-depth, flydsl-hgemm-tiling-validity]
+
+  - id: grouped_moe_sort_block_m_is_shared
+    axes: [workgroup_tile, work_partition, configuration_constraints]
+    relation: coupled_legality
+    rule: "A 2-stage grouped MoE GEMM sorts tokens to experts once at a single block size; stage 1's tile_m fixes that size directly, and stage 2 may only match it or divide it exactly, never diverge from it freely."
+    decision_refs: [grouped-moe-sort-block-m-couples-both-stages]
+
+  - id: grouped_moe_combine_is_a_dispatch_choice
+    axes: [epilogue, runtime_contract, tunable_surface]
+    relation: retune_on_change
+    rule: "Stage 2's topk combine is either folded into its own epilogue (atomic) or deferred to a second, separately launched reduction kernel (reduce); AITER's shipped table switches which one a shape gets as M grows, and the switch changes the launch shape, not just an epilogue flag."
+    decision_refs: [grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag]
+
+  - id: grouped_moe_shared_expert_is_cross_stage_identity
+    axes: [runtime_contract, configuration_constraints, implementation_variant]
+    relation: end_to_end_contract
+    rule: "Fusing a shared expert into a grouped MoE call as heterogeneous B is a contract both the stage-1 and stage-2 compiles check independently: the same shared_expert_id, pinned to the last expert index, and MXFP4-only routed weights."
+    decision_refs: [grouped-moe-shared-expert-fusion-is-a-cross-stage-identity-contract]
+
+  - id: grouped_moe_family_choice_is_shape_dependent
+    axes: [implementation_variant, workgroup_tile, work_partition]
+    relation: scenario_routing
+    rule: "More than one FlyDSL stage-1 kernel family can exist for the same grouped-MoE shape in different source modules; which one is live is a function of the token-count bucket, read off AITER's shipped table, not a property of the shape alone."
+    decision_refs: [grouped-moe-two-stage1-families-compete-at-the-same-shape]
+
+  - id: grouped_moe_name_is_the_config_object
+    axes: [tunable_surface, configuration_constraints, runtime_contract]
+    relation: end_to_end_contract
+    rule: "On the mxfp4 grouped-MoE path the kernel NAME carries the whole configuration: a token grammar defines what may appear, a parse/build pair is the only encode/decode, and the tuned table stores a config by storing its name — so a knob absent from the token sets is absent from the kernel, and two coexisting stage-2 name families spell the same concept differently."
+    decision_refs: [grouped-moe-mxfp4-kernel-name-is-the-config-space, grouped-moe-sort-block-m-couples-both-stages]
+
+  - id: grouped_moe_stage1_variants_are_whitelisted
+    axes: [configuration_constraints, workgroup_tile, tunable_surface]
+    relation: coupled_legality
+    rule: "Stage-1 tile_m, non-temporal B loads and inline quantization are one whitelisted tuple per A dtype, not three independent knobs: tile_m 16 exists only with both of the others on, tile_m 128 only with non-temporal off, and BK is welded, so the legal space is far smaller than the cross product."
+    decision_refs: [grouped-moe-mxfp4-stage1-variant-whitelist, grouped-moe-mxfp4-inline-quant-replaces-the-a-pipeline]
+
+  - id: grouped_moe_scale_layout_is_derived_from_the_tile
+    axes: [operand_layout, configuration_constraints, runtime_contract]
+    relation: end_to_end_contract
+    rule: "The block-scale layout stage 1 writes and stage 2 reads is a pure function of the tile (`BM == 16 and out_dtype == 'fp4'`), and selecting it forces stage-1 BM, the sort block size, stage-2 tile_m and stage-2 SBM to one value; a mismatch is caught at the host or produces a numerically wrong result, never a crash."
+    decision_refs: [grouped-moe-mxfp4-native-scale-layout-is-a-cross-stage-contract, grouped-moe-sort-block-m-couples-both-stages]
+
+  - id: grouped_moe_stage2_epilogue_fixes_output_and_geometry
+    axes: [epilogue, configuration_constraints, execution_geometry]
+    relation: coupled_legality
+    rule: "Stage 2's epilogue choice fixes the output dtype, the legal tile range and whether the kernel is persistent at all: fp8 output implies reduce, fp4 output implies scatter at BM 128, atomic is bf16-only and cannot combine with fp4 output or cshuffle, and the XCD swizzle is wired only into the persistent branch."
+    decision_refs: [grouped-moe-mxfp4-stage2-epilogue-picks-the-output-format, grouped-moe-mxfp4-stage2-combine-weights-before-the-atomic, grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag]
+
+  - id: grouped_moe_lds_budget_is_unenforced
+    axes: [operand_layout, pipeline_schedule, configuration_constraints]
+    relation: coupled_legality
+    rule: "No mxfp4 grouped-MoE stage compares its computed LDS footprint against the hardware limit; the two-workgroup budget only picks the pipeline depth and falls back to the deep one when neither fits, so an over-budget tile is an occupancy loss rather than a build error — and stage 1 unions its A region with the accumulator while stage 2 does not."
+    decision_refs: [grouped-moe-mxfp4-lds-budget-is-a-heuristic-not-a-gate, flydsl-lds-pipeline-depth]
+
+  - id: grouped_moe_gated_activation_meets_in_lds
+    axes: [epilogue, operand_layout, pipeline_schedule]
+    relation: end_to_end_contract
+    rule: "A fused gated activation forces stage 1 through an f32 LDS round trip after the K loop, because MFMA leaves a gate column and its paired up column in different waves; that buffer is therefore also the only site for bias and for the cross-wave k_wave reduction."
+    decision_refs: [grouped-moe-mxfp4-stage1-fuses-activation-through-lds]
+
+  - id: grouped_moe_parity_gate_is_not_the_dense_gate
+    axes: [validation_contract, epilogue, runtime_contract]
+    relation: retune_on_change
+    rule: "A grouped MoE kernel is gated on a whole-tensor cosine/relative-energy criterion, not the dense elementwise one: routing and quantization make per-element agreement unreachable, so each stage is checked against its own reference while the routing and sorting indices stay exact. Carrying the dense gate over rejects a correct kernel; carrying a two-stage conjunction over without checking strictness lets a failure degrade to a warning."
+    decision_refs: [grouped-moe-parity-gate-is-cosine-not-elementwise]

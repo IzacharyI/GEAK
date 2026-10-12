@@ -569,6 +569,109 @@ def test_tuned_db_rows_keep_the_selection_and_drop_the_timings(tmp_path):
         "M<=16": {"flydsl": 1}, "M1025-4096": {"asm": 1}}
 
 
+FMOE_HEADER = ("gfx,cu_num,token,model_dim,inter_dim,expert,topk,act_type,dtype,q_dtype_a,"
+               "q_dtype_w,q_type,use_g1u1,doweight_stage1,block_m,ksplit,us1,kernelName1,err1,"
+               "us2,kernelName2,err2,us,run_1stage,tflops,bw,_tag\n")
+
+
+def _fmoe_row(token, k1, k2, block_m="32"):
+    return (f"gfx950,256,{token},6144,256,257,9,ActivationType.Silu,torch.bfloat16,"
+            f"torch.float4_e2m1fn_x2,torch.float4_e2m1fn_x2,QuantType.per_1x32,1,0,"
+            f"{block_m},0,5.5,{k1},0.0,6.5,{k2},0.0,12.0,0,900.0,3.0,glm5\n")
+
+
+def _fmoe_db(tmp_path, *rows):
+    db = tmp_path / "aiter" / "configs"
+    db.mkdir(parents=True, exist_ok=True)
+    (db / "glm5_fp4_tuned_fmoe.csv").write_text(FMOE_HEADER + "".join(rows))
+    return EX.fmoe_db_rows(str(tmp_path))
+
+
+def test_a_fused_moe_row_buckets_on_the_rows_the_grouped_gemm_sees(tmp_path):
+    """`token` is not an M. The stage-1 grouped GEMM sees `token * topk` rows, and bucketing on the
+    raw token count would file a 64-token decode step beside a 64-row dense GEMM when the two differ
+    by a factor of nine."""
+    rows, inventory, gaps = _fmoe_db(
+        tmp_path, _fmoe_row(2, "flydsl_moe1_afp4_wfp4_bf16_t32x32x256_w3_kw4_fp4",
+                            "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_nt_sbm32"))
+    assert len(rows) == 1 and len(inventory) == 1 and gaps == []
+    assert rows[0]["token"] == 2 and rows[0]["m"] == 18
+    flat = json.dumps(rows[0]["launch"])
+    for dropped in ("12.0", "900.0", "5.5", "3.0", "glm5"):
+        assert dropped not in flat, f"{dropped} is a timing or a sweep tag, not a configuration"
+    assert set(rows[0]["launch"]) == {"block_m", "ksplit", "run_1stage"}
+
+
+def test_both_stages_of_a_fused_moe_row_are_read_not_just_the_first(tmp_path):
+    """The two stages are tuned independently, so a record that kept only stage 1 would drop the
+    combine strategy — the one decision that is grouped-GEMM-specific."""
+    rows, _, _ = _fmoe_db(
+        tmp_path, _fmoe_row(2, "flydsl_moe1_afp4_wfp4_bf16_t32x32x256_w3_kw4_fp4",
+                            "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_nt_sbm32"))
+    groups, unparsed = EX.summarize_fmoe_tuned(rows)
+    assert unparsed == [] and len(groups) == 1
+    knobs = groups[0]["knobs"]
+    assert knobs["stage1.tile"] == "32x32x256" and knobs["stage1.w"] == 3
+    assert knobs["stage2.family"] == "moe_stage2_layout"
+    assert knobs["stage2.tags"] == "atomic,nt" and knobs["stage2.sbm"] == 32
+    assert groups[0]["moe_shape"] == {"model_dim": 6144, "inter_dim": 256,
+                                      "expert": 257, "topk": 9}
+
+
+def test_each_stage_of_a_fused_moe_row_is_attributed_separately(tmp_path):
+    """A row can keep a FlyDSL gate+up and a CK down-projection; counting the row once under its
+    stage-1 backend would report it as wholly FlyDSL."""
+    rows, _, _ = _fmoe_db(
+        tmp_path, _fmoe_row(2, "flydsl_moe1_afp4_wfp4_bf16_t32x32x256_w3",
+                            "moe_ck2stages_gemm2_256x32x64x64_1x4_TypeCast_v1"))
+    selection = EX.summarize_fmoe_backend(rows)
+    assert {s["stage"]: s["selected_backend_rows"] for s in selection} == {
+        1: {"flydsl": 1}, 2: {"ck": 1}}
+
+
+def test_an_unrecognised_fused_moe_kernel_name_is_a_gap_not_a_guess(tmp_path):
+    """`opus`, `impl` and `cktile` names ship in these tables too. A fourth prefix rule would be a
+    guess, and a guessed backend is worse than a counted gap."""
+    rows, _, gaps = _fmoe_db(
+        tmp_path, _fmoe_row(2, "opus_moe_stage1_whatever", "opus_moe_stage2_whatever"))
+    assert rows[0]["libtype"] is None
+    assert any("opus" in g["why"] and "unattributed" in g["why"] for g in gaps), gaps
+    assert EX.summarize_fmoe_tuned(rows)[0] == []
+    assert EX.summarize_fmoe_backend(rows) == []
+
+
+def test_a_knob_missing_from_half_a_group_is_reported_as_absent(tmp_path):
+    """A shipped name carries a flag only when the tuner set it. Counting `xcd4: 1` across two
+    members reads as agreement; the other member did not ask for an XCD mapping at all."""
+    rows, _, _ = _fmoe_db(
+        tmp_path,
+        _fmoe_row(8, "flydsl_moe1_afp4_wfp4_bf16_t32x64x256_w3_xcd4",
+                  "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_sbm32"),
+        _fmoe_row(16, "flydsl_moe1_afp4_wfp4_bf16_t32x64x256_w3",
+                  "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_sbm32"))
+    groups, _ = EX.summarize_fmoe_tuned(rows)
+    assert len(groups) == 1 and groups[0]["tokens"] == [8, 16]
+    assert groups[0]["same_across_configs"]["stage1.tile"] == "32x64x256"
+    assert groups[0]["varies_by_shape"]["stage1.xcd"] == "4: 1, absent: 1"
+
+
+def test_two_moe_shapes_are_two_groups_rather_than_one_wide_spread(tmp_path):
+    """`inter_dim` changes which kernel is reasonable, not how one is configured. A group spanning
+    two models would report "tile varies" where the truth is "these are different problems"."""
+    db = tmp_path / "aiter" / "configs"
+    db.mkdir(parents=True, exist_ok=True)
+    other = _fmoe_row(8, "flydsl_moe1_afp4_wfp4_bf16_t32x256x256_w3",
+                      "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_sbm32"
+                      ).replace(",6144,256,257,9,", ",6144,2048,257,9,")
+    (db / "glm5_fp4_tuned_fmoe.csv").write_text(FMOE_HEADER + _fmoe_row(
+        8, "flydsl_moe1_afp4_wfp4_bf16_t32x64x256_w3",
+        "flydsl_moe2_layout_afp4_wfp4_bf16_t32x128x256_atomic_sbm32") + other)
+    groups, _ = EX.summarize_fmoe_tuned(EX.fmoe_db_rows(str(tmp_path))[0])
+    assert len(groups) == 2
+    assert {g["moe_shape"]["inter_dim"]: g["knobs"]["stage1.tile"] for g in groups} == {
+        256: "32x64x256", 2048: "32x256x256"}
+
+
 def test_the_committed_tuned_db_carries_no_timing_and_unique_ids(tuned_db):
     text = open(TUNED_DB, encoding="utf-8").read()
     for column in EX.TUNED_DB_TIMING:
@@ -704,6 +807,29 @@ def test_no_source_record_carries_a_performance_number(source):
         )
 
 
+def test_an_excerpt_drops_a_performance_claim_without_dropping_the_fact():
+    """Upstream comments do carry timings; the fact underneath them is still worth indexing.
+
+    Dropping the whole record would lose a real construct because of a sentence above it, and
+    quoting the sentence would smuggle an unattributed number into the corpus. The claim line is
+    left out the way a blank line is, and the gap in the quoted line numbers says so.
+    """
+    lines = ["a = 1",
+             "# cross this boundary instead is ~1.5% slower.",
+             "__builtin_amdgcn_sched_barrier(0);",
+             "",
+             "b = 2"]
+    quoted = EX.excerpt(lines, 2)
+    assert quoted == ["1: a = 1", "3: __builtin_amdgcn_sched_barrier(0);", "5: b = 2"]
+
+
+def test_an_excerpt_keeps_a_performance_claim_that_is_itself_the_fact():
+    """Silently rewriting the matched line would make the citation quote something the file does
+    not say. A claim on the anchor is a conflict for a reviewer to see, not one to paper over."""
+    lines = ["x", "# 1208 TFLOPS on 32Kx2Kx7K", "y"]
+    assert EX.excerpt(lines, 1) == ["1: x", "2: # 1208 TFLOPS on 32Kx2Kx7K", "3: y"]
+
+
 def test_provenance_names_the_commit_the_source_was_read_at(source):
     prov = source["provenance"]
     assert re.fullmatch(r"[0-9a-f]{40}|unknown", str(prov["aiter_commit"])), prov
@@ -724,6 +850,140 @@ def test_the_committed_corpus_resolves_at_the_commit_it_names(source):
         f"checkout (`git -C <aiter> worktree add /tmp/aiter-clean <commit>`)")
     assert not [e for e in source["source_evidence"] if e.get("unreproducible")], \
         "the committed corpus must not contain records flagged unreproducible"
+
+
+def _record(**kw):
+    base = {"language": "flydsl", "category": "lds_swizzle", "match": "swizzle_xor16",
+            "captured": [], "arch_scope": "", "file": "a.py", "line": 1, "evidence": ["1: x"]}
+    return dict(base, **kw)
+
+
+def _two_trees(monkeypatch, tmp_path, old_records, new_records):
+    """A primary tree and an older one, each with its own commit and its own evidence."""
+    new_dir, old_dir = str(tmp_path / "new"), str(tmp_path / "old")
+    os.makedirs(new_dir, exist_ok=True)
+    os.makedirs(old_dir, exist_ok=True)
+    per_tree = {new_dir: new_records, old_dir: old_records}
+    monkeypatch.setattr(EX, "dirty_paths", lambda a: set())
+    monkeypatch.setattr(EX, "collect", lambda a: ([dict(r) for r in per_tree[a]], [], [], [], []))
+    monkeypatch.setattr(EX, "aiter_commit", lambda a: ("a" * 40) if a == new_dir else ("b" * 40))
+    monkeypatch.setattr(EX, "tuned_db_rows", lambda a: ([], [], []))
+    monkeypatch.setattr(sys, "argv",
+                        ["x", "--aiter", new_dir, "--aiter", old_dir, "--json"])
+    return new_dir, old_dir
+
+
+def test_a_relocated_fact_keeps_its_old_citation_and_gains_a_pointer_to_the_new_one(
+        tmp_path, monkeypatch, capsys):
+    """The case the commit dimension exists for.
+
+    AITER's FlyDSL GEMM rewrite deleted `splitk_hgemm.py` and the same `swizzle_xor16` line now sits
+    in `mfma_preshuffle_pipeline.py`. Neither available answer was acceptable: dropping the record
+    discards a true statement over a rename, and re-pointing it at the new file silently rewrites a
+    citation nobody re-read. The record is kept, anchored at the commit where it does resolve, and
+    told where to look now.
+    """
+    _two_trees(monkeypatch, tmp_path,
+               old_records=[_record(file="kernels/splitk_hgemm.py", line=27)],
+               new_records=[_record(file="kernels/mfma_preshuffle_pipeline.py", line=270)])
+    assert EX.main() == 0
+    records = json.loads(capsys.readouterr().out)["evidence"]["source_evidence"]
+    moved = [r for r in records if r["file"] == "kernels/splitk_hgemm.py"]
+    assert len(moved) == 1, "the deleted file's record must survive the refresh"
+    assert moved[0]["aiter_commits"] == ["b" * 40], "anchored only where it resolves"
+    assert moved[0]["relocated_to"] == ["kernels/mfma_preshuffle_pipeline.py:270"]
+    live = [r for r in records if r["file"] == "kernels/mfma_preshuffle_pipeline.py"]
+    assert "relocated_to" not in live[0], "a record that resolves at HEAD needs no redirect"
+
+
+def test_a_fact_absent_from_the_primary_tree_is_not_given_a_false_redirect(
+        tmp_path, monkeypatch, capsys):
+    """`relocated_to` must mean found, not guessed. A redirect to the nearest similar line would be
+    worse than none: it reads as a verified pointer and sends the reader somewhere arbitrary."""
+    _two_trees(monkeypatch, tmp_path,
+               old_records=[_record(file="kernels/gone.py", line=3, match="lds_stage=4")],
+               new_records=[_record(file="kernels/live.py", line=9, match="lds_stage=2")])
+    assert EX.main() == 0
+    records = json.loads(capsys.readouterr().out)["evidence"]["source_evidence"]
+    gone = [r for r in records if r["file"] == "kernels/gone.py"][0]
+    assert "relocated_to" not in gone
+    assert gone["aiter_commits"] == ["b" * 40]
+
+
+def test_the_same_citation_in_both_trees_is_one_record_with_two_anchors(
+        tmp_path, monkeypatch, capsys):
+    """Unchanged code is not two facts. Merging on the content-bound ID also makes the strongest
+    evidence self-identifying: a statement that survived a rewrite carries both commits."""
+    same = _record(file="kernels/stable.py", line=5)
+    _two_trees(monkeypatch, tmp_path, old_records=[same], new_records=[same])
+    assert EX.main() == 0
+    records = json.loads(capsys.readouterr().out)["evidence"]["source_evidence"]
+    assert len(records) == 1, records
+    assert records[0]["aiter_commits"] == ["a" * 40, "b" * 40], "primary commit first"
+
+
+def test_indexing_a_second_tree_changes_no_existing_evidence_id(tmp_path, monkeypatch, capsys):
+    """The compatibility promise, which is what makes this a safe change to an existing corpus.
+
+    Thirty decision cards cite `src_…` IDs. If adding a tree perturbed those IDs, every card would
+    silently lose its grounding, so the commit dimension is carried in fields the ID does not hash.
+    """
+    old = [_record(file="kernels/a.py", line=1), _record(file="kernels/b.py", line=2)]
+    before = [EX.source_evidence_id(r) for r in old]
+    _two_trees(monkeypatch, tmp_path, old_records=old,
+               new_records=[_record(file="kernels/c.py", line=3)])
+    assert EX.main() == 0
+    records = json.loads(capsys.readouterr().out)["evidence"]["source_evidence"]
+    by_file = {r["file"]: r for r in records}
+    assert [by_file["kernels/a.py"]["evidence_id"], by_file["kernels/b.py"]["evidence_id"]] == before
+    assert all(r["evidence_id"] == EX.source_evidence_id(r) for r in records), \
+        "the ID must still be recomputable from the record, with the new fields present"
+
+
+def test_fact_identity_ignores_location_and_source_evidence_id_does_not():
+    """The two IDs answer different questions and must not be collapsed into one.
+
+    A citation has to break when its line moves; a fact has to be findable after it moves. One hash
+    cannot do both, which is why there are two.
+    """
+    here = _record(file="kernels/splitk_hgemm.py", line=27, evidence=["27: swizzle_xor16"])
+    there = _record(file="kernels/mfma_preshuffle_pipeline.py", line=270,
+                    evidence=["270: swizzle_xor16"])
+    assert EX.fact_identity(here) == EX.fact_identity(there)
+    assert EX.source_evidence_id(here) != EX.source_evidence_id(there)
+    assert re.fullmatch(r"fact_[0-9a-f]{16}", EX.fact_identity(here))
+    # Different statement, same place: the fact ID must separate them, or a redirect could point a
+    # reader at a line that says something else.
+    assert EX.fact_identity(here) != EX.fact_identity(dict(here, match="swizzle_xor8"))
+
+
+def test_provenance_names_the_primary_tree_first_and_lists_every_tree_read(
+        tmp_path, monkeypatch, capsys):
+    """`aiter_commit` stays singular and stays the primary: the rendered pages, the shipped config
+    tables and the candidate selector all speak for one tree, and a list in that field would make
+    every one of them ambiguous. The others are recorded beside it, not in place of it."""
+    _two_trees(monkeypatch, tmp_path, old_records=[_record(file="o.py")],
+               new_records=[_record(file="n.py")])
+    assert EX.main() == 0
+    prov = json.loads(capsys.readouterr().out)["evidence"]["provenance"]
+    assert prov["aiter_commit"] == "a" * 40
+    assert prov["aiter_commits"] == ["a" * 40, "b" * 40]
+    assert re.fullmatch(r"[0-9a-f]{40}", prov["aiter_commit"])
+
+
+def test_a_dirty_secondary_tree_is_refused_like_a_dirty_primary(tmp_path, monkeypatch):
+    """A second tree is a source of citations like any other. Checking only the primary would let an
+    unreproducible record in through the door that was added to carry old knowledge."""
+    new_dir, old_dir = str(tmp_path / "new"), str(tmp_path / "old")
+    os.makedirs(new_dir, exist_ok=True)
+    os.makedirs(old_dir, exist_ok=True)
+    monkeypatch.setattr(EX, "dirty_paths", lambda a: {"o.py"} if a == old_dir else set())
+    monkeypatch.setattr(EX, "collect", lambda a: (
+        [_record(file="o.py" if a == old_dir else "n.py")], [], [], [], []))
+    monkeypatch.setattr(EX, "aiter_commit", lambda a: ("a" * 40) if a == new_dir else ("b" * 40))
+    monkeypatch.setattr(EX, "tuned_db_rows", lambda a: ([], [], []))
+    monkeypatch.setattr(sys, "argv", ["x", "--aiter", new_dir, "--aiter", old_dir, "--emit"])
+    assert EX.main() == 3
 
 
 def test_extraction_refuses_a_dirty_source_by_default(tmp_path, monkeypatch):

@@ -12,9 +12,9 @@ python3 perf_knowledge/corpus/_render_facts.py --emit
 | provenance | |
 |---|---|
 | aiter_origin | `https://github.com/ROCm/aiter.git` |
-| aiter_commit | `a6bb499375849eec45d68c5ccaebc8865fd422c0` |
+| aiter_commit | `4faf87137cfb5e4d5538e010bb4fefa6c8c5df8d` |
 | operator_family | `gemm` |
-| evidence_records | `1630` |
+| evidence_records | `5167` |
 
 Every citation below resolves at that commit — no contributing file had uncommitted changes when this was extracted.
 
@@ -38,48 +38,49 @@ is simply not in the source text. See the coverage note below.
 
 | implementation question | flydsl | triton | gluon | ck | hip | asm |
 |---|---|---|---|---|---|---|
-| `access_width` | 34 | · | · | · | 10 | · |
-| `arch_gate` | 15 | · | · | · | · | · |
-| `asm_argblock` | · | · | · | · | · | 5 |
-| `asm_launch` | · | · | · | · | · | 16 |
-| `asm_object` | · | · | · | · | · | 10 |
-| `asm_tile` | · | · | · | · | · | 150 |
-| `async_copy` | 22 | · | · | · | · | · |
-| `atomic_combine` | 5 | 2 | · | · | · | · |
-| `cache_policy` | 11 | 90 | 2 | · | · | · |
-| `ck_instance` | · | · | · | 29 | · | · |
-| `ck_pipeline` | · | · | · | 20 | · | · |
-| `config_limit` | 8 | · | · | · | 1 | · |
-| `config_lookup` | · | 1 | · | · | · | · |
-| `config_space` | 38 | 1 | · | · | · | · |
-| `config_validity` | 119 | · | 3 | · | · | · |
-| `dispatch_padding` | · | · | · | 6 | 1 | · |
-| `fragment_layout` | 18 | · | · | · | · | · |
-| `grid_fill` | · | · | · | · | 5 | 5 |
-| `grid_mapping` | 16 | 5 | · | · | · | · |
-| `instance_name` | 1 | · | · | · | · | · |
-| `jit_cache` | 8 | 1 | 3 | · | · | · |
-| `kernel_family` | 15 | · | · | 18 | 5 | 10 |
-| `lane_reduction` | · | · | · | · | 10 | · |
-| `layout_epilogue` | 53 | · | · | 5 | · | · |
-| `layout_preshuffle` | 25 | · | · | · | · | 1 |
-| `lds_alloc` | · | · | · | · | 8 | · |
-| `lds_pad` | 4 | · | · | · | · | · |
-| `lds_stage` | 3 | · | · | · | · | · |
-| `lds_swizzle` | 32 | · | 10 | · | · | · |
-| `mfma_intrinsic` | 42 | 36 | · | · | 2 | · |
-| `mfma_shape` | 6 | · | 2 | · | · | · |
-| `parity_tolerance` | 7 | · | · | · | · | · |
-| `persistent` | 16 | 13 | 5 | · | · | · |
-| `scale_after_k_loop` | · | 3 | 2 | · | · | · |
-| `scale_in_k_loop` | · | 10 | 2 | · | · | · |
-| `scale_operand` | 1 | · | · | · | · | · |
-| `scheduling` | 118 | · | · | · | 5 | · |
-| `split_k` | 19 | · | · | · | · | · |
-| `tile_shape` | 7 | · | · | · | · | · |
-| `tunable_param` | · | 448 | · | · | 12 | · |
-| `waves` | 7 | · | · | · | 7 | · |
-| **total** | **650** | **610** | **29** | **78** | **66** | **197** |
+| `access_width` | 58 | · | · | · | 21 | · |
+| `arch_gate` | 45 | · | · | · | 1 | · |
+| `asm_argblock` | · | · | · | · | · | 10 |
+| `asm_launch` | · | · | · | · | · | 39 |
+| `asm_object` | · | · | · | · | · | 72 |
+| `asm_tile` | · | · | · | · | · | 581 |
+| `async_copy` | 50 | · | · | · | · | · |
+| `atomic_combine` | 11 | 5 | · | · | · | · |
+| `cache_policy` | 26 | 167 | 34 | · | · | · |
+| `ck_instance` | · | · | · | 34 | · | · |
+| `ck_pipeline` | · | · | · | 21 | · | · |
+| `config_limit` | 22 | · | · | · | 5 | · |
+| `config_lookup` | · | 2 | · | · | · | · |
+| `config_space` | 104 | 2 | 15 | 82 | 103 | · |
+| `config_validity` | 285 | 1 | 4 | · | 13 | · |
+| `dispatch_padding` | · | · | · | 12 | 2 | · |
+| `fragment_layout` | 21 | · | · | · | · | · |
+| `grid_fill` | · | · | · | · | 10 | 10 |
+| `grid_mapping` | 111 | 9 | · | · | 4 | · |
+| `instance_name` | 2 | · | · | · | · | · |
+| `jit_cache` | 18 | 1 | 3 | · | · | · |
+| `kernel_family` | 30 | 12 | · | 37 | 10 | 23 |
+| `lane_reduction` | · | · | · | · | 20 | · |
+| `layout_epilogue` | 115 | · | · | 6 | · | · |
+| `layout_preshuffle` | 85 | 1 | · | · | · | 1 |
+| `lds_alloc` | · | · | · | · | 68 | · |
+| `lds_pad` | 29 | · | 1 | · | 17 | · |
+| `lds_stage` | 4 | 1 | · | · | · | · |
+| `lds_swizzle` | 40 | · | 65 | · | · | · |
+| `mfma_intrinsic` | 50 | 103 | · | · | 4 | · |
+| `mfma_shape` | 7 | · | 28 | · | · | · |
+| `parity_tolerance` | 27 | · | · | · | · | · |
+| `persistent` | 26 | 34 | 10 | · | 1 | · |
+| `pipeline_variant` | · | · | · | · | 75 | · |
+| `scale_after_k_loop` | · | 4 | 4 | · | · | · |
+| `scale_in_k_loop` | · | 19 | 15 | · | · | · |
+| `scale_operand` | 2 | · | · | · | · | · |
+| `scheduling` | 272 | 1 | · | · | 652 | · |
+| `split_k` | 21 | · | · | · | 3 | · |
+| `tile_shape` | 84 | · | 1 | · | · | · |
+| `tunable_param` | · | 1071 | 2 | · | 24 | · |
+| `waves` | 9 | · | 1 | · | 36 | · |
+| **total** | **1554** | **1433** | **183** | **192** | **1069** | **736** |
 
 The zeros are the interesting part, and they are easy to misread. `scheduling` is dense in
 FlyDSL and empty elsewhere, but Triton kernels are scheduled too — by a compiler pass, and CK
@@ -108,11 +109,11 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `mfma_intrinsic` — Which matrix instruction is issued
 
-**flydsl** — 42 in 4 file(s)
+**flydsl** — 50 in 6 file(s)
 
+- `mfma_scale_f32_16x16x128_f8f6f4` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:705-718` (`src_c745f270657e60b3`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3653-3666` (`src_87dbf6616a35b1a4`), `aiter/ops/flydsl/kernels/mxfp4_gemm2.py:509-511` (`src_9a3d9e6bdb0e9688`) +12 more
 - `mfma_i32_16x16x32_i8` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:221` (`src_b9726369c519dd58`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:215-217` (`src_34e243d6f3900e33`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:170` (`src_81fd48f8341c8ce3`) +5 more
 - `mfma_i32_16x16x32i8` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:220` (`src_a5d9e08624d3f251`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:215-217` (`src_f9f2544162138ea2`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:169` (`src_9390d33b4ed375bc`) +5 more
-- `mfma_scale_f32_16x16x128_f8f6f4` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:934` (`src_1255666f8d08f366`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:984` (`src_1d71356bb7d110d7`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1342` (`src_b36cf6f1b6a2ac3b`) +4 more
 - `mfma_f32_16x16x16bf16_1k` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:56-58` (`src_24517333d1cd6722`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1007` (`src_d9a92f8642e73d56`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:180` (`src_0fca677c03852e6d`) +3 more
 - `mfma_f32_16x16x16_bf16_1k` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:181` (`src_5950cc6777a1a0db`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1459` (`src_76373fb208a817a1`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:175-177` (`src_b1eb32483d9f6083`) +1 more
 - `mfma_f32_16x16x16f16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:59-61` (`src_0ed3b5780c589479`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1005` (`src_722ebc17457eec5c`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:788` (`src_ab4c1a2c610bb90b`) +1 more
@@ -120,185 +121,246 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 - `mfma_f32_16x16x32_bf16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:77-79` (`src_387e95ce58e0449b`)
 - `mfma_f32_16x16x32_f16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:80-82` (`src_79cfb57473ed817f`)
 
-**triton** — 36 in 21 file(s)
+**triton** — 103 in 32 file(s)
 
-- `tl.dot(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:170` (`src_cb8f85060eec45f8`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:123` (`src_666c4f8159256e97`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:130` (`src_6a628307effc5032`) +19 more
-- `tl.dot_scaled(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:161` (`src_57ef98be9f567b64`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:357` (`src_e1b19697839ab582`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8wfp4.py:200` (`src_0d39e1a3fd9be509`) +11 more
+- `tl.dot(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:156` (`src_8d5a6150166fa73e`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:125` (`src_7e15457156949df2`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:130` (`src_79106717bbf0ef57`) +54 more
+- `tl.dot_scaled(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:161-163` (`src_2be61beec34a6d7c`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:359-361` (`src_d99b3f9c8d0c13ca`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8wfp4.py:184-186` (`src_e9fdf30a946ed150`) +43 more
 
-**hip** — 2 in 1 file(s)
+**hip** — 4 in 1 file(s)
 
-- `mfma_f32_32x32x16_fp8_fp8` — `csrc/kernels/custom_kernels.cu:1894` (`src_336caef9e32ee7b3`), `csrc/kernels/custom_kernels.cu:2109` (`src_a04d0d59b5f2a8f9`)
+- `mfma_f32_32x32x16_fp8_fp8` — `csrc/kernels/custom_kernels.cu:1892` (`src_f373c5e767ef7d4a`), `csrc/kernels/custom_kernels.cu:2107` (`src_218ae3ae1b76ce81`), `csrc/kernels/custom_kernels.cu:1894` (`src_336caef9e32ee7b3`) +1 more
 
 ### `mfma_shape` — What M/N/K shape that instruction covers
 
-**flydsl** — 6 in 1 file(s)
+**flydsl** — 7 in 2 file(s)
 
-- `16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:42` (`src_31876969bf8ecf17`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:43` (`src_9790559824dc89a2`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:44` (`src_6b168310db260660`) +2 more
+- `16` — `aiter/ops/flydsl/kernels/gemm_a16w16_kernel_gfx1250.py:16` (`src_e60414355b7a35c3`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:42` (`src_31876969bf8ecf17`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:43` (`src_9790559824dc89a2`) +3 more
 - `32` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:67` (`src_ec432cec141eab67`)
 
-**gluon** — 2 in 2 file(s)
+**gluon** — 28 in 10 file(s)
 
-- `16, 16, 32` — `aiter/ops/triton/gluon/gemm_a8w8_blockscale.py:123` (`src_cf70b9a5bae73954`)
-- `32, 32, 16` — `aiter/ops/triton/_gluon_kernels/gfx942/moe/moe_op_gemm_int8_smoothquant.py:88` (`src_422867b3bf9dfa13`)
+- `16, 16, 128` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:263` (`src_60280c38b4bd4b92`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:278` (`src_54e936dc69e24351`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:1152` (`src_5cbdadd7e2568688`) +4 more
+- `16, 16, 64` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:270` (`src_01a39e8e766c0fa1`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:285` (`src_788b2a88b93c3001`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:1159` (`src_c23817c0ba9915a2`) +3 more
+- `16, 16, 32` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a16w4.py:271` (`src_ef4609a17d9d988d`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16.py:83` (`src_60e33eaee5c552b0`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16_persistent.py:99` (`src_5be02bd41246c0c4`) +2 more
+- `32, 16, 128` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:164` (`src_3af69a54f88fee5c`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:387` (`src_21bafd870b72fa9d`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_mxfp4.py:59` (`src_19cc9147ea30a51d`)
+- `32, 16, 64` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:172` (`src_53eb01624a484baa`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:394` (`src_a60406066c3fa595`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_mxfp4.py:50` (`src_af2b99540b96195d`)
+- `16, 16, matrix_instr_nonkdim` — `aiter/ops/triton/_gluon_kernels/gfx950/moe/moe_op_gemm_a16w4.py:224` (`src_8f9cacd4663d13da`), `aiter/ops/triton/_gluon_kernels/gfx950/moe/moe_op_gemm_a16w4.py:575` (`src_21c89f1b3217b5fd`)
+- `32, 32, 16` — `aiter/ops/triton/_gluon_kernels/gfx942/moe/moe_op_gemm_int8_smoothquant.py:105` (`src_93a9ed056bdd3d02`), `aiter/ops/triton/_gluon_kernels/gfx942/moe/moe_op_gemm_int8_smoothquant.py:88` (`src_422867b3bf9dfa13`)
 
 ### `tile_shape` — How much of the output one workgroup owns
 
-**flydsl** — 7 in 3 file(s)
+**flydsl** — 84 in 20 file(s)
 
+- `BN, 256` — `aiter/ops/flydsl/kernels/mega_moe/gemm2.py:175` (`src_6a647ca491d5b919`), `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:47-54` (`src_c49c81eef10d1108`), `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:1506` (`src_ad8ce49f3cc468b4`) +10 more
+- `BK, 256` — `aiter/ops/flydsl/kernels/mega_moe/gemm2.py:176` (`src_899f54d11829f600`), `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:1507` (`src_393f8ee6cc563eba`), `aiter/ops/flydsl/kernels/mxfp4_gemm2.py:89` (`src_6201541591cb4036`) +8 more
+- `tile_k, 256` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:62` (`src_d0f62b03a40951dc`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:194` (`src_82f9d69c3401653a`), `aiter/ops/flydsl/moe_kernels.py:78` (`src_24ea6a06033f63fe`) +7 more
+- `tile_n, 256` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:193` (`src_0ed98ebde87ffba8`), `aiter/ops/flydsl/moe_kernels.py:88` (`src_297a61dc3a3f960b`), `aiter/ops/flydsl/moe_kernels.py:144` (`src_e1c8c47dcfa3a9e3`) +7 more
+- `BM, 32` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:380` (`src_97217c7c1a931c4a`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm2.py:447` (`src_8060312c760abf2a`), `aiter/ops/flydsl/kernels/mega_moe/gemm2.py:112` (`src_c03673c07a305384`) +5 more
+- `tile_m, 32` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:60` (`src_8497dde4e55e1b87`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:192` (`src_d61f686d43dce7bc`), `op_tests/flydsl_tests/test_flydsl_moe.py:224` (`src_21dfed8a811de287`) +4 more
+- `BLOCK_SIZE_M, 32` — `op_tests/test_moe_sorting.py:19` (`src_ea624bdf3672d827`), `op_tests/test_moe_ep.py:32` (`src_e30a3d4cd906e15a`), `op_tests/test_moe_sorting.py:12` (`src_89d2dc5f8ba7c659`) +1 more
+- `tile_k, 128` — `aiter/ops/flydsl/moe_kernels.py:78` (`src_b254ad3b2bd33770`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:206` (`src_2ef42710ede718c4`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:211` (`src_c22b1cdac27ab23b`)
+- `TILE_K, 256` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:387` (`src_23b3f8020bb5416e`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm2.py:453` (`src_5e4ed31aed337e5a`)
 - `TILE_M, 16` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:8` (`src_0cd161d33fedb2a7`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:70` (`src_034b3cc6e3fd6aa8`)
-- `tile_k, 128` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:206` (`src_2ef42710ede718c4`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:211` (`src_c22b1cdac27ab23b`)
-- `TILE_N, 192` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:459` (`src_d2988efafca471b0`)
-- `TILE_N, 64` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:458` (`src_6cec5e26c92418b3`)
-- `tile_m, 16` — `aiter/ops/flydsl/gemm_kernels.py:770` (`src_a69a35e050eec095`)
+- `TILE_N, 256` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:386` (`src_bd5872d2cb7d9715`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm2.py:452` (`src_ececfdd27840fd95`)
+- `BLOCK_K, 64` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:1842` (`src_94036a0f5344a294`)
+- …11 further distinct value(s); see the YAML
+
+**gluon** — 1 in 1 file(s)
+
+- `BLOCK_K, 128` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:804` (`src_78e83bf7badf9bc4`)
 
 ### `waves` — How many waves cooperate on that tile
 
-**flydsl** — 7 in 3 file(s)
+**flydsl** — 9 in 4 file(s)
 
+- `WARP_SIZE, 64` [gfx942] — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2473` (`src_201aa297b6953c17`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:139` (`src_fdef5d4771689903`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:73` (`src_6c72538f448d611c`)
 - `BLOCK_M_WARPS, 1` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:8` (`src_314f311d52e5331a`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:71` (`src_25a1c183f8a371dd`)
-- `WARP_SIZE, 64` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:139` (`src_fdef5d4771689903`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:73` (`src_6c72538f448d611c`)
+- `waves_per_eu, 0` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:92` (`src_212b210f330a2117`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:84` (`src_c35f2f59ee3664e6`)
 - `BLOCK_N_WARPS, 1` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:458` (`src_14dfe05f6798178b`)
 - `BLOCK_N_WARPS, 2` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:459` (`src_e8392924f24a573c`)
-- `waves_per_eu, 0` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:84` (`src_c35f2f59ee3664e6`)
 
-**hip** — 7 in 1 file(s)
+**gluon** — 1 in 1 file(s)
 
-- `WvPrGrp* THRDS` — `csrc/kernels/custom_kernels.cu:436` (`src_8ad9766662f97b19`), `csrc/kernels/custom_kernels.cu:688` (`src_d33d9c364eba88bd`), `csrc/kernels/custom_kernels.cu:951` (`src_ae811c921394c387`) +3 more
-- `512` — `csrc/kernels/custom_kernels.cu:2267` (`src_fba0f93e614e1b90`)
+- `NUM_WARPS, 4` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:804` (`src_816640616c8c86b1`)
+
+**hip** — 36 in 16 file(s)
+
+- `WvPrGrp* THRDS` — `csrc/kernels/custom_kernels.cu:434` (`src_17adeca6c7620408`), `csrc/kernels/custom_kernels.cu:686` (`src_b9f63309a34bebbc`), `csrc/kernels/custom_kernels.cu:949` (`src_a31909a5de329225`) +9 more
+- `128, 1` — `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_cluster_tdm_splitk_ws_gfx1250.cuh:53` (`src_743c91fab99dd53e`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_clusterlaunch_tdm_splitk_fuse_gfx1250.cuh:60` (`src_8a9ebb9cb4b492ac`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_clusterlaunch_tdm_splitk_ws_gfx1250.cuh:82` (`src_541bfa6d8d2ae771`) +2 more
+- `Traits::BLOCK_SIZE, 2` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_4g_safe_gfx950.cuh:195` (`src_af0c3470e3ac95ac`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_gfx950.cuh:183` (`src_8b4d77181021cbdd`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_persistent_4g_safe_gfx950.cuh:69` (`src_0a7ce0087a2b8c06`) +2 more
+- `Traits::BLOCK_SIZE, Traits::WG_PER_CU` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_flatmm_gfx950.cuh:168` (`src_9e6ff5ad24a0d7c4`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_flatmm_splitk_gfx950.cuh:205` (`src_80eb978faf6007f5`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_mxscale_flatmm_splitk_gfx950.cuh:368` (`src_1434434e52b764ec`) +2 more
+- `512` — `csrc/kernels/custom_kernels.cu:2265` (`src_3c9e8a73007960e7`), `csrc/kernels/custom_kernels.cu:2267` (`src_fba0f93e614e1b90`)
+- `BLOCK_THREADS, ROUTE_FP8 ? 2 : 4` — `csrc/opus_moe/include/gfx950/opus_moe_stage2_route_output_reduce_gfx950.cuh:58` (`src_bc4542e2805a89f0`), `csrc/opus_moe/include/gfx950/opus_moe_stage2_route_output_reduce_gfx950.cuh:265` (`src_ddf90821dc8651bc`)
+- `UserTraits::BLOCK_SIZE, 2` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_mono_tile_4g_safe_gfx950.cuh:247` (`src_3084013dfc207955`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_mono_tile_gfx950.cuh:242` (`src_1a96b2df31ea94d7`)
+- `256, 1` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_mxscale_flatmm_splitk_gfx950.cuh:1822` (`src_54a07f149dc54ef6`)
+- `512, 1` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_mxscale_flatmm_splitk_gfx950.cuh:1638` (`src_c01f7454998fedc0`)
+- `and __cluster_dims__ for the clusterlaunch tag, so // the <<<>>> launc…` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:250` (`src_aaff5e976043109f`)
 
 ### `split_k` — Whether K is split across workgroups, and how
 
-**flydsl** — 19 in 3 file(s)
+**flydsl** — 21 in 4 file(s)
 
 - `IS_SPLIT_K` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:117` (`src_b9b52836a1da4a49`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:615-616` (`src_5ad1990942237536`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:830-905` (`src_0294fc9392d3670a`) +5 more
 - `SPLIT_K_COUNTER_MAX_LEN` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:23` (`src_1e029a07ace5e667`), `aiter/ops/flydsl/gemm_kernels.py:37` (`src_355d2350acab709e`)
 - `SPLIT_K_SIGNAL_STATE_COUNT` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:24` (`src_67a72909c71307d1`), `aiter/ops/flydsl/gemm_kernels.py:38` (`src_564badda94311abc`)
 - `split_k_barrier` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:393-432` (`src_ad151ebc96795a5e`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:712-751` (`src_284881f3cc4c325a`)
+- `zero_c` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950_utils.py:147-210` (`src_62335b8f30076f2a`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:296-391` (`src_1a4b9ad5c5b109de`)
 - `SPLIT_K_GLOBAL_SEMAPHORE` — `aiter/ops/flydsl/gemm_kernels.py:66` (`src_194c17aa69828857`)
 - `SPLIT_K_GLOBAL_SEMAPHORE_STATE` — `aiter/ops/flydsl/gemm_kernels.py:67` (`src_1a958f82122df673`)
+- `SPLIT_K_SEMAPHORE_MAX_LEN` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950_utils.py:20` (`src_76d957ef84cb1ef3`)
 - `_advance_split_k_signal_state` — `aiter/ops/flydsl/gemm_kernels.py:688-692` (`src_86aa6d1400d0f17f`)
 - `_get_split_k_signal_state` — `aiter/ops/flydsl/gemm_kernels.py:683-685` (`src_94058066019b30f2`)
-- `zero_c` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:296-391` (`src_1a4b9ad5c5b109de`)
+
+**hip** — 3 in 2 file(s)
+
+- `split_k, 1` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:452` (`src_0a42ed2d8432300a`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:2195` (`src_5481e36aa6c88d39`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:2276` (`src_7de0e6dc2174c461`)
 
 ### `persistent` — Whether workgroups persist and loop over tiles
 
-**flydsl** — 16 in 3 file(s)
+**flydsl** — 26 in 7 file(s)
 
-- `persistent` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:145` (`src_64af276711d0fa08`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:182` (`src_efeb8eac56ca74b3`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:240` (`src_c273fc90d3c0f3a8`) +10 more
+- `persistent` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3314` (`src_52b07d40fbad4986`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:145` (`src_64af276711d0fa08`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:182` (`src_efeb8eac56ca74b3`) +11 more
+- `num_xcds` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950_utils.py:67` (`src_6a14ddc1b1696d75`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:365` (`src_dd822c3b5cd63825`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:517` (`src_1cb719a05ca22f51`) +3 more
+- `NUM_XCDS` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:537` (`src_091a8642ffbe821f`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:856` (`src_4abb0c840d1bf162`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950_utils.py:57` (`src_fee0b96a70bb46ac`)
 - `PERSISTENT` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:399` (`src_68de7eb933a46cd2`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:475` (`src_c0ee833e072f2728`), `aiter/ops/flydsl/kernels/hgemm_dispatch.py:66` (`src_79f134f10862341c`)
 
-**triton** — 13 in 7 file(s)
+**triton** — 34 in 12 file(s)
 
-- `NUM_XCDS` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:105` (`src_334e95f3f9406108`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:106` (`src_45926efd29068c06`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp4wfp4.py:95` (`src_f028084a99793734`) +10 more
+- `NUM_XCDS` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:91` (`src_1945d94e8611cd1d`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_persistent.py:100` (`src_0539596de60e5882`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:106` (`src_45926efd29068c06`) +31 more
 
-**gluon** — 5 in 2 file(s)
+**gluon** — 10 in 5 file(s)
 
-- `NUM_XCDS` — `aiter/ops/triton/gluon/gemm_a8w8.py:63` (`src_9b7067427209bff6`), `aiter/ops/triton/gluon/gemm_a8w8.py:349` (`src_ce01f7e3e145a1bf`), `aiter/ops/triton/gluon/gemm_a8w8.py:666` (`src_0380ea4732294f94`) +2 more
+- `NUM_XCDS` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16_persistent.py:143` (`src_238ed7c67516c1f9`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16_persistent.py:466` (`src_d77f070a7a11c764`), `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8.py:51` (`src_ede22a00b3c47449`) +7 more
+
+**hip** — 1 in 1 file(s)
+
+- `persistent` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:678` (`src_82b560c294bb14d4`)
 
 ### `grid_mapping` — How workgroup IDs are mapped onto tiles and XCDs
 
-**flydsl** — 16 in 5 file(s)
+**flydsl** — 111 in 24 file(s)
 
-- `xcd_swizzle` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:132` (`src_69a5695f3c33fd50`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:275` (`src_7cca17f94d5b688a`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:523-558` (`src_3a83a99245462451`) +3 more
-- `gx, gy, 1` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1674-1678` (`src_328a63de09b9204a`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1361` (`src_387b4346070fff00`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2693` (`src_72b2212b812c891c`) +1 more
+- `xcd_swizzle` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:142` (`src_9c9bf632921d5083`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:266-276` (`src_1f47ebfd41c37fb1`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:274` (`src_514130d5a7eeafc1`) +62 more
+- `grid_x, 1, 1` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:614` (`src_3bfa5de0bf3e0380`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm2.py:641` (`src_1378146a877469cd`), `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:1773` (`src_e32c3559658ca19b`) +2 more
+- `gx, gy, 1` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:5275-5279` (`src_b926de949c217b39`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1674-1678` (`src_328a63de09b9204a`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1361` (`src_387b4346070fff00`) +2 more
+- `num_n_blocks, task_num, 1` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2169` (`src_7cc8b7b6ae664d97`), `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2185` (`src_7868e8f755e84bd1`), `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2207` (`src_15213cbc3bd1dca1`) +2 more
+- `E, 1, 1` — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1200` (`src_c1f0e046c5841729`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1395` (`src_b1d4338caf797a44`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1677` (`src_c69bc701a3d11ba5`) +1 more
+- `n_grid, 1, 1` — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:994` (`src_edad5995e481a7a8`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1060` (`src_43cbe27bd46342e8`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1646` (`src_0c9fd4d6996e3893`)
 - `_wgs_per_xcd` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:544` (`src_923af36a5869aea6`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3068` (`src_407ecf07db0bcf51`)
 - `bm, bn, SPLIT_K` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:927-931` (`src_821a059af3542249`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:1399-1403` (`src_569b9cec48bd2103`)
-- `gx, gy, k_batch` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2702` (`src_44def9cee45867f8`)
-- `gx, gy_static, 1` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2927-2931` (`src_295be04e9bf7c0a0`)
+- `gx, gy, k_batch` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3018-3020` (`src_172b0c82a4da2913`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2702` (`src_44def9cee45867f8`)
+- `gx, gy, split_k` — `aiter/ops/flydsl/kernels/gemm_a16w16_kernel_gfx1250.py:793-795` (`src_8ef2a05526922f1f`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1005` (`src_60067df8db0ea11c`)
+- `n_grid_p23, 1, 1` — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1694` (`src_0f720b7cd7d8f1ff`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1758` (`src_d191786d13cb5db5`)
+- `wg_count, 1, 1` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2503-2505` (`src_085176b2d88d782e`), `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2621-2623` (`src_a81054dd64c6886b`)
+- …11 further distinct value(s); see the YAML
 
-**triton** — 5 in 1 file(s)
+**triton** — 9 in 1 file(s)
 
+- `pids_per_xcd` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:30` (`src_d44de92fce492fc3`), `aiter/ops/triton/utils/_triton/pid_preprocessing.py:31` (`src_b04ffbdb15587289`)
+- `remap_xcd` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:27-54` (`src_a3577e160263a8dc`), `aiter/ops/triton/utils/_triton/pid_preprocessing.py:28-54` (`src_1b8ded5e4825e5e1`)
+- `remap_xcd_chunked` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:9-23` (`src_e64b8eec9a69ac5c`), `aiter/ops/triton/utils/_triton/pid_preprocessing.py:10-24` (`src_a0815635126a1ea6`)
 - `pid_grid` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:58-80` (`src_d760ac9f0e4bff02`)
 - `pid_grid_3d` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:84-100` (`src_374d2045e949e65b`)
-- `pids_per_xcd` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:31` (`src_b04ffbdb15587289`)
-- `remap_xcd` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:28-54` (`src_1b8ded5e4825e5e1`)
-- `remap_xcd_chunked` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:10-24` (`src_a0815635126a1ea6`)
+- `wgs_per_xcd_in_cluster` — `aiter/ops/triton/utils/_triton/pid_preprocessing.py:199` (`src_bd00341136547ae3`)
+
+**hip** — 4 in 1 file(s)
+
+- `m_grp_per_xcd` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:689` (`src_c9ba6fe754b8c7d6`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:695` (`src_22803ab058b6fc81`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:1947` (`src_40569f5eedf3efd1`) +1 more
 
 ### `scale_operand` — Which quantization-scale granularity the kernel consumes
 
-**flydsl** — 1 in 1 file(s)
+**flydsl** — 2 in 2 file(s)
 
 - `_needs_per_token_scale` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:403` (`src_f854f40de1f28585`)
+- `block_scale` — `aiter/ops/flydsl/kernels/mxmoe_gemm_v2.py:1131-1134` (`src_9c1b248e8f431365`)
 
 ### `scale_in_k_loop` — Where a per-K-block scale multiplies each partial product inside the K loop
 
-**triton** — 10 in 5 file(s)
+**triton** — 19 in 5 file(s)
 
-- `accumulator, a_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:180-184` (`src_9e9e7447c916acf3`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:396-400` (`src_244325702ca00c60`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_blockscale.py:190-194` (`src_426b43e7e6389512`) +4 more
-- `accumulator, b_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:187` (`src_3e0308beb53d57a4`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:403` (`src_67c5c34b0678f391`)
-- `accumulator_fp8, a_scale` — `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_a8w8_blockscale_a16w16.py:176-180` (`src_cb04a173a4f1bbdf`)
+- `accumulator, a_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:182` (`src_b9ced8fe28098dd1`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:394` (`src_6d673c24d032b0c8`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_blockscale.py:177` (`src_b55cd5b407456225`) +10 more
+- `accumulator, b_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:185` (`src_061254108aac5e9b`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:397` (`src_632c9f1bcdec1e12`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:187` (`src_3e0308beb53d57a4`) +1 more
+- `accumulator_fp8, a_scale` — `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_a8w8_blockscale_a16w16.py:191` (`src_4b743ccdbf7ce52a`), `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_a8w8_blockscale_a16w16.py:176-180` (`src_cb04a173a4f1bbdf`)
 
-**gluon** — 2 in 1 file(s)
+**gluon** — 15 in 3 file(s)
 
-- `acc, cur_a_scale` — `aiter/ops/triton/gluon/gemm_a8w8_blockscale.py:301` (`src_db2ae65ef56818a7`), `aiter/ops/triton/gluon/gemm_a8w8_blockscale.py:315` (`src_330b209393d3b272`)
+- `acc, cur_a_scale` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:285` (`src_38ed780b129ced2f`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:287` (`src_0d4822acee9f2306`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:376` (`src_1ac6c660c79bda09`) +11 more
+- `acc, last_a_scale` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:676` (`src_7d3c43a3b015a615`)
 
 ### `scale_after_k_loop` — Where a per-token/per-channel scale multiplies the finished accumulator
 
-**triton** — 3 in 3 file(s)
+**triton** — 4 in 3 file(s)
 
-- `accumulator, a_scale, b_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:171` (`src_5720a1614aa54b3f`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_per_token_scale.py:177` (`src_7a0ec7ada35d7647`), `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_a8w8.py:173` (`src_7ef1d1b6e3ac3715`)
+- `accumulator, a_scale, b_scale` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:171` (`src_5720a1614aa54b3f`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_per_token_scale.py:166` (`src_aaa4be392833b413`), `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_a8w8.py:173` (`src_7ef1d1b6e3ac3715`) +1 more
 
-**gluon** — 2 in 1 file(s)
+**gluon** — 4 in 2 file(s)
 
-- `acc, a_scale, b_scale` — `aiter/ops/triton/gluon/gemm_a8w8.py:287` (`src_72fb66ae76136595`), `aiter/ops/triton/gluon/gemm_a8w8.py:543` (`src_de3150378032368b`)
+- `acc, a_scale, b_scale` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8.py:271` (`src_73c3fedee99ce276`), `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8.py:525` (`src_f6c74601f96c5608`), `aiter/ops/triton/gluon/gemm_a8w8.py:287` (`src_72fb66ae76136595`) +1 more
 
 ### `atomic_combine` — Where partial results are accumulated into the output with atomics
 
-**flydsl** — 5 in 4 file(s)
+**flydsl** — 11 in 9 file(s)
 
-- `fadd` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:875-882` (`src_869d39483177e42c`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:966-973` (`src_39dac9712009eb08`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2605-2612` (`src_eb530d7276be8a22`) +2 more
+- `fadd` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942_utils.py:250-257` (`src_409c25a3a0ca153a`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:2483-2490` (`src_a9035f819c6590bc`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:4946-4953` (`src_6256b935a42dd250`) +6 more
+- `add` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950_utils.py:277-284` (`src_329aa763795b67d7`)
+- `fmax` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2486-2493` (`src_8641c101139b3112`)
 
-**triton** — 2 in 2 file(s)
+**triton** — 5 in 3 file(s)
 
-- `tl.atomic_add(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:139` (`src_9e9cdadae23d0f5f`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:181` (`src_934367f0da61c191`)
+- `tl.atomic_add(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:144` (`src_630b5d6bccb513a4`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:183` (`src_81388402b8442e89`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp8wfp8.py:340-346` (`src_238ba0171c836b54`) +2 more
 
 ### `grid_fill` — How the workgroup count is sized against the CU count to pick a tile or split
 
-**hip** — 5 in 1 file(s)
+**hip** — 10 in 1 file(s)
 
-- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEm, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1744` (`src_1403228fc6c1ccdb`), `csrc/kernels/custom_kernels.cu:2238` (`src_ae2942278a285f31`)
-- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEs, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1738` (`src_4afbdde799d96232`), `csrc/kernels/custom_kernels.cu:2231` (`src_e32202e7a829f4ab`)
-- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEb, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1750` (`src_b7ec40f16de5bd46`)
+- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEm, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1742` (`src_7d03bf72e51b092e`), `csrc/kernels/custom_kernels.cu:2236` (`src_ee2a17690d0af70c`), `csrc/kernels/custom_kernels.cu:1744` (`src_1403228fc6c1ccdb`) +1 more
+- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEs, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1736` (`src_e5f3295b7c8a504c`), `csrc/kernels/custom_kernels.cu:2229` (`src_4e5ef78f5e2c7a9b`), `csrc/kernels/custom_kernels.cu:1738` (`src_4afbdde799d96232`) +1 more
+- `__wvPrGrp, mindiv(M_in, CuCount * _YTILEb, _WvPrGrp)` — `csrc/kernels/custom_kernels.cu:1748` (`src_825063dd383bf77b`), `csrc/kernels/custom_kernels.cu:1750` (`src_b7ec40f16de5bd46`)
 
-**asm** — 5 in 4 file(s)
+**asm** — 10 in 6 file(s)
 
-- `local_round, tg_num, num_cu` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:145` (`src_c2ed9024f2039d1f`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:124` (`src_fa4eb9ba8bba7192`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:98` (`src_0558cdca6ff86ab9`) +1 more
+- `local_round, tg_num, num_cu` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:145` (`src_c2ed9024f2039d1f`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:124` (`src_fa4eb9ba8bba7192`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:98` (`src_0558cdca6ff86ab9`) +6 more
 - `max_splitk, std::min(std::min(static_cast<int>(num_cu / pure_tg_num), …` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:138` (`src_787ebf8727d0c7e1`)
 
 ### `lane_reduction` — Where partial sums are reduced across the lanes of a wave
 
-**hip** — 10 in 1 file(s)
+**hip** — 20 in 1 file(s)
 
-- `__shfl` — `csrc/kernels/custom_kernels.cu:1951` (`src_c99341de831ed9d8`), `csrc/kernels/custom_kernels.cu:1952` (`src_ea240ed2d9a34b12`), `csrc/kernels/custom_kernels.cu:1953` (`src_f3b7cd77f71cdcb2`) +3 more
-- `__shfl_xor` — `csrc/kernels/custom_kernels.cu:350` (`src_0b8de37c2b304d4a`), `csrc/kernels/custom_kernels.cu:368` (`src_bb221ee547586bda`), `csrc/kernels/custom_kernels.cu:370` (`src_a9ca628df4d7f9f9`)
-- `__shfl_down` — `csrc/kernels/custom_kernels.cu:2333` (`src_6eb77efbe9c9c8cb`)
+- `__shfl` — `csrc/kernels/custom_kernels.cu:1949` (`src_b1ab8408d030aee8`), `csrc/kernels/custom_kernels.cu:1950` (`src_5d82ce67f0613eac`), `csrc/kernels/custom_kernels.cu:1951` (`src_00b325f46036d9b7`) +9 more
+- `__shfl_xor` — `csrc/kernels/custom_kernels.cu:348` (`src_9afecf5ee2239c4d`), `csrc/kernels/custom_kernels.cu:366` (`src_316b03bf0a122de7`), `csrc/kernels/custom_kernels.cu:368` (`src_8497bee2c44615e9`) +3 more
+- `__shfl_down` — `csrc/kernels/custom_kernels.cu:2331` (`src_aaf4c8ce9a94c48a`), `csrc/kernels/custom_kernels.cu:2333` (`src_6eb77efbe9c9c8cb`)
 
 ### `fragment_layout` — Which lane holds which row and column of an MFMA fragment
 
-**flydsl** — 18 in 6 file(s)
+**flydsl** — 21 in 7 file(s)
 
-- `layout_lane16, fx.make_layout((4, 16), stride=(16, 1))` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:349` (`src_cbefa11f13ff273e`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1642` (`src_337a0da2b4b7d21e`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:569` (`src_ee88b49e52f0a2df`) +1 more
+- `layout_lane16, fx.make_layout((4, 16), stride=(16, 1))` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:562` (`src_a30fc9b5ffe8868e`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3466` (`src_ec8d757656373bf0`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:349` (`src_cbefa11f13ff273e`) +3 more
+- `lane_div_16_mul4, lane_div_16 * 4` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:64` (`src_a7b78659c53fad33`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:73` (`src_5cae13453d752cfb`)
 - `ldmatrix_a_k_vec_idx, w_tid // WMMA_M * WMMA_A_FRAG_VALUES * MFMA_PER_…` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:289` (`src_7e41979f22eae1f9`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:626` (`src_6e9c30448f72b4fd`)
 - `ldmatrix_a_m_idx, w_tid % WMMA_M` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:288` (`src_f01ef3793a7bd87c`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:625` (`src_0a8dcfc8b5e51958`)
 - `ldmatrix_b_k_vec_idx, w_tid // WMMA_N * WMMA_B_FRAG_VALUES * MFMA_PER_…` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:291` (`src_8ba4dcf6e9d68f6e`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:628` (`src_87453420ec13d5de`)
 - `ldmatrix_b_n_idx, w_tid % WMMA_N` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:290` (`src_44f9bf23c53fc7bc`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:627` (`src_9cc81482ab9ce6e9`)
 - `stmatrix_c_m_vec_idx, w_tid // WMMA_N * WMMA_C_FRAG_VALUES` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:813` (`src_91899d8d1f4341f6`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:998` (`src_2a3938a5bfbd5582`)
 - `stmatrix_c_n_idx, w_tid % WMMA_N` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:814` (`src_074f27a8a5c89fcf`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:999` (`src_0201f421d09959ff`)
-- `lane_div_16_mul4, lane_div_16 * 4` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:73` (`src_5cae13453d752cfb`)
 - `layout_lane16, fx.make_layout((4, 16), (16, 1))` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:426` (`src_29a6126027710513`)
 
 ### `jit_cache` — How a compiled kernel (or a looked-up config) is cached and keyed
 
-**flydsl** — 8 in 5 file(s)
+**flydsl** — 18 in 10 file(s)
 
+- `1024, compile_moe_reduction` — `aiter/ops/flydsl/kernels/moe_reduce.py:202` (`src_7710996bc1db7f10`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2703` (`src_b20ee136736bd4b8`)
+- `1, _get_compile_fn` — `aiter/ops/flydsl/gemm_kernels.py:208` (`src_2ac5d32d0c4ec3f8`)
 - `1024, compile_hgemm_kernel` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:102` (`src_4d28023c79d1fe52`)
 - `1024, compile_moe_gemm1` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:87` (`src_ada62c940d6fc161`)
 - `1024, compile_moe_gemm2` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1370` (`src_240b0d19fd1324d9`)
-- `1024, compile_moe_reduction` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2703` (`src_b20ee136736bd4b8`)
+- `1024, compile_preshuffle_gemm` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:128` (`src_bc1d060efc518b44`)
 - `1024, compile_preshuffle_gemm_a8` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:123` (`src_ca495db46be070cd`)
 - `1024, compile_small_m_hgemm_kernel` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:388` (`src_1e5ae08be5adf756`)
-- `None, compile_mixed_moe_gemm1` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:106` (`src_ce69a051b38e2749`)
-- `None, compile_mixed_moe_gemm2` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2707` (`src_dd4fe914e431b3ea`)
+- `128, _get_preshuffle_split_buffers` — `aiter/ops/flydsl/gemm_kernels.py:233` (`src_b8067a512335e1d5`)
+- `128, get_split_k_buffers` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:1385` (`src_d22e00c3c6bafbc2`)
+- `256, _compile_moe_sorting_multiphase` — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:796` (`src_e5b7dc6af63b51b5`)
+- `256, _compile_moe_sorting_oneshot` — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:223` (`src_e098ef36a5c40d45`)
+- …5 further distinct value(s); see the YAML
 
 **triton** — 1 in 1 file(s)
 
@@ -310,242 +372,375 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `parity_tolerance` — Which tolerance the implementation's own test accepts against its reference
 
-**flydsl** — 7 in 1 file(s)
+**flydsl** — 27 in 6 file(s)
 
+- `logits_diff, 0.01` — `op_tests/test_moe_2stage.py:570` (`src_d741a22a37929535`), `op_tests/test_moe_2stage.py:574-577` (`src_b8f12ec4b69bdd28`), `op_tests/test_moe_2stage.py:291` (`src_4db092e298495993`) +1 more
+- `rtol, 0.01` — `op_tests/test_moe_ep.py:249` (`src_270d89ac49ec5fc4`), `op_tests/test_moe_ep.py:358` (`src_72d6b172b83526e3`), `op_tests/test_moe_ep.py:240` (`src_843e260d49260ae4`) +1 more
+- `atol, 0` — `op_tests/test_moe_sorting.py:221-226` (`src_08328711fc7e1ae6`), `op_tests/test_moe_sorting.py:151-156` (`src_5ee48479b3590731`)
+- `atol, 10` — `op_tests/test_moe_ep.py:355` (`src_754799f7f7c13f9f`), `op_tests/test_moe_ep.py:346` (`src_adf017b38e748487`)
+- `logits_diff, 1e-3` — `op_tests/test_moe_2stage.py:563-566` (`src_6aa373598c679fd3`), `op_tests/test_moe_2stage.py:285-288` (`src_ee27352fbe332f38`)
 - `pass_pct, 99.0` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:85` (`src_217562a4a9b879dc`), `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:102` (`src_972b88aa5143a3f7`)
 - `DEFAULT_ATOL, 1e-2` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:41` (`src_9d1d40ad1d82f015`)
 - `DEFAULT_PASS_PCT, 99.9` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:43` (`src_1183d7ed5d869e8a`)
 - `DEFAULT_RTOL, 1e-2` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:42` (`src_f0baf9a97c14b111`)
-- `max_delta_limit, 32.0` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:86` (`src_636fbc44252bb90e`)
-- `max_delta_limit, 8.0` — `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:103` (`src_f30b29895e6d16b2`)
+- `LOGITS_DIFF_TOL, 0.01` — `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:90` (`src_56406869ba3f3068`)
+- `VERIFY_TOL_A4W4, 0.02` — `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:85` (`src_fbc202be8570fb18`)
+- `VERIFY_TOL_A8W4, 0.02` — `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:86` (`src_e5452814c4e01160`)
+- …5 further distinct value(s); see the YAML
 
 ### `dispatch_padding` — How the dispatcher pads a shape before looking up a tuned config
 
-**ck** — 6 in 3 file(s)
+**ck** — 12 in 3 file(s)
 
-- `padded_m, 16` — `csrc/ck_gemm_a8w8/gemm_a8w8.cu:115` (`src_d25896e686f15e7e`), `csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8.cu:116` (`src_7c7d8f6fdcbb4ac5`), `csrc/ck_batched_gemm_bf16/batched_gemm_bf16.cu:107` (`src_088b1a1bf2d2157c`)
-- `padded_m, 20480` — `csrc/ck_gemm_a8w8/gemm_a8w8.cu:123` (`src_37bd4fee6ed4333a`), `csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8.cu:124` (`src_a91a85acdbbb2d27`), `csrc/ck_batched_gemm_bf16/batched_gemm_bf16.cu:115` (`src_6fbc7262d10fbc0e`)
+- `padded_m, 16` — `csrc/ck_gemm_a8w8/gemm_a8w8.cu:117` (`src_7f53c9cf37b2e7b0`), `csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8.cu:118` (`src_ac7455e067a22ba3`), `csrc/ck_batched_gemm_bf16/batched_gemm_bf16.cu:105` (`src_69fcc14146b487bc`) +3 more
+- `padded_m, 20480` — `csrc/ck_gemm_a8w8/gemm_a8w8.cu:125` (`src_4278a813a3d4f463`), `csrc/ck_batched_gemm_a8w8/batched_gemm_a8w8.cu:126` (`src_b0654892c370c5c7`), `csrc/ck_batched_gemm_bf16/batched_gemm_bf16.cu:113` (`src_ff8b62bdcca28c97`) +3 more
 
-**hip** — 1 in 1 file(s)
+**hip** — 2 in 1 file(s)
 
-- `padded_m, 8192` — `csrc/py_itfs_cu/gemm_common.cu:35` (`src_89521c1acfb179e9`)
+- `padded_m, 8192` — `csrc/py_itfs_cu/gemm_common.cu:41` (`src_a268d30e03e573f5`), `csrc/py_itfs_cu/gemm_common.cu:35` (`src_89521c1acfb179e9`)
 
 ### `config_lookup` — How a shape is mapped to a shipped tuned configuration
 
-**triton** — 1 in 1 file(s)
+**triton** — 2 in 1 file(s)
 
-- `get_gemm_config` — `aiter/ops/triton/utils/gemm_config_utils.py:142-177` (`src_2a228a58ade64092`)
+- `get_gemm_config` — `aiter/ops/triton/utils/gemm_config_utils.py:132-174` (`src_d1f8665c5da8a605`), `aiter/ops/triton/utils/gemm_config_utils.py:142-177` (`src_2a228a58ade64092`)
 
 ### `config_space` — Which configuration values the library declares it will build
 
-**flydsl** — 38 in 5 file(s)
+**flydsl** — 104 in 18 file(s)
 
-- `HGEMM_BASE_SPLIT_K_OPTIONS` — `aiter/ops/flydsl/gemm_kernels.py:75` (`src_fce6be7eb6b247d6`)
-- `HGEMM_TILE_K_OPTIONS` — `aiter/ops/flydsl/gemm_kernels.py:73` (`src_3c72689d786ca8be`)
-- `HGEMM_TILE_M_OPTIONS` — `aiter/ops/flydsl/gemm_kernels.py:74` (`src_426b8960fb14a04f`)
-- `HGEMM_TILE_N_OPTIONS` — `aiter/ops/flydsl/gemm_kernels.py:72` (`src_62ce0ec6b152ecaa`)
-- `KERNEL_CONFIG_VARIANTS` — `aiter/ops/flydsl/gemm_kernels.py:79-105` (`src_27d99a67a1d27ccc`)
-- `SMALL_M_BASE_BLOCK_N_WARPS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:104` (`src_1d782887938ee0c3`)
-- `SMALL_M_B_TO_LDS_BLOCK_N_WARPS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:106` (`src_d4a8b0951c7d9302`)
-- `SMALL_M_B_TO_LDS_UNROLL_OPTIONS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:101` (`src_44b5602aacc7e7df`)
-- `SMALL_M_B_TO_LDS_WAVES_PER_EU_OPTIONS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:100` (`src_e47b5a4b1cf192ff`)
-- `SMALL_M_NON_B_TO_LDS_WAVES_PER_EU_OPTIONS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:97` (`src_1dcdf9c7b6794c6e`)
-- `SMALL_M_N_TILE_REPEAT_OPTIONS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:102` (`src_a7c0de9870934fc0`)
-- `SMALL_M_PERSISTENT_BLOCK_N_WARPS` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:107` (`src_7a0fb4b6500460f5`)
-- …26 further distinct value(s); see the YAML
+- `AITER_MOE_EXPERT_BALANCE` — `op_tests/test_moe_2stage.py:62-64` (`src_a1e4aaee243bc488`), `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:58-60` (`src_f1f771554096e580`), `op_tests/test_moe_2stage.py:37-39` (`src_117294b983b2bbce`)
+- `_ASYNC_COPY_VALS` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:288` (`src_475f7f52364f8f8c`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:248` (`src_623470961bcb8c24`)
+- `_DLPACK_SAFE` — `aiter/ops/flydsl/moe_kernels.py:809` (`src_1605d9e38167afe1`), `aiter/ops/flydsl/moe_kernels.py:339` (`src_736dd6cfc19a6630`)
+- `_DTYPE_SHORT` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:29-34` (`src_c10df68f333db48e`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:26-31` (`src_2ad975777024afd0`)
+- `_DTYPE_STR_FALLBACK` — `op_tests/test_moe_2stage.py:803-806` (`src_4647e49003125354`), `op_tests/test_moe_2stage.py:459-462` (`src_cb915580f9fdbe5c`)
+- `_HGEMM_KERNEL_RE` — `aiter/ops/flydsl/gemm_kernels.py:35-45` (`src_54e1e77d0e576924`), `aiter/ops/flydsl/gemm_kernels.py:44-63` (`src_acd2b23f53b56b49`)
+- `_LDS_STAGES` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:291` (`src_b726ef4ba7f5d9d2`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:246` (`src_055d381c0e94f538`)
+- `_PER1X32_BF16_FP4` — `op_tests/test_moe_2stage.py:944` (`src_d2673b54a466f4ce`), `op_tests/test_moe_2stage.py:541` (`src_dd3e067b3b595ac8`)
+- `_PER1X32_FP4_FP4` — `op_tests/test_moe_2stage.py:946` (`src_b012147505382179`), `op_tests/test_moe_2stage.py:543` (`src_7422564b89200db3`)
+- `_PER1X32_FP8_FP4` — `op_tests/test_moe_2stage.py:945` (`src_260396f8c6b2b53c`), `op_tests/test_moe_2stage.py:542` (`src_1ac42a9d8d7f8865`)
+- `_SUFFIX_RE` — `aiter/ops/flydsl/moe_kernels.py:49-51` (`src_c211b74fff19f822`), `aiter/ops/flydsl/moe_kernels.py:22` (`src_674616f1df2213ae`)
+- `_TILE_PRELOAD_DEFAULT` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:114` (`src_032f7293a581d829`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:113` (`src_d4d6210e665ad849`)
+- …73 further distinct value(s); see the YAML
 
-**triton** — 1 in 1 file(s)
+**triton** — 2 in 1 file(s)
 
-- `STANDARD_M_BOUNDS` — `aiter/ops/triton/utils/gemm_config_utils.py:12` (`src_556938a6c808ec7d`)
+- `STANDARD_M_BOUNDS` — `aiter/ops/triton/utils/gemm_config_utils.py:25` (`src_5e9d5c12f38fe382`), `aiter/ops/triton/utils/gemm_config_utils.py:12` (`src_556938a6c808ec7d`)
+
+**gluon** — 15 in 8 file(s)
+
+- `_GLUON_REPR_KEYS` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16.py:11-19` (`src_75ffa49f4f1b1d38`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16_persistent.py:15-32` (`src_0b1c160aa5c2ca79`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:14-28` (`src_a509da6c78ee9500`) +1 more
+- `_KERNEL_MAP` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16.py:849-852` (`src_f180f2ffd5af4bb0`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16_persistent.py:627-630` (`src_7ef27664ced9dabd`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:1811-1814` (`src_9cd3003b4bcb0ad0`) +1 more
+- `_PRESHUFFLE_GLUON_REPR_KEYS` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:781-795` (`src_c23b4c308dcb5b9f`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_mxfp8.py:19-37` (`src_d1c34a0b2ecf63ee`)
+- `_PRESHUFFLE_KERNEL_MAP` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:1816-1819` (`src_22de63562eb9fb62`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_mxfp8.py:1727-1730` (`src_3f2deaebd29aa7fb`)
+- `_MOE_GEMM_A4W4_REPR_KEYS` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:13-23` (`src_3bbcc91f4b826d3d`)
+- `_MOE_GEMM_A8W4_REPR_KEYS` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a8w4.py:14-24` (`src_a26b695c755e3c9d`)
+- `_SUPPORTED_TILES` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:13` (`src_6806d733e91dd109`)
+
+**ck** — 82 in 3 file(s)
+
+- `DoubleSmemBuffer` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:243` (`src_e540392b839b66e6`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:62` (`src_cea20e0156062516`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:70` (`src_8d61c4a21c4c875b`) +1 more
+- `K_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:250` (`src_0db591f1cdfadb5d`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:40` (`src_c2d066045774d78c`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:46` (`src_5e8e946b0e93fd55`) +1 more
+- `K_Warp` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:253` (`src_3bef6348095a1c69`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:44` (`src_2a09ca372eb07a20`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:50` (`src_bb4d87d96dc39113`) +1 more
+- `K_Warp_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:256` (`src_7df8c123e8a11464`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:48` (`src_32ea7a352b9babd1`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:55` (`src_d85097be7f51684f`) +1 more
+- `M_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:248` (`src_69e7c75912a3189e`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:38` (`src_0dc026df1355b31a`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:44` (`src_22c7a2cf38ee11ce`) +1 more
+- `M_Warp` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:251` (`src_d133072dc7fe2838`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:42` (`src_25c017e34d420515`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:48` (`src_8b61f217059613f9`) +1 more
+- `M_Warp_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:254` (`src_d917e70f4c9726e7`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:46` (`src_0cc32d1025578f6a`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:52` (`src_10013fa5228d281e`) +1 more
+- `N_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:249` (`src_fd96fcb5c7c587b9`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:39` (`src_53075ae3a6475e2e`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:45` (`src_116a114cf62c3914`) +1 more
+- `N_Warp` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:252` (`src_94c0e89c284017c4`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:43` (`src_7799e855f5db7d70`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:49` (`src_b30dc6ca73984fe9`) +1 more
+- `N_Warp_Tile` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:255` (`src_f9e6126cce6b365e`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:47` (`src_3a476543a5a93abf`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:53` (`src_ef8c714811bca61e`) +1 more
+- `NumWaveGroups` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:242` (`src_5344f0f1854932fc`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:61` (`src_759937b81044d2f5`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:69` (`src_02c0babe696446ef`) +1 more
+- `Scheduler` — `csrc/cktile_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_cktile_common.cuh:257` (`src_7b0fd69c78a3e64c`), `csrc/ck_tile_gemm_moe_2stages/include/moe_cktile2stages_common.cuh:60` (`src_37a58d02fa006360`), `csrc/ck_deepgemm/include/deepgemm_common.cuh:68` (`src_8c81ac2c7a4aa8df`) +1 more
+- …9 further distinct value(s); see the YAML
+
+**hip** — 103 in 4 file(s)
+
+- `KARGS_NAME_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:58-65` (`src_f74432b8d8940de4`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:88-97` (`src_7281740c5d833410`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:111-128` (`src_342d7dbf527be874`)
+- `KERNEL_FUNC_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:40-47` (`src_4cb64615b5693666`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:99-110` (`src_cbf9da315e8adc25`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:66-84` (`src_cfdcdce3f2e4baeb`)
+- `PIPELINE_HEADER_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:12-29` (`src_55eaa50ec33ed587`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:64-76` (`src_9381ddb1471307a9`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:19-36` (`src_c8723dbd7425a805`)
+- `SPLITK_REDUCE_EXTRA_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:104-106` (`src_dee2922933e022e8`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:177-180` (`src_83461d2f13e64fd3`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:150-152` (`src_fedb91610b0500e6`)
+- `TRAITS_HEADER_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:31-38` (`src_73e2e057dea8d96d`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:78-81` (`src_f1fa2c00899d9913`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:47-64` (`src_b158344213e923df`)
+- `TRAITS_NAME_MAP` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:49-56` (`src_664198596514349d`), `csrc/opus_gemm/codegen/gen_instances_gfx942.py:83-86` (`src_ae00c476b73d5856`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:92-109` (`src_85a85f1c698387c1`)
+- `BIAS_AWARE_KIDS` — `csrc/opus_gemm/opus_gemm_common.py:1823-1831` (`src_ad75ebcca4eb95e5`)
+- `DEFAULT_COMPILED_KIDS` — `csrc/opus_gemm/opus_gemm_common.py:1890-1894` (`src_867561d9cef476c5`)
+- `DEFAULT_COMPILED_KIDS_BY_ARCH` — `csrc/opus_gemm/opus_gemm_common.py:1896-1900` (`src_2982ea6ec8a3deb0`)
+- `DEFAULT_COMPILED_KIDS_GFX1250` — `csrc/opus_gemm/opus_gemm_common.py:1874-1888` (`src_9ba4e212a724e480`)
+- `EXACT_N_ROWBLOCK_REDUCE_CONFIGS` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:118-128` (`src_1daafb0aac797c13`)
+- `GFX1250_4WAVE_CO_KID_OF` — `csrc/opus_gemm/opus_gemm_common.py:1696-1698` (`src_a08228111d91f90d`)
+- …79 further distinct value(s); see the YAML
 
 ### `config_limit` — Where that configuration space is capped
 
-**flydsl** — 8 in 3 file(s)
+**flydsl** — 22 in 10 file(s)
 
+- `HIDDEN_MAX, 8192` — `aiter/ops/flydsl/kernels/mxmoe_dispatcher.py:123` (`src_69636f002bee6df7`), `aiter/ops/flydsl/kernels/mxmoe_dispatcher.py:801` (`src_b21c50525c5ebec7`)
+- `MAX_TOKENS, 4096` — `op_tests/test_moe_ep.py:33` (`src_25df5b84ade40e4d`), `op_tests/test_moe_ep.py:26` (`src_2a2f1806856bac5e`)
+- `PRESHUFFLE_M_MAX, 65536` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:125` (`src_761dfa914f5bf533`), `aiter/ops/flydsl/gemm_kernels.py:223` (`src_769e259875c808b6`)
 - `SPLIT_K_COUNTER_MAX_LEN, 128` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:23` (`src_5876c1cb8be66e43`), `aiter/ops/flydsl/gemm_kernels.py:37` (`src_7c7ddd401ff4aaeb`)
+- `FP8OUT_SCALE_BLK_MIN, 8` — `aiter/ops/flydsl/kernels/mxfp4_gemm_common.py:375` (`src_ec004598bde1129e`)
 - `HGEMM_EXTRA_BLOCK_K_LOOPS_MAX, 8` — `aiter/ops/flydsl/gemm_kernels.py:78` (`src_539c4b7bf95dca07`)
 - `HGEMM_EXTRA_BLOCK_K_LOOPS_MIN, 2` — `aiter/ops/flydsl/gemm_kernels.py:77` (`src_c139f07a63569327`)
 - `HGEMM_MAX_SPLIT_K, 32` — `aiter/ops/flydsl/gemm_kernels.py:76` (`src_96320a5bab17a8f5`)
+- `INTER_MAX, 8192` — `aiter/ops/flydsl/kernels/mxmoe_dispatcher.py:125` (`src_6797c4e12421a878`)
+- `K_SPLIT_MAX_CTA_OVERSUBSCRIBE, 4` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:339` (`src_029c2609b3b799c7`)
+- `K_SPLIT_MIN_TILES_PER_SLICE, 2` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:338` (`src_9d2ec6f0d89a147f`)
 - `MAX_LDS_BYTES, 163840` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:76` (`src_bc6d04baf2182ba4`)
-- `SMALL_M_KERNEL_MAX, 17` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:69` (`src_b446c07f43b11542`)
-- `SMALL_M_MAX_SPLIT_K, 32` — `aiter/ops/flydsl/kernels/small_m_hgemm.py:82` (`src_ee5e839c6374f38f`)
+- …6 further distinct value(s); see the YAML
 
-**hip** — 1 in 1 file(s)
+**hip** — 5 in 3 file(s)
 
-- `MAX_N, 16` — `csrc/kernels/custom_kernels.cu:1658` (`src_b17fb1dac97b8345`)
+- `MAX_N, 16` — `csrc/kernels/custom_kernels.cu:1656` (`src_c8acf828e176a5ee`), `csrc/kernels/custom_kernels.cu:1658` (`src_b17fb1dac97b8345`)
+- `GFX942_MAX_AUTO_SPLIT_K, 16` — `csrc/opus_gemm/opus_gemm_common.py:912` (`src_42314f4b0ba2b875`)
+- `GFX942_MIN_ITERS_PER_SPLIT, 2` — `csrc/opus_gemm/opus_gemm_common.py:913` (`src_16c8c20353b0d6d9`)
+- `SFA_K_MAX, 8192` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_mxscale_flatmm_splitk_gfx950.cuh:480` (`src_3a1289a5a20b6149`)
 
 ### `config_validity` — Which configurations are rejected before compilation, and why
 
-**flydsl** — 119 in 11 file(s)
+**flydsl** — 285 in 29 file(s)
 
-- `elem_bytes must be 1 or 2, got {elem_bytes!r}` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:183` (`src_2bc956feedfd346d`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:373` (`src_cb6404e2cf774b8c`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:509` (`src_23859113865f5c5f`) +2 more
-- `out_dtype must be` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:170` (`src_65bcb0094b2ef2f3`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:140` (`src_cb8fbfb94599aa66`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1427-1429` (`src_463f239f7d304546`) +1 more
-- `tile_k_bytes must be divisible by 64, got tile_k_bytes={tile_k_bytes}` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:198-201` (`src_e1aea77c2c7f9600`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:151-154` (`src_598bc4b62627902e`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1465-1468` (`src_36086c201fcfb8f9`) +1 more
+- `elem_bytes must be 1 or 2, got {elem_bytes!r}` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:173` (`src_787a9545f8120755`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:269` (`src_7fa94abd8858c996`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:183` (`src_2bc956feedfd346d`) +4 more
+- `out_dtype must be` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3250-3252` (`src_39d9dbc8fa19a50e`), `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:1529` (`src_3b1950e2c76592e2`), `aiter/ops/flydsl/kernels/mxmoe_dispatcher.py:171-173` (`src_b68a23ddea180f6f`) +4 more
+- `tile_k_bytes must be divisible by 64, got tile_k_bytes={tile_k_bytes}` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3230-3233` (`src_b24a3699b50cfd4d`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:198-201` (`src_e1aea77c2c7f9600`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:151-154` (`src_598bc4b62627902e`) +2 more
+- `a_dtype must be one of (` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:156` (`src_deec39905a333c92`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3184` (`src_9c7577a88f14c454`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:151-153` (`src_2d8e5850176484c7`) +1 more
+- `b_dtype must be one of (` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:158` (`src_251c372fd360f044`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3186` (`src_537bfca8045f86d4`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:155-157` (`src_58f339c49ab62e62`) +1 more
+- `bytes_per_thread_x ({bytes_per_thread_x}) must be divisible by 4 to us…` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3675-3677` (`src_de9b5b5a624e7039`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:454-456` (`src_0e09838af93de4ba`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1764-1766` (`src_1fe628a45d722094`) +1 more
+- `tile_m*tile_k*elem_bytes must be divisible by` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3290-3293` (`src_0b938d0ae571bb16`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:187-190` (`src_5dc8854b82d195e3`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1471-1474` (`src_c52ead62733b59d9`) +1 more
 - `[fp16] bytes_per_thread_x ({bytes_per_thread_x}) must be divisible by …` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:442-444` (`src_6d43092520bc779c`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1752-1754` (`src_98e898f82bdce1eb`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3330-3332` (`src_f73e86b462744c93`)
-- `bytes_per_thread_x ({bytes_per_thread_x}) must be divisible by 4 to us…` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:454-456` (`src_0e09838af93de4ba`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1764-1766` (`src_1fe628a45d722094`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3342-3344` (`src_fb589ceb23ed493d`)
+- `compile_moe_gemm2(accumulate=False) only supports out_dtype in {` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3261-3263` (`src_080efaad410d6564`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1433-1435` (`src_61306ebcec706f61`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2841-2843` (`src_cbd9c30f65c08a8f`)
 - `in_dtype must be one of (` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:165-168` (`src_3479ce3bb9436d9d`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:130-132` (`src_3547a516b4f0c73d`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1416-1418` (`src_aaea5aa10ebb7729`)
-- `tile_m*tile_k*elem_bytes must be divisible by` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:187-190` (`src_5dc8854b82d195e3`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1471-1474` (`src_c52ead62733b59d9`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2875-2878` (`src_43414e2bb740b887`)
-- `Current kernel requires b_to_lds=False when b_preshuffle=True` — `aiter/ops/flydsl/gemm_kernels.py:161-163` (`src_e248a6669d5daaaf`), `aiter/ops/flydsl/gemm_kernels.py:738-740` (`src_ed18314cce250704`)
-- ``dtype` must be` — `aiter/ops/flydsl/gemm_kernels.py:259` (`src_0cc665119db142b2`), `aiter/ops/flydsl/gemm_kernels.py:736` (`src_b99443aa253a8819`)
-- `a_dtype must be one of (` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:151-153` (`src_2d8e5850176484c7`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2777-2779` (`src_2224b30d5f13b58d`)
-- `addressable_lds_bytes_for_gfx` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:173-174` (`src_103c033ab69d1843`), `aiter/ops/flydsl/utils.py:14-22` (`src_ce6c8804ca232bf6`)
-- `b_dtype must be one of (` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:155-157` (`src_58f339c49ab62e62`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2781-2783` (`src_a5bdaaf963a88699`)
-- …82 further distinct value(s); see the YAML
+- `kpack_bytes must be 8 or 16, got {kpack_bytes!r}` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:167` (`src_251a5740430e815f`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:175` (`src_1c0548a53c4cf22e`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:369` (`src_e8da6866eb8ce75b`)
+- `AITER_MOE_NUM_EXPERT_ACTIVATED must be >= 0, got {val}` — `op_tests/test_moe_2stage.py:75` (`src_b8f129c3245e392f`), `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:71` (`src_3f6ce6ca3272ba94`)
+- …210 further distinct value(s); see the YAML
 
-**gluon** — 3 in 3 file(s)
+**triton** — 1 in 1 file(s)
+
+- `_gemm_lds_bytes` — `aiter/ops/triton/utils/gemm_config_utils.py:263-283` (`src_0e629113804140e7`)
+
+**gluon** — 4 in 4 file(s)
 
 - `Gluon implementation is not supported on this device (requires CDNA4).` — `aiter/ops/triton/gluon/gemm_a8w8.py:579-581` (`src_be7465c0b71c63e4`), `aiter/ops/triton/gluon/gemm_a8w8_blockscale.py:431-433` (`src_b412a1e9703eaeea`), `aiter/ops/triton/gluon/gemm_afp4wfp4.py:492-494` (`src_b7f9c4fba944c766`)
+- `num_ctas must be a power of 2, got {num_ctas}` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_mxfp4.py:14` (`src_38a546aaea36476f`)
+
+**hip** — 13 in 3 file(s)
+
+- `CO kid {kid} has unsupported dtype contract` — `csrc/opus_gemm/opus_gemm_common.py:1621` (`src_d8fd521047516da6`)
+- `_validate_a16w16` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:173-319` (`src_cf591c6c6be3fcd2`)
+- `_validate_a16w16_em3en4_gfx942` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1149-1210` (`src_d56e200c9bf333e7`)
+- `_validate_a16w16_flatmm` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:322-402` (`src_a31e5432321b6949`)
+- `_validate_a16w16_flatmm_splitk` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:405-493` (`src_72d8edfc998a1ef2`)
+- `_validate_a16w16_gfx942` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1355-1405` (`src_69bbae4b7e9eabb6`)
+- `_validate_a16w16_mono_tile` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:513-616` (`src_04a3cdbf26b97f5e`)
+- `_validate_a16w16_persistent` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:496-510` (`src_4d6d8e2816e5a736`)
+- `_validate_a16w16_quad_mfma32_gfx942` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1279-1352` (`src_5b4c1a007a841323`)
+- `_validate_a16w16_wave_k_coop_gfx942` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1213-1276` (`src_0a5c1771455300af`)
+- `_validate_a8w8_blockscale_bpreshuffle_gfx942` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1043-1146` (`src_eb911dd760d76929`)
+- `_validate_co_instance` — `csrc/opus_gemm/opus_gemm_common.py:1607-1623` (`src_9286fd2a69ce0767`)
+- …1 further distinct value(s); see the YAML
 
 ### `kernel_family` — Which kernel family a shape is routed to
 
-**flydsl** — 15 in 4 file(s)
+**flydsl** — 30 in 4 file(s)
 
+- `flydsl` — `aiter/tuned_gemm.py:150-163` (`src_1c00f4f9b7879a3c`), `aiter/ops/gemm_op_a8w8.py:804-807` (`src_80c5ab8639573b54`), `aiter/ops/gemm_op_a8w8.py:1274-1277` (`src_899638d8a33e1ea4`) +7 more
 - `KERNEL_FAMILY_SMALL_M` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:56-71` (`src_bca963564a69909c`), `aiter/ops/flydsl/gemm_kernels.py:172-186` (`src_13737e5e8209141f`), `aiter/ops/flydsl/gemm_kernels.py:542-546` (`src_2e94c8ed48d5e1d5`) +1 more
-- `flydsl` — `aiter/tuned_gemm.py:133-141` (`src_c9b676e9661f7f1e`), `aiter/tuned_gemm.py:282-297` (`src_7329476fb825a920`), `aiter/ops/gemm_op_a8w8.py:629-630` (`src_bcbb91da2b9d2eb8`)
+- `gemm_a8w8_mxfp8_128_bpreshuffle_flydsl` — `aiter/ops/gemm_op_a8w8.py:1275-1277` (`src_cc3f60b5f780fa37`), `aiter/ops/gemm_op_a8w8.py:1285-1287` (`src_6ba84385254be2e8`), `aiter/ops/gemm_op_a8w8.py:1433-1435` (`src_6456877ae8111f41`) +1 more
+- `gemm_a8w8_bpreshuffle_flydsl` — `aiter/ops/gemm_op_a8w8.py:807` (`src_bd41322bce7f7019`), `aiter/ops/gemm_op_a8w8.py:827-829` (`src_cf0037feff86cd25`), `aiter/ops/gemm_op_a8w8.py:630` (`src_28ca4f5be56756ab`)
 - `KERNEL_FAMILY_HGEMM, hgemm` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:8` (`src_38699a8ce57faf0c`), `aiter/ops/flydsl/gemm_kernels.py:42` (`src_85759fc53d71cd7b`)
 - `KERNEL_FAMILY_SMALL_M, small_m` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:9` (`src_8ffea30406cf0355`), `aiter/ops/flydsl/gemm_kernels.py:43` (`src_604511a2fda23fe8`)
+- `gemm_a8w8_mxscale_preshuffle_flydsl` — `aiter/ops/gemm_op_a8w8.py:1303-1305` (`src_87fd74bec386a6a2`), `aiter/ops/gemm_op_a8w8.py:1321-1323` (`src_03e6ca506e1a68d6`)
 - `KERNEL_FAMILY_HGEMM` — `aiter/ops/flydsl/gemm_kernels.py:744-780` (`src_78e4e3ef2071e9ae`)
 - `flydsl_gemm` — `aiter/tuned_gemm.py:288-297` (`src_ce738ce3a40661af`)
-- `gemm_a8w8_bpreshuffle_flydsl` — `aiter/ops/gemm_op_a8w8.py:630` (`src_28ca4f5be56756ab`)
 - `kernel_family in (` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:40-54` (`src_a59a70ec93b3ad9b`)
 
-**ck** — 18 in 1 file(s)
+**triton** — 12 in 2 file(s)
 
-- `ck` — `aiter/ops/gemm_op_a8w8.py:625-630` (`src_bf2fb13104c62535`), `aiter/ops/gemm_op_a8w8.py:677-682` (`src_9dd4c645f2e22c23`), `aiter/ops/gemm_op_a8w8.py:736-743` (`src_599206915aa047f7`)
-- `cktile` — `aiter/ops/gemm_op_a8w8.py:627-630` (`src_0cd797340670eaca`), `aiter/ops/gemm_op_a8w8.py:679-682` (`src_ae977d7a08feed5e`), `aiter/ops/gemm_op_a8w8.py:734-743` (`src_f4e4d3f780fda60a`)
-- `gemm_a8w8_bpreshuffle_ck` — `aiter/ops/gemm_op_a8w8.py:135` (`src_5a61fd70e109e900`), `aiter/ops/gemm_op_a8w8.py:626` (`src_c1edc294820e9a91`), `aiter/ops/gemm_op_a8w8.py:632` (`src_df8a47f1c59069da`)
-- `gemm_a8w8_blockscale_bpreshuffle_ck` — `aiter/ops/gemm_op_a8w8.py:737` (`src_24d1c41020a56274`), `aiter/ops/gemm_op_a8w8.py:744` (`src_031a85c0a42ac6fd`)
-- `gemm_a8w8_blockscale_ck` — `aiter/ops/gemm_op_a8w8.py:678` (`src_5c23ca8efe2c521d`), `aiter/ops/gemm_op_a8w8.py:683` (`src_08f91e081b402af2`)
-- `gemm_a8w8_CK` — `aiter/ops/gemm_op_a8w8.py:484` (`src_6f2f73b965fbbcc2`)
-- `gemm_a8w8_blockscale_bpreshuffle_cktile` — `aiter/ops/gemm_op_a8w8.py:735` (`src_ac600b163857f92e`)
-- `gemm_a8w8_blockscale_cktile` — `aiter/ops/gemm_op_a8w8.py:680` (`src_494458ac25a754d6`)
-- `gemm_a8w8_bpreshuffle_cktile` — `aiter/ops/gemm_op_a8w8.py:628` (`src_254c0e420de9e3ea`)
-- `gemm_a8w8_ck` — `aiter/ops/gemm_op_a8w8.py:568` (`src_3cc2cc98ff981aaf`)
+- `triton` — `aiter/tuned_gemm.py:286` (`src_aeec77610d494d91`), `aiter/ops/gemm_op_a8w8.py:1071-1074` (`src_4c0e763601d5dba4`), `aiter/ops/gemm_op_a8w8.py:1244-1273` (`src_708d772df74a1396`) +1 more
+- `_blockscale_triton` — `aiter/ops/gemm_op_a8w8.py:1072-1074` (`src_8c9d45cd14b4b638`), `aiter/ops/gemm_op_a8w8.py:1105-1107` (`src_da6a03aff6047466`), `aiter/ops/gemm_op_a8w8.py:1110` (`src_4147b65a14f396a1`)
+- `_gemm_a8w8_blockscale_preshuffle_triton` — `aiter/ops/gemm_op_a8w8.py:1358-1367` (`src_bc058e0c698e23fc`), `aiter/ops/gemm_op_a8w8.py:1393-1402` (`src_4f6106ead4e705b9`)
+- `_gemm_a8w8_blockscale_triton` — `aiter/ops/gemm_op_a8w8.py:880` (`src_c4e7a6ce68dac0b3`)
+- `_gemm_afp8wfp8_preshuffle_triton` — `aiter/ops/gemm_op_a8w8.py:1254-1273` (`src_069cacd151170c03`)
+- `gemm_a8w8_triton` — `aiter/ops/gemm_op_a8w8.py:639` (`src_5fba39f743e05e13`)
 
-**hip** — 5 in 2 file(s)
+**ck** — 37 in 1 file(s)
 
-- `K_in * N_in <= 32 * 1024` — `csrc/kernels/custom_kernels.cu:1736` (`src_abfa46c903cb04ea`)
-- `K_in * N_in <= 32 * 1024 * 1.2` — `csrc/kernels/custom_kernels.cu:1742` (`src_abb2ef768886f8dc`)
-- `K_in * N_in <= 64 * 1024` — `csrc/kernels/custom_kernels.cu:2229` (`src_b8e76e6d00fd7ca3`)
-- `is_skinny_default_shape` — `aiter/tuned_gemm.py:76-97` (`src_2577a978dcbebafb`)
-- `skinny` — `aiter/tuned_gemm.py:182` (`src_07dceb286dc43c55`)
+- `ck` — `aiter/ops/gemm_op_a8w8.py:800-807` (`src_61447880c64fae94`), `aiter/ops/gemm_op_a8w8.py:1081-1102` (`src_90b6f3b39a7506dc`), `aiter/ops/gemm_op_a8w8.py:1410-1435` (`src_b553ccaea524823e`) +3 more
+- `cktile` — `aiter/ops/gemm_op_a8w8.py:802-807` (`src_5de4c9f5262ddef1`), `aiter/ops/gemm_op_a8w8.py:1091-1102` (`src_3a0b2e60cb026d7c`), `aiter/ops/gemm_op_a8w8.py:1406-1435` (`src_bacd3bee4545bd94`) +3 more
+- `gemm_a8w8_bpreshuffle_ck` — `aiter/ops/gemm_op_a8w8.py:198` (`src_7ee161e7506207c6`), `aiter/ops/gemm_op_a8w8.py:801` (`src_8b246145d534eac2`), `aiter/ops/gemm_op_a8w8.py:833` (`src_b3c1507b432b7c84`) +3 more
+- `gemm_a8w8_blockscale_bpreshuffle_ck` — `aiter/ops/gemm_op_a8w8.py:1411-1413` (`src_6f8423c59482dcb5`), `aiter/ops/gemm_op_a8w8.py:1437` (`src_1525437c769e6b00`), `aiter/ops/gemm_op_a8w8.py:737` (`src_24d1c41020a56274`) +1 more
+- `gemm_a8w8_blockscale_ck` — `aiter/ops/gemm_op_a8w8.py:1082-1090` (`src_76bc6d54e91858d5`), `aiter/ops/gemm_op_a8w8.py:1113` (`src_724fe23883da97b2`), `aiter/ops/gemm_op_a8w8.py:678` (`src_5c23ca8efe2c521d`) +1 more
+- `gemm_a8w8_bpreshuffle_cktile` — `aiter/ops/gemm_op_a8w8.py:803` (`src_5fbefa500a7d2134`), `aiter/ops/gemm_op_a8w8.py:832` (`src_327cd9b8f621d785`), `aiter/ops/gemm_op_a8w8.py:628` (`src_254c0e420de9e3ea`)
+- `gemm_a8w8_CK` — `aiter/ops/gemm_op_a8w8.py:640` (`src_ee279c7b4dab3e21`), `aiter/ops/gemm_op_a8w8.py:484` (`src_6f2f73b965fbbcc2`)
+- `gemm_a8w8_blockscale_bpreshuffle_cktile` — `aiter/ops/gemm_op_a8w8.py:1407-1409` (`src_386eec389ba7ff68`), `aiter/ops/gemm_op_a8w8.py:735` (`src_ac600b163857f92e`)
+- `gemm_a8w8_blockscale_cktile` — `aiter/ops/gemm_op_a8w8.py:1092-1100` (`src_e7ec817c5ea5cf64`), `aiter/ops/gemm_op_a8w8.py:680` (`src_494458ac25a754d6`)
+- `gemm_a8w8_ck` — `aiter/ops/gemm_op_a8w8.py:725` (`src_309d14b693c9af0e`), `aiter/ops/gemm_op_a8w8.py:568` (`src_3cc2cc98ff981aaf`)
 
-**asm** — 10 in 2 file(s)
+**hip** — 10 in 2 file(s)
 
-- `asm` — `aiter/tuned_gemm.py:172` (`src_57c3a751ec4ad78b`), `aiter/tuned_gemm.py:301-321` (`src_5b4e23744c1bba47`), `aiter/ops/gemm_op_a8w8.py:738-743` (`src_24f53ab3d301476f`)
-- `gemm_a8w8_asm` — `aiter/ops/gemm_op_a8w8.py:534-536` (`src_dc4a55b06e61f9c1`), `aiter/ops/gemm_op_a8w8.py:538` (`src_df02f02d030bf8dc`)
-- `flatmm_a8w8_blockscale_asm` — `aiter/ops/gemm_op_a8w8.py:700` (`src_5b91cc8360b43d2c`)
-- `gemm_a16w16_asm` — `aiter/tuned_gemm.py:446` (`src_cb5d081e14d7a3a6`)
-- `gemm_a8w8_blockscale_bpreshuffle_asm` — `aiter/ops/gemm_op_a8w8.py:741-743` (`src_c644fc8d296c628a`)
-- `gfx950_a8w8_blockscale_ASM` — `aiter/ops/gemm_op_a8w8.py:668` (`src_44e19b6d045bd0ec`)
-- `gfx950_a8w8_blockscale_asm` — `aiter/ops/gemm_op_a8w8.py:758` (`src_b23f1f86e180f609`)
+- `K_in * N_in <= 32 * 1024` — `csrc/kernels/custom_kernels.cu:1734` (`src_6ef2013bddd90857`), `csrc/kernels/custom_kernels.cu:1736` (`src_abfa46c903cb04ea`)
+- `K_in * N_in <= 32 * 1024 * 1.2` — `csrc/kernels/custom_kernels.cu:1740` (`src_ea9b43c7bf68a255`), `csrc/kernels/custom_kernels.cu:1742` (`src_abb2ef768886f8dc`)
+- `K_in * N_in <= 64 * 1024` — `csrc/kernels/custom_kernels.cu:2227` (`src_a857b821710a3e08`), `csrc/kernels/custom_kernels.cu:2229` (`src_b8e76e6d00fd7ca3`)
+- `is_skinny_default_shape` — `aiter/tuned_gemm.py:87-108` (`src_38a128239a0ca340`), `aiter/tuned_gemm.py:76-97` (`src_2577a978dcbebafb`)
+- `skinny` — `aiter/tuned_gemm.py:272` (`src_567ee9aab87a8501`), `aiter/tuned_gemm.py:182` (`src_07dceb286dc43c55`)
+
+**asm** — 23 in 3 file(s)
+
+- `asm` — `aiter/tuned_gemm.py:253` (`src_e612fa4968e11949`), `aiter/ops/gemm_op_a8w8.py:1414-1435` (`src_fff53726952373b0`), `aiter/ops/gemm_op_a8w8.py:2262-2274` (`src_d108923cf084b195`) +4 more
+- `gemm_a8w8_asm` — `aiter/ops/gemm_op_a8w8.py:690-692` (`src_8877ad8e99abde0b`), `aiter/ops/gemm_op_a8w8.py:694` (`src_06807ad7758e5772`), `aiter/ops/gemm_op_a8w8.py:534-536` (`src_dc4a55b06e61f9c1`) +1 more
+- `flatmm_a8w8_blockscale_asm` — `aiter/ops/gemm_op_a8w8.py:1135` (`src_2693eebadb865d26`), `aiter/ops/gemm_op_a8w8.py:700` (`src_5b91cc8360b43d2c`)
+- `gemm_a16w16_asm` — `aiter/tuned_gemm.py:544` (`src_a38585a26e88f80f`), `aiter/tuned_gemm.py:446` (`src_cb5d081e14d7a3a6`)
+- `gemm_a8w8_blockscale_bpreshuffle_asm` — `aiter/ops/gemm_op_a8w8.py:1416-1418` (`src_b6e57fd4794b9524`), `aiter/ops/gemm_op_a8w8.py:741-743` (`src_c644fc8d296c628a`)
+- `gfx950_a8w8_blockscale_ASM` — `aiter/ops/gemm_op_a8w8.py:1059` (`src_7b7f6776a3569ea6`), `aiter/ops/gemm_op_a8w8.py:668` (`src_44e19b6d045bd0ec`)
+- `gfx950_a8w8_blockscale_asm` — `aiter/ops/gemm_op_a8w8.py:1596` (`src_1a2a48ed27cd6656`), `aiter/ops/gemm_op_a8w8.py:758` (`src_b23f1f86e180f609`)
+- `gemm_mxfp4_asm` — `aiter/ops/gemm_op_a4w4.py:135-137` (`src_21a6436b10257241`)
+- `gemm_nvfp4_asm` — `aiter/ops/gemm_op_a4w4.py:125-134` (`src_b2b75f7b09ee2a43`)
 
 ### `arch_gate` — Which code path exists only on some architectures
 
-**flydsl** — 15 in 6 file(s)
+**flydsl** — 45 in 18 file(s)
 
-- `gfx942` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:128-137` (`src_e689c0cbe1b4f8e8`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:331-332` (`src_e04716b6d760605b`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:411-412` (`src_7eee3f6769348b4c`) +4 more
-- `gfx950` [gfx942] — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:156-159` (`src_d645d4f951f04c13`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1705-1706` (`src_f393dda09d6ada3e`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:254` (`src_011cf8d1222b7906`) +1 more
+- `gfx942` [gfx942] — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:197` (`src_7d6d5c6f009f9142`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:67` (`src_2f97ef658b6a9ae9`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm2.py:285` (`src_62ab38f5e52129f9`) +13 more
+- `gfx950` [gfx942, gfx950] — `aiter/ops/flydsl/gemm_a16w16_policy.py:140-141` (`src_fa5ae2e031ebdcd6`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:198` (`src_d5740d306a03d84c`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:517` (`src_d0110c4f82bf661c`) +10 more
+- `gfx1250` [gfx1250] — `aiter/ops/flydsl/kernels/gemm_a16w16_kernel_gfx1250.py:119` (`src_29334223cdd7deeb`), `op_tests/test_moe_2stage.py:999-1004` (`src_658537b00466fae8`), `op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:107-108` (`src_5b1c4d2cf01f5c61`) +1 more
+- `gfx95` [gfx942] — `aiter/ops/flydsl/kernels/kernels_common.py:161-162` (`src_45885b1abaf2f118`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:267-270` (`src_f51f71fa7f1c041a`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1786-1789` (`src_5a8cb1f0ed00fe55`) +1 more
+- `gfx9` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:299-300` (`src_73183f4af91612bf`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:257-258` (`src_dc5c279cf950ed86`)
+- `gfx94` [gfx942] — `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:265-270` (`src_d1dd7a03effe8944`), `aiter/ops/flydsl/kernels/moe_sorting_kernel.py:1784-1789` (`src_03607c45537213a4`)
+- `gfx11` [gfx11] — `aiter/ops/flydsl/kernels/kernels_common.py:163-167` (`src_96a569c9bf0d7b3f`)
+- `gfx12` — `aiter/ops/flydsl/kernels/kernels_common.py:161-162` (`src_999a966d4c8db736`)
 - `gfx7` — `aiter/ops/flydsl/utils.py:20-21` (`src_efae907f3b7ccf59`)
 - `gfx8` — `aiter/ops/flydsl/utils.py:20-21` (`src_9e29361ce0d15363`)
-- `gfx9` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:257-258` (`src_dc5c279cf950ed86`)
-- `gfx95` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:848` (`src_84fa26c5447f28f7`)
+
+**hip** — 1 in 1 file(s)
+
+- `gfx942` [gfx942] — `csrc/opus_gemm/opus_gemm_common.py:2045` (`src_3c21317c1e10f69c`)
 
 ### `lds_stage` — How many pipeline stages are buffered in LDS
 
-**flydsl** — 3 in 3 file(s)
+**flydsl** — 4 in 4 file(s)
 
 - `STAGES, 2` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:142` (`src_dbdbdbf21af30e3c`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:72` (`src_8a036c537a13ff24`)
-- `lds_stage, 2` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:211` (`src_1a80adca750d9118`)
+- `lds_stage, 2` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:94` (`src_586c3a4fe70a654b`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:211` (`src_1a80adca750d9118`)
+
+**triton** — 1 in 1 file(s)
+
+- `num_stages, 1` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:108-136` (`src_9f2dd9a2ff885d03`)
 
 ### `lds_swizzle` — How LDS addresses are permuted to dodge bank conflicts
 
-**flydsl** — 32 in 6 file(s)
+**flydsl** — 40 in 8 file(s)
 
-- `swizzle_xor16` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:27-28` (`src_2e329cfe46a52fb9`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:27-28` (`src_5f392410068ae1c3`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:455-457` (`src_d1f233838e74f022`) +29 more
+- `swizzle_xor16` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:25-35` (`src_f2398fe88a91f154`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:25-35` (`src_cb1aa58aa543f47f`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:270` (`src_b8e54e9a3abb9dee`) +37 more
 
-**gluon** — 10 in 3 file(s)
+**gluon** — 65 in 13 file(s)
 
-- `SwizzledSharedLayout` — `aiter/ops/triton/gluon/gemm_a8w8.py:123-125` (`src_99b2357d48e96781`), `aiter/ops/triton/gluon/gemm_a8w8.py:126-128` (`src_4e349fde44ffedd3`), `aiter/ops/triton/gluon/gemm_a8w8.py:408-410` (`src_4a9312348326918e`) +7 more
+- `SwizzledSharedLayout` — `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a16w4.py:472` (`src_552a6c67c4c23692`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:248-254` (`src_87a89b0a7270e855`), `aiter/ops/triton/_gluon_kernels/gfx1250/moe/moe_op_gemm_a4w4.py:284-290` (`src_d54b76a8c4db05aa`) +60 more
+- `PaddedSharedLayout` — `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:291-296` (`src_d30bbf9c1c5dabbc`), `aiter/ops/triton/_gluon_kernels/gfx950/gemm/basic/gemm_a8w8_blockscale.py:297-302` (`src_0d9fab9e79763e36`)
 
 ### `lds_pad` — How LDS rows are padded for the same reason
 
-**flydsl** — 4 in 2 file(s)
+**flydsl** — 29 in 8 file(s)
 
+- `padding_extra, 0` — `op_tests/test_moe_sorting.py:258` (`src_bfeba0017c20e3c6`), `op_tests/test_moe_sorting.py:324` (`src_1c2ca1e2904549c4`), `op_tests/test_moe_sorting.py:400` (`src_7ccd88b9877c70bc`) +4 more
+- `hidden_pad, 0` — `op_tests/test_moe_2stage.py:97` (`src_f8589dc1dcf464eb`), `op_tests/test_moe_2stage.py:1201` (`src_fb7fee5e7957e67e`), `op_tests/test_moe_2stage.py:56` (`src_aebda81154727414`) +2 more
+- `intermediate_pad, 0` — `op_tests/test_moe_2stage.py:98` (`src_abc60f5d714c3a50`), `op_tests/test_moe_2stage.py:1202` (`src_b9cab33af6b91ca5`), `op_tests/test_moe_2stage.py:57` (`src_441c9af348371d05`) +2 more
+- `model_dim_pad, 0` — `op_tests/flydsl_tests/test_flydsl_moe.py:235` (`src_e2b69ef3edfd8678`), `op_tests/flydsl_tests/test_flydsl_moe.py:391` (`src_a41e3660c400b482`), `op_tests/flydsl_tests/test_flydsl_moe.py:422` (`src_141840b2f6960faf`) +1 more
 - `pad_k, 0` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:206` (`src_03338c20f236373f`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1484` (`src_23f59381c436c999`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:245` (`src_1a73d460068d7813`) +1 more
+- `ACC_LDS_PAD_DW, 4` — `aiter/ops/flydsl/kernels/mxfp4_gemm1.py:44` (`src_dfcd02dec23c4cef`)
+- `LDS_PAD_B, 32` — `aiter/ops/flydsl/kernels/gemm_a16w16_kernel_gfx1250.py:17` (`src_32d564d867226588`)
+- `inter_dim_pad, 0` — `op_tests/flydsl_tests/test_flydsl_moe.py:943` (`src_c2bcbde7edd34ed7`)
+- `tile2_pad, 0` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:2940` (`src_aab30b260bf5348f`)
+
+**gluon** — 1 in 1 file(s)
+
+- `_MAX_PAD_INTERVAL_DWORDS, 256` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16.py:33` (`src_0fa9793151f7aca2`)
+
+**hip** — 17 in 9 file(s)
+
+- `smem_padding, 2` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_mono_tile_4g_safe_gfx950.cuh:77` (`src_8f691706511c532f`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_mono_tile_gfx950.cuh:72` (`src_683426783f4023df`), `csrc/opus_gemm/include/gfx950/opus_gemm_traits_a16w16_gfx950.cuh:108` (`src_d8a331f917ce9ae3`) +7 more
+- `smem_padding, 16` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1189` (`src_6e0e7cfc69942834`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:365` (`src_2a6fcf7c0a521f07`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:448` (`src_d4fefabdb17e10dc`)
+- `PAD_ELEMS, 16` — `csrc/opus_gemm/include/gfx1250/opus_gemm_traits_a16w16_gfx1250.cuh:156` (`src_8bb9f2fa4e70730c`)
+- `a_pad, 4` — `csrc/opus_gemm/codegen/gen_instances_gfx942.py:1250` (`src_746fa7d0c6268163`)
+- `padding, 16` — `csrc/opus_gemm/opus_gemm_common.py:297` (`src_1ba444dab73a425f`)
+- `padding, 2` — `csrc/opus_gemm/opus_gemm_common.py:320` (`src_90a5863a1c25f74b`)
 
 ### `lds_alloc` — Where LDS is reserved
 
-**hip** — 8 in 1 file(s)
+**hip** — 68 in 18 file(s)
 
-- `__shared__` — `csrc/kernels/custom_kernels.cu:287` (`src_e67d974c794d2c30`), `csrc/kernels/custom_kernels.cu:713` (`src_f9a2106c23412f25`), `csrc/kernels/custom_kernels.cu:976` (`src_553fca16fc1cb85c`) +5 more
+- `__shared__` — `csrc/kernels/custom_kernels.cu:285` (`src_d211c05e6addfa9e`), `csrc/kernels/custom_kernels.cu:711` (`src_04746ebe4f27779e`), `csrc/kernels/custom_kernels.cu:974` (`src_52c5a1b2b56dbd74`) +65 more
 
 ### `async_copy` — Whether global->LDS copies are asynchronous
 
-**flydsl** — 22 in 7 file(s)
+**flydsl** — 50 in 11 file(s)
 
-- `async_copy` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:30` (`src_1b628cfc7dc2b834`), `aiter/ops/flydsl/gemm_kernels.py:113` (`src_eca2908861dcc67b`), `aiter/ops/flydsl/gemm_kernels.py:125` (`src_f85f15e0a5b7bed6`) +8 more
-- `use_async_copy` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:136` (`src_14bff946c5d70663`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:151` (`src_a0c7409b8c2c5c6e`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:190-191` (`src_4c656f7aec149cd8`) +6 more
+- `use_async_copy` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:141` (`src_e9fa21c4696a5ba8`), `aiter/ops/flydsl/gemm_kernels.py:298` (`src_4722af8250615da3`), `aiter/ops/flydsl/gemm_kernels.py:371` (`src_d9c641373dc72a63`) +31 more
+- `async_copy` — `aiter/ops/flydsl/kernels/mega_moe/gemm1.py:306` (`src_aebb122e918179fe`), `aiter/ops/flydsl/kernels/mega_moe/gemm_util.py:71` (`src_377768ced49cc022`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:91` (`src_ef12f7ca4858682c`) +11 more
 - `ASYNC_COPY` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:132` (`src_8f59fe9a6d65aaf3`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:137` (`src_0f3d7f24923f1bc6`)
 
 ### `access_width` — How wide a single memory access is
 
-**flydsl** — 34 in 6 file(s)
+**flydsl** — 58 in 12 file(s)
 
-- `lds_load_packs_k64` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:596-609` (`src_079122c84f98b4b3`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:747-766` (`src_879801ce066a6414`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2027-2046` (`src_b6b0fd98616b42a6`) +2 more
-- `load_b_tile` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:552-581` (`src_53b921a28e9cd675`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:639-692` (`src_14d7a32aaedf7288`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1924-1975` (`src_2b81c4af3430b713`) +2 more
+- `load_b_tile` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:960-993` (`src_76982d8a1d8f6c8a`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3943-3947` (`src_228bcf7bcb03ba34`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:245-250` (`src_aa08f390fab2552c`) +6 more
+- `lds_load_packs_k64` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:1198-1217` (`src_b4a101b60a05928b`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:4160-4180` (`src_7d44693f951a5b26`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:596-609` (`src_079122c84f98b4b3`) +4 more
+- `load_b_packs_k64` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:896-958` (`src_e0f0330dbdc858e6`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3845-3923` (`src_8cff5055a28b4352`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:525-550` (`src_2a3468398e382ec9`) +2 more
 - `load_b_pack` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:455-472` (`src_64955917c8ea2258`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:620-637` (`src_d01eed80e8821b45`), `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:1905-1922` (`src_982c54cbfca6580b`)
-- `load_b_packs_k64` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:525-550` (`src_2a3468398e382ec9`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:874-902` (`src_2f54675e552adb60`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3522-3562` (`src_0fe272d21e2f236f`)
+- `load_b_scale_tile` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3995-4020` (`src_4d990982cebd4b96`), `aiter/ops/flydsl/kernels/mxfp4_gemm2.py:423-434` (`src_c90a1f56cfbe7215`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3627-3649` (`src_8134c3b0c53200f6`)
 - `DMA_BYTES, 16` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:135` (`src_7bc158d48a36bfca`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:415` (`src_3fb0d950c04abfde`)
 - `DTYPE_BYTES, 2` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:140` (`src_c3a611645fc2a1c3`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:74` (`src_7691f6e7e337af74`)
 - `LDG_VEC_SIZE, 8` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:141` (`src_5935d3305750c5f0`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:75` (`src_958bf8b628cb0dec`)
-- `DMA_BYTES, 4` [gfx942] — `aiter/ops/flydsl/kernels/splitk_hgemm.py:130` (`src_08dc0d0909566fd7`)
-- `buffer_copy_gmem16_dwordx4` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:467-489` (`src_54e4ca3a8185528d`)
-- `lds_load_16b` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:588-594` (`src_f6112799eabb995f`)
-- `lds_load_pack_k32` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:573-604` (`src_498bdd55bb2b600e`)
-- `lds_store_16b_xor16` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:492-516` (`src_f419311ce8a02db3`)
-- …7 further distinct value(s); see the YAML
+- `buffer_copy_gmem16_dwordx4` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:232-252` (`src_3d4ce7516cb979e6`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:467-489` (`src_54e4ca3a8185528d`)
+- `lds_store_16b_xor16` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:278-301` (`src_c882aa999505f8ee`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:492-516` (`src_f419311ce8a02db3`)
+- `lds_store_4b_xor16` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:330-353` (`src_22fae26ebe4563dd`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:546-570` (`src_f735e442dfbc314e`)
+- `lds_store_8b_xor16` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:304-327` (`src_d2fc9662f43f9105`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:519-543` (`src_c77d2ddf58185db3`)
+- …15 further distinct value(s); see the YAML
 
-**hip** — 10 in 1 file(s)
+**hip** — 21 in 1 file(s)
 
-- `load, b128` — `csrc/include/opus/opus.hpp:1633` (`src_e29f30b4b6f7e736`)
-- `load, b16` — `csrc/include/opus/opus.hpp:1630` (`src_bc9f33412a26dc2e`)
-- `load, b32` — `csrc/include/opus/opus.hpp:1631` (`src_5718c1c2541d03c7`)
-- `load, b64` — `csrc/include/opus/opus.hpp:1632` (`src_ed471ee7cb157c0b`)
-- `load, b8` — `csrc/include/opus/opus.hpp:1629` (`src_346f7832d20e8b1f`)
-- `store, b128` — `csrc/include/opus/opus.hpp:1682` (`src_17b0f5155728ac4f`)
-- `store, b16` — `csrc/include/opus/opus.hpp:1679` (`src_c195604b7c93405d`)
-- `store, b32` — `csrc/include/opus/opus.hpp:1680` (`src_7092b431e932b1d2`)
-- `store, b64` — `csrc/include/opus/opus.hpp:1681` (`src_0914be88fea3d9ca`)
-- `store, b8` — `csrc/include/opus/opus.hpp:1678` (`src_c5acc7ebc3d0f314`)
+- `store, b128` — `csrc/include/opus/opus.hpp:1918` (`src_42752020575fd0a5`), `csrc/include/opus/opus.hpp:1920` (`src_3ed70f6cb412de08`), `csrc/include/opus/opus.hpp:1682` (`src_17b0f5155728ac4f`)
+- `load, b128` — `csrc/include/opus/opus.hpp:1855` (`src_a113ad66e8566aaa`), `csrc/include/opus/opus.hpp:1633` (`src_e29f30b4b6f7e736`)
+- `load, b16` — `csrc/include/opus/opus.hpp:1852` (`src_b3f82e8e7d93e7d0`), `csrc/include/opus/opus.hpp:1630` (`src_bc9f33412a26dc2e`)
+- `load, b32` — `csrc/include/opus/opus.hpp:1853` (`src_c0df79023cfc8e32`), `csrc/include/opus/opus.hpp:1631` (`src_5718c1c2541d03c7`)
+- `load, b64` — `csrc/include/opus/opus.hpp:1854` (`src_92a79d3da1d35a00`), `csrc/include/opus/opus.hpp:1632` (`src_ed471ee7cb157c0b`)
+- `load, b8` — `csrc/include/opus/opus.hpp:1851` (`src_70281cd8df51a406`), `csrc/include/opus/opus.hpp:1629` (`src_346f7832d20e8b1f`)
+- `store, b16` — `csrc/include/opus/opus.hpp:1910` (`src_4d97004580c49a4b`), `csrc/include/opus/opus.hpp:1679` (`src_c195604b7c93405d`)
+- `store, b32` — `csrc/include/opus/opus.hpp:1911` (`src_bab4f9304585a2ea`), `csrc/include/opus/opus.hpp:1680` (`src_7092b431e932b1d2`)
+- `store, b64` — `csrc/include/opus/opus.hpp:1912` (`src_51be8ff8f7f9bbf8`), `csrc/include/opus/opus.hpp:1681` (`src_0914be88fea3d9ca`)
+- `store, b8` — `csrc/include/opus/opus.hpp:1909` (`src_6a3f4282f602aed5`), `csrc/include/opus/opus.hpp:1678` (`src_c5acc7ebc3d0f314`)
 
 ### `cache_policy` — Which cache hint loads and stores carry
 
-**flydsl** — 11 in 2 file(s)
+**flydsl** — 26 in 6 file(s)
 
-- `nontemporal=True` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2284` (`src_e59fe6013e3decd4`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2294` (`src_f652cb70b5fb70cc`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2303` (`src_af162d74b99b4878`) +5 more
-- `b` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:893` (`src_e93e7dd39f7adedc`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:3553` (`src_106bcf16a01dfc38`)
+- `nontemporal=True` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:2342` (`src_04e405c06511ef54`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:2352` (`src_4ecc9f655645400d`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:2361` (`src_e53a43aa8c83582c`) +16 more
+- `b` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:919` (`src_eb5ab72e704dd439`), `aiter/ops/flydsl/kernels/mega_moe/gemm1.py:315` (`src_122e860943d84a12`), `aiter/ops/flydsl/kernels/mxfp4_gemm2.py:452` (`src_73b546c7214cd995`) +2 more
 - `cache` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:71` (`src_6a42df54a6f6b458`)
+- `self` — `aiter/ops/flydsl/kernels/mega_moe/gemm_util.py:301` (`src_293fc975c941c1b9`)
 
-**triton** — 90 in 19 file(s)
+**triton** — 167 in 23 file(s)
 
-- `cache` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:159` (`src_92959715207084c1`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:168` (`src_9667faa67584ba59`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:114` (`src_5ff6413c1aeac7e8`) +55 more
-- `tl` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:81` (`src_15cea189ebb33d4c`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:57` (`src_502212cb45947f78`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:55` (`src_1567132b507a9c95`) +25 more
-- `.wt` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp4wfp4.py:478` (`src_b19e08ef79d2507a`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp4wfp4.py:715` (`src_8782178a7cd07060`), `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_afp4wfp4_a16w16.py:602` (`src_1f8060866f973374`) +1 more
+- `cache` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:145` (`src_700157a5a02b8011`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:154` (`src_9edd8fbbcd017cb1`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:116` (`src_c8b58cf6dbf9f3fc`) +105 more
+- `tl` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:67` (`src_2d4b996384e2ba0b`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:58` (`src_838a139e1b561dd7`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:55` (`src_1567132b507a9c95`) +49 more
+- `.wt` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp4wfp4.py:478` (`src_b19e08ef79d2507a`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp4wfp4.py:715` (`src_8782178a7cd07060`), `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_afp4wfp4_a16w16.py:606` (`src_65fdde47c8f792a0`) +3 more
+- `.cv` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp8wfp8.py:344` (`src_b3c75e82a286b3fc`)
 
-**gluon** — 2 in 2 file(s)
+**gluon** — 34 in 7 file(s)
 
-- `gl` — `aiter/ops/triton/gluon/gemm_a8w8_blockscale.py:67` (`src_e209e17c0e70da70`), `aiter/ops/triton/gluon/gemm_afp4wfp4.py:66` (`src_e022e96bf20d36dc`)
+- `cache` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:233` (`src_e3decd09cfccf3d8`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:325` (`src_b06f81156541268f`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:358` (`src_f70d64cbf640b108`) +17 more
+- `gl` — `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:86` (`src_2b5947d7d2850643`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:474` (`src_0ab44df9c2887f85`), `aiter/ops/triton/_gluon_kernels/gfx1250/gemm/basic/gemm_a8w8_blockscale.py:868` (`src_cf7b935e18d45fe8`) +11 more
 
 ### `layout_preshuffle` — Whether an operand is pre-permuted before the kernel runs
 
-**flydsl** — 25 in 5 file(s)
+**flydsl** — 85 in 12 file(s)
 
+- `shuffle_weight` — `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:80` (`src_ed5c3b718bd9ac9e`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/__init__.py:83` (`src_b83db702775888e7`), `aiter/ops/flydsl/kernels/moe_2stage_a16wmix/gemm1.py:402` (`src_d322cf87e27b3a41`) +43 more
+- `preshuffle` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:963-970` (`src_641ebab2708fe627`), `aiter/ops/flydsl/moe_kernels.py:1168-1176` (`src_67454d57c7dd83d7`), `aiter/ops/flydsl/moe_kernels.py:1278` (`src_9c46bd6c550f2732`) +15 more
 - `b_preshuffle` — `aiter/ops/flydsl/kernels/hgemm_dispatch.py:32` (`src_93c0f2962c52fdfb`), `aiter/ops/flydsl/gemm_kernels.py:53` (`src_1faf839315efb7e6`), `aiter/ops/flydsl/gemm_kernels.py:147` (`src_51f888cdd29012d2`) +14 more
-- `preshuffle` — `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:119-157` (`src_731dd2b3d10d2f1f`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:129-133` (`src_fc627706a898d441`), `aiter/ops/flydsl/gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py:162-170` (`src_c4d5f1ebfa94b3e7`)
-- `shuffle_weight` — `aiter/ops/flydsl/gemm_kernels.py:883` (`src_e7db1b030bf2e5c6`), `aiter/ops/flydsl/gemm_kernels.py:887` (`src_42f6db7e98463208`), `aiter/ops/flydsl/test_flydsl_splitk_hgemm.py:178` (`src_5be3642792e15485`)
-- `make_preshuffle_b_layout` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:159-223` (`src_36c3ee38d337b470`)
-- `make_preshuffle_scale_layout` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:96-148` (`src_11e30e2c665aafa7`)
+- `make_preshuffle_b_layout` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:152-210` (`src_58825ca914deeb91`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:159-223` (`src_36c3ee38d337b470`)
+- `make_preshuffle_scale_layout` — `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:96-141` (`src_2e69db14d9578697`), `aiter/ops/flydsl/kernels/mfma_preshuffle_pipeline.py:96-148` (`src_11e30e2c665aafa7`)
+
+**triton** — 1 in 1 file(s)
+
+- `shuffle_weight` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp8wfp8.py:550` (`src_f6f50867568666a1`)
 
 **asm** — 1 in 1 file(s)
 
@@ -553,71 +748,102 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `layout_epilogue` — How the accumulator is rearranged on the way out
 
-**flydsl** — 53 in 6 file(s)
+**flydsl** — 115 in 10 file(s)
 
-- `use_cshuffle_epilog` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:134` (`src_f83d827dcfa59956`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:188-189` (`src_e8798875d9a0f9fb`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1057` (`src_578097ee93c5d536`) +20 more
-- `cshuffle` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2466` (`src_7e4f3bfdc4be80d7`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2495` (`src_58324589ec139ad0`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2528` (`src_8e541a3ccbd78438`) +8 more
-- `c_shuffle` — `aiter/ops/flydsl/kernels/moe_gemm_2stage.py:2623-2645` (`src_e8a260f6bef1e3e8`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2457-2481` (`src_33cf90f9dc36c00a`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:2486-2511` (`src_9b2955d65309737a`) +7 more
-- `CShuffle` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:138` (`src_8455122707c93485`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:160` (`src_756a8fa4df5e93d9`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:163` (`src_3cd0a1fd3262b839`) +4 more
-- `default_epilog` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:50-82` (`src_1743dd27416aa823`)
-- `mfma_epilog` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:419-486` (`src_410b6fbc54cdbbac`)
+- `cshuffle` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:60` (`src_613828530a804cd2`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:152` (`src_24a25640c4515072`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:154` (`src_c71a17c638309423`) +45 more
+- `use_cshuffle_epilog` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:44` (`src_6dd93071b4929585`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:73` (`src_78d837fa91dde8a7`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:104` (`src_f8b74fa9c3c43ba3`) +27 more
+- `c_shuffle` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:18` (`src_dd2f76dec76de533`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:76-414` (`src_6fd3edef42cd6ee6`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:453-472` (`src_3cc36edff636c5ae`) +16 more
+- `CShuffle` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:124` (`src_81a6afa4eea78e7e`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:143` (`src_ccc07654a4808913`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:146` (`src_81a68c8838b7c614`) +11 more
+- `default_epilog` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:45-73` (`src_8aa4edc23ed28dca`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:50-82` (`src_1743dd27416aa823`)
+- `mfma_epilog` — `aiter/ops/flydsl/kernels/mfma_epilogues.py:417-472` (`src_bbbeb0febd54e8a6`), `aiter/ops/flydsl/kernels/mfma_epilogues.py:419-486` (`src_410b6fbc54cdbbac`)
 
-**ck** — 5 in 5 file(s)
+**ck** — 6 in 5 file(s)
 
-- `CShuffle` — `csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_common.cuh:52` (`src_5ebdfc64c47345bb`), `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:53` (`src_614544ca3702623e`), `csrc/ck_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_common.cuh:50` (`src_7e81eb9b49b377d5`) +2 more
+- `CShuffle` — `csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_common.cuh:52` (`src_5ebdfc64c47345bb`), `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:53` (`src_614544ca3702623e`), `csrc/ck_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_common.cuh:50` (`src_7e81eb9b49b377d5`) +3 more
 
 ### `scheduling` — Where instruction order is pinned by hand
 
-**flydsl** — 118 in 5 file(s)
+**flydsl** — 272 in 17 file(s)
 
-- `sched_barrier` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:323` (`src_e7a68de63948b12e`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:366` (`src_dbc6beb1ebc75dcd`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:390` (`src_c481394b755422a6`) +36 more
-- `sched_mfma` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:702` (`src_0f18d7f50ce33cbb`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:769` (`src_73013b6a4cb30a28`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:775` (`src_c6763cf12ad488c9`) +27 more
-- `sched_vmem` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:694` (`src_ed1134f4e4cea08c`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:698` (`src_86d7e5af1117454e`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:768` (`src_0d4fc63bfc744687`) +18 more
-- `sched_dsrd` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:688` (`src_5da6811a509d9806`), `aiter/ops/flydsl/kernels/splitk_hgemm.py:690` (`src_b0da890c19bc671e`), `aiter/ops/flydsl/kernels/small_m_hgemm.py:1150` (`src_e5d1c3a34c85bca0`) +17 more
-- `sched_dswr` — `aiter/ops/flydsl/kernels/splitk_hgemm.py:777` (`src_e7aa46e98f65ce51`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1225` (`src_5793d6410b67084b`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:1291` (`src_6dd333649bf42b12`) +3 more
-- `s_setprio` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1616` (`src_c42caea72a6c82d2`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage.py:1649` (`src_96f97a208d728115`)
+- `sched_barrier` — `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:416` (`src_37c1065330485e7e`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:418` (`src_14b5f0bd118a7248`), `aiter/ops/flydsl/kernels/gemm_a16w16_gfx950.py:727` (`src_69a536b429b04ac0`) +111 more
+- `sched_mfma` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:459` (`src_e033b9069f5b298e`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:462` (`src_e86b18eb22340793`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:468` (`src_54c439e949d15d73`) +54 more
+- `sched_dsrd` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:458` (`src_d1de01aff2b9a5f3`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:467` (`src_bad97cf97e394da7`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:471` (`src_c945efb57af55aab`) +35 more
+- `sched_vmem` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:461` (`src_ff676cd1352be184`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:464` (`src_9d42ee861bc4b81c`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:470` (`src_c8c968d7202e28db`) +34 more
+- `s_setprio` — `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:1635` (`src_635077102dd19ca6`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:1671` (`src_1968ca7fc205a26a`), `aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:4277` (`src_bfa80f90ac1b2510`) +10 more
+- `sched_dswr` — `aiter/ops/flydsl/kernels/preshuffle_gemm.py:489` (`src_3848abe7d895ad05`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:546` (`src_8af3ec18aa6f305f`), `aiter/ops/flydsl/kernels/preshuffle_gemm.py:549` (`src_b495339a1a940d92`) +8 more
+- `sched_group_barrier` — `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2062` (`src_5df989c94705b23f`), `aiter/ops/flydsl/kernels/moe_gemm_2stage_gfx942.py:2066` (`src_b1e7a8073df086ea`)
 
-**hip** — 5 in 1 file(s)
+**triton** — 1 in 1 file(s)
 
-- `s_barrier` — `csrc/include/opus/opus.hpp:1515` (`src_c978399c9187052e`), `csrc/include/opus/opus.hpp:1534` (`src_9b4d366c7b5b255e`), `csrc/include/opus/opus.hpp:1535` (`src_17637218952c3515`) +1 more
-- `s_waitcnt` — `csrc/include/opus/opus.hpp:2098` (`src_e431bd364220209b`)
+- `tl.debug_barrier(` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_afp8wfp8.py:339` (`src_ef8f675e409966be`)
+
+**hip** — 652 in 18 file(s)
+
+- `s_barrier` — `csrc/include/opus/opus.hpp:1631` (`src_7cfe8d1a0b7dce3a`), `csrc/include/opus/opus.hpp:1650` (`src_7aea5c18164ddb7c`), `csrc/include/opus/opus.hpp:1651` (`src_b28476e7b5072a91`) +281 more
+- `s_setprio` — `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_4g_safe_gfx950.cuh:388` (`src_80f7eb900ed96539`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_4g_safe_gfx950.cuh:390` (`src_68ba0c9afa51f808`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a16w16_4g_safe_gfx950.cuh:399` (`src_6840b8cf41c7068c`) +195 more
+- `sched_barrier` — `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:577` (`src_192895bc38141a12`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:664` (`src_fb7da7fec3f7fff3`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:678` (`src_703f95113ce83dba`) +122 more
+- `sched_group_barrier` — `csrc/opus_gemm/include/opus_gemm_utils.cuh:66` (`src_7b2005ec11dda37f`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:588` (`src_e20ce6c82b0a2a7c`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:589` (`src_118ab306bb78ff27`) +40 more
+- `s_waitcnt` — `csrc/include/opus/opus.hpp:3024` (`src_6522806590133838`), `csrc/include/opus/opus.hpp:2098` (`src_e431bd364220209b`)
 
 ### `tunable_param` — Which knobs the kernel exposes (values live elsewhere)
 
-**triton** — 448 in 21 file(s)
+**triton** — 1071 in 35 file(s)
 
-- `BLOCK_SIZE_M` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:72` (`src_45e95e07280bb7aa`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:207` (`src_856d794ebfb34048`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:50` (`src_6e7846f2d3a5fbf2`) +41 more
-- `BLOCK_SIZE_N` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:74` (`src_17b84cf6afa1d326`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:208` (`src_58bd6e570be45406`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:52` (`src_eb9af39fb9989707`) +41 more
-- `BLOCK_SIZE_K` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:75` (`src_64dba9756d5b0b27`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:53` (`src_1fd2e4632c4a7aa9`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:51` (`src_8540fbcbe8e019de`) +27 more
-- `EVEN_K` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:79` (`src_fd4106242f7404f7`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:58` (`src_65b2d3c83cddad41`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:53` (`src_61998cdf9532c394`) +27 more
-- `GROUP_SIZE_M` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:76` (`src_de6d336c2ee7601b`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:54` (`src_a04e2db0c7d81493`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:52` (`src_2530e1427d0ca570`) +27 more
-- `cache_modifier` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:81` (`src_0505cb58690b386c`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:57` (`src_54f8633adb3d6a68`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:55` (`src_be7d312d5e198e87`) +25 more
-- `NUM_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:77` (`src_0f50a57ed622a4f4`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:55` (`src_f5043ecafb832fa0`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:71` (`src_07d45c199f58f09c`) +23 more
-- `SPLITK_BLOCK_SIZE` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:78` (`src_9ded4cca041a3849`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:56` (`src_9ee95b5d364d1124`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:72` (`src_a6a458873d31c369`) +23 more
-- `GRID_MN` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:59` (`src_a24fc24640dc6043`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:54` (`src_81033d846f091cac`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:74` (`src_3e8b087b0fa64fa6`) +16 more
-- `ACTUAL_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:209` (`src_8f1fdafc50973349`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:221` (`src_18d3b57aca77f585`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_blockscale.py:448` (`src_d6774626dc5880dd`) +11 more
-- `MAX_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:210` (`src_631307eab0126cfe`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8.py:222` (`src_063ee17748c3ff7f`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a8w8_blockscale.py:449` (`src_b15254523b8b9591`) +11 more
-- `matrix_instr_nonkdim` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:81` (`src_1a4fac50228600ef`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:282` (`src_20aa9f9d69a9a3f1`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16wfp4.py:67` (`src_8854498ae49e6046`) +9 more
-- …30 further distinct value(s); see the YAML
+- `BLOCK_SIZE_M` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:58` (`src_82be3a3b6890ad8f`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:51` (`src_8e30c06fa95e5b6e`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:48` (`src_aeb37d7d249efc7d`) +77 more
+- `BLOCK_SIZE_N` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:60` (`src_c1e5ae1e30d24cf2`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:53` (`src_ba48f033e8338abc`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:50` (`src_6513e016fbe67c1a`) +77 more
+- `EVEN_K` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:65` (`src_c337ac8af4ee44d0`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:59` (`src_95a6898100b95821`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:53` (`src_61998cdf9532c394`) +65 more
+- `BLOCK_SIZE_K` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:61` (`src_e5f98b6293e12f90`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:54` (`src_cfd83ae78c96f57d`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:51` (`src_8540fbcbe8e019de`) +54 more
+- `GROUP_SIZE_M` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:62` (`src_61551bc9dfb2071a`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:55` (`src_0c18a165c8580816`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:52` (`src_2530e1427d0ca570`) +53 more
+- `cache_modifier` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:67` (`src_5a68410597f85cb3`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:58` (`src_6a1681f80595ee8a`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:55` (`src_be7d312d5e198e87`) +49 more
+- `NUM_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:63` (`src_dd7be3abacd64365`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:56` (`src_b4911d5dd71dee4b`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_persistent.py:63` (`src_fe5c5454a5b3a958`) +47 more
+- `SPLITK_BLOCK_SIZE` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16.py:64` (`src_36b4bf0bea3d561a`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:57` (`src_734f4dee37af82bc`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_persistent.py:64` (`src_610815c148ca7cee`) +47 more
+- `GRID_MN` — `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_atomic.py:60` (`src_952b3d97a4c441b1`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w16_gated.py:54` (`src_81033d846f091cac`), `aiter/ops/triton/_triton_kernels/gemm/basic/gemm_a16w8_blockscale.py:74` (`src_3e8b087b0fa64fa6`) +25 more
+- `BLOCK_N` — `aiter/ops/triton/_triton_kernels/moe/moe_op_gemm_a16w4.py:94` (`src_178986c64215d8d4`), `aiter/ops/triton/_triton_kernels/moe/moe_op_gemm_a16w4.py:148` (`src_a33c685a49295105`), `aiter/ops/triton/_triton_kernels/moe/moe_op_gemm_a4w4.py:95` (`src_811309afbba7e547`) +21 more
+- `ACTUAL_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_a16wfp4.py:254` (`src_31ff96ab38dd77c7`), `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_afp4wfp4.py:253` (`src_6c47d68a6c407b92`), `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_a8w8_blockscale_a16w16.py:309` (`src_31fc1e3fa38c08f2`) +19 more
+- `MAX_KSPLIT` — `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_a16wfp4.py:255` (`src_d181395d4a409d51`), `aiter/ops/triton/_triton_kernels/gemm/batched/batched_gemm_afp4wfp4.py:254` (`src_21b61381d50b0945`), `aiter/ops/triton/_triton_kernels/gemm/fused/fused_gemm_a8w8_blockscale_a16w16.py:310` (`src_41e5c72a93e52d9c`) +19 more
+- …80 further distinct value(s); see the YAML
 
-**hip** — 12 in 1 file(s)
+**gluon** — 2 in 1 file(s)
 
-- `typename scalar_t, int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int…` — `csrc/kernels/custom_kernels.cu:435` (`src_346fe67511bac3d2`), `csrc/kernels/custom_kernels.cu:671` (`src_f5fb8394038e718b`), `csrc/kernels/custom_kernels.cu:687` (`src_d78de056f0337d85`) +5 more
-- `typename scalar_t, typename fp8_t, int THRDS, int YTILE, int WvPrGrp, …` — `csrc/kernels/custom_kernels.cu:1775` (`src_5147e7cddd350323`), `csrc/kernels/custom_kernels.cu:1972` (`src_476c3b249ceab7f6`), `csrc/kernels/custom_kernels.cu:1996` (`src_a86279d9f1c24768`) +1 more
+- `BLOCK_N` — `aiter/ops/triton/_gluon_kernels/gfx950/moe/moe_op_gemm_a16w4.py:68` (`src_adc5bbc31e484873`)
+- `MX_SCALE_BLOCK_K` — `aiter/ops/triton/_gluon_kernels/gfx950/moe/moe_op_gemm_a16w4.py:69` (`src_613304c53ed1b407`)
+
+**hip** — 24 in 1 file(s)
+
+- `typename scalar_t, int THRDS, int YTILE, int WvPrGrp, int A_CHUNK, int…` — `csrc/kernels/custom_kernels.cu:433` (`src_9a632b62d99b7d6f`), `csrc/kernels/custom_kernels.cu:669` (`src_8f3c17e415d58b15`), `csrc/kernels/custom_kernels.cu:685` (`src_eee237d2a2fdf96f`) +13 more
+- `typename scalar_t, typename fp8_t, int THRDS, int YTILE, int WvPrGrp, …` — `csrc/kernels/custom_kernels.cu:1773` (`src_c3dc7d647377d334`), `csrc/kernels/custom_kernels.cu:1970` (`src_5b91df621b600a63`), `csrc/kernels/custom_kernels.cu:1994` (`src_8c5abd813936f296`) +5 more
 
 ### `instance_name` — Configuration encoded in a generated kernel's name
 
-**flydsl** — 1 in 1 file(s)
+**flydsl** — 2 in 1 file(s)
 
-- `_HGEMM_KERNEL_RE` — `aiter/ops/flydsl/gemm_kernels.py:44-63` (`src_1e7dc0218412b0cf`)
+- `_HGEMM_KERNEL_RE` — `aiter/ops/flydsl/gemm_kernels.py:35-45` (`src_2e052959990dd71a`), `aiter/ops/flydsl/gemm_kernels.py:44-63` (`src_1e7dc0218412b0cf`)
+
+### `pipeline_variant` — Which named pipeline variant is being built
+
+**hip** — 75 in 22 file(s)
+
+- `a16w16` — `csrc/opus_gemm/include/opus_gemm_common.cuh:97` (`src_48c9612e50175394`), `csrc/opus_gemm/include/opus_gemm_common.cuh:99` (`src_55372159653854c6`), `csrc/opus_gemm/include/gfx1250/opus_gemm_pipeline_a16w16_4wave_compute_gfx1250.cuh:25` (`src_fc66de396372ff66`) +32 more
+- `a8w8_scale` — `csrc/opus_gemm/include/opus_gemm_common.cuh:93` (`src_a5f009c37577e979`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_mxscale_flatmm_splitk_gfx950.cuh:11` (`src_d1d678cde0f4aa34`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_scale_gfx950.cuh:5` (`src_8213cc3b4fad9309`) +10 more
+- `a8w8_mxscale_flatmm_splitk` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:28` (`src_c30ce9631b1fd182`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:29` (`src_a2ede9b70eda2100`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:30` (`src_6156b1bd1678c616`) +4 more
+- `is_4g_safe` — `csrc/opus_gemm/opus_gemm_common.py:66` (`src_7ee0d8850dda40f5`), `csrc/opus_gemm/opus_gemm_common.py:260-261` (`src_d22d7d264a76f4b2`), `csrc/opus_gemm/opus_gemm_common.py:876-879` (`src_1ec1ebefb3f5d3c1`) +2 more
+- `a8w8_noscale` — `csrc/opus_gemm/include/opus_gemm_common.cuh:94` (`src_5a9f21eed52a82cf`), `csrc/opus_gemm/include/gfx950/opus_gemm_pipeline_a8w8_noscale_gfx950.cuh:9` (`src_277935b2f5e1682b`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:22` (`src_0264ac5812e15d78`) +1 more
+- `a16w16_persistent` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:26` (`src_3558cd3d59c25c3b`), `csrc/opus_gemm/codegen/gen_instances_gfx950.py:682` (`src_182437ea62575625`)
+- `a16w16_4g_safe` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:42` (`src_822814ef5aa74881`)
+- `a16w16_cluster_tdm_splitk_ws` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:14` (`src_44bbe8d32ae5de52`)
+- `a16w16_clusterlaunch_tdm_splitk_fuse` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:20` (`src_5858a7d592c5f792`)
+- `a16w16_clusterlaunch_tdm_splitk_ws` — `csrc/opus_gemm/codegen/gen_instances_gfx1250.py:17` (`src_9ad2d0f2def0ff28`)
+- `a16w16_flatmm` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:24` (`src_0d7ba2662de12371`)
+- `a16w16_flatmm_splitk` — `csrc/opus_gemm/codegen/gen_instances_gfx950.py:25` (`src_ad7534ea61a177d3`)
+- …3 further distinct value(s); see the YAML
 
 ### `ck_instance` — Which CK device-op template is instantiated
 
-**ck** — 29 in 7 file(s)
+**ck** — 34 in 7 file(s)
 
-- `DeviceGemmInstance` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:114` (`src_34d2a85fa1071a80`), `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:142` (`src_d8e4c74e16c401bc`), `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:203` (`src_8da3a9cb4ff8609a`) +11 more
-- `DeviceBatchedGemmMultiD_Xdl_CShuffle_V3` — `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:170` (`src_2dd11adec1468b08`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:204` (`src_4d242cc24f97078d`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:86` (`src_780fadebcc954d06`)
-- `DeviceGemmHelper` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:153` (`src_0647c599d69341d5`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:203` (`src_2323790920c1cf3a`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:85` (`src_0ee616bf91deb1d8`)
+- `DeviceGemmInstance` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:114` (`src_34d2a85fa1071a80`), `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:142` (`src_d8e4c74e16c401bc`), `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:203` (`src_8da3a9cb4ff8609a`) +14 more
+- `DeviceBatchedGemmMultiD_Xdl_CShuffle_V3` — `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:170` (`src_2dd11adec1468b08`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:204` (`src_4d242cc24f97078d`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:87` (`src_71c433cfaabca854`) +1 more
+- `DeviceGemmHelper` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:153` (`src_0647c599d69341d5`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:203` (`src_2323790920c1cf3a`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:86` (`src_875cf0d1ef184ab4`) +1 more
 - `DeviceGemmMultiD_Xdl_CShuffle_V3` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:116` (`src_e9db5262043eab6e`), `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:154` (`src_0f9c56f51c18e3e5`)
 - `DeviceGemmHelperF4BlockScale` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:87` (`src_77d6a3836c8edb73`)
 - `DeviceGemmHelperF8BlockScaleBPreshuffle` — `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:92` (`src_24c2dc21486cdfe7`)
@@ -629,63 +855,74 @@ practice, and a number inside one is not necessarily wrong elsewhere.
 
 ### `ck_pipeline` — CK's loop scheduler and pipeline version
 
-**ck** — 20 in 7 file(s)
+**ck** — 21 in 7 file(s)
 
 - `GemmSpecialization::Default` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:86` (`src_d9299c020666b73d`), `csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_common.cuh:96` (`src_061699da744d68e6`), `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:91` (`src_5eb9b8eb2bc826a3`) +1 more
+- `GemmSpecialization::MNPadding` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:152` (`src_36482bae130b2038`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:202` (`src_b9cf618e5229faf1`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:85` (`src_e0f85148bf18c6b8`) +1 more
 - `Intrawave` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:68` (`src_75b377d9dfc10083`), `csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_common.cuh:94` (`src_360e5ac016fb28e3`), `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:89` (`src_f626c5ad78e1d26a`) +1 more
 - `v1` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:125` (`src_4649fbd25dfb64c2`), `csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_common.cuh:95` (`src_1b5ae47043939e92`), `csrc/ck_gemm_a8w8_blockscale_bpreshuffle/include/gemm_a8w8_blockscale_bpreshuffle_common.cuh:90` (`src_32719853b0287aaf`) +1 more
-- `GemmSpecialization::MNPadding` — `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:152` (`src_36482bae130b2038`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:202` (`src_b9cf618e5229faf1`), `csrc/ck_batched_gemm_bf16/include/batched_gemm_bf16_common.cuh:84` (`src_14e600f607e38d69`)
 - `Interwave` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:69` (`src_bb0d15e277ff0a86`), `csrc/ck_gemm_a8w8/include/gemm_a8w8_common.cuh:125` (`src_92b0ea97740ecf30`), `csrc/ck_batched_gemm_a8w8/include/batched_gemm_a8w8_common.cuh:179` (`src_836182b5a9e64fdd`)
 - `v3` — `csrc/ck_gemm_a4w4_blockscale/include/gemm_a4w4_blockscale_common.cuh:85` (`src_6a2107cadf863683`), `csrc/ck_gemm_a8w8_bpreshuffle/include/gemm_a8w8_bpreshuffle_common.cuh:137` (`src_da4c62b1bada48c0`)
 
 ### `asm_object` — Which precompiled object the launcher loads
 
-**asm** — 10 in 5 file(s)
+**asm** — 72 in 10 file(s)
 
-- `co_name` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:185` (`src_5644e26feb85e947`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:189` (`src_d55ca2e78d9ed061`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:244` (`src_b392e47e73f1431a`) +6 more
-- `flatmm_uk_gfx9_f16f8_128x256x128_1x4x1_16x16x32.co` — `csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu:70` (`src_1ab3671c7ce2cd0c`)
+- `co_name` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:185` (`src_5644e26feb85e947`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:189` (`src_d55ca2e78d9ed061`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:244` (`src_b392e47e73f1431a`) +26 more
+- `hsaco` — `csrc/py_itfs_cu/asm_fmoe.cu:84` (`src_b9beeecc3cb656ef`), `csrc/py_itfs_cu/asm_fmoe.cu:87` (`src_d54108e812a44c45`), `csrc/py_itfs_cu/asm_fmoe.cu:82` (`src_a0a56a5bc754941f`) +1 more
+- `fmoe_b16.co` — `csrc/py_itfs_cu/asm_fmoe.cu:417` (`src_8303338c4cea2872`), `csrc/py_itfs_cu/asm_fmoe.cu:369` (`src_a1061f2e06b9761c`)
+- `fmoe_f16.co` — `csrc/py_itfs_cu/asm_fmoe.cu:412` (`src_89d42d282cb00ea7`), `csrc/py_itfs_cu/asm_fmoe.cu:364` (`src_644a75c28058d7d9`)
+- `fmoe_int4fp8_g1u1_subGU_128_gelu.co` — `csrc/py_itfs_cu/asm_fmoe.cu:619` (`src_527e35f034b7676a`), `csrc/py_itfs_cu/asm_fmoe.cu:570` (`src_88a3b05a654749e5`)
+- `fmoe_int4fp8_g1u1_subGU_256_gelu.co` — `csrc/py_itfs_cu/asm_fmoe.cu:613` (`src_72b4f38a53e4b276`), `csrc/py_itfs_cu/asm_fmoe.cu:564` (`src_8178d87879b62e56`)
+- `fmoe_int4fp8_g1u1_subGU_512_gelu.co` — `csrc/py_itfs_cu/asm_fmoe.cu:607` (`src_69c4b0700fe8dbd6`), `csrc/py_itfs_cu/asm_fmoe.cu:558` (`src_4674c9c6bfbb1d7b`)
+- `fmoe_int8_g1u0_subGU_128.co` — `csrc/py_itfs_cu/asm_fmoe.cu:496` (`src_ac550664a4f79725`), `csrc/py_itfs_cu/asm_fmoe.cu:448` (`src_a196a4654cac1982`)
+- `fmoe_int8_g1u0_subGU_128_gelu.co` — `csrc/py_itfs_cu/asm_fmoe.cu:487` (`src_8a9483909876d9a6`), `csrc/py_itfs_cu/asm_fmoe.cu:439` (`src_d41e8d61bfc6568c`)
+- `fmoe_int8_g1u0_subGU_192.co` — `csrc/py_itfs_cu/asm_fmoe.cu:495` (`src_08a801467e8c3f4f`), `csrc/py_itfs_cu/asm_fmoe.cu:447` (`src_6d0330ba2d07662d`)
+- `fmoe_int8_g1u0_subGU_192_gelu.co` — `csrc/py_itfs_cu/asm_fmoe.cu:485` (`src_8d452963c3718801`), `csrc/py_itfs_cu/asm_fmoe.cu:437` (`src_691505fb2dae902b`)
+- `fmoe_int8_g1u0_subGU_256.co` — `csrc/py_itfs_cu/asm_fmoe.cu:494` (`src_64238ca7a9db8de5`), `csrc/py_itfs_cu/asm_fmoe.cu:446` (`src_b184b677f3a09af1`)
+- …10 further distinct value(s); see the YAML
 
 ### `asm_launch` — Workgroup size and grid formula the assembly assumes
 
-**asm** — 16 in 5 file(s)
+**asm** — 39 in 10 file(s)
 
-- `(Mdim + SUBM - 1) / SUBM` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:249` (`src_81323f080ddf3954`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:267` (`src_0113b838f34f9cc3`)
-- `(Ndim + SUBN - 1) / SUBN` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:247` (`src_680a902279bf0a09`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:265` (`src_313b911dd7b54598`)
+- `(Mdim + SUBM - 1) / SUBM` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:249` (`src_81323f080ddf3954`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:267` (`src_0113b838f34f9cc3`), `csrc/py_itfs_cu/asm_gemm_a4w6.cu:266` (`src_8a89048fb05846c9`) +2 more
+- `(Ndim + SUBN - 1) / SUBN` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:247` (`src_680a902279bf0a09`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:265` (`src_313b911dd7b54598`), `csrc/py_itfs_cu/asm_gemm_a4w6.cu:264` (`src_65ed14f89b935d62`) +2 more
+- `sub_X_cnt` — `csrc/py_itfs_cu/asm_fmoe.cu:244` (`src_bdc26bbd5f0e8ffd`), `csrc/py_itfs_cu/asm_moe_2stage.cu:273` (`src_91e4408d997f2769`), `csrc/py_itfs_cu/asm_fmoe.cu:198` (`src_15f4eb1abdc0ca66`) +1 more
+- `((inter_dim + sub_GU - 1) / sub_GU)` — `csrc/py_itfs_cu/asm_fmoe.cu:197` (`src_cb007b6b9db91ac6`), `csrc/py_itfs_cu/asm_fmoe.cu:243` (`src_ba4d526010733db2`), `csrc/py_itfs_cu/asm_fmoe.cu:197` (`src_8d2e71f5b9eb9eb0`)
+- `((hidden_dim + sub_GU - 1) / sub_GU)` — `csrc/py_itfs_cu/asm_moe_2stage.cu:272` (`src_daed0345704e54a0`), `csrc/py_itfs_cu/asm_moe_2stage.cu:263` (`src_627b7e2ed5acbdf5`)
 - `256` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:216` (`src_417fafbc98c96c58`), `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:348` (`src_69299754fbe43145`)
+- `k_num` — `csrc/py_itfs_cu/asm_moe_2stage.cu:274` (`src_0226e8c1a24e7f9f`), `csrc/py_itfs_cu/asm_moe_2stage.cu:265` (`src_eb501c73d9fa2c42`)
+- `this->num_persistent_tgs` — `csrc/py_itfs_cu/asm_fmoe.cu:236` (`src_8dce3db7464678ac`), `csrc/py_itfs_cu/asm_fmoe.cu:190` (`src_45807da93bf7264c`)
 - `(Kdim + k_per_tg - 1) / k_per_tg` — `csrc/py_itfs_cu/asm_gemm_a4w4.cu:257` (`src_ba930f8efbfc212a`)
 - `(Mdim % SUBM == 0) ? Mdim / SUBM : Mdim / SUBM + 1` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:225` (`src_b00480c9bbb99e4c`)
 - `(Mdim % cfg.tile_m == 0) ? Mdim / cfg.tile_m : Mdim / cfg.tile_m + 1` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:351` (`src_e1c274aa54d08f52`)
 - `(Ndim / SUBN) * blockSizeX` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:224` (`src_b2e1a654578dab1d`)
-- `(Ndim / cfg.tile_n) * blockSizeX` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:350` (`src_11ef8d4dce87c5ca`)
-- `(m + TileM - 1) / TileM` — `csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu:74` (`src_df9efbadf83ba05f`)
-- `(n + TileN - 1) / TileN` — `csrc/py_itfs_cu/asm_flatmm_a8w8_blockscale.cu:72` (`src_bd8b149b21574307`)
-- `gdx * selectedksplit` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:270` (`src_9822afa6c1c82ca7`)
-- `gdx * selectedsplitK` — `csrc/py_itfs_cu/asm_a8w8_blockscale_bpreshuffle.cu:353` (`src_b07a8dc43c913b9d`)
-- …1 further distinct value(s); see the YAML
+- …10 further distinct value(s); see the YAML
 
 ### `asm_argblock` — Byte layout of the argument block it expects
 
-**asm** — 5 in 5 file(s)
+**asm** — 10 in 10 file(s)
 
-- `KernelArgs` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:11` (`src_3af5d32be2dfccf0`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:10` (`src_739e8fc4faa40364`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:11` (`src_5d85df9372b081ab`) +2 more
+- `KernelArgs` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:11` (`src_3af5d32be2dfccf0`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:10` (`src_739e8fc4faa40364`), `csrc/py_itfs_cu/asm_gemm_a4w6.cu:29` (`src_64323d8825058faa`) +7 more
 
 ### `asm_tile` — Tile size the selected object was built for
 
-**asm** — 150 in 11 file(s)
+**asm** — 581 in 28 file(s)
 
-- `splitK` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:115` (`src_05e16505bb238998`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:116` (`src_33ed168f12674807`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:133` (`src_7a432565c23ef5f9`) +10 more
-- `tile_n` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:83` (`src_1987e197a68e34c7`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:96` (`src_c09bffe1c698ed4f`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:101` (`src_02d96be8bef454c8`) +5 more
-- `tile_m` — `csrc/py_itfs_cu/asm_gemm_a8w8.cu:95` (`src_765002409ba25500`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:101` (`src_dbc894556c91af53`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:222` (`src_1db016742914d34e`) +3 more
-- `0` — `csrc/py_itfs_cu/asm_gemm_a4w4.cu:235` (`src_065cac410129b495`), `csrc/py_itfs_cu/asm_gemm_a4w4.cu:236` (`src_4916b86f673fa6dc`), `csrc/py_itfs_cu/asm_gemm_a8w8.cu:210` (`src_bb0fac5b1b13f275`) +1 more
-- `tile_m=128, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:2` (`src_3865c44e30f36de9`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:5` (`src_3b1c5947405c3ef7`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:2` (`src_8866d3dbeb612f3a`) +1 more
-- `tile_m=32, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:3` (`src_fcf5d73d12271d55`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:3` (`src_8a8e1b431c43ca1c`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:3` (`src_a4937eaa160077d1`) +1 more
-- `tile_m=48, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:4` (`src_c792a003b578b049`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:4` (`src_4a10625779e3e502`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:4` (`src_7a9be066638ee5bc`) +1 more
-- `tile_m=64, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:5` (`src_acee84984c040f98`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:7` (`src_b13798126e58eef3`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:5` (`src_a82f1dd1768c7ed4`) +1 more
-- `tile_m=80, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:6` (`src_fe82852692f7eaca`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:8` (`src_e9bf47b974e44f53`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:6` (`src_8f2808b9b000c3f2`) +1 more
-- `tile_m=96, tile_n=128, split_k_capable=1, bpreshuffle=1` [gfx942, gfx950] — `hsa/gfx942/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:7` (`src_8475d71b5a90595e`), `hsa/gfx942/i8gemm/i8gemm_bf16_perTokenI8.csv:9` (`src_3ca89354f31b31da`), `hsa/gfx950/fp8gemm_blockscale/fp8gemm_bf16_blockscale.csv:7` (`src_09df573fce2f0289`) +1 more
-- `tn=1, tile_m=128, tile_n=64, prefetch=0, bpreshuffle=1, split_k_capabl…` [gfx942, gfx950] — `hsa/gfx942/bf16gemm/bf16gemm_fp32bf16.csv:2` (`src_f489a24ab705ccea`), `hsa/gfx942/bf16gemm/bf16gemm_fp32bf16.csv:12` (`src_8b7a84f993b7dec9`), `hsa/gfx950/bf16gemm/bf16gemm_fp32bf16.csv:4` (`src_ccc9e2bcad7b2f6b`) +1 more
-- `tn=1, tile_m=160, tile_n=64, prefetch=0, bpreshuffle=1, split_k_capabl…` [gfx942, gfx950] — `hsa/gfx942/bf16gemm/bf16gemm_fp32bf16.csv:3` (`src_f117496fe7876408`), `hsa/gfx942/bf16gemm/bf16gemm_fp32bf16.csv:19` (`src_a08746e8d51c64a4`), `hsa/gfx950/bf16gemm/bf16gemm_fp32bf16.csv:5` (`src_d6ec1c61855545a7`) +1 more
-- …63 further distinct value(s); see the YAML
+- `tile_m=256, tile_n=256, split_k_capable=0, bpreshuffle=0` [gfx950] — `hsa/gfx950/f4f6gemm/f4f6gemm_bf16_per1x32Fp4Fp6.csv:2` (`src_252356ed8c37f787`), `hsa/gfx950/f4f6gemm/f4f6gemm_bf16_per1x32Fp4Fp6.csv:3` (`src_08ef526eaa839600`), `hsa/gfx950/f4f6gemm/f4f6gemm_bf16_per1x32Fp4Fp6.csv:4` (`src_3f042ae78d882323`) +19 more
+- `tile_m=128, tile_n=128` [gfx1250, gfx942, gfx950] — `hsa/gfx1250/mxfp8fp4gemm/mxfp8fp4gemm.csv:12` (`src_cf26db1c19a8b014`), `hsa/gfx1250/mxfp8fp4gemm/mxfp8fp4gemm.csv:13` (`src_2ba8f6b7b440d96e`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:16` (`src_d2307014d3a3e03a`) +15 more
+- `splitK` — `csrc/py_itfs_cu/asm_gemm_a16w16.cu:115` (`src_05e16505bb238998`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:116` (`src_33ed168f12674807`), `csrc/py_itfs_cu/asm_gemm_a16w16.cu:133` (`src_7a432565c23ef5f9`) +13 more
+- `tile_m=112, tile_n=128` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:14` (`src_8422ebeade474113`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:15` (`src_cb9fc7b5186ad6e4`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:14` (`src_4e461cc484fe6143`) +13 more
+- `tile_m=144, tile_n=128` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:18` (`src_f73ab7ee5a4c691a`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:19` (`src_ed93d5b01dc4d495`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:18` (`src_35daac142e10526e`) +13 more
+- `tile_m=16, tile_n=128` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:2` (`src_d62b91b05fcaf3c6`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:3` (`src_03efb709507692f6`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:2` (`src_99499fe095855645`) +13 more
+- `tile_m=16, tile_n=256` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:22` (`src_8d901c05a49efaa2`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:23` (`src_52b65f394959ca25`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:20` (`src_db822ae36163a484`) +13 more
+- `tile_m=16, tile_n=512` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:32` (`src_7f137b163c73c94c`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:33` (`src_b488e0b94d7d0a4d`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:30` (`src_b4f593d8beaa9d9e`) +13 more
+- `tile_m=32, tile_n=128` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:4` (`src_efba5bc91a09d9dd`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:5` (`src_aa4cc44f9b5f6b52`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:4` (`src_4dc03bde05a1a821`) +13 more
+- `tile_m=32, tile_n=256` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:24` (`src_dad071ae16f22fdd`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:25` (`src_cadf3c53ff626856`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:22` (`src_5cf0a5701e396c83`) +13 more
+- `tile_m=32, tile_n=512` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:34` (`src_8510e83e123db92c`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:35` (`src_64f6e6be3b2d3350`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:32` (`src_50c06c5ac1dc0907`) +13 more
+- `tile_m=48, tile_n=128` [gfx942, gfx950] — `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:6` (`src_df82eff234ebf113`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_blockscale_g1u1.csv:7` (`src_28eff6ff44080529`), `hsa/gfx942/fmoe_2stages/fmoe_stage1_bf16_pertokenFp8_doweight_g1u1.csv:6` (`src_4cd0c4e6c299c02e`) +13 more
+- …97 further distinct value(s); see the YAML
 
 ## Shipped tuned starting points
 
@@ -700,7 +937,52 @@ Knobs that moved are listed as varying, with value counts. Exact source JSON pat
 in `evidence/gemm_tuned_configs.yaml` for per-shape lookup.
 
 
-Source: `aiter/ops/triton/configs/gemm` — 1304 rows in 306 groups.
+Source: `aiter/ops/triton/configs` — 8089 rows in 2042 groups.
+
+**gfx1250 · gluon GEMM GEMM_A16W16 GEMM A16W16 · any** — `cfg_30f1c552436d77bf` (46 shipped shape config(s))
+
+- same across shipped configs: `persistent=False`
+- varies by shape: `BLOCK_K` (64: 24, 128: 17, 256: 4, 512: 1), `BLOCK_M` (256: 23, 128: 14, 64: 7, 16: 1, 32: 1), `BLOCK_N` (256: 20, 128: 17, 64: 7, 32: 1, 16: 1), `NUM_BUFFERS` (2: 19, 4: 17, 3: 6, 5: 3, 6: 1), `kernel_type` (bandwidth_bound: 25, compute_bound: 21), `num_warps` (4: 23, 8: 17, 2: 6), `waves_per_eu` (1: 2, 2: 2, 4: 1)
+- source JSON: `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=1024-K=4096.json`, `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=1024-K=7168.json`, `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=10248-K=2880.json` +43 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · M_LEQ_128** — `cfg_7a9c1c67760462a0` (40 shipped shape config(s))
+
+- same across shipped configs: `num_warps=4`
+- varies by shape: `BLOCK_SIZE_K` (256: 20, 512: 17, 1024: 3), `BLOCK_SIZE_M` (64: 20, 128: 19, 16: 1), `BLOCK_SIZE_N` (64: 16, 128: 16, 256: 5, 16: 2, 32: 1), `GROUP_SIZE_M` (1: 31, 2: 7, 8: 2), `NUM_KSPLIT` (1: 26, 4: 9, 2: 5), `cache_modifier` (.cg: 23, None: 17), `matrix_instr_nonkdim` (16: 39, 32: 1), `num_stages` (3: 32, 2: 6, 4: 1, 1: 1), `waves_per_eu` (1: 26, 2: 12, 4: 2)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · M_LEQ_16** — `cfg_f5b4f8a7c3d4d6c7` (40 shipped shape config(s))
+
+- same across shipped configs: `matrix_instr_nonkdim=16`
+- varies by shape: `BLOCK_SIZE_K` (1024: 22, 256: 9, 512: 9), `BLOCK_SIZE_M` (16: 22, 32: 18), `BLOCK_SIZE_N` (32: 14, 128: 12, 64: 9, 16: 5), `GROUP_SIZE_M` (1: 29, 4: 9, 2: 1, 8: 1), `NUM_KSPLIT` (1: 24, 4: 14, 2: 2), `cache_modifier` (.cg: 37, None: 3), `num_stages` (3: 29, 2: 10, 1: 1), `num_warps` (4: 35, 2: 3, 8: 2), `waves_per_eu` (1: 23, 6: 9, 2: 7, 0: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · M_LEQ_256** — `cfg_2589e75d8006fa1a` (40 shipped shape config(s))
+
+- varies by shape: `BLOCK_SIZE_K` (256: 23, 512: 14, 1024: 3), `BLOCK_SIZE_M` (128: 20, 256: 10, 64: 10), `BLOCK_SIZE_N` (128: 14, 64: 13, 256: 11, 16: 1, 32: 1), `GROUP_SIZE_M` (1: 25, 2: 11, 4: 3, 8: 1), `NUM_KSPLIT` (1: 30, 4: 7, 2: 3), `cache_modifier` (.cg: 20, None: 20), `matrix_instr_nonkdim` (16: 37, 32: 3), `num_stages` (3: 24, 2: 15, 1: 1), `num_warps` (4: 30, 8: 10), `waves_per_eu` (1: 29, 2: 7, 4: 4)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · M_LEQ_32** — `cfg_b8d0c20fa0de92b7` (40 shipped shape config(s))
+
+- same across shipped configs: `matrix_instr_nonkdim=16`
+- varies by shape: `BLOCK_SIZE_K` (1024: 17, 512: 12, 256: 11), `BLOCK_SIZE_M` (32: 37, 16: 3), `BLOCK_SIZE_N` (128: 14, 32: 12, 64: 10, 16: 3, 256: 1), `GROUP_SIZE_M` (1: 28, 2: 5, 4: 5, 8: 2), `NUM_KSPLIT` (1: 26, 4: 7, 2: 5, 8: 2), `cache_modifier` (.cg: 36, None: 4), `num_stages` (3: 25, 2: 15), `num_warps` (4: 36, 8: 2, 2: 2), `waves_per_eu` (1: 21, 4: 5, 8: 5, 2: 5, 3: 3, 6: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · M_LEQ_64** — `cfg_e9749efe58cc547a` (40 shipped shape config(s))
+
+- varies by shape: `BLOCK_SIZE_K` (512: 25, 1024: 8, 256: 7), `BLOCK_SIZE_M` (64: 21, 32: 19), `BLOCK_SIZE_N` (128: 15, 32: 13, 64: 11, 16: 1), `GROUP_SIZE_M` (1: 28, 2: 8, 4: 2, 8: 2), `NUM_KSPLIT` (1: 26, 4: 9, 2: 5), `cache_modifier` (.cg: 28, None: 12), `matrix_instr_nonkdim` (16: 38, 32: 2), `num_stages` (3: 23, 2: 17), `num_warps` (4: 37, 8: 2, 2: 1), `waves_per_eu` (1: 18, 2: 11, 4: 8, 0: 2, 6: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4 GEMM AFP4WFP4 · any** — `cfg_922b2b4fbf4c8377` (40 shipped shape config(s))
+
+- varies by shape: `BLOCK_SIZE_K` (256: 35, 1024: 3, 128: 2), `BLOCK_SIZE_M` (256: 29, 128: 8, 64: 3), `BLOCK_SIZE_N` (256: 29, 128: 7, 64: 2, 16: 1, 32: 1), `GROUP_SIZE_M` (4: 17, 2: 11, 8: 6, 1: 5, 16: 1), `NUM_KSPLIT` (1: 39, 2: 1), `cache_modifier` (None: 37, .cg: 3), `matrix_instr_nonkdim` (16: 27, 32: 13), `num_stages` (2: 36, 3: 4), `num_warps` (8: 27, 4: 13), `waves_per_eu` (1: 30, 2: 9, 4: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4/GEMM-AFP4WFP4-N=13312-K=16384.json` +37 more
+
+**gfx950 · GEMM AFP4WFP4 · any** — `cfg_19c96d4f76752170` (37 shipped shape config(s))
+
+- same across shipped configs: `NUM_KSPLIT=1`
+- varies by shape: `BLOCK_SIZE_K` (256: 35, 128: 2), `BLOCK_SIZE_M` (256: 29, 128: 8), `BLOCK_SIZE_N` (256: 29, 128: 7, 64: 1), `GROUP_SIZE_M` (4: 17, 2: 11, 8: 6, 1: 2, 16: 1), `cache_modifier` (None: 34, .cg: 3), `matrix_instr_nonkdim` (16: 24, 32: 13), `num_stages` (2: 36, 3: 1), `num_warps` (8: 29, 4: 8), `waves_per_eu` (1: 27, 2: 8, 4: 1, 0: 1)
+- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=13312-K=16384.json` +34 more
 
 **gfx950 · GEMM AFP4WFP4 · M_LEQ_128** — `cfg_9d65f58c6f42e5bd` (36 shipped shape config(s))
 
@@ -731,118 +1013,69 @@ Source: `aiter/ops/triton/configs/gemm` — 1304 rows in 306 groups.
 - varies by shape: `BLOCK_SIZE_K` (512: 25, 256: 7, 1024: 4), `BLOCK_SIZE_M` (64: 18, 32: 18), `BLOCK_SIZE_N` (128: 15, 32: 13, 64: 8), `GROUP_SIZE_M` (1: 25, 2: 8, 8: 2, 4: 1), `NUM_KSPLIT` (1: 25, 4: 7, 2: 4), `cache_modifier` (.cg: 25, None: 11), `num_stages` (2: 18, 3: 18), `num_warps` (4: 33, 8: 2, 2: 1), `waves_per_eu` (1: 16, 2: 10, 4: 8, 0: 1, 6: 1)
 - source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=13312-K=16384.json` +33 more
 
-**gfx950 · GEMM AFP4WFP4 · any** — `cfg_19c96d4f76752170` (36 shipped shape config(s))
+**gfx1250 · gluon GEMM GEMM_A16W16 GEMM A16W16 · M_LEQ_512** — `cfg_acaabe561274ec0f` (34 shipped shape config(s))
 
-- same across shipped configs: `NUM_KSPLIT=1`
-- varies by shape: `BLOCK_SIZE_K` (256: 34, 128: 2), `BLOCK_SIZE_M` (256: 28, 128: 8), `BLOCK_SIZE_N` (256: 28, 128: 7, 64: 1), `GROUP_SIZE_M` (4: 17, 2: 10, 8: 6, 1: 2, 16: 1), `cache_modifier` (None: 33, .cg: 3), `matrix_instr_nonkdim` (16: 24, 32: 12), `num_stages` (2: 35, 3: 1), `num_warps` (8: 28, 4: 8), `waves_per_eu` (1: 27, 2: 8, 4: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=13312-K=16384.json` +33 more
+- varies by shape: `BLOCK_K` (128: 14, 256: 12, 64: 5, 512: 3), `BLOCK_M` (64: 14, 128: 12, 32: 4, 256: 2, 16: 2), `BLOCK_N` (64: 12, 128: 10, 32: 7, 256: 4, 16: 1), `NUM_BUFFERS` (4: 16, 2: 9, 5: 4, 3: 3, 6: 1, 8: 1), `kernel_type` (compute_bound: 17, bandwidth_bound: 17), `num_warps` (4: 17, 8: 11, 2: 6), `waves_per_eu` (1: 4, 2: 1)
+- source JSON: `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=1024-K=4096.json`, `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=1024-K=7168.json`, `aiter/ops/triton/configs/gfx1250/gluon/gemm/gemm_a16w16/GEMM-A16W16-N=12448-K=7168.json` +31 more
 
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_128** — `cfg_f565e339602e6388` (26 shipped shape config(s))
+**gfx942 · triton GEMM GEMM_A8W8_BLOCKSCALE GEMM A8W8_BLOCKSCALE · M_LEQ_32** — `cfg_6e71021d457c3f0e` (34 shipped shape config(s))
 
-- varies by shape: `BLOCK_SIZE_K` (512: 16, 256: 6, 1024: 4), `BLOCK_SIZE_M` (64: 20, 128: 4, 32: 2), `BLOCK_SIZE_N` (64: 11, 128: 8, 32: 6, 16: 1), `GROUP_SIZE_M` (1: 17, 4: 6, 8: 3), `NUM_KSPLIT` (1: 20, 4: 6), `cache_modifier` (None: 16, .cg: 10), `matrix_instr_nonkdim` (16: 25, 32: 1), `num_stages` (2: 19, 3: 6, 1: 1), `num_warps` (4: 15, 2: 11), `waves_per_eu` (1: 17, 2: 8, 4: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
+- same across shipped configs: `BLOCK_SIZE_K=128`, `GROUP_K=128`, `GROUP_N=128`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2`
+- varies by shape: `BLOCK_SIZE_M` (16: 25, 32: 8, 64: 1), `BLOCK_SIZE_N` (32: 18, 64: 10, 16: 6), `GROUP_SIZE_M` (1: 28, 4: 4, 8: 1, 2: 1), `NUM_KSPLIT` (1: 30, 8: 2, 4: 1, 14: 1), `SPLITK_BLOCK_SIZE` (512: 1, 1536: 1, 2048: 1), `cache_modifier` (None: 24, .cg: 10), `num_warps` (2: 22, 4: 7, 1: 4, 8: 1), `waves_per_eu` (0: 16, 2: 8, 1: 5, 4: 2, 8: 2, 6: 1)
+- source JSON: `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=11008-K=4096.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=12288-K=4096.json` +31 more
 
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_256** — `cfg_32927746518772c2` (26 shipped shape config(s))
+**gfx942 · triton GEMM GEMM_A8W8_BLOCKSCALE GEMM A8W8_BLOCKSCALE · M_LEQ_4** — `cfg_272ff9cfede80cd0` (34 shipped shape config(s))
+
+- same across shipped configs: `BLOCK_SIZE_K=128`, `GROUP_K=128`, `GROUP_N=128`, `SPLITK_BLOCK_SIZE=512`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2`
+- varies by shape: `BLOCK_SIZE_M` (16: 23, 4: 6, 32: 5), `BLOCK_SIZE_N` (32: 18, 64: 11, 16: 4, 128: 1), `GROUP_SIZE_M` (1: 27, 4: 7), `NUM_KSPLIT` (1: 28, 16: 2, 8: 1, 14: 1, 3: 1, 4: 1), `cache_modifier` (None: 24, .cg: 10), `num_warps` (2: 23, 4: 6, 1: 4, 8: 1), `waves_per_eu` (2: 11, 0: 10, 1: 10, 4: 2, 6: 1)
+- source JSON: `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=11008-K=4096.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=12288-K=4096.json` +31 more
+
+**gfx942 · triton GEMM GEMM_A8W8_BLOCKSCALE GEMM A8W8_BLOCKSCALE · M_LEQ_8** — `cfg_bee1c002612b1c38` (34 shipped shape config(s))
+
+- same across shipped configs: `BLOCK_SIZE_K=128`, `GROUP_K=128`, `GROUP_N=128`, `SPLITK_BLOCK_SIZE=512`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2`
+- varies by shape: `BLOCK_SIZE_M` (16: 25, 4: 4, 32: 3, 8: 2), `BLOCK_SIZE_N` (32: 19, 64: 10, 16: 5), `GROUP_SIZE_M` (1: 29, 4: 5), `NUM_KSPLIT` (1: 29, 8: 2, 14: 1, 16: 1, 4: 1), `cache_modifier` (None: 27, .cg: 7), `num_warps` (2: 23, 4: 6, 1: 5), `waves_per_eu` (0: 17, 2: 9, 4: 5, 1: 2, 8: 1)
+- source JSON: `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=11008-K=4096.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=12288-K=4096.json` +31 more
+
+**gfx942 · triton GEMM GEMM_A8W8_BLOCKSCALE GEMM A8W8_BLOCKSCALE · any** — `cfg_18e0713c9089ca71` (34 shipped shape config(s))
+
+- same across shipped configs: `BLOCK_SIZE_K=128`, `GROUP_K=128`, `GROUP_N=128`, `NUM_KSPLIT=1`, `kpack=2`, `matrix_instr_nonkdim=16`, `num_stages=2`
+- varies by shape: `BLOCK_SIZE_M` (256: 25, 128: 5, 64: 4), `BLOCK_SIZE_N` (128: 32, 64: 2), `GROUP_SIZE_M` (1: 25, 4: 9), `cache_modifier` (None: 32, .cg: 2), `num_warps` (8: 26, 4: 6, 1: 2), `waves_per_eu` (1: 17, 0: 15, 2: 2)
+- source JSON: `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=11008-K=4096.json`, `aiter/ops/triton/configs/gfx942/triton/gemm/gemm_a8w8_blockscale/GEMM-A8W8_BLOCKSCALE-N=12288-K=4096.json` +31 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_128** — `cfg_f1e1f0271d89ef77` (34 shipped shape config(s))
+
+- varies by shape: `BLOCK_SIZE_K` (512: 25, 256: 5, 1024: 4), `BLOCK_SIZE_M` (64: 28, 128: 4, 32: 2), `BLOCK_SIZE_N` (64: 19, 128: 8, 32: 6, 16: 1), `GROUP_SIZE_M` (1: 25, 4: 6, 8: 3), `NUM_KSPLIT` (1: 28, 4: 6), `cache_modifier` (None: 24, .cg: 10), `matrix_instr_nonkdim` (16: 33, 32: 1), `num_stages` (2: 19, 3: 14, 1: 1), `num_warps` (4: 23, 2: 11), `waves_per_eu` (1: 25, 2: 8, 4: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
+
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_256** — `cfg_3d67c347c53501d1` (34 shipped shape config(s))
 
 - same across shipped configs: `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_K` (512: 14, 256: 10, 1024: 2), `BLOCK_SIZE_M` (64: 9, 32: 8, 128: 7, 256: 2), `BLOCK_SIZE_N` (128: 17, 64: 7, 32: 1, 256: 1), `GROUP_SIZE_M` (4: 14, 1: 8, 8: 4), `NUM_KSPLIT` (1: 24, 4: 2), `cache_modifier` (None: 17, .cg: 9), `num_stages` (2: 17, 3: 8, 1: 1), `num_warps` (4: 22, 2: 4), `waves_per_eu` (2: 11, 1: 10, 4: 5)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
+- varies by shape: `BLOCK_SIZE_K` (512: 23, 256: 9, 1024: 2), `BLOCK_SIZE_M` (128: 15, 64: 9, 32: 8, 256: 2), `BLOCK_SIZE_N` (128: 17, 64: 15, 32: 1, 256: 1), `GROUP_SIZE_M` (1: 16, 4: 14, 8: 4), `NUM_KSPLIT` (1: 32, 4: 2), `cache_modifier` (None: 25, .cg: 9), `num_stages` (2: 17, 3: 16, 1: 1), `num_warps` (4: 30, 2: 4), `waves_per_eu` (1: 18, 2: 11, 4: 5)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
 
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_31** — `cfg_60d953ac8627aebc` (26 shipped shape config(s))
-
-- same across shipped configs: `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_K` (1024: 14, 512: 8, 256: 4), `BLOCK_SIZE_M` (16: 19, 8: 7), `BLOCK_SIZE_N` (64: 9, 16: 9, 32: 6, 128: 2), `GROUP_SIZE_M` (1: 17, 4: 5, 8: 4), `NUM_KSPLIT` (1: 19, 4: 6, 14: 1), `cache_modifier` (.cg: 19, None: 7), `num_stages` (2: 21, 3: 3, 1: 2), `num_warps` (2: 16, 4: 10), `waves_per_eu` (2: 13, 1: 5, 4: 4, 6: 4)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
-
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_32** — `cfg_afa0e179ea27f2cb` (26 shipped shape config(s))
-
-- varies by shape: `BLOCK_SIZE_K` (512: 14, 256: 6, 1024: 6), `BLOCK_SIZE_M` (32: 23, 64: 3), `BLOCK_SIZE_N` (64: 12, 128: 7, 16: 5, 32: 2), `GROUP_SIZE_M` (1: 19, 4: 4, 8: 3), `NUM_KSPLIT` (1: 16, 4: 6, 8: 3, 7: 1), `cache_modifier` (.cg: 23, None: 3), `matrix_instr_nonkdim` (16: 25, 32: 1), `num_stages` (2: 20, 3: 5, 1: 1), `num_warps` (4: 14, 2: 12), `waves_per_eu` (2: 10, 1: 9, 4: 5, 6: 2)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
-
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_64** — `cfg_db9580db9d05c211` (26 shipped shape config(s))
-
-- varies by shape: `BLOCK_SIZE_K` (512: 17, 256: 6, 1024: 3), `BLOCK_SIZE_M` (64: 15, 32: 11), `BLOCK_SIZE_N` (64: 16, 128: 7, 32: 2, 16: 1), `GROUP_SIZE_M` (1: 19, 8: 5, 4: 2), `NUM_KSPLIT` (1: 17, 4: 7, 8: 1, 7: 1), `cache_modifier` (.cg: 17, None: 9), `matrix_instr_nonkdim` (16: 25, 32: 1), `num_stages` (2: 21, 3: 4, 1: 1), `num_warps` (2: 15, 4: 11), `waves_per_eu` (1: 11, 2: 6, 4: 5, 6: 4)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
-
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_8** — `cfg_98e147da67fe19a2` (26 shipped shape config(s))
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_31** — `cfg_057b475be0a7ffcf` (34 shipped shape config(s))
 
 - same across shipped configs: `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_K` (1024: 12, 256: 7, 512: 7), `BLOCK_SIZE_M` (8: 19, 16: 6, 4: 1), `BLOCK_SIZE_N` (32: 11, 64: 7, 16: 5, 128: 2, 256: 1), `GROUP_SIZE_M` (1: 18, 4: 5, 8: 3), `NUM_KSPLIT` (1: 17, 4: 6, 7: 2, 8: 1), `cache_modifier` (.cg: 22, None: 4), `num_stages` (2: 22, 3: 3, 1: 1), `num_warps` (2: 15, 4: 10, 8: 1), `waves_per_eu` (2: 9, 1: 9, 4: 6, 8: 1, 6: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
+- varies by shape: `BLOCK_SIZE_K` (1024: 17, 512: 13, 256: 4), `BLOCK_SIZE_M` (16: 26, 8: 8), `BLOCK_SIZE_N` (32: 13, 64: 10, 16: 9, 128: 2), `GROUP_SIZE_M` (1: 25, 4: 5, 8: 4), `NUM_KSPLIT` (1: 23, 4: 7, 2: 3, 14: 1), `cache_modifier` (.cg: 19, None: 15), `num_stages` (2: 29, 3: 3, 1: 2), `num_warps` (2: 22, 4: 12), `waves_per_eu` (2: 17, 1: 8, 4: 5, 6: 4)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
 
-**gfx950 · GEMM AFP4WFP4_PRESHUFFLED · any** — `cfg_0f3bcc30969e9c45` (26 shipped shape config(s))
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_32** — `cfg_d5e5389296c60c5f` (34 shipped shape config(s))
 
-- same across shipped configs: `NUM_KSPLIT=1`, `num_stages=2`
-- varies by shape: `BLOCK_SIZE_K` (256: 16, 512: 9, 1024: 1), `BLOCK_SIZE_M` (128: 10, 32: 9, 64: 7), `BLOCK_SIZE_N` (128: 21, 64: 5), `GROUP_SIZE_M` (4: 19, 8: 7), `cache_modifier` (None: 21, .cg: 5), `matrix_instr_nonkdim` (16: 25, 32: 1), `num_warps` (4: 19, 2: 6, 8: 1), `waves_per_eu` (2: 19, 4: 5, 1: 2)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +23 more
+- varies by shape: `BLOCK_SIZE_K` (512: 19, 1024: 9, 256: 6), `BLOCK_SIZE_M` (32: 31, 64: 3), `BLOCK_SIZE_N` (64: 14, 128: 8, 32: 7, 16: 5), `GROUP_SIZE_M` (1: 27, 4: 4, 8: 3), `NUM_KSPLIT` (1: 20, 4: 9, 8: 3, 7: 1, 2: 1), `cache_modifier` (.cg: 25, None: 9), `matrix_instr_nonkdim` (16: 33, 32: 1), `num_stages` (2: 28, 3: 5, 1: 1), `num_warps` (2: 18, 4: 16), `waves_per_eu` (1: 12, 2: 11, 4: 9, 6: 2)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
 
-**gfx950 · GEMM AFP4WFP4 · M_LEQ_8** — `cfg_2362072de525ac82` (25 shipped shape config(s))
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_64** — `cfg_46198d63ca806f9c` (34 shipped shape config(s))
 
-- same across shipped configs: `num_warps=4`
-- varies by shape: `BLOCK_SIZE_K` (512: 18, 1024: 3, 256: 2, 128: 2), `BLOCK_SIZE_M` (8: 20, 4: 5), `BLOCK_SIZE_N` (64: 17, 16: 4, 128: 3, 32: 1), `GROUP_SIZE_M` (1: 22, 8: 2, 2: 1), `NUM_KSPLIT` (1: 11, 4: 9, 8: 4, 16: 1), `cache_modifier` (.cg: 21, None: 4), `matrix_instr_nonkdim` (16: 19, 32: 6), `num_stages` (2: 19, 3: 6), `waves_per_eu` (2: 16, 4: 3, 8: 2, 1: 2, 6: 2)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=16384-K=13312.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=16384-K=16384.json` +22 more
+- varies by shape: `BLOCK_SIZE_K` (512: 22, 256: 6, 1024: 6), `BLOCK_SIZE_M` (64: 20, 32: 14), `BLOCK_SIZE_N` (64: 16, 32: 9, 128: 8, 16: 1), `GROUP_SIZE_M` (1: 27, 8: 5, 4: 2), `NUM_KSPLIT` (1: 19, 4: 9, 2: 4, 8: 1, 7: 1), `cache_modifier` (.cg: 19, None: 15), `matrix_instr_nonkdim` (16: 33, 32: 1), `num_stages` (2: 29, 3: 4, 1: 1), `num_warps` (2: 22, 4: 12), `waves_per_eu` (1: 13, 4: 9, 2: 8, 6: 4)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
 
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_128** — `cfg_c94a55b233cad7ea` (18 shipped shape config(s))
+**gfx950 · triton GEMM GEMM_AFP4WFP4_PRESHUFFLED GEMM AFP4WFP4_PRESHUFFLED · M_LEQ_8** — `cfg_b4af2b8276e45bc2` (34 shipped shape config(s))
 
-- same across shipped configs: `BLOCK_SIZE_K=128`
-- varies by shape: `BLOCK_SIZE_M` (64: 12, 128: 4, 32: 2), `BLOCK_SIZE_N` (64: 13, 128: 4, 16: 1), `GROUP_SIZE_M` (1: 12, 4: 5, 8: 1), `NUM_KSPLIT` (1: 10, 7: 3, 8: 3, 16: 1, 14: 1), `cache_modifier` (.cg: 10, None: 8), `matrix_instr_nonkdim` (16: 16, 32: 2), `num_stages` (2: 13, 3: 5), `num_warps` (1: 7, 4: 6, 2: 4, 8: 1), `waves_per_eu` (1: 11, 2: 4, 4: 1, 6: 1, 8: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
+- same across shipped configs: `matrix_instr_nonkdim=16`
+- varies by shape: `BLOCK_SIZE_K` (1024: 15, 512: 12, 256: 7), `BLOCK_SIZE_M` (8: 25, 16: 8, 4: 1), `BLOCK_SIZE_N` (32: 18, 64: 7, 16: 5, 128: 3, 256: 1), `GROUP_SIZE_M` (1: 27, 4: 4, 8: 3), `NUM_KSPLIT` (1: 19, 4: 9, 2: 3, 7: 2, 8: 1), `cache_modifier` (.cg: 24, None: 10), `num_stages` (2: 30, 3: 3, 1: 1), `num_warps` (2: 22, 4: 11, 8: 1), `waves_per_eu` (2: 14, 1: 11, 4: 7, 8: 1, 6: 1)
+- source JSON: `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=10240-K=8192.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=106496-K=16384.json`, `aiter/ops/triton/configs/gfx950/triton/gemm/gemm_afp4wfp4_preshuffled/GEMM-AFP4WFP4_PRESHUFFLED-N=1280-K=8192.json` +31 more
 
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_16** — `cfg_ab4442fdd08d0ab3` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (16: 15, 8: 3), `BLOCK_SIZE_N` (16: 11, 32: 6, 128: 1), `GROUP_SIZE_M` (1: 13, 4: 5), `NUM_KSPLIT` (1: 7, 8: 4, 4: 3, 14: 2, 7: 1, 16: 1), `cache_modifier` (.cg: 15, None: 3), `num_stages` (3: 9, 2: 7, 1: 2), `num_warps` (1: 14, 2: 3, 4: 1), `waves_per_eu` (2: 9, 1: 3, 6: 3, 4: 2, 8: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_256** — `cfg_6e04f3c060095c74` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (64: 8, 256: 8, 128: 2), `BLOCK_SIZE_N` (128: 11, 64: 7), `GROUP_SIZE_M` (1: 13, 4: 4, 8: 1), `NUM_KSPLIT` (1: 8, 4: 6, 7: 2, 8: 1, 14: 1), `cache_modifier` (.cg: 11, None: 7), `num_stages` (2: 13, 3: 5), `num_warps` (8: 9, 4: 6, 1: 3), `waves_per_eu` (2: 13, 1: 5)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_32** — `cfg_6511b85f28cc24a3` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (32: 14, 16: 4), `BLOCK_SIZE_N` (32: 9, 64: 6, 16: 3), `GROUP_SIZE_M` (1: 13, 4: 5), `NUM_KSPLIT` (1: 8, 16: 2, 7: 2, 4: 2, 14: 2, 8: 2), `cache_modifier` (.cg: 15, None: 3), `num_stages` (3: 9, 2: 9), `num_warps` (1: 13, 2: 3, 4: 2), `waves_per_eu` (1: 8, 4: 6, 2: 3, 6: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_512** — `cfg_a80837d278172560` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (64: 9, 256: 7, 128: 2), `BLOCK_SIZE_N` (128: 10, 64: 8), `GROUP_SIZE_M` (1: 10, 4: 7, 8: 1), `NUM_KSPLIT` (1: 11, 4: 5, 7: 2), `cache_modifier` (None: 12, .cg: 6), `num_stages` (2: 14, 3: 4), `num_warps` (8: 7, 1: 7, 4: 4), `waves_per_eu` (2: 10, 1: 8)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_64** — `cfg_f3c8a2c89a3d1d60` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (64: 10, 32: 6, 16: 2), `BLOCK_SIZE_N` (64: 9, 32: 6, 16: 3), `GROUP_SIZE_M` (1: 11, 4: 5, 8: 2), `NUM_KSPLIT` (1: 10, 8: 3, 7: 2, 14: 2, 16: 1), `cache_modifier` (.cg: 12, None: 6), `num_stages` (3: 9, 2: 9), `num_warps` (1: 13, 4: 3, 2: 2), `waves_per_eu` (1: 8, 4: 5, 2: 4, 8: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · M_LEQ_8** — `cfg_d20ceac354b22aa4` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (8: 12, 4: 4, 16: 2), `BLOCK_SIZE_N` (16: 10, 32: 6, 64: 2), `GROUP_SIZE_M` (1: 15, 4: 2, 8: 1), `NUM_KSPLIT` (1: 7, 14: 3, 8: 3, 16: 2, 4: 2, 7: 1), `cache_modifier` (.cg: 16, None: 2), `num_stages` (3: 11, 2: 7), `num_warps` (1: 16, 2: 1, 4: 1), `waves_per_eu` (4: 7, 1: 4, 8: 4, 2: 2, 6: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE · any** — `cfg_cc3e0595aa865a63` (18 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`
-- varies by shape: `BLOCK_SIZE_M` (128: 16, 64: 1, 256: 1), `BLOCK_SIZE_N` (128: 10, 256: 7, 64: 1), `GROUP_SIZE_M` (1: 8, 4: 5, 8: 3, 32: 1, 16: 1), `cache_modifier` (None: 16, .ca: 1, .cg: 1), `matrix_instr_nonkdim` (16: 15, 32: 3), `num_stages` (2: 17, 3: 1), `num_warps` (4: 12, 2: 4, 8: 2), `waves_per_eu` (1: 10, 2: 7, 4: 1)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=16384-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE-N=2112-K=7168.json` +15 more
-
-**gfx950 · GEMM AFP4WFP4 · M_LEQ_512** — `cfg_d1d0a8dc138e0571` (18 shipped shape config(s))
-
-- same across shipped configs: `NUM_KSPLIT=1`
-- varies by shape: `BLOCK_SIZE_K` (256: 15, 512: 3), `BLOCK_SIZE_M` (128: 10, 256: 5, 64: 3), `BLOCK_SIZE_N` (128: 10, 256: 5, 64: 3), `GROUP_SIZE_M` (8: 7, 2: 6, 4: 4, 1: 1), `cache_modifier` (None: 9, .cg: 9), `matrix_instr_nonkdim` (16: 12, 32: 6), `num_stages` (3: 10, 2: 8), `num_warps` (4: 13, 8: 5), `waves_per_eu` (2: 10, 1: 6, 4: 2)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=1280-K=8192.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=16384-K=16384.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-AFP4WFP4-N=16384-K=53248.json` +15 more
-
-**gfx950 · GEMM A8W8_BLOCKSCALE_PRESHUFFLED · any** — `cfg_8b23ae88a4a42049` (14 shipped shape config(s))
-
-- same across shipped configs: `BLOCK_SIZE_K=128`, `NUM_KSPLIT=1`, `cache_modifier=None`, `matrix_instr_nonkdim=16`
-- varies by shape: `BLOCK_SIZE_M` (128: 11, 256: 3), `BLOCK_SIZE_N` (128: 13, 256: 1), `GROUP_SIZE_M` (4: 7, 1: 5, 8: 2), `num_stages` (2: 13, 3: 1), `num_warps` (8: 11, 4: 3), `waves_per_eu` (4: 8, 2: 4, 1: 2)
-- source JSON: `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=2112-K=7168.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=24576-K=1536.json`, `aiter/ops/triton/configs/gemm/gfx950-GEMM-A8W8_BLOCKSCALE_PRESHUFFLED-N=3072-K=1536.json` +11 more
-
-…282 further group(s) in `evidence/gemm_tuned_configs.yaml`.
+…2018 further group(s) in `evidence/gemm_tuned_configs.yaml`.
 
 ## Gaps, stated
 
@@ -851,7 +1084,44 @@ genuinely-empty one are indistinguishable to a reader, and the difference decide
 next person re-runs the search or trusts it.
 
 
-- **gluon** in `aiter/ops/triton` — declared pattern matched no file: _gluon_kernels/*/gemm/*.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/splitk_hgemm.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/small_m_hgemm.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/hgemm_dispatch.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: utils.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: test_flydsl_splitk_hgemm.py
+- **flydsl** in `aiter/ops/flydsl` — indexed but no rule matched: aiter/ops/flydsl/kernels/layout_utils.py (168 lines)
+- **triton** in `aiter/ops/triton/_triton_kernels/moe` — declared pattern matched no file: moe_op_mxfp4*.py
+- **gluon** in `aiter/ops/triton` — declared pattern matched no file: gluon/*gemm*.py
+- **gluon** in `aiter/ops/triton` — indexed but no rule matched: aiter/ops/triton/_gluon_kernels/gfx1250/gemm/batched/batched_gemm_a16w8.py (205 lines)
+- **hip** in `csrc` — indexed but no rule matched: csrc/include/gemm_dispatch_utils.h (177 lines)
+- **hip** in `csrc` — indexed but no rule matched: csrc/opus_gemm/opus_gemm.cu (491 lines)
+- **hip** in `csrc` — indexed but no rule matched: csrc/opus_moe/include/opus_moe_host_impl.cuh (845 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle.cu (207 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_moe_2stages_codegen/gemm_moe_ck2stages.cu (203 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_cktile_common.cuh (418 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/cktile_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle_cktile.cu (137 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_tile_gemm_moe_2stages/moe_cktile2stages.cu (522 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_deepgemm/deepgemm.cu (137 lines)
+- **triton** in `aiter/ops/triton/_triton_kernels/gemm` — no @triton.autotune in the GEMM family — tuning is shipped as per-shape JSON under aiter/ops/triton/configs (see evidence/gemm_tuned_configs.yaml, 6669 rows)
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/gemm_a16w16*.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: gemm_a16w16_policy.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/splitk_epilogue.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/moe_2stage_a16wmix/*.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/mega_moe/gemm*.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/mxfp4_gemm*.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: mxfp4_kname.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/mxmoe_dispatcher.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/mxmoe_gemm_v2.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: mxfp4_gemm1_kernels.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: mxfp4_gemm2_kernels.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: moe_sorting.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/moe_reduce.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/moe_sorting_kernel.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: moe_common.py
+- **flydsl** in `aiter/ops/flydsl` — declared pattern matched no file: kernels/utils.py
+- **flydsl** in `aiter/ops/flydsl` — indexed but no rule matched: aiter/ops/flydsl/kernels/layout_utils.py (166 lines)
+- **flydsl** in `op_tests/flydsl_tests` — no such directory
+- **gluon** in `aiter/ops/triton` — declared pattern matched no file: _gluon_kernels/*/gemm/**/*.py
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/*.cu
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/include/*.cuh
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/include/*.h
@@ -859,12 +1129,24 @@ next person re-runs the search or trusts it.
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/include/gfx*/opus_gemm_traits_*.cuh
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/codegen/gen_instances_*.py
 - **hip** in `csrc` — declared pattern matched no file: opus_gemm/opus_gemm_common.py
-- **triton** in `aiter/ops/triton/_triton_kernels/gemm` — no @triton.autotune in the GEMM family — tuning is shipped as per-shape JSON under aiter/ops/triton/configs/gemm (see evidence/gemm_tuned_configs.yaml, 1304 rows)
+- **hip** in `csrc` — declared pattern matched no file: opus_moe/*.cu
+- **hip** in `csrc` — declared pattern matched no file: opus_moe/include/*.cuh
+- **hip** in `csrc` — declared pattern matched no file: opus_moe/include/*.h
+- **hip** in `csrc` — declared pattern matched no file: opus_moe/include/gfx*/*.cuh
+- **hip** in `csrc` — indexed but no rule matched: csrc/include/gemm_dispatch_utils.h (127 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_a8w8_blockscale/gemm_a8w8_blockscale_cktile.cu (121 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle.cu (200 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_moe_2stages_codegen/gemm_moe_ck2stages.cu (182 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_gemm_a8w8_blockscale/include/gemm_a8w8_blockscale_cktile_common.cuh (386 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/cktile_gemm_a8w8_bpreshuffle/gemm_a8w8_bpreshuffle_cktile.cu (121 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_tile_gemm_moe_2stages/moe_cktile2stages.cu (510 lines)
+- **ck** in `csrc` — indexed but no rule matched: csrc/ck_deepgemm/deepgemm.cu (135 lines)
+- **triton** in `aiter/ops/triton/_triton_kernels/gemm` — no @triton.autotune in the GEMM family — tuning is shipped as per-shape JSON under aiter/ops/triton/configs (see evidence/gemm_tuned_configs.yaml, 1420 rows)
 
 ## Sources
 
-- **AITER** `https://github.com/ROCm/aiter.git` at commit `a6bb499375849eec45d68c5ccaebc8865fd422c0` — every `file:line` on this page is that repo at that commit. Nothing here is quoted from anywhere else.
+- **AITER** `https://github.com/ROCm/aiter.git` at commit `4faf87137cfb5e4d5538e010bb4fefa6c8c5df8d` — every `file:line` on this page is that repo at that commit. Nothing here is quoted from anywhere else.
 - Extracted source evidence: [`evidence/gemm_source.yaml`](evidence/gemm_source.yaml), produced by [`_extract_impl_facts.py`](_extract_impl_facts.py).
-- Shipped tuning tables: [`evidence/gemm_tuned_configs.yaml`](evidence/gemm_tuned_configs.yaml), summarised from `aiter/ops/triton/configs/gemm` in the same tree.
+- Shipped tuning tables: [`evidence/gemm_tuned_configs.yaml`](evidence/gemm_tuned_configs.yaml), summarised from `aiter/ops/triton/configs` in the same tree.
 - This page is generated by [`_render_facts.py`](_render_facts.py); edit the extractor or the source evidence, never this file.
 

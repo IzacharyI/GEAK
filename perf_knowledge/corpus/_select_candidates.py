@@ -414,25 +414,60 @@ def _case_regime(signature: str) -> str | None:
     return None
 
 
+def _moe_stage_dims(model_dims: dict[str, Any]) -> list[tuple[str, int, int, int]] | None:
+    """The (stage, N, K, row multiplier) of a two-stage grouped MoE, or None if this is not one.
+
+    A fused-MoE meta describes a model, not a GEMM: it records `hidden_size` and
+    `moe_intermediate_size_per_rank`, and the two GEMMs the kernel actually launches have
+    DIFFERENT N and K. Collapsing them to one (N, K) would be a guess, and a wrong one for whichever
+    stage lost -- a card gated on `k_max` would be judged against a K the kernel never sees. So the
+    shapes are emitted separately and the caller expands one case into one per stage.
+
+    The row multiplier is `topk`, not 1: after the sort every token appears once per selected expert,
+    so a GEMM that the meta labels `m=6` is 54 rows wide. M is the axis the tiling cards care about
+    most, and the token count is off by an order of magnitude here.
+    """
+    hidden = model_dims.get("hidden_size")
+    inter = model_dims.get("moe_intermediate_size_per_rank")
+    topk = model_dims.get("topk_in_fused_call") or model_dims.get("topk") or 1
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (hidden, inter, topk)):
+        return None
+    # Stage 1 fuses gate and up into one N, hence 2*inter. Stage 2 contracts the intermediate back
+    # to hidden, so its N and K are the reverse of stage 1's.
+    return [("g1", 2 * inter, hidden, topk), ("g2", hidden, inter, topk)]
+
+
 def workload_cases(meta: dict[str, Any] | None, shapes: list[str] | None = None) -> list[dict[str, Any]]:
     """The (M, N, K) cases of a task `meta.json` plus any `--shape MxNxK`, in order.
 
-    Two meta layouts are in use. Kernel-task metas give every case `sig`, `m`, `n`, `k`. Seam metas
+    Three meta layouts are in use. Kernel-task metas give every case `sig`, `m`, `n`, `k`. Seam metas
     extracted from a served model give each case `name`, `m` and `regime`, keep the fixed weight
     dims once in `model_dims` (`N`, `K`), and mark correctness-only edges `timed: false`.
+    A fused-MoE seam meta is the second kind with no `N`/`K` at all, because its weights are a model
+    config rather than a matrix; see `_moe_stage_dims`, which turns it into one case per GEMM stage.
     A case's regime is its explicit `regime`, else read from its signature only when the signature
     says so (`decode_m8`); nothing is inferred from M, because where decode ends is exactly what
     the cards disagree on.
     """
     cases = []
     model_dims = (meta or {}).get("model_dims") or {}
+    stages = _moe_stage_dims(model_dims) if not (model_dims.get("N") or model_dims.get("n")) else None
     for case in (meta or {}).get("cases") or []:
+        regime = case.get("regime")
+        tokens = case.get("m")
+        base_sig = str(case.get("sig") or case.get("name") or "")
+        if stages and isinstance(tokens, int) and not isinstance(tokens, bool):
+            for stage, n, k, topk in stages:
+                sig = f"{base_sig or f'm{tokens}'}/{stage}"
+                cases.append({"sig": sig, "m": tokens * topk, "n": n, "k": k,
+                              "regime": regime if regime in ("decode", "prefill") else _case_regime(sig),
+                              "timed": case.get("timed") is not False})
+            continue
         dims = [case.get(axis, model_dims.get(axis.upper(), model_dims.get(axis)))
                 for axis in ("m", "n", "k")]
         if not all(isinstance(v, int) and not isinstance(v, bool) for v in dims):
             continue
-        signature = str(case.get("sig") or case.get("name") or "m{}_n{}_k{}".format(*dims))
-        regime = case.get("regime")
+        signature = base_sig or "m{}_n{}_k{}".format(*dims)
         cases.append({"sig": signature, "m": dims[0], "n": dims[1], "k": dims[2],
                       "regime": regime if regime in ("decode", "prefill") else _case_regime(signature),
                       "timed": case.get("timed") is not False})

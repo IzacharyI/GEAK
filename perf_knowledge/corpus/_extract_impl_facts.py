@@ -56,16 +56,72 @@ IMPLS = [
     # cap on waves_per_eu. Without it the corpus could cite that family's kernel but not the set of
     # configurations AITER is willing to build for it. `utils.py` carries the per-arch LDS budget
     # every tiling estimate is compared against.
-    ("flydsl", "aiter/ops/flydsl", ("kernels/splitk_hgemm.py", "kernels/small_m_hgemm.py",
-                                   "kernels/preshuffle_gemm.py",
-                                   "kernels/mfma_preshuffle_pipeline.py",
-                                   "kernels/moe_gemm_2stage.py",
-                                   "kernels/mixed_moe_gemm_2stage.py",
-                                   "kernels/hgemm_dispatch.py", "kernels/mfma_epilogues.py",
-                                   "kernels/layout_utils.py", "gemm_kernels.py",
-                                   "gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py",
-                                   "utils.py", "test_flydsl_splitk_hgemm.py")),
+    # Patterns are the UNION of the layouts across the indexed trees, not the layout of any one of
+    # them. The FlyDSL GEMM family was restructured between a6bb4993 and 4faf8713 — `splitk_hgemm.py`
+    # and `small_m_hgemm.py` became `gemm_a16w16_gfx950.py`, `hgemm_dispatch.py` became
+    # `gemm_a16w16_policy.py`, `utils.py` moved under `kernels/` — and a pattern list that tracked
+    # only the newer one would read the older tree as empty, which is the opposite of why it is
+    # indexed. Each tree reports its own non-matching patterns in `missing`, qualified by commit, so
+    # the gap list states what the restructure moved instead of hiding it.
+    ("flydsl", "aiter/ops/flydsl", (
+        # Dense bf16/fp16. First three are <= a6bb4993, the a16w16 family is the rewrite.
+        "kernels/splitk_hgemm.py", "kernels/small_m_hgemm.py", "kernels/hgemm_dispatch.py",
+        "kernels/gemm_a16w16*.py", "gemm_a16w16_policy.py",
+        # Pipeline, epilogue and layout: shared by dense and grouped, and the part that survived the
+        # rewrite in place — which is why evidence here is the strongest in the corpus.
+        "kernels/preshuffle_gemm.py", "kernels/mfma_preshuffle_pipeline.py",
+        "kernels/mfma_epilogues.py", "kernels/layout_utils.py", "kernels/splitk_epilogue.py",
+        "kernels/kernels_common.py", "gemm_kernels.py",
+        # Grouped (MoE) two-stage GEMM: gemm1 (gate+up, fused activation) and gemm2 (down, weighted
+        # combine). Globbed as families because the same two kernels appear under four names across
+        # the two trees — `moe_gemm_2stage.py`, `moe_gemm_2stage_gfx942.py`, the a16wmix pair split
+        # into explicit `gemm1.py`/`gemm2.py`, and the mega_moe pair.
+        "kernels/moe_gemm_2stage*.py", "kernels/mixed_moe_gemm_2stage*.py",
+        "kernels/moe_2stage_a16wmix/*.py", "kernels/mega_moe/gemm*.py",
+        "kernels/mxfp4_gemm*.py",
+        # The mxfp4 (a4w4 block-scaled) arm of the grouped family is split across four files that
+        # the `kernels/mxfp4_gemm*.py` glob alone does not reach, and all four are on the path a
+        # deployed gfx950 MoE actually takes. `mxfp4_kname.py` is the config space itself — the
+        # kernel NAME is the configuration, so its grammar, its variant whitelist and its
+        # name-level legality checks are the only statement of which configs exist. Without it the
+        # corpus can describe tiles it cannot name. `mxmoe_dispatcher.py` is the entry point that
+        # turns a shape into one of those names, `mxmoe_gemm_v2.py` is the second gemm2 family
+        # behind that front-end, and the two `mxfp4_gemm{1,2}_kernels.py` wrappers hold the host
+        # side. These live at the package root, not under `kernels/`.
+        "mxfp4_kname.py", "kernels/mxmoe_dispatcher.py", "kernels/mxmoe_gemm_v2.py",
+        "mxfp4_gemm1_kernels.py", "mxfp4_gemm2_kernels.py",
+        # Where the grouped launch is actually assembled: grid_y from the sorted-block count,
+        # persist_m, the sorted-scale buffer sizing, and the stage-2 reduction call. The GEMM
+        # codegen files state the tile; this states what the tile is launched over.
+        "moe_kernels.py", "moe_sorting.py",
+        # The topk combine is not always stage 2's epilogue: the `reduce` path leaves stage 2's
+        # output unsummed and sums it in a separately compiled, separately launched kernel. Without
+        # this file the corpus can only cite the atomic half of that choice.
+        "kernels/moe_reduce.py",
+        # Ragged M is the grouped family's defining constraint and it is not stated in the GEMM
+        # kernel: the sorting kernel is where tokens are bucketed per expert and padded to a block
+        # multiple, which is what fixes the tile the GEMM can use.
+        "kernels/moe_sorting_kernel.py", "moe_common.py",
+        # Per-arch LDS budget every tiling estimate is compared against; moved under `kernels/`.
+        "utils.py", "kernels/utils.py",
+        "gemm_tune/flydsl_gemm_a8w8_bpreshuffle_common.py",
+        "test_flydsl_splitk_hgemm.py")),
+    # The grouped/MoE parity gates. The dense family's gate is citable because its test happens to
+    # live under `aiter/ops/flydsl/`; the MoE ones live under `op_tests/`, so without this entry the
+    # corpus could state what a grouped kernel must COMPUTE but not what it must PASS — and an
+    # author would reasonably assume the dense elementwise gate carries over, which it does not.
+    # Only the files that declare a gate are listed: routing/sorting (which assert exactness) and
+    # the two-stage and grouped GEMM tests (which assert a cosine bound).
+    ("flydsl", "op_tests", ("test_moe_2stage.py", "test_moe_sorting.py", "test_moe_ep.py")),
+    ("flydsl", "op_tests/flydsl_tests", ("test_flydsl_moe.py", "test_flydsl_grouped_gemm.py")),
     ("triton", "aiter/ops/triton/_triton_kernels/gemm", ("basic/*.py", "batched/*.py", "fused/*.py")),
+    # Triton's grouped GEMM. `moe_op_gemm_*` is the two-stage kernel per quantization scheme;
+    # `activations.py` is the fused gate/up activation that makes stage 1 more than a GEMM, and
+    # reading the GEMM without it would present a fusion decision as an unexplained epilogue.
+    # `moe_routing/` is deliberately excluded: routing is upstream of the GEMM seam, and a corpus
+    # that mixed the two would teach an author to optimize a part the task holds fixed.
+    ("triton", "aiter/ops/triton/_triton_kernels/moe", ("moe_op_gemm*.py", "moe_op_mxfp4*.py",
+                                                        "activations.py", "reduce.py")),
     # The GEMM kernels above call `remap_xcd` / `pid_grid` but do not define them; the definitions —
     # which are the actual workgroup-to-XCD and grouped-M rasterization — live in a shared helper.
     ("triton", "aiter/ops/triton/utils/_triton", ("pid_preprocessing.py",)),
@@ -73,7 +129,11 @@ IMPLS = [
     # file, then M_LEQ/M_GEQ buckets, then `any`. An untuned shape gets the generic `any` entry at
     # every M, which is where a frozen Triton baseline for such a task actually sits.
     ("triton", "aiter/ops/triton/utils", ("gemm_config_utils.py",)),
-    ("gluon", "aiter/ops/triton", ("_gluon_kernels/*/moe/*gemm*.py", "_gluon_kernels/*/gemm/*.py",
+    # `**` on the gemm arm: the newer tree nests the kernels one level deeper
+    # (`_gluon_kernels/gfx1250/gemm/basic/gemm_a16w16.py`), and the single-segment `*` silently
+    # matched nothing there while the moe arm kept the language non-empty — the failure the
+    # per-pattern gap reporting below exists to catch.
+    ("gluon", "aiter/ops/triton", ("_gluon_kernels/*/moe/*gemm*.py", "_gluon_kernels/*/gemm/**/*.py",
                                    "gluon/*gemm*.py")),
     # HIP and CK both live under `csrc/` and both are `.cu`/`.cuh`, so the split is by DIRECTORY,
     # not by extension: `ck_*` subtrees are CK template instantiations, `py_itfs_cu/` and `kernels/`
@@ -96,7 +156,12 @@ IMPLS = [
                      "opus_gemm/include/*.cuh", "opus_gemm/include/*.h",
                      "opus_gemm/include/gfx*/opus_gemm_pipeline_*.cuh",
                      "opus_gemm/include/gfx*/opus_gemm_traits_*.cuh",
-                     "opus_gemm/codegen/gen_instances_*.py", "opus_gemm/opus_gemm_common.py")),
+                     "opus_gemm/codegen/gen_instances_*.py", "opus_gemm/opus_gemm_common.py",
+                     # `opus_moe/` is the HIP grouped-GEMM tree, present from 4faf8713. Unlike
+                     # `opus_gemm/` it ships no codegen layer — the instances are written out — so
+                     # only the dispatcher and the per-arch headers are declared.
+                     "opus_moe/*.cu", "opus_moe/include/*.cuh", "opus_moe/include/*.h",
+                     "opus_moe/include/gfx*/*.cuh")),
     ("ck", "csrc", ("ck_gemm*/*.cu", "ck_gemm*/include/*.cuh", "ck_gemm*/include/*.h",
                     "ck_batched_gemm*/*.cu", "ck_batched_gemm*/include/*.cuh",
                     "cktile_gemm*/**/*.cu", "cktile_gemm*/**/*.cuh",
@@ -109,11 +174,16 @@ IMPLS = [
     # The instructions inside the binary are a separate, deeper layer. They require a future
     # disassembly evidence pass; this source pass does not pretend that file:line can describe a
     # binary instruction.
+    # `asm_fmoe.cu` and `asm_moe_2stage.cu` are the same contract for the grouped family, and they
+    # state the part that is specific to it: the sorted-token and expert-id buffers the assembly
+    # expects alongside A and B, which is the argument block a FlyDSL grouped kernel has to match.
     ("asm", "csrc/py_itfs_cu", ("asm_gemm_*.cu", "asm_flatmm_*.cu",
-                                "asm_a8w8_blockscale_bpreshuffle.cu")),
+                                "asm_a8w8_blockscale_bpreshuffle.cu",
+                                "asm_fmoe.cu", "asm_moe_2stage.cu")),
     # The binaries publish no source, but each `hsa/<gfx>/<kind>/*.csv` states which kernels exist
     # for that architecture: tile, B-preshuffle and split-K capability. One record per row, per gfx.
-    ("asm", "hsa", ("gfx*/*gemm*/*.csv",)),
+    # `fmoe*/` carries the grouped equivalent, including the block-M the sorting must pad to.
+    ("asm", "hsa", ("gfx*/*gemm*/*.csv", "gfx*/fmoe*/*.csv")),
 ]
 
 # AITER's runtime dispatch — which backend a shape is routed to by default. Dispatch is library code,
@@ -131,11 +201,16 @@ ROUTING_RULES = (
 ROUTE_TARGETS = (("cktile", "ck"), ("skinny", "hip"), ("flydsl", "flydsl"), ("triton", "triton"),
                  ("gluon", "gluon"), ("asm", "asm"), ("ck", "ck"))
 
-# Per-shape selected knob sets that AITER ships for its Triton GEMMs: one JSON per
-# `{gfx}-{KERNEL}-{VARIANT}[-N=..-K=..]`, each mapping an M bucket to a concrete config. The source
-# tree preserves neither the benchmark archive nor rejected alternatives, so these are useful seeds,
-# not measured winners.
-TUNED_CONFIG_DIR = "aiter/ops/triton/configs/gemm"
+# Per-shape selected knob sets that AITER ships for its Triton GEMMs, each mapping an M bucket to a
+# concrete config. The source tree preserves neither the benchmark archive nor rejected
+# alternatives, so these are useful seeds, not measured winners.
+#
+# The root, not `…/configs/gemm`, because AITER has moved these twice over and the directory the
+# older constant named no longer exists: `parse_tuned_location` decodes both the flat
+# `{gfx}-{KERNEL}-{VARIANT}[-N=..-K=..].json` form and the nested
+# `<arch>/<backend>/<op>/<dtype>/DEFAULT.json` tree that replaced it. Naming the root also brings
+# the grouped (`op == moe`) tables in, which the GEMM-only path could not reach.
+TUNED_CONFIG_DIR = "aiter/ops/triton/configs"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -183,6 +258,39 @@ RULES = [
     # and vaguer than it is.
     ("config_space", r"^([A-Z][A-Z0-9_]{2,})\s*=\s*[\(\[]"),
     ("config_space", r"\bdef\s+(\w*_options|iter_\w+_configs?|\w*_registry_variants)\s*\("),
+    # The grouped (MoE) arm states its space as module-level DICTS and as a kernel-NAME grammar, so
+    # the two rules above read `mxfp4_kname.py` -- which is the entire grouped config space -- as
+    # nearly empty. There the configuration is not an argument at all: the kernel name IS the config,
+    # and it is defined by a `re.compile` grammar plus token sets (`_MXMOE_G1_FLAG_TOKENS` and
+    # friends) that enumerate which flags may appear. A leading underscore is normal for both, hence
+    # `_?`; the existing rule's `[A-Z]` start misses every one of them. Dicts are looser than tuples
+    # and do pull in a few module-level caches (`_GROUPED_CONFIG_CACHE = {}`), which is tolerable:
+    # an empty dict carries no values to mislead a reader, while the variant whitelists it reaches
+    # (`MXFP4_G1_VARIANTS`) are the only statement anywhere of which grouped kernels exist.
+    ("config_space", r"^(_?[A-Z][A-Z0-9_]{2,})\s*=\s*re\.compile\("),
+    ("config_space", r"^(_?[A-Z][A-Z0-9_]{2,})\s*=\s*\{"),
+    # And the two ends of that grammar: the function that BUILDS a kernel name from a config and the
+    # one that parses it back. Where the name is the config, these are the encode/decode pair for the
+    # whole space -- `build_flydslv2_gemm2_name` is the only statement anywhere of which tokens a
+    # stage-2 grouped kernel may carry and in what order, and a reader who has the token sets but not
+    # the builder can still assemble a name no compiler will accept. Deliberately narrow (9 sites in
+    # the indexed tree) because a loose `\bdef (\w*name\w*)` would sweep up every getter.
+    ("config_space",
+     r"\bdef\s+((?:build|make|format|parse)_\w*(?:_name|kname|_kernels?)|\w*kname\w*)\s*\("),
+    # The same fact in CK-tile's grammar. The two rules above are Python's: a module-level tuple and
+    # an `*_options()` helper. CK-tile states its space as a traits struct of `static constexpr`
+    # members, so a Python-shaped rule set reads every `ck_tile::` file as empty — 60 of the indexed
+    # CK files yielded nothing, which read as "CK has no configuration surface" rather than "this
+    # extractor cannot see it". The members are forwarded template parameters (`M_Tile = M_Tile_`),
+    # so the VALUE here is a name, not a number: the numbers live in build-time generated instances
+    # that are not in the tree. That is the honest fact to capture — which knobs CK-tile exposes for
+    # a family — and it is what makes CK comparable to the FlyDSL config spaces beside it. Safe to
+    # match loosely because `.cu`/`.cuh` are comment-stripped as C++, so the commented-out branches
+    # these files are full of are already blanked.
+    ("config_space", r"\bstatic\s+constexpr\s+(?:ck_tile::index_t|int|bool|auto)\s+"
+                     r"(M_Tile|N_Tile|K_Tile|[MNK]_Warp|[MNK]_Warp_Tile|kBlockPerCu|kPad[MNK]|"
+                     r"Scheduler|DoubleSmemBuffer|NumWaveGroups|TransposeC|TiledMMAPermuteN|"
+                     r"UseStructuredSparsity|TileParitioner\w*)\s*="),
     # Caps and floors: the boundary of the space, which is a different fact from its members. Written
     # as `HGEMM_MAX_SPLIT_K`, `MAX_LDS_BYTES`, `SMALL_M_KERNEL_MAX` — prefix optional, suffix optional.
     ("config_limit", r"\b((?:[A-Z][A-Z0-9_]*_)?(?:MAX|MIN)(?:_[A-Z0-9_]+)?)\s*=\s*([0-9]+)"),
@@ -302,9 +410,17 @@ RULES = [
     # most of its contract — `tile_k_bytes must be divisible by 64`, `tile_n must be divisible by
     # (CShuffleNLane*EVec)` — and a checker you cannot cite is a constraint an optimizer rediscovers
     # by compiling. Anchored on the `raise`, so the excerpt shows the condition above it.
+    # The second line of verbs is the grouped-MoE vocabulary: that path states most of its contract
+    # as a rejection rather than a requirement ("illegal mxmoe g2 name ... atomic incompatible with
+    # f4out|cshuffle", "unknown token", "sorting layout mismatch"), and the original verb list --
+    # written from the dense FlyDSL kernels, which phrase everything as `must be` -- matched none of
+    # them. Still keyed on the message vocabulary rather than on `raise` alone, because a bare
+    # `raise` rule matches ~1400 sites in this tree and most are argument hygiene, not legality.
     ("config_validity", r"\braise\s+(?:ValueError|NotImplementedError|RuntimeError|AssertionError)"
-                        r"\(\s*f?[\"']([^\"'\n]*(?:must be|must equal|requires|only support|"
-                        r"not supported|not yet supported|exceed|divisible|fixes)[^\"'\n]*)"),
+                        r"\(\s*f?[\"']([^\"'\n]*(?:must be|must equal|must match|requires|"
+                        r"only support|not supported|not yet supported|exceed|divisible|fixes|"
+                        r"illegal|unsupported|unknown token|incompatible|invalid|mismatch)"
+                        r"[^\"'\n]*)"),
     # How split-K partials are combined: the module-level state constants and the helpers that rotate
     # the per-stream signal state. `SPLIT_K\s*[=:]` above only sees the split factor itself.
     ("split_k", r"^(SPLIT_K_[A-Z0-9_]+)\s*(?::[^=\n]+)?="),
@@ -382,6 +498,21 @@ RULES = [
     # relaxes — which is where the implementation says its numerics drift.
     ("parity_tolerance", r"^(DEFAULT_(?:ATOL|RTOL|PASS_PCT))\s*=\s*([0-9.eE+-]+)"),
     ("parity_tolerance", r"[\"'](pass_pct|max_delta_limit)[\"']\s*:\s*([0-9.eE+-]+)"),
+    # The grouped/MoE tests state their gate differently from the dense ones, and reading only the
+    # dense idiom above would present the MoE gate as missing rather than as a different shape:
+    # the pass/fail criterion there is a COSINE distance constant, with the elementwise comparison
+    # demoted to an informational print. Captured as three separate idioms because they are three
+    # separate decisions — the named constant, the inequality it is used in, and the per-call
+    # override of the shared `checkAllclose` defaults (an explicit `atol=0` is how the routing and
+    # sorting outputs declare they are exact, not approximate).
+    # `[^\S\n]*`, not `\s*`: under MULTILINE `\s` still matches the newline, so `^\s*` happily
+    # starts the match on an earlier blank line — or on a comment line, which `strip_comments` has
+    # turned into spaces — and reports that line instead. That is exactly the three-lines-off record
+    # `strip_comments`'s docstring says is worse than no record at all.
+    ("parity_tolerance", r"^[^\S\n]*(\w*(?:LOGITS_DIFF_TOL|VERIFY_TOL\w*|logits_diff_tol))[^\S\n]*=\s*([0-9.eE+-]+)"),
+    ("parity_tolerance", r"\b(logits_diff)\s*>\s*([0-9.eE+-]+)"),
+    ("parity_tolerance", r"\bcheckAllclose\([^)]*?\b(atol|rtol|tol_err_ratio)\s*=\s*([0-9.eE+-]+)"),
+    ("parity_tolerance", r"\bdef\s+(_check_close)\s*\(([^)]*)\)"),
     # opus's buffer access and wait builtins — the HIP spelling of the loads FlyDSL issues.
     ("access_width", r"\b__builtin_amdgcn_raw_buffer_(load|store)_(\w+)\s*\("),
     ("scheduling", r"\b__builtin_amdgcn_(s_waitcnt\w*|s_barrier|sched_group_barrier|sched_barrier|"
@@ -425,9 +556,28 @@ def arch_context(lines, idx):
     return ""
 
 
+PERF_CLAIM = re.compile(r"\b\d+(?:\.\d+)?\s*(?:us|ms|ns|µs|TFLOPS|tflops|GB/s|gbps)\b|"
+                        r"\b(?:speedup|faster|slower)\b", re.IGNORECASE)
+
+
+def quotable(line, anchor=False):
+    """Whether a source line may be quoted as context around a fact.
+
+    Blank lines say nothing. A comment such as "cross this boundary instead is ~1.5% slower" says
+    something, but it is an upstream timing with no machine, shape or date attached: quoting it
+    inside the corpus would hand a card author a performance number dressed as evidence, which is
+    exactly the unfalsifiable claim the corpus exists to replace with measurement. The construct the
+    comment sits above is still a fact, so the record stays and only the claim is left out — the
+    gap in the quoted line numbers shows where. An anchor line is never dropped: it IS the fact, and
+    a perf claim on it is a conflict worth surfacing rather than hiding.
+    """
+    return bool(line.strip()) and (anchor or not PERF_CLAIM.search(line))
+
+
 def excerpt(lines, idx, span=2):
     lo, hi = max(0, idx - span), min(len(lines), idx + span + 1)
-    return [f"{n + 1}: {lines[n].rstrip()}" for n in range(lo, hi) if lines[n].strip()]
+    return [f"{n + 1}: {lines[n].rstrip()}"
+            for n in range(lo, hi) if quotable(lines[n], anchor=n == idx)]
 
 
 def source_evidence_id(record):
@@ -444,6 +594,26 @@ def source_evidence_id(record):
     }
     canonical = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return "src_" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def fact_identity(record):
+    """Identity of the STATEMENT, deliberately blind to where it is written.
+
+    `source_evidence_id` is bound to `file`/`line` because a citation must stop resolving when the
+    cited line changes. That is right for a citation and useless for the question a refresh actually
+    raises, which is whether the fact survived: the FlyDSL GEMM rewrite moved `swizzle_xor16` out of
+    `splitk_hgemm.py` into `mfma_preshuffle_pipeline.py`, and under the citation identity that reads
+    as 1227 dead records when 817 of them are the same sentence one directory over.
+
+    So the two live side by side. Dropping `file`, `line` and `evidence` (whose excerpt carries line
+    numbers) leaves what the record asserts, which is what lets a relocated fact be found again.
+    Equal fact_ids are the same statement, not necessarily the same occurrence — a tile shape used in
+    nine kernels is one fact and nine citations, and the renderer already treats it that way.
+    """
+    fields = {key: record.get(key)
+              for key in ("category", "language", "match", "captured", "arch_scope")}
+    canonical = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "fact_" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 def statement_ends(raw):
@@ -546,7 +716,7 @@ def routing_records(path, rel):
                 "arch_scope": "",
                 "evidence": [f"{n + 1}: {rlines[n].rstrip()}"
                              for n in range(max(0, idx - 5), min(len(rlines), idx + 2))
-                             if rlines[n].strip()],
+                             if quotable(rlines[n], anchor=n == idx)],
             })
             record["evidence_id"] = source_evidence_id(record)
             out.append(record)
@@ -672,6 +842,41 @@ def parse_tuned_name(name):
     return {"gfx": gfx, "tags": tags, "shape": shape}
 
 
+TUNED_CONFIG_OPS = ("gemm", "moe")
+
+
+def parse_tuned_location(rel):
+    """Decode a shipped config's identity from its path, under either of AITER's two layouts.
+
+    Up to a6bb4993 the arch and tags were in the filename and the directory was flat
+    (`configs/gemm/gfx942-GEMM-A8W8_BLOCKSCALE-N=1024-K=8192.json`). From 4faf8713 the tree is
+    `configs/<arch>/<backend>/<op>/<dtype>/DEFAULT.json`, the filename carries no arch at all, and
+    `configs/gemm/` does not exist — so a reader of the old constant sees an empty directory and
+    concludes AITER ships no tuned Triton configs, when it ships 700 of them.
+
+    `<dtype>` is `config_name.lower().replace("-", "_")`, which is lossy: `GEMM-A8W8_BLOCKSCALE` and
+    `GEMM_A8W8_BLOCKSCALE` both land on `gemm_a8w8_blockscale`, so it is kept as ONE tag rather than
+    split back into the two the old form had. Splitting would be a guess, and a tag list that looks
+    like the old one while being reconstructed differently is worse than one that plainly differs.
+    """
+    parts = rel.replace(os.sep, "/").split("/")
+    flat = parse_tuned_name(parts[-1])
+    if flat is not None:
+        return flat
+    if len(parts) < 5 or not parts[0].startswith("gfx") or parts[2] not in TUNED_CONFIG_OPS:
+        return None
+    arch, backend, op, dtype = parts[0], parts[1], parts[2], parts[3]
+    stem = parts[-1][:-len(".json")]
+    tags, shape = [backend, op.upper(), dtype.upper()], {}
+    for seg in ([] if stem == "DEFAULT" else stem.split("-")):
+        m = TUNED_SHAPE_SEG.match(seg)
+        if m:
+            shape[m.group("dim").lower()] = int(m.group("val"))
+        else:
+            tags.append(seg)
+    return {"gfx": arch, "tags": tags, "shape": shape}
+
+
 def tuned_configs(aiter):
     """The shipped per-shape knob sets, as one record per (file, M bucket).
 
@@ -685,34 +890,48 @@ def tuned_configs(aiter):
         return [], [{"language": "triton", "subtree": TUNED_CONFIG_DIR,
                      "why": "no such directory (no shipped tuned configs to read)"}]
     out, unparsed = [], []
-    for name in sorted(os.listdir(base)):
-        if not name.endswith(".json"):
+    # Walked rather than listed: the current layout is four directories deep, and `os.listdir` on
+    # the root of it returns nine `gfx*` directories and no configs at all.
+    for dirpath, dirs, names in os.walk(base):
+        dirs.sort()
+        rel_dir = os.path.relpath(dirpath, base)
+        # An attention or conv config is not this corpus's subject. Skipping it by path keeps it out
+        # of `unparsed`, which is for files that LOOK like ours and could not be read — a gap list
+        # padded with out-of-scope filenames stops being read.
+        seg = rel_dir.replace(os.sep, "/").split("/")
+        if len(seg) >= 3 and seg[0].startswith("gfx") and seg[2] not in TUNED_CONFIG_OPS:
+            dirs[:] = []
             continue
-        meta = parse_tuned_name(name)
-        if meta is None:
-            unparsed.append(name)
-            continue
-        try:
-            with open(os.path.join(base, name), encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            unparsed.append(name)
-            continue
-        if not isinstance(data, dict):
-            unparsed.append(name)
-            continue
-        for bucket, knobs in data.items():
-            if not isinstance(knobs, dict):
+        for name in sorted(names):
+            if not name.endswith(".json"):
                 continue
-            out.append({"file": os.path.join(TUNED_CONFIG_DIR, name),
-                        "gfx": meta["gfx"], "tags": meta["tags"], "shape": meta["shape"],
-                        "m_bucket": str(bucket),
-                        "knobs": {k: v for k, v in sorted(knobs.items())}})
+            rel = name if rel_dir == "." else os.path.join(rel_dir, name)
+            meta = parse_tuned_location(rel)
+            if meta is None:
+                unparsed.append(rel)
+                continue
+            try:
+                with open(os.path.join(dirpath, name), encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                unparsed.append(rel)
+                continue
+            if not isinstance(data, dict):
+                unparsed.append(rel)
+                continue
+            for bucket, knobs in data.items():
+                if not isinstance(knobs, dict):
+                    continue
+                out.append({"file": os.path.join(TUNED_CONFIG_DIR, rel),
+                            "gfx": meta["gfx"], "tags": meta["tags"], "shape": meta["shape"],
+                            "m_bucket": str(bucket),
+                            "knobs": {k: v for k, v in sorted(knobs.items())}})
     gap = []
     if unparsed:
         gap.append({"language": "triton", "subtree": TUNED_CONFIG_DIR,
-                    "why": f"{len(unparsed)} config filename(s) not in `gfx…-TAG…[-N=..]` form, "
-                           f"skipped rather than guessed: {', '.join(sorted(unparsed)[:4])}"})
+                    "why": f"{len(unparsed)} config file(s) in neither the flat `gfx…-TAG…[-N=..]` "
+                           f"form nor `<arch>/<backend>/<op>/<dtype>/`, skipped rather than guessed: "
+                           f"{', '.join(sorted(unparsed)[:4])}"})
     return out, gap
 
 
@@ -914,6 +1133,31 @@ def _value_text(value):
     return "true" if value is True else "false" if value is False else str(value)
 
 
+def knob_spread(members):
+    """`(fixed, varies)` over a group's knob dicts, counting absence as a value.
+
+    Not every knob appears on every member: a shipped name carries a flag only when the tuner set
+    it, so `kw` present on one of two members is a knob that MOVED, and reporting it as `kw: 2`
+    would read as "the group agreed on 2" when half the group did not ask for it at all. `absent`
+    is spelled out for the same reason a gap is reported rather than dropped.
+    """
+    spread = collections.defaultdict(collections.Counter)
+    for knobs in members:
+        for knob, value in knobs.items():
+            spread[knob][json.dumps(value)] += 1
+    fixed, varies = {}, {}
+    for knob, counter in sorted(spread.items()):
+        if len(counter) == 1 and sum(counter.values()) == len(members):
+            fixed[knob] = json.loads(next(iter(counter)))
+            continue
+        parts = [f"{_value_text(json.loads(v))}: {n}" for v, n in counter.most_common()]
+        gap = len(members) - sum(counter.values())
+        if gap:
+            parts.append(f"absent: {gap}")
+        varies[knob] = ", ".join(parts)
+    return fixed, varies
+
+
 def summarize_flydsl_tuned(rows):
     """FlyDSL selections grouped by (gfx, CUs, database, family, dtype, M bucket).
 
@@ -937,17 +1181,7 @@ def summarize_flydsl_tuned(rows):
     for key in sorted(groups, key=lambda t: (t[0], t[1], t[2], t[3], t[4], M_BUCKET_ORDER[t[5]])):
         gfx, cu, kind, family, dtype, bucket = key
         members = groups[key]
-        spread = collections.defaultdict(collections.Counter)
-        for _, knobs in members:
-            for knob, value in knobs.items():
-                spread[knob][json.dumps(value)] += 1
-        fixed, varies = {}, {}
-        for knob, counter in sorted(spread.items()):
-            if len(counter) == 1 and sum(counter.values()) == len(members):
-                fixed[knob] = json.loads(next(iter(counter)))
-            else:
-                varies[knob] = ", ".join(f"{_value_text(json.loads(v))}: {n}"
-                                         for v, n in counter.most_common())
+        fixed, varies = knob_spread([knobs for _, knobs in members])
         rec = {
             "config_id": _short_id("cfg_", ["aiter_tuned_db", gfx, cu, kind, family, dtype, bucket]),
             "gfx": gfx, "cu_num": cu, "db_kind": kind, "family": family, "dtype": dtype,
@@ -987,6 +1221,237 @@ def summarize_backend_selection(rows):
         out.append({
             "selection_id": _short_id("sel_", ["aiter_tuned_db", gfx, cu, kind, bucket]),
             "gfx": gfx, "cu_num": cu, "db_kind": kind, "m_bucket": bucket,
+            "rows": sum(groups[key].values()),
+            "selected_backend_rows": dict(sorted(groups[key].items())),
+            "source_files": sorted(files[key]),
+        })
+    return out
+
+
+# --------------------------------------------------------------------------------------------
+# Fused-MoE tuned databases
+#
+# A separate reader rather than a wider `TUNED_DB_KIND`, because these tables are not keyed on a
+# GEMM shape at all. A dense row says (M, N, K); a fused-MoE row says (token, model_dim, inter_dim,
+# expert, topk) and then names TWO kernels, one per stage. Folding them into the dense reader would
+# have required inventing an M/N/K for each row, which is the kind of guess the rest of this file
+# refuses to make.
+# --------------------------------------------------------------------------------------------
+FMOE_DB_KIND = re.compile(r"(?P<kind>tuned_(?:grouped_)?fmoe)")
+FMOE_SHAPE_KEYS = ("model_dim", "inter_dim", "expert", "topk")
+FMOE_QUANT_KEYS = ("act_type", "dtype", "q_dtype_a", "q_dtype_w", "q_type",
+                   "use_g1u1", "doweight_stage1")
+# Timings from a box this corpus cannot name, plus the accuracy columns of the same run, plus the
+# model tag, which names the sweep rather than the configuration.
+FMOE_DROP = ("bw", "err1", "err2", "max_abs", "rel_l2", "tflops", "us", "us1", "us2", "_tag")
+FMOE_KEYS = ("gfx", "cu_num", "token", "kernelName", "kernelName1", "kernelName2")
+# AITER's own serialisations of a fused-MoE configuration. Three forms ship, and the per-stage knobs
+# live INSIDE the name, so a decoded name is a read configuration rather than an inferred one. The
+# flag tokens are kept under AITER's own spelling (`w3`, `xcd4`, `sbm32`, `atomic`, `nt`) — a
+# friendlier name would be my interpretation of a token I cannot check against a definition.
+FLYDSL_MOE_NAME = re.compile(
+    r"^flydsl_moe(?P<stage>\d+)(?P<layout>_layout)?_"
+    r"a(?P<a_dtype>[a-z0-9]+)_w(?P<w_dtype>[a-z0-9]+)_(?P<out_dtype>[a-z0-9]+)_"
+    r"t(?P<tile_m>\d+)x(?P<tile_n>\d+)x(?P<tile_k>\d+)(?P<flags>(?:_[a-z0-9]+)*)$")
+FLYDSL_MXMOE_NAME = re.compile(
+    r"^flydsl_mxmoe_g(?P<stage>\d+)_(?P<dtype>a\d+w\d+)_"
+    r"(?P<tile_m>\d+)x(?P<tile_n>\d+)x(?P<tile_k>\d+)(?P<flags>(?:_[a-z0-9]+)*)$")
+FLYDSL_GROUPED_NAME = re.compile(
+    r"^grouped_gemm(?P<stage>\d+)_(?P<dtype>[a-z0-9]+)(?P<flags>(?:_[a-z0-9]+)*)$")
+FLAG_WITH_COUNT = re.compile(r"^(?P<knob>[a-z]+)(?P<count>\d+)$")
+# Which project generated a name, read off the serialisation each one emits: CK's generated instance
+# name, the mangled symbol of an aiter assembly kernel, FlyDSL's own name builder. A prefix that is
+# none of these is left unattributed and counted as a gap — `opus`, `impl`, `cktile` and `swiglu`
+# names ship here too, and a fourth guess would be exactly that.
+FMOE_BACKEND_PREFIXES = (("moe_ck2stages", "ck"), ("_ZN5aiter", "asm"),
+                         ("flydsl_", "flydsl"), ("grouped_gemm", "flydsl"))
+
+
+def fmoe_backend(name):
+    for prefix, backend in FMOE_BACKEND_PREFIXES:
+        if (name or "").startswith(prefix):
+            return backend
+    return None
+
+
+def decode_flydsl_moe_kernel(name):
+    """`(family, dtype, knobs)` for a shipped FlyDSL fused-MoE kernel name, or None."""
+    m = FLYDSL_MOE_NAME.match(name or "")
+    if m:
+        g = m.groupdict()
+        family = f"moe_stage{g['stage']}" + ("_layout" if g["layout"] else "")
+        dtype = f"a{g['a_dtype']}_w{g['w_dtype']}_{g['out_dtype']}"
+        knobs = {"tile": f"{g['tile_m']}x{g['tile_n']}x{g['tile_k']}"}
+    else:
+        m = FLYDSL_MXMOE_NAME.match(name or "")
+        if m:
+            g = m.groupdict()
+            family = f"mxmoe_stage{g['stage']}"
+            dtype = g["dtype"]
+            knobs = {"tile": f"{g['tile_m']}x{g['tile_n']}x{g['tile_k']}"}
+        else:
+            m = FLYDSL_GROUPED_NAME.match(name or "")
+            if not m:
+                return None
+            g = m.groupdict()
+            family, dtype, knobs = f"grouped_stage{g['stage']}", g["dtype"], {}
+    tags = []
+    for token in [t for t in g["flags"].split("_") if t]:
+        counted = FLAG_WITH_COUNT.match(token)
+        if counted:
+            knobs[counted.group("knob")] = int(counted.group("count"))
+        else:
+            tags.append(token)
+    if tags:
+        knobs["tags"] = ",".join(sorted(tags))
+    return family, dtype, knobs
+
+
+def fmoe_db_rows(aiter):
+    """Rows of AITER's fused-MoE tuned databases, without their timings.
+
+    One record per CSV row, carrying both stages: the stage-1 and stage-2 kernel names and every
+    launcher column the sweep wrote. Launcher columns are kept under AITER's own names, including
+    its `tile_m` / `tile_m2` stage spelling — re-keying them into a stage-1/stage-2 structure would
+    mean deciding that `num_buffer_stage2` pairs with `num_buffers`, which is a reading of the
+    schema and not something the schema states.
+
+    `m` is `token * topk`, the row count the stage-1 grouped GEMM actually sees, so a fused-MoE
+    record buckets on the same axis as a dense one. `token` is kept beside it: the two differ by a
+    factor of topk, and only one of them is a GEMM dimension.
+    """
+    rows, inventory, gaps = [], [], []
+    for sub in TUNED_DB_DIRS:
+        base = os.path.join(aiter, sub)
+        if not os.path.isdir(base):
+            continue  # already reported by `tuned_db_rows`
+        for name in sorted(os.listdir(base)):
+            if not name.endswith(".csv") or "untuned" in name:
+                continue
+            kind = FMOE_DB_KIND.search(name)
+            if not kind:
+                continue
+            rel = os.path.join(sub, name)
+            with open(os.path.join(base, name), encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                columns = list(reader.fieldnames or [])
+                file_rows = list(reader)
+            launch = [c for c in columns
+                      if c not in FMOE_DROP and c not in FMOE_KEYS
+                      and c not in FMOE_SHAPE_KEYS and c not in FMOE_QUANT_KEYS]
+            unattributed = collections.Counter()
+            inventory.append({
+                "file": rel, "db_kind": kind.group("kind"), "rows": len(file_rows),
+                "backend_column": False, "stages": 2,
+                "gfx": sorted({r["gfx"] for r in file_rows if r.get("gfx")}),
+            })
+            for r in file_rows:
+                try:
+                    shape = {k: int(r[k]) for k in FMOE_SHAPE_KEYS}
+                    token, cu = int(r["token"]), int(r["cu_num"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                backend = fmoe_backend(r.get("kernelName1"))
+                if backend is None:
+                    unattributed[(r.get("kernelName1") or "").split("_")[0]] += 1
+                rows.append({
+                    "file": rel, "db_kind": kind.group("kind"), "gfx": r.get("gfx") or "",
+                    "cu_num": cu, "token": token, "m": token * max(shape["topk"], 1),
+                    "shape": shape, "libtype": backend,
+                    "kernel_stage1": r.get("kernelName1") or "",
+                    "kernel_stage2": r.get("kernelName2") or "",
+                    "quant": {k: r[k] for k in FMOE_QUANT_KEYS if r.get(k) not in (None, "")},
+                    "launch": {c: r[c] for c in launch if r.get(c) not in (None, "")},
+                })
+            for prefix, n in sorted(unattributed.items()):
+                gaps.append({"language": "aiter_tuned_db", "subtree": rel,
+                             "why": f"{n} row(s) name a `{prefix}…` stage-1 kernel, which is none of "
+                                    "the shipped naming forms; the backend is left unattributed"})
+    return rows, inventory, gaps
+
+
+def summarize_fmoe_tuned(rows):
+    """FlyDSL fused-MoE selections grouped by (gfx, CUs, database, family, dtype, MoE shape, M).
+
+    The MoE shape is part of the key, not of the spread. `inter_dim` and `expert` change which
+    kernel is reasonable rather than how it is configured, so a group that mixed two models would
+    report "tile varies" where the truth is "these are two different problems".
+
+    Within a group the members are the token counts of one M bucket, so a fixed knob is one the
+    sweep kept across the whole bucket and a varying one is a knob that tracks the token count.
+    """
+    groups = collections.defaultdict(list)
+    unparsed = collections.Counter()
+    for r in rows:
+        if r["libtype"] != "flydsl":
+            continue
+        decoded = decode_flydsl_moe_kernel(r["kernel_stage1"])
+        if decoded is None:
+            unparsed[r["file"]] += 1
+            continue
+        family, dtype, knobs = decoded
+        knobs = {f"stage1.{k}": v for k, v in knobs.items()}
+        stage2 = decode_flydsl_moe_kernel(r["kernel_stage2"])
+        if stage2:
+            knobs["stage2.family"] = stage2[0]
+            knobs.update({f"stage2.{k}": v for k, v in stage2[2].items()})
+        knobs.update(r["launch"])
+        shape = "x".join(str(r["shape"][k]) for k in FMOE_SHAPE_KEYS)
+        groups[(r["gfx"], r["cu_num"], r["db_kind"], family, dtype, shape,
+                m_bucket(r["m"]))].append((r, knobs))
+    out = []
+    for key in sorted(groups, key=lambda t: (t[:6], M_BUCKET_ORDER[t[6]])):
+        gfx, cu, kind, family, dtype, shape, bucket = key
+        members = groups[key]
+        fixed, varies = knob_spread([knobs for _, knobs in members])
+        rec = {
+            "config_id": _short_id("cfg_", ["aiter_fmoe_db", gfx, cu, kind, family, dtype,
+                                            shape, bucket]),
+            "gfx": gfx, "cu_num": cu, "db_kind": kind, "family": family, "dtype": dtype,
+            "moe_shape": dict(zip(FMOE_SHAPE_KEYS, (int(v) for v in shape.split("x")))),
+            "m_bucket": bucket, "shape_configs": len(members),
+            "tokens": sorted({r["token"] for r, _ in members}),
+            "source_files": sorted({r["file"] for r, _ in members}),
+        }
+        if len(members) == 1:
+            rec["knobs"] = fixed
+        else:
+            rec["same_across_configs"] = fixed
+            rec["varies_by_shape"] = varies
+        out.append(rec)
+    gaps = [{"language": "aiter_tuned_db", "subtree": path,
+             "why": f"{n} flydsl fused-MoE kernelName(s) in no shipped naming form; "
+                    "skipped, not guessed"}
+            for path, n in sorted(unparsed.items())]
+    return out, gaps
+
+
+def summarize_fmoe_backend(rows):
+    """Which project's kernel the fused-MoE sweep kept, per (gfx, CUs, database, MoE shape, M).
+
+    Counted per stage, because the two stages are tuned independently and are not always won by the
+    same project: a row can keep a FlyDSL gate+up and a CK down-projection. A single count keyed on
+    stage 1 would have reported that row as wholly FlyDSL.
+    """
+    groups = collections.defaultdict(collections.Counter)
+    files = collections.defaultdict(set)
+    for r in rows:
+        shape = "x".join(str(r["shape"][k]) for k in FMOE_SHAPE_KEYS)
+        for stage, column in ((1, "kernel_stage1"), (2, "kernel_stage2")):
+            backend = fmoe_backend(r[column])
+            if backend is None:
+                continue
+            key = (r["gfx"], r["cu_num"], r["db_kind"], shape, m_bucket(r["m"]), stage)
+            groups[key][backend] += 1
+            files[key].add(r["file"])
+    out = []
+    for key in sorted(groups, key=lambda t: (t[:4], M_BUCKET_ORDER[t[4]], t[5])):
+        gfx, cu, kind, shape, bucket, stage = key
+        out.append({
+            "selection_id": _short_id("sel_", ["aiter_fmoe_db", gfx, cu, kind, shape,
+                                               bucket, stage]),
+            "gfx": gfx, "cu_num": cu, "db_kind": kind, "m_bucket": bucket, "stage": stage,
+            "moe_shape": dict(zip(FMOE_SHAPE_KEYS, (int(v) for v in shape.split("x")))),
             "rows": sum(groups[key].values()),
             "selected_backend_rows": dict(sorted(groups[key].items())),
             "source_files": sorted(files[key]),
@@ -1066,6 +1531,16 @@ def collect(aiter):
                 configs += [dict(c, language=language) for c in autotune_configs(path, rel)]
             seen.append({"language": language, "file": rel, "lines": raw.count("\n") + 1,
                          "evidence_records": len(got)})
+            # A file that matched a declared pattern and yielded nothing is a gap in the RULES, not
+            # a fact about the file, and it used to be invisible: `missing` only reported patterns
+            # that matched NO file, so a declared-and-read file could contribute zero evidence
+            # forever without a line anywhere. That is the worst kind of gap, because coverage looks
+            # complete. Reported only above a size floor — a 40-line forwarding header legitimately
+            # states nothing, and listing those would bury the real cases in noise.
+            if not got and raw.count("\n") + 1 >= 120:
+                missing.append({"language": language, "subtree": subtree,
+                                "why": f"indexed but no rule matched: {rel} "
+                                       f"({raw.count(chr(10)) + 1} lines)"})
     for rel in ROUTING_FILES:
         path = os.path.join(aiter, rel)
         if not os.path.isfile(path):
@@ -1088,6 +1563,41 @@ def collect(aiter):
                                f"per-shape JSON under {TUNED_CONFIG_DIR} "
                                f"(see evidence/gemm_tuned_configs.yaml, {len(tuned)} rows)"})
     return evidence, configs, tuned, seen, missing + tuned_gap
+
+
+MERGE_BOOKKEEPING = ("aiter_commits", "retuned_at", "relocated_to")
+
+
+def merge_by_identity(store, order, rows, key, commit):
+    """Fold one tree's rows into the cross-tree table, keyed by `key`.
+
+    Two different kinds of key arrive here and they must not be treated alike. `evidence_id` hashes
+    the CONTENT, so a repeat across trees is literally the same statement and the only new fact is
+    that it also holds at another commit. `config_id` and `selection_id` hash a LOOKUP KEY — (gfx,
+    tags, M bucket), (gfx, CU, shape) — and AITER retunes those tables: 36 of the 41 shared
+    backend-selection keys carry a different winner at the two commits indexed here.
+
+    Appending the older commit to such a row would assert an agreement that does not exist, and
+    dropping the row would lose the fact that the answer changed. So the primary tree's answer is
+    kept, and the commits where the same key held a different one are named in `retuned_at` — which
+    is also the signal a card quoting a shipped number needs, because that number has since moved.
+    """
+    def body(row):
+        return json.dumps({k: v for k, v in row.items() if k not in MERGE_BOOKKEEPING},
+                          ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    for row in rows:
+        prev = store.get(row[key])
+        if prev is None:
+            row["aiter_commits"] = [commit]
+            store[row[key]] = row
+            order.append(row[key])
+        elif commit in prev["aiter_commits"] or commit in prev.get("retuned_at", []):
+            continue
+        elif body(prev) == body(row):
+            prev["aiter_commits"].append(commit)
+        else:
+            prev.setdefault("retuned_at", []).append(commit)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1155,7 +1665,12 @@ def emit_yaml(payload, path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--aiter", help="an aiter checkout to read (required for --emit / --json)")
+    ap.add_argument("--aiter", action="append", metavar="PATH",
+                    help="an aiter checkout to read (required for --emit / --json). Repeat to index "
+                         "several checkouts: the first is PRIMARY (it names provenance.aiter_commit "
+                         "and its answer wins where two trees disagree); every tree contributes "
+                         "evidence, so a fact whose file was moved or deleted upstream stays citable "
+                         "at a commit that still contains it")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--emit", action="store_true", help="write evidence/gemm_source.yaml")
     mode.add_argument("--json", action="store_true", help="dump to stdout instead")
@@ -1164,56 +1679,141 @@ def main():
                          "the affected records are marked `unreproducible: true`")
     a = ap.parse_args()
 
-    if not a.aiter:
+    trees = a.aiter or []
+    if not trees:
         ap.error("--aiter is required: this tool reads a source tree that is not part of this repo")
-    if not os.path.isdir(a.aiter):
-        print(f"no such aiter tree: {a.aiter}", file=sys.stderr)
-        return 2
+    for tree in trees:
+        if not os.path.isdir(tree):
+            print(f"no such aiter tree: {tree}", file=sys.stderr)
+            return 2
+    primary, multi = trees[0], len(trees) > 1
 
-    evidence, configs, tuned, seen, missing = collect(a.aiter)
-    db_rows, db_inventory, db_gaps = tuned_db_rows(a.aiter)
-    commit = aiter_commit(a.aiter)
-    for record in evidence:
-        record.setdefault("evidence_id", source_evidence_id(record))
+    # Each record carries the commits it was OBSERVED at, merged by content-bound id across trees.
+    #
+    # An upstream refactor does not falsify a fact, it relocates it: when `splitk_hgemm.py` was folded
+    # into `gemm_a16w16_gfx950.py`, 309 records stopped resolving at HEAD while every one of them
+    # remained a true statement about a real kernel at the commit it was read from. Discarding them
+    # would throw away knowledge over a rename; silently re-pointing them at HEAD would be a citation
+    # index that lies. So the commit becomes a dimension of the record instead, and the three cases a
+    # reader actually cares about fall out of `aiter_commits` without anyone curating them: present in
+    # every tree (survived the refactor, strongest), new tree only (current practice), old tree only
+    # (the technique is sound, the implementation moved — go find where).
+    merged, order = {}, []
+    tuned_store, tuned_order = {}, []
+    flydsl_store, flydsl_order = {}, []
+    sel_store, sel_order = {}, []
+    coverage, missing, inventory, db_missing = [], [], [], []
+    commits, dirty_all = [], []
+    configs, rows_summarised, db_rows_read = [], 0, 0
 
-    # Which files that CONTRIBUTED evidence are locally modified. Scoped to contributors rather than
-    # the whole tree because that is the actual condition: an unrelated edit elsewhere in aiter cannot
-    # make a citation unresolvable, and refusing on it would be superstition rather than a check.
-    # The shipped JSON and CSV tables contribute too: a locally re-tuned database would otherwise be
-    # published under a commit that never contained it.
-    contributors = ({f["file"] for f in evidence} | {r["file"] for r in tuned}
-                    | {r["file"] for r in db_rows})
-    unreproducible = sorted(contributors & dirty_paths(a.aiter))
-    if unreproducible and not a.allow_dirty:
-        print(f"REFUSING: {len(unreproducible)} file(s) that produced evidence have uncommitted changes, "
-              f"so their `file:line` would not resolve at {commit[:12]} for anyone else:",
-              file=sys.stderr)
-        for p in unreproducible[:10]:
-            print(f"  {p}", file=sys.stderr)
-        print("\nA citation index whose citations do not resolve is not a weaker index, it is a\n"
-              "different document that looks like one. Either commit those changes, or extract from a\n"
-              "clean checkout:\n"
-              f"  git -C {a.aiter} worktree add /tmp/aiter-clean {commit[:12]}\n"
-              "Pass --allow-dirty to record the evidence anyway; the affected records are then marked\n"
-              "and the committed corpus is not allowed to contain them.", file=sys.stderr)
-        return 3
+    for pos, tree in enumerate(trees):
+        evidence, tree_configs, tree_tuned, seen, gaps = collect(tree)
+        db_rows, db_inventory, db_gaps = tuned_db_rows(tree)
+        moe_rows, moe_inventory, moe_gaps = fmoe_db_rows(tree)
+        commit = aiter_commit(tree)
+
+        # Which files that CONTRIBUTED evidence are locally modified. Scoped to contributors rather
+        # than the whole tree because that is the actual condition: an unrelated edit elsewhere in
+        # aiter cannot make a citation unresolvable, and refusing on it would be superstition rather
+        # than a check. The shipped JSON and CSV tables contribute too: a locally re-tuned database
+        # would otherwise be published under a commit that never contained it.
+        contributors = ({f["file"] for f in evidence} | {r["file"] for r in tree_tuned}
+                        | {r["file"] for r in db_rows} | {r["file"] for r in moe_rows})
+        dirt = contributors & dirty_paths(tree)
+        if dirt and not a.allow_dirty:
+            print(f"REFUSING: {len(dirt)} file(s) that produced evidence have uncommitted changes, "
+                  f"so their `file:line` would not resolve at {commit[:12]} for anyone else:",
+                  file=sys.stderr)
+            for p in sorted(dirt)[:10]:
+                print(f"  {p}", file=sys.stderr)
+            print("\nA citation index whose citations do not resolve is not a weaker index, it is a\n"
+                  "different document that looks like one. Either commit those changes, or extract from a\n"
+                  "clean checkout:\n"
+                  f"  git -C {tree} worktree add /tmp/aiter-clean {commit[:12]}\n"
+                  "Pass --allow-dirty to record the evidence anyway; the affected records are then marked\n"
+                  "and the committed corpus is not allowed to contain them.", file=sys.stderr)
+            return 3
+
+        commits.append(commit)
+        # Qualified by commit only when there is more than one tree, where an unqualified path would
+        # not say which checkout is dirty.
+        dirty_all += [f"{commit[:12]}:{p}" if multi else p for p in sorted(dirt)]
+        for record in evidence:
+            record.setdefault("evidence_id", source_evidence_id(record))
+            if record["file"] in dirt:
+                record["unreproducible"] = True
+            record.setdefault("fact_id", fact_identity(record))
+        # Identical content at a second commit is one record with two anchors: the ID is bound to the
+        # match and excerpt, so a repeat is the same statement, not a near-duplicate.
+        merge_by_identity(merged, order, evidence, "evidence_id", commit)
+
+        # The shipped tables get the same treatment, and for the same reason. Fifteen cards cite
+        # `cfg_…` IDs as evidence of a bucket STRUCTURE, not as a current recommendation; reading
+        # those tables from the primary tree alone silently unmoored every one of them, because the
+        # Triton config tree was reorganised upstream and not one of the 386 older group IDs
+        # survives into the new layout.
+        flydsl_groups, flydsl_gaps = summarize_flydsl_tuned(db_rows)
+        moe_groups, moe_unparsed = summarize_fmoe_tuned(moe_rows)
+        merge_by_identity(tuned_store, tuned_order, summarize_tuned(tree_tuned), "config_id", commit)
+        merge_by_identity(flydsl_store, flydsl_order, flydsl_groups + moe_groups,
+                          "config_id", commit)
+        merge_by_identity(sel_store, sel_order, summarize_backend_selection(db_rows),
+                          "selection_id", commit)
+        merge_by_identity(sel_store, sel_order, summarize_fmoe_backend(moe_rows),
+                          "selection_id", commit)
+        if pos == 0:
+            configs = tree_configs
+        rows_summarised += len(tree_tuned)
+        db_rows_read += len(db_rows) + len(moe_rows)
+        # Per-tree facts, so what a refresh dropped is legible as a diff rather than inferred from a
+        # record count that moved.
+        coverage += [dict(row, aiter_commit=commit) if multi else row for row in seen]
+        inventory += [dict(row, aiter_commit=commit) if multi else row
+                      for row in db_inventory + moe_inventory]
+        missing += [dict(row, aiter_commit=commit) if multi else row for row in gaps]
+        db_missing += [dict(row, aiter_commit=commit) if multi else row
+                       for row in db_gaps + flydsl_gaps + moe_gaps + moe_unparsed]
+
+    evidence = [merged[i] for i in order]
+    grouped = [tuned_store[i] for i in tuned_order]
+    flydsl_groups = [flydsl_store[i] for i in flydsl_order]
+    selection = [sel_store[i] for i in sel_order]
+    commit, unreproducible = commits[0], dirty_all
+
+    # A citation that stopped resolving, repaired in place where the statement can still be found.
+    #
+    # Without this a card grounded in `splitk_hgemm.py:27` leaves its reader at a deleted file with
+    # nothing but a commit to check out, and the practical response is to distrust the card. With it
+    # the record says where the same line lives now, so the knowledge survives the rename at the cost
+    # of one field. Only the primary tree is a redirect target: pointing at another stale commit
+    # would move the problem rather than solve it.
+    if multi:
+        current = collections.defaultdict(list)
+        for f in evidence:
+            if commit in f["aiter_commits"]:
+                current[f["fact_id"]].append(f"{f['file']}:{f['line']}")
+        for f in evidence:
+            if commit not in f["aiter_commits"] and f["fact_id"] in current:
+                here = current[f["fact_id"]]
+                # Capped: the point is an entry point into the current tree, and a record that
+                # listed sixty call sites would be answering a different question.
+                f["relocated_to"] = sorted(here)[:4]
 
     prov = {
         # The commit is the expiry date. Without it a stale fact and a current one are the same
         # document, which is how `kernel_families.md` came to state a default tile nothing checks.
+        # Singular stays singular: it names the primary tree, the one the config tables and the
+        # rendered pages speak for. The full list is beside it.
         "aiter_commit": commit,
+        "aiter_commits": commits,
         # Empty means every citation below resolves at that commit for anyone. Non-empty names exactly
         # which ones do not, which is the part a boolean could not say.
         "aiter_dirty_sources": unreproducible,
-        "aiter_origin": aiter_origin(a.aiter),
+        "aiter_origin": aiter_origin(primary),
         "extractor": "perf_knowledge/corpus/_extract_impl_facts.py",
         "operator_family": "gemm",
     }
-    if unreproducible:
-        dirt = set(unreproducible)
-        for f in evidence:
-            if f["file"] in dirt:
-                f["unreproducible"] = True
+    seen = coverage
     payload = {
         "provenance": dict(prov, evidence_records=len(evidence), autotune_configs=len(configs)),
         "coverage": seen, "missing": missing, "autotune_configs": configs,
@@ -1221,20 +1821,17 @@ def main():
     }
     # The shipped config table changes on a different clock from the source (a reselection rewrites all
     # of it; a kernel edit touches a few lines), so it gets its own file and its own diff.
-    grouped = summarize_tuned(tuned)
     tuned_payload = {
-        "provenance": dict(prov, records=len(grouped), rows_summarised=len(tuned),
+        "provenance": dict(prov, records=len(grouped), rows_summarised=rows_summarised,
                            source=TUNED_CONFIG_DIR),
         "tuned_configs": grouped,
     }
-    flydsl_groups, flydsl_gaps = summarize_flydsl_tuned(db_rows)
-    selection = summarize_backend_selection(db_rows)
     db_payload = {
         "provenance": dict(prov, records=len(flydsl_groups), selection_groups=len(selection),
-                           rows_read=len(db_rows), source=", ".join(TUNED_DB_DIRS),
+                           rows_read=db_rows_read, source=", ".join(TUNED_DB_DIRS),
                            timing_columns_dropped=list(TUNED_DB_TIMING)),
-        "inventory": db_inventory,
-        "missing": db_gaps + flydsl_gaps,
+        "inventory": inventory,
+        "missing": db_missing,
         "tuned_configs": flydsl_groups,
         "backend_selection": selection,
     }
@@ -1254,12 +1851,34 @@ def main():
     print(f"OK: {len(evidence)} source-evidence records from {len(seen)} files "
           f"({', '.join(f'{k}={v}' for k, v in sorted(by_lang.items()))}), "
           f"{len(configs)} autotune -> {os.path.relpath(out, ROOT)}")
-    print(f"OK: {len(tuned)} shipped tuned rows in {len(grouped)} (gfx, tags, M) groups "
+    if multi:
+        # The split is the point of indexing more than one tree, so it is printed rather than left
+        # for a reader to count: what survived the refresh, what the refresh added, and what now
+        # resolves only at an older commit and therefore needs a card that says where it went.
+        held = sum(1 for f in evidence if len(f["aiter_commits"]) == len(commits))
+        stale = [f for f in evidence if commit not in f["aiter_commits"]]
+        moved = [f for f in stale if f.get("relocated_to")]
+        print(f"     commit anchors: {held}/{len(evidence)} cited identically in all {len(commits)} "
+              f"trees; {len(stale)} do not resolve at the primary tree {commit[:12]}, of which "
+              f"{len(moved)} are the same statement relocated (`relocated_to`) and "
+              f"{len(stale) - len(moved)} are absent from it entirely")
+        absent = collections.Counter(f["file"] for f in stale if not f.get("relocated_to"))
+        for path, n in absent.most_common(8):
+            print(f"       gone: {n:4d} records  {path}")
+    print(f"OK: {rows_summarised} shipped tuned rows in {len(grouped)} (gfx, tags, M) groups "
           f"-> {os.path.relpath(tuned_out, ROOT)}")
-    print(f"OK: {len(db_rows)} tuned-DB rows from {len(db_inventory)} CSVs -> {len(flydsl_groups)} "
-          f"FlyDSL groups, {len(selection)} backend-selection groups "
-          f"-> {os.path.relpath(db_out, ROOT)}")
-    for m in missing:
+    moe_cfg = sum(1 for g in flydsl_groups if g.get("moe_shape"))
+    moe_sel = sum(1 for s in selection if s.get("moe_shape"))
+    print(f"OK: {db_rows_read} tuned-DB rows from {len(inventory)} CSVs -> {len(flydsl_groups)} "
+          f"FlyDSL groups ({moe_cfg} fused-MoE), {len(selection)} backend-selection groups "
+          f"({moe_sel} fused-MoE) -> {os.path.relpath(db_out, ROOT)}")
+    if multi:
+        # Not a warning. A shipped table that answers the same lookup differently at two commits is
+        # the single most useful thing a cross-tree index can tell an author quoting one.
+        retuned = sum(1 for g in grouped + flydsl_groups + selection if g.get("retuned_at"))
+        print(f"     {retuned} shipped group(s) answer the same (gfx, tags, shape) key differently "
+              f"at an older commit (`retuned_at`)")
+    for m in missing + db_missing:
         print(f"  gap: {m['language']} — {m['why']} ({m['subtree']})")
     return 0
 

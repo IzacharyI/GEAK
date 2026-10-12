@@ -52,7 +52,7 @@ cards:
     type: "constraint"
     axes: ["architecture_capability", "compute_instruction", "memory_access", "implementation_variant"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       gfx: ["gfx942"]
     question: "Which FlyDSL GEMM paths does gfx942 (MI300X) actually give you, and which does it silently switch or refuse?"
@@ -197,7 +197,7 @@ cards:
     type: "performance_candidate"
     axes: ["compute_instruction", "architecture_capability"]
     match:
-      operator_families: ["gemm", "dense_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       dtypes: ["f16", "bf16"]
     question: "Which legal MFMA call forms can seed a FlyDSL f16/bf16 GEMM?"
@@ -397,7 +397,7 @@ cards:
     type: "performance_candidate"
     axes: ["memory_access", "architecture_capability", "pipeline_schedule", "implementation_variant"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       requires: ["lds_staging"]
     question: "Is global-to-LDS async copy a knob, a fixed fact, or unavailable — per FlyDSL kernel family and architecture?"
@@ -442,7 +442,7 @@ cards:
     type: "performance_candidate"
     axes: ["epilogue", "configuration_constraints", "workgroup_tile"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "When can a FlyDSL GEMM route its accumulators through an LDS CShuffle epilogue, and what does it cost?"
     evidence_level: "source_observed"
@@ -489,7 +489,7 @@ cards:
     type: "performance_candidate"
     axes: ["work_partition", "memory_access", "execution_geometry"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "How should a FlyDSL GEMM map workgroup IDs onto output tiles and XCDs, and where does AITER already do it?"
     evidence_level: "source_observed"
@@ -529,7 +529,7 @@ cards:
     type: "performance_candidate"
     axes: ["work_partition", "workgroup_tile", "execution_geometry", "epilogue", "runtime_contract"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "When does a GEMM case need split-K to fill the machine, and what does choosing it commit the rest of the kernel to?"
     evidence_level: "source_observed"
@@ -726,7 +726,7 @@ cards:
     type: "performance_candidate"
     axes: ["operand_layout", "configuration_constraints"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       requires: ["lds_staging"]
     question: "How should a FlyDSL GEMM apply an XOR16 LDS layout without making stores and loads disagree?"
@@ -838,7 +838,7 @@ cards:
     type: "performance_candidate"
     axes: ["pipeline_schedule", "workgroup_tile", "execution_geometry", "memory_access", "compute_instruction"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       requires: ["split_k_hot_loop"]
     question: "What explicit instruction-order bundle can seed a hand-scheduled FlyDSL split-K GEMM hot loop?"
@@ -881,7 +881,7 @@ cards:
     type: "performance_candidate"
     axes: ["pipeline_schedule", "memory_access", "workgroup_tile", "compute_instruction"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       dtypes: ["fp8_e4m3fnuz", "fp8_e4m3fn", "int8"]
     question: "How does the FlyDSL A8 kernel interleave LDS reads, global loads and MFMAs, and how does that differ between gfx942 and gfx950?"
@@ -1056,7 +1056,7 @@ cards:
     type: "performance_candidate"
     axes: ["implementation_variant", "workgroup_tile", "work_partition"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "For each shape bucket, which backend did AITER's own tuner ship, and what does that imply for a FlyDSL kernel?"
     evidence_level: "source_observed"
@@ -1229,7 +1229,7 @@ cards:
     type: "semantic"
     axes: ["operand_layout", "epilogue", "compute_instruction"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "Which lane holds which row and column of a 16x16 MFMA fragment in AITER's FlyDSL kernels, and what does that fix for loads, in-register scaling and stores?"
     evidence_level: "source_observed"
@@ -1268,7 +1268,7 @@ cards:
     type: "performance_candidate"
     axes: ["memory_access", "operand_layout", "pipeline_schedule"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
       requires: ["lds_staging"]
     question: "Which global-to-LDS and LDS-to-register helpers do the FlyDSL A8 and MoE GEMMs share, and which access widths do they fix?"
@@ -1314,7 +1314,7 @@ cards:
     type: "constraint"
     axes: ["runtime_contract", "work_partition", "implementation_variant"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "What does the host side of a FlyDSL GEMM have to provide in AITER — compile cache, launch grid, per-stream state and kernel name?"
     evidence_level: "source_observed"
@@ -1389,11 +1389,53 @@ cards:
     limitations:
       - "These are AITER's regression cases for its own kernel; an authored kernel is judged by the task's oracle, not by this test."
 
+  - id: "grouped-moe-parity-gate-is-cosine-not-elementwise"
+    type: "constraint"
+    axes: ["validation_contract", "epilogue", "runtime_contract"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+    question: "A grouped/MoE GEMM is being validated against a reference — which parity does AITER's own test actually demand, and why is it not the dense GEMM's elementwise gate?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "a grouped (MoE) GEMM — one or both stages, or the fused two-stage path — is being compared against a torch reference"
+    actions:
+      - "Gate on the COSINE distance, not on elementwise closeness: the shipped criterion is `logits_diff = ||x-y||^2 / (||x||^2 + ||y||^2) < 0.01`, declared as `LOGITS_DIFF_TOL = 0.01` (`op_tests/flydsl_tests/test_flydsl_grouped_gemm.py:90`) and asserted as `logits_diff > 0.01` in the two-stage test (`op_tests/test_moe_2stage.py:570`). Treat an elementwise rel-L2 or isclose ratio as an informational print beside it, which is exactly the role the grouped test gives it."
+      - "Do not carry the dense family's elementwise gate over (flydsl-test-parity-gate). The stated reason it was abandoned is quantization, not kernel error: the EP test records that a path quantizing activations to fp8 'differs elementwise by more than atol/rtol=5e-2 even without EP', and switches to the cosine criterion for it (`op_tests/test_moe_ep.py:813`) while keeping `atol=rtol=5e-2` elementwise only off that path (`:821`)."
+      - "Check NaN separately and deterministically, as its own assert — never let the tolerance gate stand in for it. The two-stage test added an explicit NaN probe precisely because `checkAllclose`'s err and the cosine diff 'can be masked by atomic-reduction noise', and a stage-2 atomic combine with an uninitialised K-padding tail is the defect it was written to catch."
+      - "When authoring one stage, check that stage against its own reference rather than only the fused output: the FlyDSL MoE suite compares stage 1 alone, and feeds the REFERENCE stage-1 output into stage 2 so a stage-2 failure cannot be blamed on stage 1. Its helper fixes the shape of the check — NaN assert, Inf assert, then a bounded mismatch ratio (`op_tests/flydsl_tests/test_flydsl_moe.py:54`)."
+      - "Validate routing and sorting as EXACT, not as approximate, and keep them out of the numerics gate: the sorting test compares `num_tokens_post_padded` with `atol=0` (`op_tests/test_moe_sorting.py:221`) and requires its whole error dict to be zero. The two-stage test instead holds routing constant — the same `topk_weights`/`topk_ids` go to both reference and kernel — so a routing bug would not show up there at all."
+    alternatives:
+      - "The dense elementwise gate (isclose at atol=rtol=1e-2 with a pass percentile) — what AITER uses for its split-K dense GEMM, and what the MoE tests deliberately moved away from once activations are quantized."
+      - "Bit-exactness, which AITER does demand where a path is supposed to be a pure passthrough rather than a requantization — appropriate only when no arithmetic may differ, since any tolerance wide enough to absorb quantizer noise would also absorb a real defect."
+    why:
+      - "Once activations are quantized to fp4/fp8 the reference and the kernel disagree elementwise by construction, so an elementwise bound tight enough to catch a real bug fails a correct kernel, and one loose enough to pass it catches nothing. A direction-of-vector metric is insensitive to that per-element quantization noise while still catching a wrong result."
+      - "The failure modes a grouped MoE actually has are not elementwise drift: an uninitialised padding lane, a mis-indexed expert, a wrong sorted offset. NaN and exact index comparison catch those; a tolerance does not."
+      - "The expected magnitude separates signal from noise and is the reason a bound this loose still discriminates — correct mxfp4 quantization error lands near 5e-3, while a broken scale indexing lands around 0.7."
+    source_evidence:
+      - "src_56406869ba3f3068"
+      - "src_fbc202be8570fb18"
+      - "src_e5452814c4e01160"
+      - "src_d741a22a37929535"
+      - "src_08328711fc7e1ae6"
+      - "src_bb2f27c92eb262d3"
+      - "src_47c8b68457e67034"
+      - "src_d1781a7127dd5d52"
+      - "src_a1a66f43d47e0462"
+    measurement_evidence: []
+    limitations:
+      - "These are AITER's regression gates for its own kernels; an authored kernel is judged by the task's oracle and its tolerance, not by this card. Use the card to tell a known quantization drift from a bug, and to decide WHICH comparison to run, not to overrule a task that demands something stricter."
+      - "The gate is weaker than it looks in two places that are worth reading before relying on it. The two-stage assert is a CONJUNCTION — it fails only when the elementwise error is non-zero AND the cosine diff exceeds 0.01 — and its strictness is switchable: the CLI sweep path passes `strict_accuracy=False`, which degrades both the NaN and the accuracy failure to warnings. Separately, the shared `checkAllclose` is a percentile reporter that returns a mismatch ratio rather than raising; the asserting wrapper exists but no MoE test calls it."
+      - "The attribution of the relaxation to quantization is sourced; a relaxation attributed to the stage-2 ATOMIC combine is NOT — no comment in these tests says the tolerance was widened for atomics. Atomics appear only in the opposite role, as noise that can MASK a failure, which is why the NaN check was added alongside. Do not cite this card for 'atomics justify a looser bound'."
+      - "Scope: the cosine gate is read off the mxfp4/a8w4 grouped and two-stage tests. Several older bf16/asm MoE tests still call the elementwise helper with `atol=100`, which is not a tighter alternative but an effectively disabled elementwise check — they were not treated as evidence for a gate here."
+
   - id: "gemm-streamed-operand-cache-policy"
     type: "performance_candidate"
     axes: ["memory_access", "tunable_surface"]
     match:
-      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
+      operator_families: ["gemm", "dense_gemm", "scaled_quant_gemm", "grouped_gemm_moe", "fused_moe_grouped_gemm", "batched_gemm", "splitk_streamk_gemm", "skinny_gemv_decode", "gemm_epilogue_fused"]
       target_languages: ["flydsl"]
     question: "Which operand loads and output stores should carry a streaming (non-temporal) cache policy, and which should keep the default?"
     evidence_level: "source_observed"
@@ -1464,3 +1506,470 @@ cards:
     limitations:
       - "The HGEMM families hard-code two stages; a different depth there means changing the kernel source, not passing a parameter."
       - "Deeper is not monotonically better: once global latency is hidden, further stages only take LDS away from occupancy."
+
+  # The cards below are grouped-GEMM-only (match.operator_families == ["grouped_gemm_moe", "fused_moe_grouped_gemm"]): a 2-stage
+  # grouped MoE GEMM shares a single token-to-expert sort between two independently compiled kernels,
+  # which the dense/batched/split-K cards above say nothing about. Grounded against AITER main's
+  # 2-stage MoE compilers (`moe_gemm_2stage.py`, `mixed_moe_gemm_2stage_common.py`, `mxfp4_gemm1/2.py`)
+  # and the shipped `glm5_fp4_tuned_fmoe.csv` / `glm5_mxfp8_tuned_fmoe.csv` rows for the GLM-5.2
+  # mxfp4 fused-MoE pilot shape (gfx950, 6144 hidden x 256 inter x 257 experts x topk 9).
+
+  - id: "grouped-moe-sort-block-m-couples-both-stages"
+    type: "constraint"
+    axes: ["workgroup_tile", "work_partition", "configuration_constraints"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+    question: "When a 2-stage grouped MoE GEMM sorts tokens to experts once and both GEMMs read that sorted order, what tile-M choices are actually free?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "the design is a 2-stage grouped (MoE) GEMM sharing one token-to-expert sort/pad step between stage 1 and stage 2"
+    actions:
+      - "Pick stage 1's tile_m first: AITER's generic 2-stage compiler fixes the sort block size to it directly (`sort_block_m = tile_m`, no stage-1 override) — stage 1 is never free to sort at a size other than its own tile."
+      - "Give stage 2 either that same tile_m (the common case) or a smaller one that evenly divides it: `compile_mixed_moe_gemm2` accepts its own `sort_block_m` but raises unless it already equals stage 2's tile_m or is an exact multiple of it."
+      - "Read the `_sbm{N}` tag in a stage-2 name as a declaration, not as a deviation flag: `build_flydslv2_gemm2_name` appends it whenever `sbm` is non-zero, with no `sbm != tm` guard, and its only caller passes `sbm=block_m` for every candidate tile — so the shipped GLM-5.2 names carry `_sbm16`/`_sbm32`/`_sbm64`/`_sbm128` each equal to their own `t{M}`. A name with no `_sbm` tag means the sort block was left unstated, not that it matches."
+      - "Treat tile_m=16 on stage 2 as the one genuinely coupled case: the BM16 A-scale chunk addressing is selected by `SBM == BM`, not by `BM` alone, so a 16-wide stage-2 tile is only legal when the shared sort block is also 16 — which in turn forces stage 1's BM to 16 (that is the same condition `native_scale_layout_for` imposes). At every other tile_m the multiple-of rule is the whole constraint."
+    alternatives:
+      - "An unshared sort per stage — not what AITER's launcher does; it would cost a second sort/pad pass to buy tiling independence the multiple-of rule already gives for free in the common case."
+    why:
+      - "The sort/pad step runs once and lays every expert's rows out at one granularity; a stage tiled at a different, non-dividing granularity would read across a row boundary that does not exist in its own output."
+      - "The raise exists to catch exactly that at compile time: `sort_block_m % tile_m != 0` is rejected before launch, not left to a runtime out-of-bounds read."
+    source_evidence:
+      - "src_d90c21da2fd744e2"
+      - "src_b25a5418edbd6918"
+      - "src_684ee007ec1d2fd1"
+      - "src_7fdfffec65089511"
+      - "src_0a0738d9fdf9642d"
+    shipped_evidence:
+      - "cfg_58db8a1bd4f97080"
+      - "cfg_da3c10c1b64033c6"
+      - "cfg_cff530f26fedf80c"
+    measurement_evidence: []
+    limitations:
+      - "Two different stage-2 compilers are in play and this card merges them: `mixed_moe_gemm_2stage_common.py`'s generic one (which supplies the multiple-of rule) and the mxfp4 `flydsl_moe2_layout_*` family (which supplies the `_sbm` naming and the SBM==BM==16 gate). They agree on the rule but were read separately; the older per-kernel-pair compilers were not confirmed to expose `sort_block_m` independently of `tile_m` at all."
+      - "Only the legality boundary is sourced here — nothing in this corpus measures whether taking the freedom (sort_block_m larger than stage 2's own tile_m) is ever faster than matching it exactly."
+      - "`sort_block_m` being a knob does not make the sort step's *grid* one, and on the mxfp4 path it is not. Two unrelated kernels both answer to the word 'sort' and must not be conflated. (a) `moe_sorting` — the FlyDSL one, open body, host-settable grid: `n_grid_blocks: fx.Int32` is a kernel parameter (`aiter/ops/flydsl/kernels/moe_sorting_kernel.py:755`) passed straight to `grid=(n_grid_blocks,1,1)` (`:773`) and computed host-side at `:1951`. (b) `sort_quant` / `moe_sort_quant` — what a decode trace on the mxfp4 two-stage path actually dispatches, and a *compiled HIP* kernel in `csrc/kernels/mxfp4_moe/moe_aux/moe_sort_quant.cuh`, built into `module_moe_mxfp4_aux.so`. There its CTA count is a template parameter, not an argument: `template <int N_CTAS, int THREADS_PER_CTA>` (`:34`) reaching `<<<N_CTAS, THREADS_PER_CTA, 0, stream>>>` (`:355`, `:405`, `:450`, `:466`). Decisively, the runtime dispatch is a string-keyed lookup into pre-codegen'd instances whose key is `\"aux_sort_quant_NE{NE}_TOPK{TOPK}_MB{MB}_H{H}\"` (`csrc/kernels/mxfp4_moe/moe_mxfp4_aux.cu:122`, `:125`) — **the key carries no CTA field**, and `gen_instances.py:287-290` emits exactly one instance per shape at `mb in (32,)`. So there is no second grid to select: changing it means editing the codegen and rebuilding the `.so`, which is neither a config-string edit nor a single-kernel-file edit."
+      - "Do not reach for the open FlyDSL sorting kernel as the escape hatch without first checking it is the one running. In the GLM-5.2 vendored seam that path is gated off by default — `_USE_CK_MOE_SORTING` / `_USE_FLYDSL_MOE_SORTING` both read `os.environ.get(..., \"0\") == \"1\"` (`fused_moe_seam.py:2711-2712`) and nothing in that task or its harness sets either — so `moe_sorting()` falls through to the compiled `moe_sorting_opus_fwd`. Flipping the flag to open the body is not a free optimisation either: it swaps the baseline kernel for a different implementation, so any speedup measured after it is a comparison between two kernels, not a tuning result."
+
+  - id: "grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag"
+    type: "performance_candidate"
+    axes: ["epilogue", "runtime_contract", "tunable_surface"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+    question: "How does the stage-2 GEMM accumulate `topk` partial outputs per token into one row, and what does the choice cost at the host level?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "the design combines topk expert outputs per token after stage 2 (a grouped-GEMM combine, not a single dense GEMM write)"
+    actions:
+      - "Treat 'atomic' and 'reduce' as two different launch shapes, not two values of one flag: the atomic path adds every partial straight into the output inside stage 2's own epilogue (`llvm.AtomicRMWOp(llvm.AtomicBinOp.fadd, ...)`), while the reduce path leaves stage 2's output unsummed and runs a second kernel out of its own module (`moe_reduce.py`), separately `lru_cache`-compiled by `compile_moe_reduction` and separately launched on its own grid, to sum over the topk dimension."
+      - "Pick between them by shape, following AITER's own shipped table rather than guessing: in the GLM-5.2 mxfp4/mxfp8 fused-MoE rows, every low-M bucket (`M<=16` through `M257-1024`) ships `atomic`[,`nt`], and every bucket at `M>4096` ships `reduce` (sometimes with `persist`) — the table switches somewhere in between, not at one fixed, universal cutover."
+      - "Budget for the second kernel launch when reduce is selected: it is a real extra host-side dispatch, not an extra epilogue instruction."
+    alternatives:
+      - "Always atomic — one kernel, no separate reduction pass, but every partial write contends on the same output row."
+      - "Always reduce — no atomic contention, but a mandatory second kernel launch even at the smallest M."
+    why:
+      - "Atomic serializes writers on the same output address across however many of the `topk` experts land a row there; at large M both the row count and the per-row contention grow, so AITER moves the summation off the atomic path into an unsummed write followed by one coalesced reduction kernel."
+      - "The shipped table encodes this tradeoff per M bucket for the GLM-5.2 pilot shape, so it is a cheap seed to start from before resweeping."
+    source_evidence:
+      - "src_a9035f819c6590bc"
+      - "src_7710996bc1db7f10"
+      - "src_081b5f3cb3e34298"
+      - "src_eb530d7276be8a22"
+      - "src_b20ee136736bd4b8"
+    shipped_evidence:
+      - "cfg_555872067e503a14"
+      - "cfg_f851ab2244623ab6"
+      - "sel_71c693f9258640e7"
+    measurement_evidence: []
+    limitations:
+      - "`persist` further changes how the reduce kernel is scheduled across CUs (see `gemm-workgroup-xcd-mapping` for persistent-kernel XCD mapping); this card only separates atomic-epilogue from separate-reduction, not what tunes each."
+      - "The bucket boundary is read off one shape family (gfx950, 6144x256x257/topk9); it is a seed for the M-bucket sweep, not a boundary proven to generalize to other MoE shapes."
+      - "Both halves are cited live at current main (`mixed_moe_gemm_2stage_common.py` for the atomic epilogue, `moe_reduce.py` for the separate reduction); the two older `moe_gemm_2stage.py` citations are pinned at commit `a6bb4993`, where that module held both paths together, and that file no longer exists upstream."
+
+  - id: "grouped-moe-shared-expert-fusion-is-a-cross-stage-identity-contract"
+    type: "constraint"
+    axes: ["runtime_contract", "configuration_constraints", "implementation_variant"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+    question: "What has to agree between the stage-1 and stage-2 compiles when a shared expert is fused into the same grouped-GEMM call as the routed experts?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "a shared expert is appended to the routed experts as one more row of the same grouped GEMM (heterogeneous B), rather than run as its own dense GEMM"
+    actions:
+      - "Give both compiles the same `shared_expert_id`, and make it the last expert index: `compile_mixed_moe_gemm1_common` and its stage-2 counterpart each raise unless `shared_expert_id == experts - 1`, so the identity is checked twice, once per stage, never inferred from the expert count alone."
+      - "Only fuse a shared expert into an MXFP4-weight call: both stages separately raise 'Heterogeneous B requires MXFP4 routed weights' when `shared_expert_id` is set and the routed B dtype is not fp4 — there is no heterogeneous path here for fp8 or bf16 weights."
+      - "Read a fused call's expert axis as routed-experts-plus-one before matching it against a tuned table: GLM-5.2's 256 routed experts plus its one shared expert is why its shipped fused-MoE rows key on `expert=257`, not 256."
+    alternatives:
+      - "Run the shared expert as its own ordinary (non-grouped) GEMM outside the grouped call — avoids the heterogeneous-B and ID-identity contract entirely, at the cost of a separate kernel launch and losing the fusion with the routed experts' combine."
+    why:
+      - "A heterogeneous B tile (the shared expert's weight sitting at a different physical location than the routed experts') is only safe to address if the kernel that built the row-to-expert mapping and the kernel that reads it agree on exactly which row index is the special one; checking it in both compiles turns a silent mismatch into a compile-time `ValueError` in either stage."
+    source_evidence:
+      - "src_0a391fc56eb3134e"
+      - "src_9c2d5c214ffbc124"
+      - "src_b25a5418edbd6918"
+      - "src_4ce856c5ae84c9a4"
+    measurement_evidence: []
+    limitations:
+      - "The MXFP4-only restriction and the id-equals-last-expert rule are both read directly off `mixed_moe_gemm_2stage_common.py`; whether every FlyDSL 2-stage MoE variant in the tree enforces the same two constraints the same way was not checked file-by-file."
+
+  - id: "grouped-moe-two-stage1-families-compete-at-the-same-shape"
+    type: "performance_candidate"
+    axes: ["implementation_variant", "workgroup_tile", "work_partition"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+    question: "For one fixed grouped-MoE shape, AITER ships two different FlyDSL stage-1 kernel families rather than one family swept over knobs — which applies, and why does that matter for authoring?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "a stage-1 grouped GEMM exists at the exact (model_dim, inter_dim, expert, topk) shape in more than one FlyDSL source module"
+    actions:
+      - "Check which source module is live for a given shape before tuning knobs inside just one of them: the 'moe_stage1' family compiles out of the generic 2-stage builder (`mixed_moe_gemm_2stage_common.py` at current main; the same builder lived in `moe_gemm_2stage.py` at commit `a6bb4993`, which upstream has since split per-arch) with block_m=32 in every shipped row for this shape, while the 'mxmoe_stage1' family compiles out of the separate `mxfp4_gemm1.py` module (block_m=16, its own grid helper `gemm1_grid(n_tokens, BM, *, NE, TOPK, INTER, ...)`, its own epilogue tags `f16in`/`hpf`)."
+      - "Expect AITER's shipped table to switch between the two families by token-count bucket at this exact shape (gfx950, 6144x256, 257 experts, topk 9, mxfp4): `moe_stage1` at the smallest (`token=1,2`) and largest (`token>=256`) buckets, `mxmoe_stage1` in between (`token=4..128`) — not a single cutover in one direction."
+      - "Treat a retune as scoped to one family's own knob space (its own tile catalog, its own flags) until the bucket boundary itself is swept; moving a knob inside one family does not touch the other family's shipped rows for the neighboring buckets."
+    alternatives:
+      - "Standardize on a single stage-1 family across all buckets for this shape — simpler to maintain and tune, but gives up whatever each specialized family wins in its own M range."
+    why:
+      - "Two source modules implementing the same math for the same shape is a maintenance fact worth knowing before retuning: a change to `moe_gemm_2stage.py`'s tile catalog does nothing for the buckets the shipped table currently routes to `mxfp4_gemm1.py`, and vice versa."
+    source_evidence:
+      - "src_c49c81eef10d1108"
+      - "src_74352923ff7ef43b"
+      - "src_ada62c940d6fc161"
+    shipped_evidence:
+      - "cfg_58db8a1bd4f97080"
+      - "cfg_cff530f26fedf80c"
+      - "cfg_da3c10c1b64033c6"
+      - "cfg_87387b8c0155e756"
+      - "cfg_039e19576885eb1d"
+    measurement_evidence: []
+    limitations:
+      - "This is read off one model's shipped CSV (`glm5_fp4_tuned_fmoe.csv`) for one shape; the bucket boundary is a fact about what AITER currently ships, not a proven optimum, and a different shape could keep one family the whole range."
+      - "The two families are not pinned to the same upstream commit: the `mxmoe_stage1` citations are live at current main, while the `moe_stage1` builder is cited at `a6bb4993`, so confirm which module name carries that family in the tree actually being built before acting on the module names here."
+      - "The device-side dispatch for a specific deployed build can differ from what the static shipped table alone would predict (padding, batching and runtime routing all sit between the table and the launch); treat the per-bucket family as a seed to verify against the actual launch, not as the final word."
+
+  - id: "grouped-moe-mxfp4-kernel-name-is-the-config-space"
+    type: "semantic"
+    axes: ["tunable_surface", "configuration_constraints", "runtime_contract"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "Where is the configuration of an mxfp4 grouped-MoE GEMM actually written down, and what can be changed without changing it?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "the a4w4 / mxfp4 block-scaled grouped MoE path (`flydsl_mxmoe_g1_*` stage 1, `flydsl_moe2_layout_*` or `flydsl_mxmoe_g2_*` stage 2)"
+    actions:
+      - "Treat the kernel NAME as the configuration object, not as a label on one: `mxfp4_kname.py` holds a token grammar (`_MXMOE_NUMERIC_TOKENS`, `_MXMOE_G1_FLAG_TOKENS`, `_MXMOE_G2_FLAG_TOKENS`, `_FLYDSL_V2_GEMM2_RE`) and a parse/build pair, and the tuned CSV stores a config by storing its name. Every tile size, dtype, epilogue and flag reaches the compiler through that string."
+      - "Change a config by changing the name and letting the parser reject it, rather than by passing a new argument: an unknown token raises `bad mxmoe kernel name ... unknown token`, so an illegal configuration fails at parse time instead of compiling into something that merely runs."
+      - "Check WHICH stage-2 family a name belongs to before reading its tokens — two coexist with different grammars. `parse_g2_kname_any` dispatches between the native `flydsl_mxmoe_g2_a4w4_*` form and the v2 layout form `flydsl_moe2_layout_a{a}_w{b}_{out}_t{M}x{N}x{K}_{epilog}[_persist][_nt][_sbm{N}]` built by `build_flydslv2_gemm2_name`. The same concept (`persist`, `nt`) is spelled differently in each, and tokens legal in one are unknown in the other."
+      - "Do not read the host-side dispatch name and the device-side symbol as two kernels: `flydsl_mxmoe_g1_a4w4_16x256x256_f16in_nt` and `gemm1_a4w4_port_h6144_i256_ne257_bm16_iq_sep` are the same kernel under two naming schemes, the first from the config space and the second from the compiler's `@flyc.kernel(name=...)`."
+    alternatives:
+      - "A keyword-argument config object with the name derived from it — what the dense FlyDSL GEMM path does; it makes an illegal config a Python TypeError rather than a parse error, but it cannot be stored in a CSV cell, which is what the tuned-table lookup needs."
+    why:
+      - "An optimizer that treats the name as cosmetic will edit a launch argument that the dispatcher overwrites from the parsed name on the next call, and conclude the knob does nothing."
+      - "The grammar is also the completeness statement: the flag token sets are the only place that says which flags exist at all, so a knob absent from them is absent from the kernel, not merely undocumented."
+    source_evidence:
+      - "src_0a644836120e1b24"
+      - "src_1d74af857400b4b5"
+      - "src_b4aaef8ed904898d"
+      - "src_7fdfffec65089511"
+      - "src_8080a3948e3593a9"
+      - "src_4ca84ec1053e1925"
+      - "src_d918b57fec77fa2f"
+      - "src_675a596bbd78b93f"
+      - "src_684ee007ec1d2fd1"
+    measurement_evidence: []
+    limitations:
+      - "`mxfp4_kname.py` parses an `SK{n}` split-K token into both stage dicts, but no consumer of that parsed field was found in the stage-1/stage-2 compilers or in the host dispatcher — treat split-K as parsed-but-inert on this path until a consumer is shown, rather than as an available knob."
+      - "The `_bf16lds` and `_sp{N}` suffixes the v2 regex accepts are never emitted by `build_flydslv2_gemm2_name`; the equivalent knobs exist one level down, in the compiler's own `gemm2_a4w4_port_*` symbol, which is a different name space. Do not transplant a token between the two."
+
+  - id: "grouped-moe-mxfp4-stage1-variant-whitelist"
+    type: "constraint"
+    axes: ["configuration_constraints", "workgroup_tile", "tunable_surface"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "Which stage-1 tile_m / cache-policy / inline-quant combinations will actually compile for an mxfp4 grouped MoE, and which are only apparently free?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "the a4w4 / mxfp4 stage-1 grouped GEMM (`mxfp4_gemm1.py`, dispatched as `flydsl_mxmoe_g1_a4w4_*`)"
+    actions:
+      - "Pick `(BM, use_nt, inline_quant)` as ONE choice from `MXFP4_G1_VARIANTS[a_dtype]`, not as three independent knobs: fp4 admits `{(32,T,F),(32,F,F),(64,T,F),(64,F,F),(128,F,F),(16,T,T)}` and fp8 the same set minus `(64,T,F)`. Anything else raises `NotImplementedError` from `_assert_supported` even when every other check passes."
+      - "Read the practical consequence directly off that set: tile_m 16 exists ONLY together with non-temporal B loads and inline quantization — which is exactly the deployed decode config `16x256x256_f16in_nt` — and tile_m 128 exists ONLY without non-temporal B loads. There is no `(16, *, False)` and no `(128, True, *)` to try."
+      - "Treat BK as welded, not tuned: stage 1 asserts `BN in (64,128,256) and BK == 256`, so the K tile is not a knob and `K % 256 == 0` is a hard shape requirement (`D_HIDDEN % BK == 0`), as is `(2*D_INTER) % BN == 0` on the fused gate+up N."
+      - "Expect the narrow combinations to carry extra riders: `BN == 64` is legal only at `BM == 32` with fp4 in AND fp4 out and no inline quant; `num_waves == 2` requires `BN == 64`; `k_wave > 1` requires `BM == 32`, forbids inline quant, and caps `num_waves * k_wave <= 8`."
+    alternatives:
+      - "Sweeping BM, use_nt and inline_quant as a cross product — the obvious thing to try, and it spends most of its budget on combinations that cannot compile."
+    why:
+      - "The whitelist is not a style choice: each entry corresponds to a code path with its own LDS layout and operand staging, and the ones absent from it were never written, so a sweep over the cross product is a sweep over mostly-missing kernels."
+      - "The `(16, True, True)` entry is why the GLM-5.2 decode config looks over-specified — at tile_m 16 the other two tokens are not independent decisions at all."
+    source_evidence:
+      - "src_0a0738d9fdf9642d"
+      - "src_c86e3bf3667b6875"
+      - "src_50249c22f9a4c75e"
+      - "src_96686bfe03b0b2ff"
+      - "src_c58e3e46708c46bc"
+      - "src_4b58ee5ae49ae29c"
+      - "src_ae5bccba3310fa36"
+      - "src_a8b88b9d2224fb6b"
+      - "src_ed75bfa8a52c3bfa"
+      - "src_3d98038b022c3b55"
+    measurement_evidence: []
+    limitations:
+      - "The whitelist is read at current aiter main; it is a per-commit fact and an upstream change that adds a kernel widens it. Re-read `MXFP4_G1_VARIANTS` against the tree actually being built before concluding a combination is unavailable."
+      - "Nothing here measures which admitted combination is fastest for a shape; the set is the legality boundary only."
+      - "A deployment that vendors this kernel by flattening it into a single seam may carry a NARROWER set than upstream, and the narrowing is silent. Observed on the GLM-5.2 MXFP4 fused-MoE seam: its inlined copy of the variant set is the **fp8** set verbatim, so an fp4 `(64, True, False)` candidate — admitted by `MXFP4_G1_VARIANTS['fp4']` upstream — raises `NotImplementedError` inside that seam. Resolve the whitelist against the copy the build actually calls, not only against aiter main."
+      - "**Whether `BN`/`BK` are knobs at all is a per-tree fact, and the two trees disagree — resolve it against the build, exactly as the limitation above says.** On aiter main the tile token is live: `_MXMOE_TILE_RE` parses `t{BM}x{BN}x{BK}` into `p1['BN']` (`mxfp4_kname.py:81-85`, `:107`), `_mxfp4_a4w4_stage1_fw` forwards `BN=p1['BN']` (`fused_moe.py:2505`), it is a `@functools.cache` key on `_get_compiled_mxfp4_gemm1_port` (`mxfp4_gemm1_kernels.py:13-23`), and `compile_gemm1_a4w4_port` accepts `BN in (64,128,256)` (`mxfp4_gemm1.py:1541-1552`). In the GLM-5.2 vendored seam NONE of that holds: there is no tile regex and no `nums['BN']` at all, `_mxfp4_a4w4_stage1_fw` reads only `p1['BM']`, `p1['inline_quant']`, `p1['use_nt']` (`fused_moe_seam.py:4514-4552`), and the compile entry hard-asserts `BN == 256 and BK == 256` (`:1380`, `:1588`). So in that build `BN`, `BK`, `hpf`, `num_waves`, `k_wave` and `kSplitK` are genuinely INERT NAME TEXT — a renamed tier is the same compiled kernel, and a `BN=128` row is a `BN=256` kernel wearing a `BN=128` name. Measured: sweeping them at tiers 8/16 returned the null floor, leaving `xcd_swizzle` as the only live integer there (0.99916 / 0.99719, both null)."
+      - "Do not generalise that inertness back onto aiter main, and do not let the reverse mistake through either: reading main's richer parser and concluding the deployed null was 'a measured negative on a live knob' is wrong on this seam. Real `BN=128` here is a DEVICE-CODE change, so it is not reachable from the config string in either direction. Two concrete blockers in `_gemm1_body`, both on the non-interleaved arm: `tile_il = n_block_idx*16 + wave*4 + j` (`fused_moe_seam.py:843`) has the BN=256 geometry baked in as literals, where the interleaved arm one branch up (`:840`) still writes `BN` and `BN//4` symbolically; and `np_gate = n_block_idx*(BN//64) + wave` (`:855`) tiles exactly only while `BN//64 == 4` matches `wave in 0..3` — at `BN=128` it becomes `n_block*2 + wave` and the upper waves run into the next n-block's scales."
+
+  - id: "grouped-moe-mxfp4-native-scale-layout-is-a-cross-stage-contract"
+    type: "constraint"
+    axes: ["operand_layout", "configuration_constraints", "runtime_contract"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "Stage 1 writes block scales that stage 2 reads — what decides their layout, and who else has to agree?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "a two-stage mxfp4 grouped MoE where stage 1's fp4 output and its e8m0 scales are stage 2's A operand"
+    actions:
+      - "Do not tune the scale layout: it is derived, by `native_scale_layout_for(BM, out_dtype)`, which is true exactly when `BM == 16 and out_dtype == 'fp4'`. Stage 1 enforces the same predicate as a hard check, so setting the flag independently of the tile is not possible."
+      - "Expect FOUR values to move together when stage 1 picks tile_m 16: stage-1 BM, the sort block size, stage-2 tile_m, and stage-2 `SBM`. Stage 2's BM16 A-scale chunk addressing is selected by `SBM == BM`, not by `BM` alone, and the host refuses a mismatch at runtime (`FlyDSL v2 stage2 sorting layout mismatch: moe_sorting uses block_m=..., but the kernel expects sort_block_m=...`)."
+      - "Read the two layouts as different shapes, not different strides: native emits one padded chunk per BM16 block with each scale byte duplicated into both halves of a 16-bit store (so stage 2's two N16 MFMA selectors each find one), while the regular layout packs two BM16 blocks into one 32-row chunk with byte-granular stores. Changing one side alone produces a silently wrong result, not a crash."
+      - "When down-tiling stage 2 for a small-M bucket, stop at the sort block: tile_m 16 is only a candidate when the sort block is also 16, which is why AITER's own stage-2 candidate generator excludes it otherwise."
+    alternatives:
+      - "One scale layout for all tile sizes — fewer coupled values and no cross-stage contract, but it costs stage 2 an atomic merge at BM16 that the duplicated-byte narrow store replaces."
+    why:
+      - "The layout is a serialization format between two kernels; a format needs one owner, and AITER makes the owner a pure function of the tile so that no caller can disagree with another."
+      - "The failure mode if they do disagree is numerical, not structural: stage 2 reads a real scale from the wrong row, so parity degrades without any out-of-bounds signal."
+    source_evidence:
+      - "src_200b3893f45ec954"
+      - "src_200b3893f45ec954"
+      - "src_271f42b2696a0d4c"
+      - "src_271f42b2696a0d4c"
+      - "src_9c1b248e8f431365"
+    measurement_evidence: []
+    limitations:
+      - "The stage-1 side is cited at its enforcement site (`_assert_supported`); `native_scale_layout_for` itself is a short helper that the extractor's rules do not reach, so its body is quoted from a read rather than from an evidence record."
+      - "No runtime assertion was found that stage 1's parsed `out_dtype` equals stage 2's parsed `a_dtype` on the dedicated mxfp4 path — that agreement is trusted to whichever tuner paired the two names in the CSV row. Treat a hand-edited CSV pair as unchecked."
+
+  - id: "grouped-moe-mxfp4-stage2-epilogue-picks-the-output-format"
+    type: "constraint"
+    axes: ["epilogue", "configuration_constraints", "execution_geometry"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "On mxfp4 stage 2, which epilogue / output-dtype / persistence combinations exist, and which are mutually exclusive?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "the a4w4 / mxfp4 stage-2 grouped GEMM"
+    actions:
+      - "Treat epilogue and output dtype as one decision: `out_dtype='fp8'` requires `epilog='reduce'`, `out_dtype='fp4'` requires `epilog='scatter'` (and `scatter` in turn requires `BM == 128`), and only `bf16` is free to use the atomic path. There is no epilogue-independent output format."
+      - "Do not combine the atomic combine with an fp4 output or a cshuffle epilogue — the name parser rejects it outright (`illegal mxmoe g2 name ... atomic incompatible with f4out|cshuffle`), because the atomic add is what performs the topk combine and a packed-fp4 or LDS-shuffled store has nothing to add into."
+      - "Read `persist` as a property of the epilogue rather than a free flag on the native path: persistence is `epilog in ('nonatomic','nonatomic_mxfp4')`, and even then the grid is only clamped to the CU count when total tiles exceed `NUM_CU * 4` — below that it degenerates to one block per tile. The XCD swizzle is wired only into the persistent branch, so an `atomic` kernel carrying an xcd token in its name is not swizzling."
+      - "Avoid the one combination that is broken rather than merely illegal: `persist=True` with an fp8 A operand and no `persist_flat` is rejected as a known-bad path (cosine 0 at large M), and `persist=True` requires a non-zero `cu_num` to clamp against."
+      - "Keep the BN/BK choice inside the shipped set: stage 2 accepts `BN in {128,256,512}` and `BK in {128,256}` on the v2 dispatcher, but `out_dtype='fp4'` narrows BN to 128 or 256 because fp32 C staging at BN=512 would need 256 KB of LDS; the native stage-2 compiler welds both to 256 outright."
+    alternatives:
+      - "A single bf16 atomic epilogue everywhere — one code path, no exclusions to track, but it forfeits the fp8/fp4 routed-output formats that exist to avoid a separate requantization pass."
+    why:
+      - "Each epilogue owns the output buffer differently (atomic accumulates into it, reduce leaves partials for a second kernel, scatter writes a packed quantized payload plus its scale bytes), so the output dtype is a consequence of who writes it."
+      - "Stating the exclusions as a list beats discovering them one compile at a time: all of them are compile- or parse-time raises, so each wrong guess costs a build."
+    source_evidence:
+      - "src_0644ef057d70e344"
+      - "src_b68a23ddea180f6f"
+      - "src_787c6bd2b6e02ef9"
+      - "src_7ef4a25f18f24f3b"
+      - "src_a05565e3105dc883"
+      - "src_3da4fe5eeb03e3f1"
+      - "src_9f05040744f6e010"
+      - "src_6201541591cb4036"
+      - "src_f5a63189caf8f4ef"
+      - "src_99b9dabdc3cd562f"
+    measurement_evidence: []
+    limitations:
+      - "Two stage-2 implementations are merged here: the native `mxfp4_gemm2.py` (BN and BK welded to 256, persistence from `epilog`) and the v2 `mxmoe_dispatcher.py`/`mxmoe_gemm_v2.py` path (wider BN/BK, explicit `persist`). Check which one a name routes to before applying a bound from the other."
+      - "Nothing here measures where atomic stops beating reduce; the existing `grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag` card carries the shipped per-bucket seed for that."
+
+  - id: "grouped-moe-mxfp4-inline-quant-replaces-the-a-pipeline"
+    type: "performance_candidate"
+    axes: ["memory_access", "implementation_variant", "pipeline_schedule"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "Stage 1's `f16in` / `iq` token — what does inline quantization actually remove, and when is it available?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "stage-1 mxfp4 grouped GEMM whose activation arrives as bf16 rather than pre-quantized"
+    actions:
+      - "Read `f16in` (parsed to `inline_quant`, tagged `iq` in the device symbol) as a change of pipeline, not an extra step: the kernel takes the bf16 hidden state as an extra argument and quantizes it per 32-element group into the swizzled A-LDS slot directly, so the global->LDS DMA for A and the whole A-scale load are SKIPPED, not supplemented."
+      - "Expect the saving to be a removed memory pipeline and the cost to be in-loop ALU: a packed-u16 amax over four dwords plus two DPP reduction steps per group, then `cvt_scalef32_pk_fp4_bf16` straight into the position the MFMA fragment reader expects."
+      - "Do not plan on combining it: inline quant is available only at `BM == 16` (and so only with `use_nt=True`), is rejected with `k_wave > 1` and with `BN == 64`, and is a PREREQUISITE for `prefetch_hidden` (`hpf`), which hoists the next tile's bf16 loads one iteration ahead."
+      - "When the caller already holds a quantized activation, prefer the non-inline variants (`nt` / `cached` in the tag position): the three are mutually exclusive in the name, so this is a choice about where quantization happens, not whether."
+    alternatives:
+      - "Quantize the activation in a separate kernel before stage 1 — one extra pass over the hidden state and an extra buffer, but it keeps stage 1 on the plain A-load path and leaves tile_m free."
+      - "`hpf` (prefetch_hidden) on top of inline quant — deeper hiding of the bf16 loads, at the cost of holding another tile's worth of registers."
+    why:
+      - "At decode M the stage-1 GEMM is memory-bound on a skinny A, and the inline path deletes two separate global streams (quantized A and its scales) in exchange for arithmetic that the MFMA pipeline is not using."
+      - "The tile restriction is not incidental: the whole point is a BM16 kernel whose A tile is small enough to quantize inside the K loop without spilling, which is why the whitelist has exactly one inline-quant entry."
+    source_evidence:
+      - "src_0a0738d9fdf9642d"
+      - "src_9bff422d7e1ffc9d"
+      - "src_ae5bccba3310fa36"
+      - "src_a8b88b9d2224fb6b"
+      - "src_c86e3bf3667b6875"
+      - "src_74352923ff7ef43b"
+    shipped_evidence:
+      - "cfg_58db8a1bd4f97080"
+    measurement_evidence: []
+    limitations:
+      - "No measurement in this corpus compares inline quant against a pre-quantized stage 1 at the same shape; the deployed GLM-5.2 decode rows select it, which is a seed and not a benchmark."
+      - "Because inline quant forces `BM == 16`, any A/B against a non-inline config also changes the tile — the two effects are not separable by swapping the token alone."
+
+  - id: "grouped-moe-mxfp4-lds-budget-is-a-heuristic-not-a-gate"
+    type: "constraint"
+    axes: ["operand_layout", "pipeline_schedule", "configuration_constraints"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "What stops an mxfp4 grouped-MoE tile from asking for more LDS than the hardware has?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "an mxfp4 grouped-MoE stage whose A tile and f32 accumulator both live in LDS"
+    actions:
+      - "Do not expect a guard rail: nothing in either stage compares the computed `lds_bytes` against the hardware LDS size. The only budget constant, `LDS_2WG_LIMIT` (65 KiB, two workgroups per CU), feeds `default_k_stages`, which tries the deep pipeline, then the shallow one, and if NEITHER fits returns the deep one anyway. An over-budget tile is a link-time or occupancy surprise, not a compile error."
+      - "Size the tile by hand from the stage's own formula before trusting it. Stage 1 UNIONS the A region with the accumulator: `max(k_wave*kAStages*BM*KH_TILE + kSubBlocks*(K/BK)*256, k_wave*(BM/epi_splits)*(BN+4)*4)`, where `KH_TILE` is `BK` for fp8 A and `BK/2` for fp4. Stage 2 does NOT union — its layout is sequential, A slots then accumulator — so the same tile numbers cost more LDS in stage 2 than in stage 1."
+      - "Keep the four dwords of accumulator row padding when editing the epilogue: `ACC_LDS_STRIDE = BN + 4` rotates each four-row store group by 16 banks on gfx950 and exists to avoid a 4-way bank conflict from a BN-aligned stride. Stage 2's accumulator has no such padding, so a store pattern copied from one into the other inherits the conflict."
+      - "Watch for the side effect of the pipeline depth landing on 1: that case also flips a compiler hint (`amdgpu-sched-strategy: iterative-minreg`), so a shallow-K config is not only shallower, it is scheduled differently."
+    alternatives:
+      - "An explicit assert against the arch LDS size — it would turn a silent occupancy loss into a build failure, which is what the dense FlyDSL tiling-validity card expects, but AITER does not do it here."
+    why:
+      - "Treating the union as two separate allocations overstates stage 1's LDS by the smaller of the two regions, which is enough to reject a tile that actually fits."
+      - "An optimizer that assumes an illegal tile will fail to build will read the resulting occupancy drop as 'this tile is slow' instead of 'this tile did not fit'."
+    source_evidence:
+      - "src_2f735e2089e8927d"
+      - "src_dfcd02dec23c4cef"
+      - "src_74352923ff7ef43b"
+      - "src_ad8ce49f3cc468b4"
+      - "src_393f8ee6cc563eba"
+      - "src_f3e5a9635914fa7d"
+      - "src_06aa7c5b011611ea"
+    measurement_evidence: []
+    limitations:
+      - "`LDS_2WG_LIMIT` and the union/sequential layout comments are quoted from a read of `mxfp4_gemm1.py` and `mxfp4_gemm2.py`; the extractor's `config_limit` rule reaches the neighbouring `MIN_N_BLOCKS_FOR_SHALLOW_K` but not the limit constant itself, so the cited evidence anchors the surrounding derivation rather than the constant."
+      - "Whether exceeding the two-workgroup budget actually costs throughput at a given shape is unmeasured here; the card only states that nothing prevents it."
+
+  - id: "grouped-moe-mxfp4-stage1-fuses-activation-through-lds"
+    type: "semantic"
+    axes: ["epilogue", "operand_layout", "pipeline_schedule"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "Where does the gate/up activation happen in a fused stage-1 MoE GEMM, and why can it not stay in registers?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "stage-1 grouped GEMM that fuses a gated activation (silu / swiglu / situv2) over a gate+up fused N"
+    actions:
+      - "Plan for a full LDS round trip after the K loop, not an in-register epilogue: MFMA leaves the gate column and its paired up column in DIFFERENT waves' accumulators, so stage 1 barriers, writes every accumulator to an f32 LDS buffer, barriers again, and reads the pair back before multiplying. Any `k_wave` cross-wave reduction happens on that read."
+      - "Add bias, if any, at that same point — after the pair is reassembled and BEFORE the activation. There is one site, and a bias applied anywhere else is a different function."
+      - "Pick the activation by its clamping semantics, not just its name: `silu` clamps gate and up before the multiply (the host passes `+inf` for ordinary unclamped SiLU, so `swiglu_limit` is live even here), `swiglu` clamps gate from above only and up on both sides then uses a 1.702-alpha sigmoid with `(up + 1.0)`, and `situv2` is unclamped with host-supplied reciprocals. Each has its own positivity check at compile time."
+      - "Treat the gate/up weight layout (`interleave`, tagged `il` vs `sep`) as a free compile-time flag with no validation: separated is the default and de-interleaves on the fly by assigning alternate 16-column MFMA tiles to gate and up. Either layout produces the same accumulator assignment, so it is a load-addressing choice, and the same config name can compile both."
+    alternatives:
+      - "Keeping the activation in registers by tiling N so one wave owns both halves of a pair — no LDS round trip, but it constrains the N tiling to the gate/up split rather than to the MFMA shape."
+      - "A separate activation kernel after stage 1 — simplest to reason about, at the cost of writing and re-reading the whole intermediate."
+    why:
+      - "The round trip is forced by the operand layout, not chosen for convenience: a gated activation needs two columns that the MFMA fragment layout places in different waves."
+      - "Because the LDS accumulator is the meeting point, it is also the only place bias and the cross-wave k_wave sum can be applied, which is why all three collapse into one epilogue."
+    source_evidence:
+      - "src_759b694e2df7c154"
+      - "src_851a8600c1f27eb0"
+      - "src_e55d60318b3ae2e7"
+      - "src_85a0084052e0aba5"
+      - "src_21afbb8224a4d7a8"
+      - "src_94c01495845eaba9"
+      - "src_a95f47b4e798c75a"
+      - "src_dfcd02dec23c4cef"
+    measurement_evidence: []
+    limitations:
+      - "Read from the mxfp4 stage-1 kernel only; the generic 2-stage stage-1 builder was not re-read for this card and may stage its activation differently."
+      - "Nothing here measures the cost of the round trip against a register-resident alternative — no such alternative exists in this tree to compare against."
+
+  - id: "grouped-moe-mxfp4-stage2-combine-weights-before-the-atomic"
+    type: "semantic"
+    axes: ["epilogue", "runtime_contract", "memory_access"]
+    match:
+      operator_families: ["grouped_gemm_moe", "fused_moe_grouped_gemm"]
+      target_languages: ["flydsl"]
+      gfx: ["gfx950"]
+      dtypes: ["mxfp4", "fp4_e2m1"]
+    question: "In the atomic stage-2 combine, where does the routing weight get applied and what shape does the atomic actually have?"
+    evidence_level: "source_observed"
+    status: "candidate_only"
+    conditions:
+      - "target_language=flydsl"
+      - "gfx950"
+      - "mxfp4 stage-2 grouped GEMM using the atomic bf16 combine"
+    actions:
+      - "Apply the topk weight in f32, then convert, then atomically add: the epilogue multiplies each accumulator pair by the per-row weight as f32, converts the pair to bf16, and issues ONE packed-bf16x2 atomic fadd (monotonic, agent scope, 4-byte aligned). Converting before weighting changes the rounding, and weighting after the atomic is not expressible."
+      - "Expect a transpose through LDS on the way there, and budget for it: the MFMA leaves four strided rows per lane, while a packed 2-wide atomic needs contiguous column pairs, so the accumulators go through LDS purely to be re-laned. Each lane then issues four atomics 64 columns apart to cover BN=256."
+      - "Hoist the sorted-position lookups: the token ids and routing weights are loaded at the very top of the epilogue as `invariant` loads, before the accumulator stores, so the long-latency gather overlaps the LDS traffic rather than stalling the atomic."
+      - "Mask the token id before using it: the sorted id word carries a payload in its top 8 bits and only the low 24 are the token index, which is then bounds-checked against M. A raw compare against the packed word reads padding rows as real tokens."
+    alternatives:
+      - "The `reduce` epilogue, which stores unsummed partials and runs a second kernel to sum over topk — no atomic contention, but an extra launch; see `grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag` for which bucket AITER ships which."
+      - "Deferring the weight to the reduction kernel (`g2_defer_weight` on the v2 path) — available only on the reduce path, since the atomic has nowhere to defer to."
+    why:
+      - "The combine is the only place the per-token routing weights can be applied without materializing topk separate outputs, so its ordering is the numerics of the whole MoE."
+      - "The packed-bf16x2 form is what makes the atomic affordable: one atomic per two output columns instead of per column, which is why the LDS re-lane is worth a barrier."
+    source_evidence:
+      - "src_99b9dabdc3cd562f"
+      - "src_39531c6fe9b3aac8"
+      - "src_73b546c7214cd995"
+      - "src_c90a1f56cfbe7215"
+      - "src_cb67223b021205a3"
+    measurement_evidence: []
+    limitations:
+      - "Read from the native `mxfp4_gemm2.py` atomic epilogue; the v2 `mxmoe_gemm_v2.py` epilogue has additional output formats (fp8-routed reduce, deferred weighting, alternate store cache policies) whose weight ordering was not separately confirmed."
+      - "The meaning of the top 8 bits of the packed sorted-id word is not decoded in the stage-2 source; only the masking is."
