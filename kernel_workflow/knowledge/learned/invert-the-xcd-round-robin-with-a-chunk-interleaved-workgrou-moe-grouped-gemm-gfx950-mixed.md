@@ -5,10 +5,10 @@ confidence: ★★
 effect: largest single item of the campaign: first-stage HBM read traffic -47% at 2048 tokens and -67% at 65536, carrying the cumulative from 1.29x to 1.35x; a later per-grid-size chunk adds +0.9% more, with the mid case monotone in chunk size (-0% / -1.9% / -2.4% for 24 / 384 / 816)
 confirms_cited: 1
 confirms_blind: 0
-losses: 0
-attempts: 2
+losses: 2
+attempts: 4
 toolchain: unknown
-last_seen: 2026-08-12
+last_seen: 2026-09-26
 name: invert-the-xcd-round-robin-with-a-chunk-interleaved-workgrou-moe-grouped-gemm-gfx950-mixed
 description: Chunk-interleaving the linear workgroup id inverts the hardware XCD round-robin and restores weight reuse inside each XCD's L2 slice.
 keywords: ['xcd-swizzle', 'l2-reuse', 'workgroup-mapping', 'bucket-routing', 'moe', 'grouped-gemm', 'fp8-blockscale']

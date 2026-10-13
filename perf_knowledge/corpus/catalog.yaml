@@ -1,0 +1,39 @@
+schema_version: 1
+
+# One discovery surface for every operator/pattern corpus.  Source evidence,
+# curated decisions, generated human pages and optional benchmark adapters stay
+# separate artifacts; the catalog only says which files belong to one family.
+#
+# `patterns` lists every taxonomy operator id (index/taxonomy.md) this family's
+# cards speak to, so a TechLead that resolved `kk_operator` from the taxonomy
+# reaches the decision page instead of an unknown-family error. `grouped_gemm_moe`
+# is the taxonomy's grouped GEMM (one GEMM per expert over a sorted token layout).
+# `fused_moe_grouped_gemm` is the MoE-family name for the same two GEMMs with the
+# sort, activation and combine fused around them. It is listed here as well, and
+# deliberately: there is no separate MoE corpus, and the authoring knowledge a
+# fused-MoE kernel needs -- tiling, the config space, the stage1/stage2 contract --
+# IS the grouped-GEMM knowledge. Leaving it out made `resolve_family` raise for
+# every real fused-MoE workload, which is the only form this operator ships in.
+families:
+  - id: gemm
+    patterns:
+      - gemm
+      - dense_gemm
+      - scaled_quant_gemm
+      - grouped_gemm_moe
+      - fused_moe_grouped_gemm
+      - batched_gemm
+      - splitk_streamk_gemm
+      - skinny_gemv_decode
+      - gemm_epilogue_fused
+    source_evidence: evidence/gemm_source.yaml
+    tuned_evidence: evidence/gemm_tuned_configs.yaml
+    tuned_db_evidence: evidence/gemm_csv_tuned_configs.yaml
+    performance_axes: performance_axes/gemm.yaml
+    performance_normalizer: _normalize_performance_decisions.py
+    decisions: decisions/gemm.yaml
+    source_document: gemm_source_evidence.md
+    decision_document: gemm_decisions.md
+    seed_documents:
+      - gemm_triton_seeds.md
+    benchmark_manifest: benchmarks/gemm.yaml

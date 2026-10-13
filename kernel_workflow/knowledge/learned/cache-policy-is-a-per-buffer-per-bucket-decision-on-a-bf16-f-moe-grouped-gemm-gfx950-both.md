@@ -4,11 +4,11 @@ type: lever
 confidence: ★★
 effect: weighted 1.22x -> 1.29x from a vL1D-bypass hint on the first grouped GEMM's weight load (58% of that gain landed in the untouched second GEMM), +5.2% more on the mid prefill case when the gate widened to BLOCK_M=128; write-through on write-once outputs cut those dispatches 4-15% isolated per case and -1.26% +/-0.10 in situ on the mid prefill case, all bit-identical
 confirms_cited: 1
-confirms_blind: 0
+confirms_blind: 2
 losses: 0
-attempts: 1
+attempts: 3
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-26
 name: cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both
 description: bf16 Triton fused MoE: bypass hint on the first GEMM's streamed weight load plus write-through on write-once outputs; sign flips per GEMM and per M bucket
 keywords: ['cache-modifier', 'non-temporal-store', 'moe-grouped-gemm', 'bf16', 'triton', 'gfx950', 'l2-residency', 'm-bucket', 'gated-lever', 'bit-exact']

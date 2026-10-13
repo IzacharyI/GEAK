@@ -4,11 +4,11 @@ type: anti-pattern
 confidence: ★★
 effect: ~0.14x (about a 7x regression) on the large-ctx decode case for the fenced variant; the fence-free atomic+inline-reduce variant was still net-negative vs the dispatch it removes, so ~1.00x is the ceiling of the whole axis
 confirms_cited: 1
-confirms_blind: 0
+confirms_blind: 2
 losses: 0
-attempts: 3
+attempts: 6
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-10-12
 name: split-kv-decode-the-two-dispatch-shape-is-welded-budget-the--attention-decode-gfx950-decode
 description: Fusing the split-KV reduce into the attention epilogue is a closed axis on gfx950: the cross-block fence L2-serializes the grid for a ~7x regression.
 keywords: ['attention-decode', 'paged-kv', 'split-kv', 'kernel-fusion', 'threadfence', 'dispatch-overhead', 'anti-pattern', 'gfx950']

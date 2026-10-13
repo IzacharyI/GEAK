@@ -50,9 +50,11 @@ MoE is the headline MI300X MoE optimization. A 1.2× here moves e2e materially o
 |---|---|---|
 | aiter | 🟢 sota (live `fused_moe`, DB-driven) | [backends/aiter.md](backends/aiter.md) |
 | ck | 🟢 sota (stage-2 `moe_ck2stages_*`, block-scale) | [backends/ck.md](backends/ck.md) |
-| hip | 🟢 (stage-1 hand-tuned asm `fmoe_stage1_*`; editable) | [backends/hip.md](backends/hip.md) |
+| hip | 🟢 (stage-1 `fmoe_stage1_*`; the C++/HIP launcher is editable, the asm itself is **not** — see asm row) | [backends/hip.md](backends/hip.md) |
 | triton | 🟡 competitive (vLLM/sglang Triton fused-MoE; per-shape JSON tuned) | [backends/triton.md](backends/triton.md) |
 | flydsl | 🟢 sota (fp4 a4w4 2-stage + fused act/requant, CDNA4) | [backends/flydsl.md](backends/flydsl.md) |
+| asm | 🟢 sota (stage-1 `fmoe_stage1_*`; a **closed** axis — only `.co` blobs ship, zero `.s`) | [backends/asm.md](backends/asm.md) |
+| gluon | 🟢 sota on gfx1250 (a4w4/a8w4/a16w4) — card shared | [../grouped_gemm_moe/backends/gluon.md](../grouped_gemm_moe/backends/gluon.md) |
 
 ## Fusion neighbors
 - **act_and_mul (SwiGLU) fused into stage-1** (`g1u1`); **routed-weight multiply** into stage-1/stage-2

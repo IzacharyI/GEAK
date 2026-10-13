@@ -50,6 +50,8 @@ sources:
 | aiter | 🟢 sota | [backends/aiter.md](backends/aiter.md) |
 | tilelang | 🧪 experimental | [backends/tilelang.md](backends/tilelang.md) |
 | flydsl | 🟢 sota (2-stage gate+up / down GEMM, fp8/bf16, JIT) | [backends/flydsl.md](backends/flydsl.md) |
+| asm | 🟡 competitive (**stage-1 only**, fp8/int8 `.co` blobs; no fp4) | [backends/asm.md](backends/asm.md) |
+| gluon | 🟢 sota (**the default on gfx1250**: a4w4/a8w4/a16w4) | [backends/gluon.md](backends/gluon.md) |
 
 ## Fusion neighbors
 - Upstream: [../moe_routing_topk/overview.md](../moe_routing_topk/overview.md) (topk + sort/align),

@@ -5,10 +5,10 @@ confidence: ★★
 effect: size-gated non-temporal KV loads gave +2.5% on the cache-resident small-batch cases with the large-context cases provably untouched (0.9997), and dropping the hint everywhere costs the large-context half 0.9644; the same class of hint on the split-KV scratch round trip measured an increment of 0.00 +/- 0.01, while deleting that stream outright was worth +18.6%
 confirms_cited: 2
 confirms_blind: 0
-losses: 0
-attempts: 5
+losses: 1
+attempts: 6
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-26
 name: ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode
 description: Non-temporal / cache-policy hints move a decode kernel only on read-once traffic no restructure can delete, and only when the working set exceeds cache.
 keywords: ['decode', 'paged-attention', 'non-temporal-loads', 'cache-modifier', 'kv-cache', 'memory-bound', 'size-gating']

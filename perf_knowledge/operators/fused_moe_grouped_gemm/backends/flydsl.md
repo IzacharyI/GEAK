@@ -77,6 +77,28 @@ From `flydsl_moe_stage1` / `flydsl_moe_stage2` and `get_flydsl_stage{1,2}_kernel
 | `mode` (s2) | atomic / reduce | accumulation strategy | atomic |
 | `xcd_swizzle` | 0 / 4 | XCD remap | 0 |
 
+**Authoring vs. selecting.** The table above is the *dispatch* surface of the `mixed_moe_gemm_2stage`
+generation. The newer on-box mxfp4 path (`aiter/ops/flydsl/kernels/mxfp4_gemm{1,2}.py`,
+`mxfp4_kname.py`) states its whole config space **as the kernel name** — a candidate is a name string that
+`parse_*_name` must accept, not a free tuple of ints. The corpus
+([`../../../corpus/gemm_decisions.md`](../../../corpus/gemm_decisions.md)) carries that space with
+file:line citations; the cards you need before generating candidates are:
+
+| card | what it decides |
+|---|---|
+| `grouped-moe-mxfp4-kernel-name-is-the-config-space` | the name grammar is the config object; build/parse it, don't hand-write tuples |
+| `grouped-moe-mxfp4-stage1-variant-whitelist` | legal `(BM, use_nt, inline_quant)` for stage 1 — fp4 and fp8 whitelists differ by one entry |
+| `grouped-moe-sort-block-m-couples-both-stages` | `block_m` of moe_sorting ties stage 1 and stage 2; `_sbm{N}` is a declaration, not a deviation |
+| `grouped-moe-mxfp4-native-scale-layout-is-a-cross-stage-contract` | `native_scale_layout_for(BM, out_dtype)` is a contract between stages, not a knob |
+| `grouped-moe-mxfp4-stage2-epilogue-picks-the-output-format` | atomic / cshuffle / f4out are mutually exclusive and fix the output geometry |
+| `grouped-moe-mxfp4-inline-quant-replaces-the-a-pipeline` | `inline_quant` is an A-pipeline swap, only legal at BM16 |
+| `grouped-moe-mxfp4-stage1-fuses-activation-through-lds` | where silu_and_mul lands and what it costs in LDS |
+| `grouped-moe-mxfp4-lds-budget-is-a-heuristic-not-a-gate` | nothing rejects an over-budget tile — it fails at compile, so check it yourself |
+| `grouped-moe-two-stage1-families-compete-at-the-same-shape` | native `flydsl_mxmoe_g2_*` and v2 `flydsl_moe2_layout_*` both answer the same shape |
+| `grouped-moe-mxfp4-stage2-combine-weights-before-the-atomic` | where the routing weight is applied relative to the reduction |
+| `grouped-moe-shared-expert-fusion-is-a-cross-stage-identity-contract` | the shared expert fused in as expert `NE-1` |
+| `grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag` | atomic vs reduce is a different compiled kernel |
+
 ## Numerics / parity
 fp4 (E2M1) MXFP4 with **per-1×32 e8m0 block scales**. The fused `silu_and_mul_fq` kernel computes SiLU via
 `llvm.amdgcn.exp2.f32`/`rcp.f32`, takes the per-32-lane abs-max (warp shuffle-xor reduction), derives the
@@ -100,6 +122,10 @@ mixed builders are `lru_cache`d on the full shape/dtype tuple. Symbols only impo
 - `inter_dim` must be divisible by 32 (MXFP4 block) for the fused activation kernel (asserted).
 - fp4 is lossy; never gate correctness on bit-exact parity — use the ≥95%-close / task-accuracy bar.
 - `mock_gate_only` requires `k_batch>1`; misusing it raises `ValueError`.
+- **Don't hand-pick a tile for the mxfp4 path.** Its legality lives in a name grammar plus a variant
+  whitelist, and an LDS over-budget tile is *not* rejected — it fails at compile time with an allocator
+  error that reads like a bug. Generate candidates from the declared space
+  ([`../../../corpus/gemm_decisions.md`](../../../corpus/gemm_decisions.md)) and let the benchmark pick.
 - Optional dependency + per-shape JIT cost as in the standard path.
 
 ## How to verify

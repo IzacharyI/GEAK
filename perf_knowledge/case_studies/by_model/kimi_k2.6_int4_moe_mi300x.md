@@ -93,6 +93,17 @@ identical 口径**, so the +16% relative win holds even when the absolute baseli
    actually execute.
 4. **Report the A/B ratio, not absolute tok/s** — it survives box/口径 drift.
 
+## Sources
+First-party measurement, not a citation of published work — the numbers above were produced by the
+run below, so they are reproducible only to the extent that run is.
+- **Run artifacts** (`test_results/kimi_2.6_20260610/`: `RESULTS.md`,
+  `director_e2e_validation.json`, `kernels/moe_int4_tune/tune_report.md`) — the measurements. These
+  live with the run, **not in this repo**, so a reader here cannot open them; treat the ratios as
+  reported-by-us and re-measure before depending on them.
+- **Generic recipe, in-repo and checkable:**
+  [`../../../e2e_workflow/knowledge/gemm_tuning/moe_int4_tuning.md`](../../../e2e_workflow/knowledge/gemm_tuning/moe_int4_tuning.md)
+  — what to re-run to reproduce the win on another model.
+
 ## Cross-links
 - Operator tuning: [`../../operators/fused_moe_grouped_gemm/tuning.md`](../../operators/fused_moe_grouped_gemm/tuning.md)
 - Head-kernel routing: [`../../../e2e_workflow/roles/op_benchmarker.md`](../../../e2e_workflow/roles/op_benchmarker.md)

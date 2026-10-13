@@ -1,14 +1,14 @@
 ---
 key: split-KV paged decode attention on gfx950 that ships as two dispatches (partial attention + reduce), HIP/C++ template source
 type: lever
-confidence: ★★
+confidence: ★
 effect: +9.5% over the host-optimized incumbent for the fusion itself (all three cases single-dispatch, profiler-confirmed one dispatch per call with zero reduce rows), then +3.0% more from epilogue protocol tuning, largest on the 2-sequence case; part of an accepted 3.98x geomean
 confirms_cited: 1
-confirms_blind: 0
-losses: 0
-attempts: 4
+confirms_blind: 2
+losses: 4
+attempts: 18
 toolchain: unknown
-last_seen: 2026-08-17
+last_seen: 2026-09-24
 name: one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode
 description: Fuse the split-KV reduce into the attention kernel behind a padded arrival counter with arch-cheap release bits: +9.5%, then +3.0% of epilogue protocol tuning.
 keywords: ['decode', 'paged-attention', 'split-kv', 'dispatch-collapse', 'cross-workgroup', 'arrival-counter', 'coherence']
@@ -29,3 +29,5 @@ origin_kernels: ['paged_attention_decode']
 - pitfall: two handshake barriers where only wave 0 issues the producer stores -> a wave-0-only release drain removes one of them as pure latency.
 - caution: - caution: also verify how much of the combine ceiling is harvestable before budgeting rounds at it — a probe that deleted the whole protocol showed ~20% on the small-batch case, but decomposition priced the reachable part at ~3% because the incumbent already sat on the publish/signal/consume round-trip floor.
 - source: - source: kernel_workflow 16h campaign, run kernel_20_geak_0808_16h, 2026-08-12; director-validated geomean 3.98x, correctness pass
+
+- caution: cited 9 time(s) with 3 non-improving outcome(s) as of 2026-09-26 — also verify it engages on your shapes before spending a round on it.

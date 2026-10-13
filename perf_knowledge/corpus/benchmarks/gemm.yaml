@@ -1,0 +1,126 @@
+schema_version: 1
+family: gemm
+
+# Registry of upstream executable evidence.  These paths are inputs to a future
+# normalized runner, not mutually-comparable timing records: each upstream
+# script currently owns a different candidate set and accounting convention.
+suites:
+  - id: fp8_a8w8_blockscale
+    pattern: scaled_quant_gemm
+    math_contract: "Y = (X * x_scale) @ (W * w_scale).T; fp32 accumulation; bf16 output; 128x128 scaling"
+    dtype: architecture_selected_fp8_e4m3_blockscale
+    correctness_source: op_tests/test_gemm_a8w8_blockscale.py
+    executable_sources:
+      - path: op_tests/test_gemm_a8w8_blockscale.py
+        languages: [ck, asm]
+        role: correctness_and_benchmark
+      - path: op_tests/op_benchmarks/triton/bench_gemm_a8w8_blockscale.py
+        languages: [triton, gluon]
+        role: benchmark
+      - path: csrc/ck_gemm_a8w8_blockscale/gemm_a8w8_blockscale_tune.py
+        languages: [ck, asm]
+        role: candidate_tuner
+    normalized_runner: benchmarks/run_fp8_a8w8_blockscale.py
+    normalized_candidates:
+      - triton
+      - triton_preshuffle
+      - gluon
+      - ck
+      - ck_preshuffle
+      - cktile
+      - cktile_preshuffle
+      - asm
+    known_gaps:
+      - "AITER flydsl_preshuffle_gemm_a8 is per-token scaled, not 128x128 block-scaled; custom/generated FlyDSL implementations are measured by kernel_workflow instead of being compared under the wrong contract."
+    required_accounting:
+      - "Generate one shared input set and oracle result for every implementation."
+      - "Separate first-call/JIT/setup cost from steady-state kernel latency."
+      - "State whether preshuffle and output allocation are inside the measured region."
+      - "Use identical warmup, repeats, correctness tolerance and target GPU."
+      - "Persist implementation/config identity, source hash and environment fingerprint."
+
+  - id: bf16_splitk_hgemm
+    pattern: gemm
+    dtype: bf16
+    correctness_source: aiter/ops/flydsl/test_flydsl_splitk_hgemm.py
+    executable_sources:
+      - path: aiter/ops/flydsl/test_flydsl_splitk_hgemm.py
+        languages: [flydsl]
+        role: correctness
+      - path: op_tests/test_gemm_a16w16.py
+        languages: [ck, asm, flydsl]
+        role: correctness_and_benchmark
+    normalized_runner: not_implemented
+    required_accounting:
+      - "Use the same B layout and transpose contract for every implementation."
+      - "Charge or amortize preshuffle consistently with the declared workload regime."
+      - "Persist split-K, tile and wave configuration as one implementation bundle."
+
+  # The grouped arm, covering both of catalog.yaml's names for it: `grouped_gemm_moe` is
+  # the taxonomy id, `fused_moe_grouped_gemm` the MoE-family name for the same two GEMMs.
+  # `pattern` is a scalar and nothing resolves a suite by it -- only catalog.yaml's family
+  # patterns are consumed (`_select_candidates.py`) -- so the alias is recorded here rather
+  # than by inventing a list field.
+  # It is listed separately and not folded into `gemm` above because the two
+  # differ in the thing this registry exists to state: the parity gate. The dense suites
+  # are checked elementwise; the grouped family is checked on a magnitude-weighted
+  # cosine-style scalar, and an author who assumed the dense gate carried over would
+  # either reject a correct kernel or ship a wrong one.
+  - id: moe_2stage_grouped_gemm
+    pattern: fused_moe_grouped_gemm
+    math_contract: >-
+      Two-stage MoE over a sorted, block-padded token layout. Stage 1 computes the fused
+      gate+up projection with the activation in the epilogue; stage 2 computes the down
+      projection and combines across topk weighted by the router. fp32 accumulation, bf16
+      output. Per-expert M is ragged and padded to the sort block size, so the tile is
+      fixed by the sorting stage rather than by the caller's shape.
+    dtype: parameterized_by_quant_scheme
+    quant_schemes: [bf16, fp8_per_token, int8, i4x2_a16w4, mxfp4_per_1x32]
+    correctness_source: op_tests/flydsl_tests/test_flydsl_grouped_gemm.py
+    executable_sources:
+      - path: op_tests/flydsl_tests/test_flydsl_grouped_gemm.py
+        languages: [flydsl]
+        role: correctness
+      - path: op_tests/flydsl_tests/test_flydsl_moe.py
+        languages: [flydsl]
+        role: correctness
+      - path: op_tests/test_moe_2stage.py
+        languages: [ck, flydsl]
+        role: correctness_and_benchmark
+      - path: op_tests/test_moe_sorting.py
+        languages: [ck, flydsl]
+        role: correctness
+      - path: op_tests/op_benchmarks/triton/bench_moe_gemm_a4w4_cudagraph.py
+        languages: [triton]
+        role: benchmark
+      - path: op_tests/op_benchmarks/triton/bench_moe_gemm_a8w8_blockscale.py
+        languages: [triton]
+        role: benchmark
+    normalized_runner: not_implemented
+    known_gaps:
+      - "The gate is NOT elementwise allclose. `test_flydsl_grouped_gemm.py:560-572` defines
+         logits_diff = 1 - 2<x,y>/(||x||^2 + ||y||^2), the same metric as `calc_diff` in
+         `test_moe_2stage.py:556-560`, with the strict gate LOGITS_DIFF_TOL = 0.01
+         (`test_flydsl_grouped_gemm.py:90`). A per-element tolerance is not a substitute:
+         the metric is magnitude-weighted, so it is forgiving on near-zero rows and strict
+         on the rows that carry the output."
+      - "`test_moe_sorting.py` asserts EXACTNESS (torch.equal on the row remap and the
+         prefix sums), not a tolerance. The sorted layout is an input contract to stage 1,
+         so a sorting change that is 'close enough' is a correctness failure, not a
+         precision trade."
+      - "No normalized cross-language runner exists for this suite. The Triton benchmarks
+         listed above own their own candidate sets and accounting, so their numbers are
+         not comparable to the FlyDSL or CK paths without re-running under one harness."
+    required_accounting:
+      - "State the routing distribution and pin it. Tokens-per-expert is what sets the
+         padded M, so a kernel can be made to look faster purely by routing more evenly.
+         A speedup quoted without its routing distribution is not a kernel result."
+      - "State whether moe_sorting is inside the measured region. The sort is a separate
+         launch and charging it to one implementation but not another silently changes
+         the comparison."
+      - "Report E, topk and tokens together. The same token count at a different topk is a
+         different amount of GEMM work, not the same workload run faster."
+      - "Quote logits_diff alongside latency for every measured candidate, not just a
+         pass/fail, so a regression in accuracy traded for speed is visible."
+      - "Separate first-call/JIT/codegen cost from steady-state latency: the grouped path
+         compiles per kernel-name configuration."

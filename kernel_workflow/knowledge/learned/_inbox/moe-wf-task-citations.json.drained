@@ -1,0 +1,37 @@
+{
+  "run_id": "moe_wf_task-citations",
+  "date": "2026-10-11",
+  "kernel_names": [
+    "moe_wf_task"
+  ],
+  "validation_status": "accepted",
+  "box_quiet": true,
+  "held_out": false,
+  "cards": [],
+  "citations": [
+    {
+      "card": "diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed.md",
+      "round": 1,
+      "direction": "r1_d2",
+      "specialty": "compute",
+      "cited_then_verified": null,
+      "became_winner": false
+    },
+    {
+      "card": "a-contract-fixed-short-k-loop-closes-the-inner-loop-axes-moe-grouped-gemm-gfx950-mixed.md",
+      "round": 1,
+      "direction": "r1_d2",
+      "specialty": "compute",
+      "cited_then_verified": null,
+      "became_winner": false
+    },
+    {
+      "card": "delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both.md",
+      "round": 2,
+      "direction": "r2_d1",
+      "specialty": "host_runtime",
+      "cited_then_verified": 1.13997,
+      "became_winner": false
+    }
+  ]
+}
