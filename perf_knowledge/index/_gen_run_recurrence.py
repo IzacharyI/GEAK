@@ -47,8 +47,25 @@ OUT = os.path.join(HERE, "run_recurrence.md")
 # implementation cost the last time there were two: the JS reader parsed `keywords: []` as an empty
 # list and the Python one as the truthy STRING "[]", so one side dropped every tag while the other
 # reported the header complete, and neither side could see the disagreement.
-sys.path.insert(0, os.path.join(ROOT, "kernel_workflow", "scripts"))
-import kb
+#
+# Loaded BY PATH, under a name nothing else uses. `import kb` after a `sys.path.insert` is not
+# safe here: the repo also has a `kb/` PACKAGE at its root, and `sys.path.insert` loses to an
+# already-populated `sys.modules["kb"]`. So in any process that imported the package first --
+# `kb/tests/test_store_env.py` does exactly that, and CI runs it in the same pytest session --
+# this module would silently bind the package and die later on `kb.all_cards`. Import order is
+# not something a generator should depend on.
+def _load_card_parser():
+    import importlib.util
+    path = os.path.join(ROOT, "kernel_workflow", "scripts", "kb.py")
+    spec = importlib.util.spec_from_file_location("_gen_run_recurrence_kb", path)
+    assert spec and spec.loader, f"cannot load the card parser at {path}"
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert hasattr(mod, "all_cards"), f"{path} has no all_cards(); it is not the card parser"
+    return mod
+
+
+kb = _load_card_parser()
 
 # The sinks whose gate is a kernel-level A/B. Both learned trees are read: e2e cards carry
 # throughput evidence for the same axes, and an axis measured at both levels is a stronger prior

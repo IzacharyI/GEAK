@@ -1024,7 +1024,20 @@ class TestTimeOpGraph(_CudaTestCase):
 class TestTimingResult(unittest.TestCase):
     def test_detail_exposes_both_clocks_and_which_timer_produced_them(self):
         self.assertEqual(hl._timing_result(1.5, 2.25, "cuda_event", True),
-                         {"ms": 1.5, "wall_ms": 2.25, "timer": "cuda_event"})
+                         {"ms": 1.5, "wall_ms": 2.25, "timer": "cuda_event", "primed": True})
+
+    def test_warmup_is_carried_through_when_the_caller_passes_it(self):
+        """The receipt reports how many warmup launches ran, not only that some did.
+
+        `primed` and `warmup` exist because the receipt read them and `_timing_result` never
+        emitted them, so GEAK_TIMING_RECEIPT reported all_primed=false on every run and flagged
+        every campaign. `warmup` is floored at 1 because every `_time_*` loop runs
+        `max(1, warmup)` launches -- warmup=0 still primes once, and the receipt must say 1 or it
+        is describing a loop that does not exist.
+        """
+        self.assertEqual(hl._timing_result(1.5, 2.25, "cuda_event", True, warmup=8)["warmup"], 8)
+        self.assertEqual(hl._timing_result(1.5, 2.25, "cuda_event", True, warmup=0)["warmup"], 1)
+        self.assertNotIn("warmup", hl._timing_result(1.5, 2.25, "cuda_event", True))
 
     def test_the_bare_form_is_the_device_ms_the_speedup_is_scored_on(self):
         self.assertEqual(hl._timing_result(1.5, 2.25, "cuda_event", False), 1.5)
@@ -2320,7 +2333,16 @@ class TestLegTimeoutReleasesTheGpu(_LegTestCase):
                 hl._run_leg(self.task, self.base, "time", timeout=1)
 
     def test_a_real_grandchild_does_not_outlive_the_timeout(self):
-        """The end-to-end claim, against the real OS: reaped, not merely signalled."""
+        """The end-to-end claim, against the real OS: reaped, not merely signalled.
+
+        "Dead" here means "no longer running", which is NOT what `os.kill(pid, 0)` answers --
+        `_kill_process_group`'s own docstring says so: a zombie still accepts signal 0. When the
+        leg dies first, the grandchild is re-parented to PID 1 and stays a zombie until PID 1
+        reaps it; inside a container whose PID 1 is not an init that reaps, that is forever.
+        Measured on this box: the grandchild was state `Z`, ppid 1 -- killed correctly, and
+        `os.kill(pid, 0)` reported it alive anyway. So read the state from /proc and treat `Z`
+        as dead, which is the claim that matters: a zombie holds no GPU allocation.
+        """
         marker = os.path.join(self.task, "grandchild.pid")
         with open(os.path.join(self.task, "leg_runner.py"), "w") as fh:
             fh.write(
@@ -2332,14 +2354,19 @@ class TestLegTimeoutReleasesTheGpu(_LegTestCase):
             hl._run_leg(self.task, self.base, "list", timeout=5)
         with open(marker) as fh:
             gpid = int(fh.read())
-        deadline = time.monotonic() + 10
+        deadline, state = time.monotonic() + 10, "?"
         while time.monotonic() < deadline:
             try:
-                os.kill(gpid, 0)
-            except ProcessLookupError:
-                return
+                with open(f"/proc/{gpid}/stat") as fh:
+                    # `comm` may contain spaces/parens; everything after the final ')' is fixed.
+                    state = fh.read().rsplit(")", 1)[1].split()[0]
+            except FileNotFoundError:
+                return                      # gone outright
+            if state == "Z":
+                return                      # reaped: signalled, exited, holds nothing
             time.sleep(0.1)
-        self.fail(f"grandchild {gpid} survived the leg timeout and still holds the device")
+        self.fail(f"grandchild {gpid} survived the leg timeout in state {state!r} "
+                  f"and still holds the device")
 
 
 class TestBuildCandidateOverlay(_LegTestCase):

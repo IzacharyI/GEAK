@@ -37,6 +37,34 @@ def load():
 G = load()
 
 
+def test_the_card_parser_is_not_whichever_kb_imported_first():
+    """`kb` names two different things in this repo; the generator must bind the right one.
+
+    `kernel_workflow/scripts/kb.py` is the card parser. `kb/` at the repo root is an unrelated
+    PACKAGE (the experience store). A `sys.path.insert` + `import kb` resolves to whichever is
+    already in `sys.modules`, and `kb/tests/test_store_env.py` -- which CI runs in the same pytest
+    session -- imports the package first. That bound the package here and the generator died on
+    `kb.all_cards`, taking all 33 tests in this file with it, while every one of them passed when
+    the file was run alone. Loading by path under a private module name removes the ordering
+    dependency; this test is what notices if `import kb` comes back.
+    """
+    import importlib
+    saved = sys.modules.pop("kb", None)
+    try:
+        sys.path.insert(0, ROOT)
+        pkg = importlib.import_module("kb")       # the package, first, as CI's session does
+        assert pkg.__file__.endswith(os.path.join("kb", "__init__.py")), (
+            f"expected the kb PACKAGE to win here, got {pkg.__file__}")
+        fresh = load()                            # re-exec the generator under that sys.modules
+    finally:
+        if saved is not None:
+            sys.modules["kb"] = saved
+    assert hasattr(fresh.kb, "all_cards"), (
+        f"the generator bound {fresh.kb.__file__} as its card parser -- that is the kb PACKAGE, "
+        "not kernel_workflow/scripts/kb.py. Load the parser by path, not with `import kb`.")
+    assert fresh.load_cards(), "the card parser bound correctly but read no cards"
+
+
 CARD = """\
 ---
 name: {name}
