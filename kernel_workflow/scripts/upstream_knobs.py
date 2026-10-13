@@ -35,6 +35,9 @@ WHAT IT REPORTS
             was closed by the port, not by a measurement
   fuzzy     the same, where the names matched only after stripping a vendoring suffix
             (`_port`, `_fold`, `_clone`, `_v2`, ...), so confirm the pairing before trusting it
+  coverage  how many of the modules the candidate imports out of this tree's own packages the tree
+            actually contains -- because the wrong upstream revision reports an EMPTY findings list,
+            which is indistinguishable from a clean one. See `stack_coverage`.
 
 Static, AST-only, both sides. These modules do not import without a GPU and a matching FlyDSL, and a
 tool that needs the stack working cannot run at the point in a campaign where this question is
@@ -169,6 +172,110 @@ def imported_modules(path):
             mods.add(node.module)
             mods.update(f"{node.module}.{a.name}" for a in node.names)
     return mods
+
+
+def _catches_import(handler):
+    """Does this `except` clause tolerate a failed import?"""
+    exc = handler.type
+    if exc is None:  # bare `except:`
+        return True
+    names = exc.elts if isinstance(exc, ast.Tuple) else [exc]
+    return any(getattr(n, "id", getattr(n, "attr", None))
+               in {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+               for n in names)
+
+
+def _guarded_imports(tree):
+    """`id()` of every import the file itself declares optional.
+
+    A `try: from aiter.ops.flydsl.utils import ... except ImportError:` is the author stating that
+    this module may legitimately be absent, usually behind a feature probe. Counting it against
+    coverage makes the correct tree look wrong -- on the GLM-5.2 seam it was the single remaining
+    false alarm -- and worse, it is the one import whose absence is guaranteed harmless.
+    """
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try) and any(_catches_import(h) for h in node.handlers):
+            for stmt in node.body:
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                        out.add(id(sub))
+    return out
+
+
+def import_targets(path):
+    """Module names a candidate imports -- true modules only, and only unguarded ones.
+
+    `imported_modules` deliberately also emits `mod.name` for every `from mod import name`, because
+    for RANKING a composite that happens to be a real submodule is a stronger signal than the
+    package alone. For COVERAGE that same composite is a false alarm: `from aiter import flat_view`
+    would report a missing module `aiter.flat_view` that was never a module. So this is the strict
+    set, and only this one may conclude anything is absent.
+    """
+    try:
+        tree = ast.parse(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
+        return set()
+    guarded = _guarded_imports(tree)
+    mods = set()
+    for node in ast.walk(tree):
+        if id(node) in guarded:
+            continue
+        if isinstance(node, ast.Import):
+            mods.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            mods.add(node.module)
+    return mods
+
+
+def module_in_roots(name, roots):
+    """Can `import name` be satisfied by these roots, treated as sys.path entries?
+
+    Resolved against the FILESYSTEM, not against `dotted()`'s index. `dotted()` walks up while
+    `__init__.py` exists because that is the question an upstream FILE asks ("what is my importable
+    name"), but PEP 420 namespace packages have no `__init__.py` -- `aiter/utility/` and
+    `flydsl/_mlir/` on this box are both -- so going through it reported real, present modules as
+    missing and the warning fired on the correct tree. Here the question is the importer's own:
+    does `<root>/a/b/c.py` or `<root>/a/b/c/` exist. Compiled extensions count: `_mlir_libs` ships
+    as `.so`, and a seam importing one is not evidence of a wrong revision.
+    """
+    rel = Path(*name.split("."))
+    for root in roots:
+        root = Path(root)
+        if (root / rel).is_dir() or (root / rel).with_suffix(".py").is_file():
+            return True
+        parent = root / rel.parent
+        if parent.is_dir() and any(parent.glob(rel.name + ".*.so")):
+            return True
+    return False
+
+
+def stack_coverage(cand_files, roots):
+    """`(imported_from_upstream, missing)` -- does this tree even contain what the candidate imports?
+
+    Measured, same GLM-5.2 task as the module docstring. Pointed at the box's ambient checkout
+    (`/sgl-workspace/aiter`, which predates the whole `mxfp4_*` family the seam imports) this tool
+    reports 2242 upstream functions, 2 findings and ZERO pins. Pointed at the stack the task
+    actually pins it reports 7664, 86 and 6 -- including the `BN == 256` pin that three rounds had
+    concluded was inert. The failure is silent and it looks exactly like a clean result: an empty
+    findings list reads as "nothing was closed by the port", not as "you indexed the wrong tree".
+
+    So before trusting an empty report, check the cheap structural thing: of the modules the
+    candidate imports out of a package this tree provides, how many does the tree actually have?
+    Only packages the tree claims are considered -- a seam importing `torch` or `triton` says
+    nothing about whether the aiter root is the right revision.
+    """
+    want, missing = set(), set()
+    for f in cand_files:
+        for m in import_targets(f):
+            # The top-level package must be one of these roots' own, or the import is about some
+            # other dependency entirely and its absence here means nothing.
+            if not module_in_roots(m.split(".", 1)[0], roots):
+                continue
+            want.add(m)
+            if not module_in_roots(m, roots):
+                missing.add(m)
+    return want, missing
 
 
 def dotted(root, file):
@@ -354,12 +461,30 @@ def main(argv=None):
         findings.extend(got)
         errors.extend(errs)
 
+    want, missing = stack_coverage(cand_files, roots)
+    # Loud, on stderr, in both modes: an empty findings list is only meaningful once the tree is
+    # known to be the right one, and the wrong tree produces the same empty list.
+    if missing:
+        print(f"WARNING: wrong upstream tree? {len(missing)} of the {len(want)} module(s) these "
+              f"candidates import from this tree's own packages do not exist in it:",
+              file=sys.stderr)
+        for m in sorted(missing)[:8]:
+            print(f"  missing: {m}", file=sys.stderr)
+        if len(missing) > 8:
+            print(f"  ... and {len(missing) - 8} more", file=sys.stderr)
+        print("  A report with few or no findings is NOT a clean result until this is resolved. "
+              "Point --upstream at the revision the kernel was written against.", file=sys.stderr)
+
     if a.json:
         print(json.dumps({"upstream_roots": roots, "candidates": len(cand_files),
-                          "upstream_functions": len(index), "findings": findings,
+                          "upstream_functions": len(index),
+                          "stack_coverage": {"imported_from_upstream": len(want),
+                                             "missing": sorted(missing)},
+                          "findings": findings,
                           "errors": errors}, indent=2))
     else:
-        print(f"upstream: {', '.join(roots)}  ({len(index)} module-level functions)")
+        print(f"upstream: {', '.join(roots)}  ({len(index)} module-level functions, "
+              f"{len(want) - len(missing)}/{len(want)} imported module(s) present)")
         print(f"candidate: {len(cand_files)} file(s) -> {len(findings)} function(s) with "
               f"knobs upstream has and this does not\n")
         # Widest narrowing first, and a pinned parameter outranks a merely absent one: a pin is a

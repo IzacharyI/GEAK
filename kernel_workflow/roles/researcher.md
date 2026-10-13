@@ -115,11 +115,20 @@ question).** Run
 python3 SKILL_DIR/scripts/upstream_knobs.py WORKSPACE --json
 ```
 
-(add `--upstream DIR` when the task pins no `.geak_pythonpath`). It lists, per function, the
-parameters the UPSTREAM same-named function takes and this file does not (`narrowed`), and the
-parameters this file declares and then asserts to a constant (`pinned`). Put the result in
-`facts.vendored_knobs` — `[]` when there is none, never omitted — and **raise a question for every
-`pinned` parameter that upstream varies.**
+(add `--upstream DIR` when the task pins no `.geak_pythonpath` — most task dirs pin none, so expect
+to supply it). It lists, per function, the parameters the UPSTREAM same-named function takes and
+this file does not (`narrowed`), and the parameters this file declares and then asserts to a
+constant (`pinned`). Put the result in `facts.vendored_knobs` — `[]` when there is none, never
+omitted — and **raise a question for every `pinned` parameter that upstream varies.**
+
+⚠ **Check `stack_coverage` before you believe an empty report.** Pointing `--upstream` at the wrong
+revision produces few or no findings, which reads exactly like a clean result. The box's ambient
+`PYTHONPATH` is the trap: on the GLM-5.2 task it points at a checkout predating the entire `mxfp4_*`
+family the seam imports, and the scan then reports 2242 upstream functions, 2 findings and **zero
+pins** — versus 7664, 86 and 6 against the stack the kernel was actually written against. So the
+tool prints `N/M imported module(s) present` and warns loudly on stderr when the tree lacks modules
+the candidate hard-imports. A warning there invalidates the run; fix the root and re-run. Do not
+record `vendored_knobs: []` from a run that warned.
 
 Why this is mandatory and not advisory: a task kernel is often a VENDORED CUT of an upstream one,
 and everything the cut dropped is invisible from inside the file. There is no import to follow and

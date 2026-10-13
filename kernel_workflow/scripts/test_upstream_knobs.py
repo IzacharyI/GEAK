@@ -194,3 +194,87 @@ def test_the_two_moe_gemms_rank_above_the_noise():
     ranked = sorted(data["findings"], key=lambda f: (-len(f["pinned"]), -len(f["narrowed"])))
     top = [f["function"] for f in ranked[:3]]
     assert "compile_gemm1_a4w4_port" in top and "compile_gemm2_a4w4_port" in top
+
+
+# --------------------------------------------------------------------------------------------
+# Coverage: is the tree we were pointed at even the one this kernel was written against?
+#
+# This check's own failure mode is crying wolf, and it is the worse one: a warning that fires on a
+# correct tree teaches the reader to ignore it, and the one time it is right it is ignored too.
+# Three separate false alarms were found and fixed while writing it -- package `__init__`, PEP 420
+# namespace packages, and `try/except ImportError` probes -- so all three are pinned here.
+# --------------------------------------------------------------------------------------------
+
+def test_namespace_package_counts_as_present(tmp_path):
+    """PEP 420: a package directory with no `__init__.py` is still importable."""
+    root = tmp_path / "up"
+    (root / "pkg" / "nspkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "nspkg" / "mod.py").write_text("")  # nspkg has NO __init__.py
+    assert UK.module_in_roots("pkg.nspkg", [root])
+    assert UK.module_in_roots("pkg.nspkg.mod", [root])
+    assert not UK.module_in_roots("pkg.absent", [root])
+
+
+def test_compiled_extension_counts_as_present(tmp_path):
+    """`_mlir_libs` ships as `.so`; importing one is not evidence of a wrong revision."""
+    root = tmp_path / "up"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "_native.cpython-312-x86_64-linux-gnu.so").write_bytes(b"\x7fELF")
+    assert UK.module_in_roots("pkg._native", [root])
+
+
+def test_guarded_import_is_not_counted_against_coverage(tmp_path):
+    """An import the file itself wraps in `except ImportError` is declared optional by its author."""
+    root = tmp_path / "up"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    cand = tmp_path / "cand.py"
+    cand.write_text("import pkg\n"
+                    "try:\n"
+                    "    from pkg.optional_probe import thing\n"
+                    "except ImportError:\n"
+                    "    thing = None\n")
+    want, missing = UK.stack_coverage([cand], [root])
+    assert missing == set(), "a guarded probe must not be reported missing"
+    assert "pkg" in want and "pkg.optional_probe" not in want
+
+
+def test_unguarded_absent_import_is_reported(tmp_path):
+    """The case the check exists for: the tree lacks what the candidate hard-imports."""
+    root = tmp_path / "up"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("")
+    cand = tmp_path / "cand.py"
+    cand.write_text("import pkg\nfrom pkg.kernels.mxfp4 import compile_it\nimport torch\n")
+    want, missing = UK.stack_coverage([cand], [root])
+    assert missing == {"pkg.kernels.mxfp4"}
+    assert "torch" not in want, "a foreign dependency says nothing about this tree's revision"
+
+
+@needs_box
+def test_the_stale_ambient_checkout_is_called_out():
+    """The measured trap: the box's ambient aiter predates the seam's whole mxfp4 family.
+
+    Pointed at it the tool reports ~2k upstream functions and ZERO pins -- indistinguishable from a
+    clean result, and exactly the false all-clear that let three rounds conclude `BN` was inert.
+    Pointed at the stack the task pins it reports the pin. Coverage is what separates the two.
+    """
+    stale = Path("/sgl-workspace/aiter")
+    if not stale.is_dir():
+        pytest.skip("ambient checkout absent")
+    out = subprocess.run(
+        [sys.executable, str(HERE / "upstream_knobs.py"), str(SEAM),
+         "--upstream", str(stale), "--json"],
+        capture_output=True, text=True, check=True, timeout=900)
+    data = json.loads(out.stdout)
+    assert data["stack_coverage"]["missing"], "the stale tree must not look complete"
+    assert "WARNING" in out.stderr and "wrong upstream tree" in out.stderr
+
+    good = subprocess.run(
+        [sys.executable, str(HERE / "upstream_knobs.py"), str(SEAM),
+         "--upstream", str(AITER), "--json"],
+        capture_output=True, text=True, check=True, timeout=900)
+    assert not json.loads(good.stdout)["stack_coverage"]["missing"], \
+        "the correct tree must be silent -- a check that cries wolf is worse than none"
