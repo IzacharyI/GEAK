@@ -61,6 +61,13 @@ COMMANDMENT correctness + on-box benchmark; the verify step re-measures every pa
 only help, never hurt. If it is empty or no card matches this kernel (e.g. a point-cloud HIP op),
 ignore it — behavior is unchanged.
 
+**Following a card's `repo@commit:path:line` citation.** The commit is the identity and the path is
+not: this box carries five `aiter` checkouts at five different commits, so the same path holds a
+different file — or no file — in each. Resolve with
+`python3 KERNEL_KNOWLEDGE_DIR/index/resolve_citation.py 'ROCm/aiter@<commit>:<path>:<line>'` rather
+than `grep`-ing whichever tree is nearest. Grepping the wrong tree reads as "the card is wrong" when
+the card is right, and quietly hands you code from a version the task does not run.
+
 ## The engineer specialties (you assign every direction to exactly one)
 The first four are **narrow specialists** — one technique, one `focus_files` lane, kept orthogonal so
 they can run in parallel and be merged:

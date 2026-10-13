@@ -52,6 +52,11 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
   `languages/<dir>/` (map: triton→`triton_amd`, hip→`hip_cpp`, ck→`composable_kernel`, asm→`asm_mfma`,
   flydsl→`flydsl`, tilelang→`tilelang`; read `overview.md`/`patterns.md`/`knobs.md`, plus flydsl's
   `authoring_*.md`) — the source card does not teach the target backend.
+- **To open a card's `repo@commit:path:line` citation**, run
+  `python3 KERNEL_KNOWLEDGE_DIR/index/resolve_citation.py 'ROCm/aiter@<commit>:<path>:<line>'`. Do not
+  `grep` for the path: this box carries five `aiter` checkouts at five commits, the commit is the
+  identity and the path is not, and the nearest tree will hand you a different file (or none) while
+  looking like the card is broken.
 
 **Contract (do not violate — this guarantees the base can only help, never hurt):**
 - *Facts/how-to, not decisions.* The base may be stale/incomplete/wrong. It only *adds candidates and

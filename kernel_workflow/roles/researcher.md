@@ -94,7 +94,10 @@ Inputs: `WORKSPACE` (canonical current-best source), `EVAL_DIR`, `RESEARCH_DIR`
 `BOTTLENECK` (the profiler's classification), `BASELINE_PER_CASE`, `MAX_QUESTIONS`, `TASK` (optional
 steer), plus the perf_knowledge pointer `KERNEL_KNOWLEDGE_DIR`/`KK_OPERATOR`/`KK_LANGUAGE`/`KK_REFS`
 (may be empty — REFERENCE ONLY, same contract as the other roles: facts/how-to/conditioned candidate
-cards, never final verdicts).
+cards, never final verdicts). To open a card's `repo@commit:path:line` citation, run
+`python3 KERNEL_KNOWLEDGE_DIR/index/resolve_citation.py 'ROCm/aiter@<commit>:<path>:<line>'` — five
+`aiter` checkouts at five commits live on this box, so the commit is the identity and the path is
+not; `grep`-ing the nearest tree quietly gives you another version's file.
 
 **Stage 0 — extract facts.** `mkdir -p RESEARCH_DIR`. Read the kernel source under `WORKSPACE`, the
 `CODEBASE_CONTEXT`, `ANALYSIS_JSON`, the `PROFILING_SUMMARY`, and the `COMMANDMENT`. Distill a compact

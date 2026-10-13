@@ -62,6 +62,10 @@ skeletons, split-K/preshuffle, fusion, MFMA/numerics pitfalls, alternative backe
 your measured benchmark is the floor. Ignore stored `status`/TFLOPS as verdicts. It can only add
 candidates, never narrow them. Skip entirely
 if empty / `KK_OPERATOR` null.
+**To open a card's `repo@commit:path:line` citation**, run
+`python3 KERNEL_KNOWLEDGE_DIR/index/resolve_citation.py 'ROCm/aiter@<commit>:<path>:<line>'` — this box
+carries five `aiter` checkouts at five commits, so the commit is the identity and the path is not;
+`grep`-ing the nearest tree hands you a different file (or none) and reads as a broken card.
 **Cross-backend rewrite/port** (your rewrite targets a language ≠ the current source — ANY source→target,
 e.g. ck→flydsl, triton→tilelang, hip→ck): ALSO mine the TARGET backend card
 `operators/<KK_OPERATOR>/backends/<target>.md` and the target language's authoring how-to under
