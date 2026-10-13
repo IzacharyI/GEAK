@@ -290,9 +290,8 @@ Read, as reference (focused — start with the paths handed to you, don't crawl 
    dispatch functions. See `hip_optimization.md` → Hipify Safety Rules.
 8. **mode=mega (mega-gated) — advance only your candidate lane.** `CANDIDATE_TREE` is an independent
    lineage, not a shared floor. Continue its HEAD, keep its complete two-launch target coherent, and
-   never modify another registry candidate. When `MEGA_KNOWLEDGE` or the direction names knowledge
-   files to read first (for example Expert Skill documents granted by the task) for the bucket you are
-   changing, Read every named file before your first
+   never modify another registry candidate. When the direction names knowledge files to read first
+   for the bucket you are changing, Read every named file before your first
    source edit, and cite in `notes` the sections you applied and any you deliberately departed from.
    An author turn that skipped a named file has not done the direction. Slow correct work remains runnable WIP; it may continue
    but cannot become final output until absolute speedup is greater than 1.0 versus the frozen baseline.

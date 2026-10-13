@@ -27,10 +27,8 @@ ok(gmi('mega', false).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement
   'generic mega gets the guide');
 ok(gmi('mega', false).MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lessons.md',
   'generic mega gets the lessons');
-ok(!('MEGA_KNOWLEDGE' in gmi('mega', false)), 'no mega_knowledge arg leaves the inputs unchanged');
-ok(gmi('mega', false, { mega_knowledge: 'read /k.md' }).MEGA_KNOWLEDGE === 'read /k.md' &&
-   !('MEGA_KNOWLEDGE' in gmi('mega', true, { mega_knowledge: 'read /k.md' })),
-  'mega_knowledge reaches generic mega roles only');
+ok(!('MEGA_KNOWLEDGE' in gmi('mega', false, { mega_knowledge: 'read /k.md' })),
+  'no launch argument can hand the generic mega roles extra knowledge files');
 
 // The generic graph-contract runner is the default only for generic mega; a pinned skill keeps its
 // runtime, and an explicit graph_contract_tool arg still wins.
