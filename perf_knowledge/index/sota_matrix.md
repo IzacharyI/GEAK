@@ -3,7 +3,7 @@
 AUTO-GENERATED from per-card frontmatter (`index/_gen_registry.py`). Each cell links to the SOTA card.
 Legend: 🟢 sota · 🟡 competitive · 🧪 experimental · 🟤 legacy · ⚪ na · `·` no card.
 
-Coverage: **54 operators**, **231 backend cards**.
+Coverage: **54 operators**, **235 backend cards**.
 
 ## GEMM
 | operator | triton | flydsl | hip | ck | asm | tilelang | gluon | hipkittens | rocwmma | aiter | hipblaslt |
@@ -48,7 +48,7 @@ Coverage: **54 operators**, **231 backend cards**.
 |---|---|---|---|---|---|---|---|---|---|
 | [moe_routing_topk](../operators/moe_routing_topk/overview.md) | [🟡](../operators/moe_routing_topk/backends/triton.md) | · | [🟢](../operators/moe_routing_topk/backends/hip.md) | · | · | · | [🟢](../operators/moe_routing_topk/backends/aiter.md) | · | [🟢](../operators/moe_routing_topk/backends/vllm_kernels.md) |
 | [moe_dispatch_combine](../operators/moe_dispatch_combine/overview.md) | [🧪](../operators/moe_dispatch_combine/backends/triton.md) | · | [🟢](../operators/moe_dispatch_combine/backends/hip.md) | · | · | · | [🟢](../operators/moe_dispatch_combine/backends/aiter.md) | [🟢](../operators/moe_dispatch_combine/backends/mori.md) | · |
-| [fused_moe_grouped_gemm](../operators/fused_moe_grouped_gemm/overview.md) | [🟡](../operators/fused_moe_grouped_gemm/backends/triton.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/flydsl.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/hip.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/ck.md) | · | · | [🟢](../operators/fused_moe_grouped_gemm/backends/aiter.md) | · | · |
+| [fused_moe_grouped_gemm](../operators/fused_moe_grouped_gemm/overview.md) | [🟡](../operators/fused_moe_grouped_gemm/backends/triton.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/flydsl.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/hip.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/ck.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/asm.md) | [🧪](../operators/fused_moe_grouped_gemm/backends/tilelang.md) | [🟢](../operators/fused_moe_grouped_gemm/backends/aiter.md) | [⚪](../operators/fused_moe_grouped_gemm/backends/mori.md) | [🟡](../operators/fused_moe_grouped_gemm/backends/vllm_kernels.md) |
 | [shared_expert_fusion](../operators/shared_expert_fusion/overview.md) | [🟡](../operators/shared_expert_fusion/backends/triton.md) | · | [🟢](../operators/shared_expert_fusion/backends/hip.md) | · | · | · | [🟢](../operators/shared_expert_fusion/backends/aiter.md) | · | · |
 
 ## Collectives
