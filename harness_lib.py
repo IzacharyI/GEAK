@@ -322,7 +322,7 @@ def time_op(call, warmup=10, repeats=50, inner=1, graph=False, flush_cache=True,
     `graph=True` times a captured CUDA-graph replay (the decode deployment context) with the same
     event+flush method; falls back to eager event timing if capture is unavailable (see the `timer` field).
 
-    Returns median device ms (float), or {ms, wall_ms, timer} when detail=True. None if `call` raises.
+    Returns median device ms (float), or {ms, wall_ms, timer, primed, warmup} when detail=True. None if `call` raises.
     On a box without CUDA, device time is unavailable so ms == wall_ms and timer='wall'."""
     torch = _torch()
     inner = max(1, int(inner))
@@ -335,19 +335,26 @@ def time_op(call, warmup=10, repeats=50, inner=1, graph=False, flush_cache=True,
             g = _try_capture(torch, call, inner)
             if g is not None:
                 dev, wall = _time_graph(torch, g, warmup, repeats, flush_cache)
-                return _timing_result(dev, wall, "cuda_event_graph", detail)
+                return _timing_result(dev, wall, "cuda_event_graph", detail, warmup)
         if have_cuda:
             dev, wall = _time_events(torch, call, warmup, repeats, inner, flush_cache)
-            return _timing_result(dev, wall, "cuda_event", detail)
+            return _timing_result(dev, wall, "cuda_event", detail, warmup)
         wall = _time_wall(torch, call, warmup, repeats, inner)   # no device timeline -> wall only
-        return _timing_result(wall, wall, "wall", detail)
+        return _timing_result(wall, wall, "wall", detail, warmup)
     except Exception:
         return None
 
 
-def _timing_result(dev_ms, wall_ms, timer, detail):
+def _timing_result(dev_ms, wall_ms, timer, detail, warmup=None):
     if detail:
-        return {"ms": dev_ms, "wall_ms": wall_ms, "timer": timer}
+        # `primed` answers the timing receipt's question "did warmup launches run before the timed
+        # samples?". Every _time_* loop below runs max(1, warmup) of them, so the answer is always yes
+        # -- but the field was never emitted, which made GEAK_TIMING_RECEIPT report
+        # all_primed=False / timer_unprimed=True on EVERY run and flag every campaign unconditionally.
+        out = {"ms": dev_ms, "wall_ms": wall_ms, "timer": timer, "primed": True}
+        if warmup is not None:
+            out["warmup"] = max(1, int(warmup))
+        return out
     return dev_ms
 
 
