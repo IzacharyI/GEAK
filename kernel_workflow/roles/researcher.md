@@ -105,6 +105,31 @@ behind it, the hot kernels / dispatch count, the correctness constraints, and 2-
 testable claim + the quantitative basis + what measurement would falsify it). Write
 `RESEARCH_DIR/facts.json`.
 
+**Stage 0b — enumerate the knobs the file does not expose (MANDATORY, before you write any
+question).** Run
+
+```
+python3 SKILL_DIR/scripts/upstream_knobs.py WORKSPACE --json
+```
+
+(add `--upstream DIR` when the task pins no `.geak_pythonpath`). It lists, per function, the
+parameters the UPSTREAM same-named function takes and this file does not (`narrowed`), and the
+parameters this file declares and then asserts to a constant (`pinned`). Put the result in
+`facts.vendored_knobs` — `[]` when there is none, never omitted — and **raise a question for every
+`pinned` parameter that upstream varies.**
+
+Why this is mandatory and not advisory: a task kernel is often a VENDORED CUT of an upstream one,
+and everything the cut dropped is invisible from inside the file. There is no import to follow and
+no `NotImplementedError` — the cut turns the knobs it abandoned into asserts, so the file reads as
+if the axis had been measured and closed. Measured on the GLM-5.2 MXFP4 fused-MoE task: its seam
+carried `assert BN == 256`, three campaign rounds concluded "BN is inert" from inside that file,
+and re-opening BN (256 → 128, which doubles the decode grid) was one of the three mechanisms that
+took the task from 1.1294x to 1.3205x. All three came from axes closed this way. The scan surfaces
+them in its first two lines, in seconds, against the untouched baseline.
+
+A knob upstream has is a thing to TRY, not a thing that works — rank such a question like any
+other. But a `pinned` parameter is not a measured verdict, and must never be passed on as one.
+
 **Stages 1/2 — generate + rank research questions.** Produce up to `MAX_QUESTIONS` questions that
 **span BOTH modes**: grounded bottleneck questions (tied to a profile metric / per-case number) AND
 design-space questions ("is there a fundamentally faster algorithm or execution strategy for this
@@ -133,6 +158,10 @@ Return JSON:
        "falsifier_measurement": "...", "prior_weight": 0.5}
     ],
     "hot_kernels": [{"name": "...", "pct_of_total": 0.0}],
+    "vendored_knobs": [
+      {"function": "...", "upstream": "module:line", "narrowed": ["param", "..."],
+       "pinned": [{"param": "BN", "to": 256, "upstream_varies": true}]}
+    ],
     "correctness_constraints": ["..."],
     "likely_targets": ["<rel paths/functions>"],
     "notes": "..."
