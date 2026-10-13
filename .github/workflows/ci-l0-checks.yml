@@ -184,6 +184,11 @@ jobs:
           # the corpus and version_map were all built, tested, gated — and unreachable by the agent
           # that plans directions. A doc no role reads is a comment with a CI gate on it.
           python3 kernel_workflow/scripts/test_knowledge_reachable.py
+          # learned/README.md tells readers that every card in it was measured on gfx950 and none on
+          # gfx942, which is what makes an MI300X reader treat a card as a hypothesis rather than a
+          # number. True when written; silently false the first time a campaign runs elsewhere, and
+          # false in the direction that HIDES the new evidence. The marker keeps the claim honest.
+          python3 kernel_workflow/scripts/test_card_arch_coverage.py
           # The two structural promises perf_knowledge/README.md makes about itself. They had been
           # advertised in its banner and checked by nothing; the first run found 25 content files with
           # no `## Sources`, so the banner had been wrong for a while with nothing to say so.
