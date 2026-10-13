@@ -406,7 +406,9 @@ if (PINNED_MEGA_SKILL &&
     [DIRECT_GRAPH_ACCURACY, 'direct_graph_accuracy'],
     [REQUIRE_HW_ACTIVATION, 'require_hardware_activation'],
     [REQUIRE_ARTIFACT_DISTINCT, 'require_artifact_distinct'],
-    [REQUIRE_OVERLAP, 'require_overlap'],
+    // Overlap is a large-token rule; _mtpr-only targets follow their own profile.
+    [REQUIRE_OVERLAP || TARGET_GUARDS.length && TARGET_GUARDS.every((g) => /_mtpr\d+$/.test(g)),
+      'require_overlap'],
     [REQUIRE_ATTRIBUTION, 'require_attribution'],
     [REQUIRED_REPLAYS >= 256, 'required_replays>=256'],
     [REQUIRED_PAIRS >= 5, 'required_pairs>=5'],
