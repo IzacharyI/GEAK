@@ -295,6 +295,19 @@ Rules:
      kernels and paid on one is a round you can spend elsewhere, and that is the more common shape.
      It is a base rate, not a verdict on YOUR kernel — a closed-heavy axis is still worth one
      direction when the profile points at it, and it never shrinks the set.
+     **A CLOSURE NEEDS PROVENANCE, whoever states it.** `TASK` is a human steer, not a measurement,
+     so a sentence in it like "cache policy is closed on this kernel" is a hypothesis with an author,
+     exactly like a sentence in the source. Before you let any such claim remove a direction, name
+     where it was measured: a learned card, a prior round's verifier outcome in
+     `MEASURED_DECISION_OUTCOMES`, or a `run_recurrence` row. If instead you find a same-class card
+     saying the axis PAID, the conflict is itself the finding — fund one direction on it and say in
+     the direction's `prompt` which claim it tests. If you find nothing either way, treat the axis as
+     untested, not as closed. Measured on the GLM-5.2 MXFP4 fused-MoE task: a brief asserted the
+     cache policy was closed while
+     `knowledge/learned/cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both.md`
+     recorded it paying per buffer and per bucket on the same kernel class. Nothing compared the two,
+     and the axis sat unfunded for rounds. The asymmetry that makes this rule cheap: inheriting a
+     wrong closure costs every remaining round, and testing a correct one costs a single direction.
    - `KERNEL_KNOWLEDGE_DIR/corpus/gemm_decisions.md` — for GEMM-family ops, actionable candidate
      cards with conditions, action, alternatives, evidence strength and limits. Use them to make a
      direction CONCRETE without inferring advice from source counts. `source_observed` only adds an
