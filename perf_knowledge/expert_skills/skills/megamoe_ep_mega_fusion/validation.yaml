@@ -47,12 +47,16 @@ measured:
     reduction_width: 4
     total_items: 8192
   best_known_8192:
-    speedup: 1.155
+    speedup: 1.22
     g2_claim_order: column_grouped
     g2_claim_group_m: 32
     g2_chunk: 1
     g2_skew_interleave: gated
-    stacked_with_g1_codegen: false
+    stacked_with_g1_codegen: true
+    g1_payload_spin_fill: true
+    g2_completion: per_workgroup_deferred
+    combine_readiness: coarse_barrier
+    certified_by_finalist: false
   best_known_cap64:
     guard: 64_uniform_mtpr64
     speedup: 1.1315

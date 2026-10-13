@@ -645,8 +645,10 @@ per-token arrival Combine on BN-invariant units, no per-item release   1.125x
 Combine column group CG 4 -> 7                                         1.1315x
 ```
 
-Rows come from different leases (drift up to ~2.7%), so read the same-lease
-increments: route preload/batched atomics +1.8%, pre-gate producers +3.9%,
+The table is evidence for each lever, not a build order: once the path is
+correct, build the final one-launch structure directly instead of walking the
+two-launch rows first. Rows come from different leases (drift up to ~2.7%), so
+read the same-lease increments: route preload/batched atomics +1.8%, pre-gate producers +3.9%,
 write-through finalize +1.7%, inline quantization +2.1%, single launch +0.8%,
 arrival Combine +2.1%, CG 7 +0.56%.
 
@@ -748,6 +750,11 @@ advisory `host_specializes_g2_chunk` hint still describes the m-major
 reference mapping (16 at `>=4096` tokens); a `C=1` candidate reports it as an
 advisory miss, which is expected.
 
+Measured losses with this order at 8192: GM 48-128 flat against 32; a W2 load
+cache modifier that bypasses L2 (`sc1`) +5.5% slower, so W2 must stay in L2;
+dispatch geometry (dispatch CUs 64-160, payload rows 256, work shards 8) flat,
+but 128 payload rows +40% slower.
+
 The mapping must be a bijection over `[0, total_g2_units)`: every CTA must be
 able to claim every unit, or a CTA waits on a unit no one will run. A subset
 drain that excluded some CTAs deadlocked.
@@ -760,6 +767,24 @@ holds, permute the m-block index across `npes` equal segments before the
 column grouping (`m' = (m % npes) * (total_m // npes) + m // npes` for
 `m < npes*(total_m // npes)`, else `m`). That restored skew to 1.21x and leaves
 a balanced rank's order unchanged.
+
+### G1 payload-spin fill and deferred G2 completion
+
+Two hot-path levers measured on the column-grouped build at 8192:
+
+- Payload-spin fill. A CTA that holds a G1 stripe whose payload is not ready
+  does not spin idle: it peeks the G2 head, checks that the peeked position's
+  owning G1 completion is ready, and claims exactly that position with a
+  compare-and-swap, then returns to its stripe. It never takes a blocking G2
+  wait while holding an unexecuted G1 claim. Measured -0.7% uniform, -0.9% on
+  skew. An atomic-add claim instead of the compare-and-swap tripled the fills
+  for only -0.2%; a peek only at the loop top, or more polls between peeks,
+  gave nothing.
+- Deferred G2 completion. With a coarse pre-Combine barrier, G2 completion
+  needs no per-unit drain, barrier and add: thread zero counts the
+  workgroup's units in LDS, and on leaving the G1/G2 loop the workgroup
+  drains once, meets one barrier and adds its count; the add that reaches
+  the G2 total publishes the epoch. Measured -0.8%.
 
 ## Memory-order blueprint
 
@@ -961,15 +986,28 @@ Measured on the validated profile (8192 uniform, rank-max):
   separate Combine launch ~4.62 ms; complete fusion with the m-major reference
   order ~4.50 ms (1.0448x). The fusion gain alone is ~0.2 ms, so one expensive
   construct erases it.
-- Best known: the same two-launch structure with the column-grouped G2 order
-  and `C=1` reached ~4.05-4.07 ms (~1.155x). G1 stays at frozen-Stage1 parity
-  (ends ~2.55 ms); G2 plus transport plus Combine fell from ~2.31 to ~1.42 ms;
-  G1/G2 overlap is ~3%. The extra ~10% is G2 efficiency, not removed waiting.
-- Measured separately, on other builds, not yet stacked with the order above:
-  the G1 codegen items in the author guide cut G1 time by ~170 us per
-  workgroup (~4.24 to ~4.07 ms on an n-major build), and issuing G2's B and
-  A-scale loads before the barrier and the next A DMA was worth ~3%. The G1
-  items also speed the unfused path, because GEMM1 code is shared.
+- The column-grouped G2 order with `C=1` alone reached ~4.05-4.12 ms
+  (~1.14-1.155x): G1 stays at frozen-Stage1 parity, G2 plus transport plus
+  Combine fell from ~2.31 to ~1.42 ms, and G1/G2 overlap is ~3%. That ~10% is
+  G2 efficiency, not removed waiting.
+- Best known, ~3.84 ms (~1.22x): on top of that order, one build stacked, each
+  measured same-tree in fresh processes:
+  1. the three G1 codegen items in the author guide together: 4.115-4.127 ->
+     3.925-3.933 ms (-4.6%), VGPR spills 75 -> 31, private 272 -> 92 B;
+  2. the non-blocking G1 payload-spin fill (Scheduling blueprint): -0.7%;
+  3. per-workgroup deferred G2 completion (Scheduling blueprint): -0.8%;
+  4. the Combine memory order (no acquire after the barrier, cache-19 payload
+     and scale loads, cache-2 output): -0.5%, Combine 89-96 -> 83-88 us per
+     workgroup.
+  This build keeps one G2 head and a coarse pre-Combine barrier. In it G2 is
+  ~44 units of ~29 us per workgroup, 82% of that in the K-loop; by the stage
+  meter (which itself adds ~2.7%) the per-workgroup busy sum is about the e2e
+  time, so the kernel is near work and bandwidth bound. Remote P2P traffic costs only ~0.11 ms. The G2 K-loop
+  waits `vmcnt(2)` before every BK256 back-edge, so a two-deep W2 prefetch is
+  the open lever.
+- G2's B and A-scale loads issued before the barrier and the next A DMA was
+  worth ~3% on a build that lacked it; current Stage2 already hoists them.
+  The G1 items also speed the unfused path, because GEMM1 code is shared.
 - Combine readiness is not decisive once G2 reuses W2: an n-major build reached
   ~1.154x with per-token readiness, and a column-grouped build reached ~1.155x
   with a coarse pre-Combine barrier, where per-row readiness measured ~10%
@@ -1062,8 +1100,9 @@ The Skill succeeds only when its independently authored candidate has:
 - frozen-relative 8192-uniform rank-max speedup (frozen `BASELINE_PER_CASE`
   latency divided by the candidate latency, paired against a frozen-tree base
   arm) of at least 1.03x after the established noise allowance. The m-major
-  reference order measured 1.0448x and the column-grouped order ~1.155x. A
-  same-tree switch-off pair is a diagnostic only.
+  reference order measured 1.0448x, the column-grouped order ~1.155x, and the
+  column-grouped order with the stacked levers of the Performance budget
+  ~1.22x. A same-tree switch-off pair is a diagnostic only.
   When the workflow names another target guard and minimum, that guard and
   minimum replace 8192-uniform and 1.03x here; everything else above still
   applies, and the speedup must stay above 1.0x.

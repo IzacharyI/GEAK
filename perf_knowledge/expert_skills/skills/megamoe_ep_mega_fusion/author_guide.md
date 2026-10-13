@@ -284,7 +284,12 @@ that way and kept the output bit-identical.
   columns): epilogue 245 -> 164 us per workgroup, about +1.5%.
 - G1 A-tile start row is uniform across the workgroup. Kept in a VGPR it costs 4 `readfirstlane`
   waterfall loops per K iteration; load it into an SGPR: G1 K-loop -57 us per workgroup, about
-  +0.85% at 8192, but about -1.4% at bs128@mtpr8192, so gate it by bucket.
+  +0.85% at 8192. At bs128@mtpr8192 one build measured about -1.4% and another no measurable
+  change; measure it per bucket.
+- Stacked: the three G1 items above together (last-K anchor, 8-column SiluQuant, SGPR row base)
+  measured 4.115-4.127 -> 3.925-3.933 ms on the column-grouped build (-4.6%), spills 75 -> 31,
+  private 272 -> 92 B; more than the sum of their separate measurements on another build. Keep them behind a compile key of
+  the large-token path so the small-token kernel stays byte-identical.
 - G2 K-loop: the in-order `vmcnt` wait drained the A prefetch behind later loads. Issue B and the
   A scales before the barrier and before the next A DMA: about +3%.
 - These GEMM1 edits live in shared code, so they also speed the unfused path. Credit them with the

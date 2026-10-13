@@ -106,8 +106,9 @@ structure into it. When the guards span both regimes, give each bucket its own t
   breakdown means the next direction is an ablation measurement, not a knob sweep. When
   `MEGA_STALL` reaches its limit, route an on-card measurement of the banked HEAD.
 - Lever order at 8192 once correctness passes: (1) G2 claim order and chunk, measured on both
-  uniform and rank-mixed-skew; (2) the G1 codegen items in `author_guide.md`, checked against
-  emitted spill metadata; (3) the G2 K-loop load order. Readiness and overlap changes come after
+  uniform and rank-mixed-skew; (2) the G1 codegen items in `author_guide.md` stacked, checked
+  against emitted spill metadata; (3) the G1 payload-spin fill and per-workgroup deferred G2
+  completion; (4) the Combine memory order; (5) a two-deep W2 prefetch in the G2 K-loop (open). Readiness and overlap changes come after
   these: G1/G2 overlap measured ~3%, and Combine readiness was not decisive.
 
 The complete declarative contract belongs to independent Verify. Planner should
