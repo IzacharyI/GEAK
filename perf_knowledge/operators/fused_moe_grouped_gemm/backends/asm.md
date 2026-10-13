@@ -25,8 +25,9 @@ sources:
 > (`moe_stage1_g1u1`). The decisive constraint for any optimization campaign: aiter vendors only
 > compiled **`.co` HSA code objects** — there is **not one `.s` file** in either on-box checkout — so
 > this backend is a *catalog you select from*, never a seam you author. And the catalog is
-> **asymmetric**: 190 stage-1 objects on gfx942 / 186 on gfx950, and **zero** stage-2 objects on
-> either. Stage-2 (down-proj) always lands on CK. Own stage-1 here, own stage-2 in
+> **asymmetric**: 186 stage-1 objects on gfx942 / 182 on gfx950 in `hsa/<arch>/fmoe_2stages/`, and
+> **zero** stage-2 objects anywhere — every file in those directories is named `fmoe_stage1_*`.
+> Stage-2 (down-proj) always lands on CK. Own stage-1 here, own stage-2 in
 > [`ck.md`](ck.md) — or move both into [`flydsl.md`](flydsl.md) when you need source-level control.
 
 ## SOTA implementation(s)
@@ -75,8 +76,10 @@ fp32 accumulate inside MFMA. Coverage by quant: bf16/fp16 unquantized, int8 g1u0
 not the backend's: see [`../numerics.md`](../numerics.md).
 
 ## Pitfalls & anti-patterns
-- ⚠ **There is no stage-2 asm kernel.** `hsa/gfx942/fmoe_2stages/` holds 190 objects and
-  `hsa/gfx950/fmoe_2stages/` holds 186; `grep -c stage2` over either is **0**. Any plan that reads
+- ⚠ **There is no stage-2 asm kernel.** `hsa/gfx942/fmoe_2stages/` holds **186 `.co`** objects and
+  `hsa/gfx950/fmoe_2stages/` holds **182** (each directory also carries 4 `.csv` tuning tables, so a
+  bare `ls | wc -l` reports 190/186 — count `*.co` or say which you mean). Every one of them is named
+  `fmoe_stage1_*`; `grep -c stage2` over either is **0**. Any plan that reads
   "replace both stages with asm" is unimplementable on this box — stage-2 goes to
   `ck_moe_stage2_fwd` (`aiter/fused_moe.py:1130`, binding `aiter/ops/moe_op.py:320`) or CK-Tile.
 - ⚠ **No assembly source is vendored.** `find -iname '*.s'` over both `/sgl-workspace/aiter` and
@@ -87,9 +90,16 @@ not the backend's: see [`../numerics.md`](../numerics.md).
   improves on this path is to re-author the stage in a language with a source seam
   ([`flydsl.md`](flydsl.md), [`triton.md`](triton.md), [`ck.md`](ck.md)) and *win on measurement*.
   That is a legitimate goal — just never report it as "tuned the asm kernel".
-- ⚠ **Per-gen coverage differs.** gfx942 carries the larger `.co` set (int4fp8, the `smf`/`multix`
-  smooth-quant families); gfx950's set is smaller and MXFP4-centric. A config that dispatches to asm
-  on MI300X may fall to CK on MI350.
+- ⚠ **Per-gen coverage differs — and not in the direction "newer gen, thinner catalog" suggests.**
+  Counted on box (2026-10-13, identical in both checkouts): the **single-launch** family
+  `hsa/<arch>/fmoe/{silu,gelu}` is **larger on gfx950** (876 vs 840 `.co`), because gfx950 alone
+  carries the 74 MXfp4 objects (34 of them `fmoe_bf16_pertokenMXfp4_*`). The **two-stage** family
+  `hsa/<arch>/fmoe_2stages` is marginally larger on gfx942 (186 vs 182). The smooth-quant families
+  are **not** a gfx942 differentiator: `multix` is 224 on both, `smf` 38 vs 40. Only `int4fp8` is
+  gfx942-only, and it is a handful of objects outside the `fmoe` directories.
+  So check the specific dtype you dispatch on, per family — "which gen has more kernels" has no
+  single answer, and a config that dispatches to asm on one gen may fall to CK on the other in
+  either direction.
 
 ## How to verify
 `AITER_LOG_MORE=1` and confirm an `fmoe*` (1-stage) or `fmoe_stage1_*` (2-stage) name appears. If you
@@ -117,6 +127,7 @@ for gfx950 MXFP4) · [`triton.md`](triton.md) (portable fallback) · [`../overvi
 - Object selection: `ROCm/aiter@a6bb49937:csrc/cpp_itfs/moe/asm_moe.py:42` (`select_tile`), `:132`
   (`select_hsaco`).
 - Binary-only, asymmetric catalog (counted on box 2026-10-13, `/sgl-workspace/aiter` @ `a6bb49937`):
-  `hsa/gfx942/fmoe_2stages/` 190 entries / 0 matching `stage2`; `hsa/gfx950/fmoe_2stages/` 186 / 0
+  `hsa/gfx942/fmoe_2stages/` **186 `.co`** (+4 `.csv`) / 0 matching `stage2`;
+  `hsa/gfx950/fmoe_2stages/` **182 `.co`** (+4 `.csv`) / 0 — all named `fmoe_stage1_*`
   (same counts in `/sgl-workspace/geak_flydsl/aiter_main/aiter` @ `4faf87137`). `find -iname '*.s'`
   over both trees: 0 hits.

@@ -18,9 +18,11 @@ sources:
 
 ## TL;DR
 > HIP/asm is the **stage-1 (gate+up, g1u1)** of aiter's fused MoE — hand-tuned MFMA assembly
-> (`fmoe_stage1_*`) that fuses gate+up + SwiGLU activation. It's the editable Tier-C seam for the hottest
-> per-expert GEMM and where the bf16 asm fused-MoE path lives (`fused_moe_bf16_asm.py`). Reach for it to
-> own the MFMA schedule/LDS layout of stage-1; consume CK for stage-2.
+> (`fmoe_stage1_*`) that fuses gate+up + SwiGLU activation, and where the bf16 asm fused-MoE path
+> lives (`fused_moe_bf16_asm.py`). ⚠ The Tier-C seam here is the **launcher and the dispatch, not the
+> assembly**: only `.co` blobs ship, so you cannot own stage-1's MFMA schedule or LDS layout by
+> editing it — for source-level control of that math move to [`flydsl.md`](flydsl.md) or
+> [`triton.md`](triton.md). Consume CK for stage-2.
 
 ## SOTA implementation(s)
 | impl | source | gens/dtypes | measured perf | when best |
@@ -42,8 +44,12 @@ fp32 acc; per-token fp8 quant gate; fnuz on gfx942 (wrong dialect = 2× off). bf
 [numerics.md](../numerics.md).
 
 ## Integration (rebind seam)
-asm kernels compiled JIT/AOT into `aiter/jit/`; dispatched by `tuned_fmoe.csv`. To edit, modify the asm
-source under aiter and rebuild; autotune tile/prefetch/ksplit. bf16 asm via `fused_moe_bf16_asm.py`.
+asm kernels are dispatched by `tuned_fmoe.csv`; the C++/HIP launcher around them is compiled JIT/AOT
+into `aiter/jit/`. ⚠ **You cannot "modify the asm source and rebuild": none ships.** aiter vendors
+only prebuilt `.co` HSA code objects — zero `.s` files in either on-box checkout — so what is
+editable here is the launcher, the dispatch table and the tile/prefetch/ksplit *selection*, not the
+MFMA schedule inside the blob. See [`asm.md`](asm.md) for the catalog and what selecting from it
+costs. bf16 asm via `fused_moe_bf16_asm.py`.
 
 ## Pitfalls & anti-patterns
 - Decode under-fill: per-expert `m_e < block_m` wastes padding — consider masked grouped GEMM.

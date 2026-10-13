@@ -2,7 +2,7 @@
 key: recovering tuning axes that a task's vendored or flattened kernel copy deleted from its upstream original, before declaring any axis closed
 type: lever
 confidence: ★★
-effect: The task's vendored stage-1 had dropped num_waves, k_wave, prefetch_hidden and the 64/128 tile widths and hard-asserted a single tile size; recovering ONE of those axes was worth weighted 1.1294 -> 1.1502 across the decode buckets on its own, and the campaign that started from the diff reached 1.3205 against a prior ceiling priced at ~7% over 1.1294.
+effect: The task's vendored stage-1 had dropped num_waves, k_wave, prefetch_hidden and the 64/128 tile widths and hard-asserted a single tile size; recovering ONE of those axes was worth weighted 1.1294 -> 1.1502 across the decode buckets on its own, and the campaign that started from the diff reached 1.3205 (director 3-run median; 1.3182/1.3205/1.3284, span 2.5% -- read it as ~1.32x, not to 4 digits) against a prior ceiling priced at ~7% over 1.1294.
 confirms_cited: 0
 confirms_blind: 0
 losses: 0
@@ -31,5 +31,5 @@ verified_on: 2026-10-12
 - verify: Resolve a handful of upstream citations by line before trusting the diff, and confirm which tree you are in -- a box carrying two checkouts of the same library makes every citation fail silently in the wrong one.
 - pitfall: Some deletions are real contracts, not simplifications -> a scale-layout parameter documented as a GEMM1/GEMM2 contract must stay consistent across both stages -> read the upstream docstring before widening a whitelist.
 Line numbers do NOT survive flattening -> a citation that will not resolve means the wrong tree or the wrong copy, not a typo.
-- caution: Closed-axis lists and cost ceilings are scoped to the skeleton they were measured in; carried into the next brief as properties of the problem they delete the structural search space, which is how the ~7% ceiling above came to be off by 17pp.
+- caution: Closed-axis lists and cost ceilings are scoped to the skeleton they were measured in; carried into the next brief as properties of the problem they delete the structural search space, which is how the ~7% ceiling above came to be off by ~10pp (predicted +7%, delivered +16.9%).
 - source: run wwd7t6625 / team_volck_A_20261012_082749, 2026-10-12, gfx950/MI355X; diff of the task's fused_moe_seam.py against aiter@4faf8713 ops/flydsl/kernels/mxfp4_gemm1.py

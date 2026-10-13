@@ -2,7 +2,7 @@
 key: whether collapsing graph nodes is worth funding on a decode MoE already captured as one CUDA graph
 type: lever
 confidence: ★★
-effect: Folding the sort prologue into stage-1's grid cut the captured graph from 3 nodes to 1 and bought +1.8% marginal weighted (1.2913 -> 1.3279) for 656 lines; the deletion control is the real result -- removing a prologue node recovered ZERO measurable wall time on every decode case, while the surviving stage-1 kernel grew by over half the deleted node's own device time.
+effect: Folding the sort prologue into stage-1's grid cut the captured graph from 3 nodes to 1 and bought +1.6% marginal weighted (1.2891 -> 1.3096, the same-binary GEAK_DECODE_SORT_FUSED=0/1 control -- NOT the verifier's 1.2913 or round 2's stored 1.2836, which the run record explicitly rules out for round-over-round) for 656 lines; the deletion control is the real result -- removing a prologue node recovered ZERO measurable wall time on every decode case, while the surviving stage-1 kernel grew by over half the deleted node's own device time.
 confirms_cited: 0
 confirms_blind: 0
 losses: 0
@@ -30,6 +30,6 @@ levers: ['host.dispatch-collapse']
 - apply: Keep the deletion control as a separate arm from the fusion arm, so 'the node is free' and 'the fusion helps' are measured apart rather than inferred from one number.
 - stack: What does pay is locality and the work the fusion lets you skip; budget the round against that, not against the node count.
 - verify: A node-count change with no measured host residue is a null by construction -- price the exposed host fraction first, and if a replay-floor measurement shows no floor, the axis is closed before any code is written.
-- pitfall: The same reasoning is correct and valuable WITHOUT graph capture, where each launch is a real dispatch -> carrying it into a captured-graph decode path funded a 656-line rewrite for +1.8% -> check which regime the benchmark actually times.
+- pitfall: The same reasoning is correct and valuable WITHOUT graph capture, where each launch is a real dispatch -> carrying it into a captured-graph decode path funded a 656-line rewrite for +1.6% -> check which regime the benchmark actually times.
 - caution: A fused prologue silently widens the kernel's correctness surface; the win here was marginal enough that the added parity risk is the dominant cost, not the lines.
 - source: run wwd7t6625 / team_volck_A_20261012_082749 round 3, 2026-10-12, gfx950/MI355X, decode-only CUDA-graph capture/replay harness; director weighted 1.3205 correctness pass

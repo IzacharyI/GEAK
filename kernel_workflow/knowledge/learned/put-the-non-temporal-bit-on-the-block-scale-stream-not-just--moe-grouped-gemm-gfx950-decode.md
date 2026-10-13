@@ -10,7 +10,7 @@ attempts: 1
 toolchain: flydsl 0.3.4.1 / aiter@4faf8713 / ROCm 7.2
 last_seen: 2026-10-12
 name: put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode
-description: mxfp4 MoE: the scale stream is 1/16 of the bytes but evicts the other 15/16 from a 256 MiB LLC; one NT bit on it is worth +12.5pp weighted.
+description: mxfp4 MoE: the scale stream is 1/16 of the bytes but evicts the other 15/16 from a 256 MiB LLC; one NT bit on it is worth +12.5% weighted (1.1432 -> 1.2858, same-binary env A/B).
 keywords: ['moe-grouped-gemm', 'mxfp4', 'block-scale', 'cache-modifier', 'non-temporal-loads', 'l2-residency', 'llc-capacity', 'infinity-cache', 'decode', 'flydsl', 'gfx950']
 kernels: ['gemm1_a4w4_port']
 platforms: ['gfx950']

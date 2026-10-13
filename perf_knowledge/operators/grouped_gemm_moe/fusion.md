@@ -80,7 +80,10 @@ Two consequences worth holding separately:
 ## Sources
 - AITER fused_moe / asm MoE: https://github.com/ROCm/aiter , https://rocm.blogs.amd.com/artificial-intelligence/aiter-intergration-s/README.html
 - Single-launch asm family and its binary-only distribution: [`./backends/asm.md`](./backends/asm.md),
-  cited there to `ROCm/aiter@a6bb49937:csrc/py_itfs_cu/asm_fmoe.cu` and `aiter/ops/moe_op.py`.
+  cited there to `ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_fmoe.cu` and `:csrc/py_itfs_cu/asm_moe_2stage.cu`.
+  (The `a6bb49937` pin and `aiter/ops/moe_op.py` belong to the sibling family's card,
+  [`../fused_moe_grouped_gemm/backends/asm.md`](../fused_moe_grouped_gemm/backends/asm.md) — the two
+  are pinned at different commits on purpose, so do not merge their source lists.)
 - Stage-1 in-kernel activation + requantization (FlyDSL): [`./backends/flydsl.md`](./backends/flydsl.md).
 - Atomic-vs-reduce combine as a kernel choice, and weight-before-convert ordering: corpus decision cards
   `grouped-moe-stage2-combine-is-a-kernel-choice-not-a-flag`,

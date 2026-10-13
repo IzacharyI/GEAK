@@ -130,7 +130,15 @@ jobs:
             perf_knowledge/corpus/test_workflow_products.py \
             kernel_workflow/scripts/test_detect_language.py \
             kernel_workflow/scripts/test_capture_validation_env.py \
-            geak/test_bootstrap.py
+            geak/test_bootstrap.py \
+            kernel_workflow/scripts/test_check_flydsl_compat.py \
+            kernel_workflow/scripts/test_upstream_knobs.py \
+            kb/tests/test_store_env.py \
+            perf_knowledge/corpus/test_benchmark_adapter.py \
+            perf_knowledge/corpus/test_benchmark_registry.py \
+            perf_knowledge/corpus/test_implementation_selection.py \
+            perf_knowledge/corpus/test_performance_decision_normalization.py \
+            ci/test_ci_test_inventory.py
 
       # Advisory, on the same reasoning as the ruff step: three skills declare `validated` while
       # pointing at no measurement record, and a record cannot be invented for a run nobody archived.
