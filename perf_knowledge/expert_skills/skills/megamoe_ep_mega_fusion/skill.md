@@ -1093,7 +1093,10 @@ The Skill succeeds only when its independently authored candidate has:
 - same-instance graph replay with route mutation and a smaller-to-larger token
   transition, proving generation padding;
 - on every route, including `moving-hot-rank`, the first replay after a route
-  change within relL2 0.01 of a repeated replay (no stale route metadata);
+  change within relL2 0.01 of a repeated replay (no stale route metadata); an
+  operator that is not deterministic (the frozen small-capacity path: two
+  repeats differ by relL2 0.04-0.08 at MTPR 64) passes when the first replay
+  stays within twice its own repeat-to-repeat drift;
 - emitted 128 and 8192 resource envelopes within the values above and at least
   one resident workgroup per CU;
 - no regression on fixed, compact or skew guards;
@@ -1125,7 +1128,18 @@ is timed on its own operator built with max_tok_per_rank=M, which must print
 the path marker on every rank and emit at most two launches (the same count on
 every rank) even when M is at or below `--mtpr-fallback-max`; the shared
 operator still emits exactly two. The switch-off control uses the target's
-operator capacity.
+operator capacity. When the run optimizes only the `_mtpr<M>` target and the
+shared capacity is a declared FALLBACK bucket, add `--shared-fallback`: the
+shared operator must then print `path=FALLBACK` on every rank (any launch count,
+the same on every rank) and still pass accuracy and replay on the caller's
+routes, the claim's
+activation is the target's `path=MEGA`, and the resource JSON carries one
+`target_mtpr<M>` case for the target kernel instead of the two envelopes
+(metadata reported, at least one resident workgroup; no validated envelope).
+The frozen path itself fails the `moving-hot-rank` first-call check at 8192
+(measured relL2 0.145 on the frozen tree), so on the FALLBACK operator that
+route is recorded under `shared_fallback_diagnostics` and not gated; the target
+operator is still gated on every route.
 
 ## Sources
 

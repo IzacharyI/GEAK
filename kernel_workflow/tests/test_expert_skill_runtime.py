@@ -382,7 +382,11 @@ def test_megamoe_activation_is_observed_across_ranks_not_asserted():
         in text
     )
     assert (
-        "_activation_summary(args.path_marker, world, observed_sum, observed_min, per_rank)"
+        "_activation_summary(shared_marker, world, observed_sum, observed_min, per_rank)"
+        in text
+    )
+    assert (
+        "shared_marker = 'path=FALLBACK' if args.shared_fallback else args.path_marker"
         in text
     )
     reducer = ast.unparse(_runtime_function("_reduce_marker_observation"))
@@ -561,6 +565,11 @@ class _FakeRank:
         self.fallback_max = fallback_max
         # Fused operators built with these capacities emit one kernel instead of two.
         self.single_launch_caps = set()
+        # Operators built with these capacities run unfused and print fallback_marker.
+        self.fallback_caps = set()
+        self.fallback_marker = "[megamoe] path=FALLBACK\n"
+        # Calls with these token counts read stale route metadata on the moving hot route.
+        self.stale_hot_tokens = set()
         self.last_route = None
         self.fused_ms = fused_ms
         self.unfused_ms = unfused_ms
@@ -693,10 +702,14 @@ class _FakeRank:
                 fused = (
                     os.environ.get("AITER_MEGAMOE_FUSE_ALL") == "1"
                     and self.capacity > fake.fallback_max
+                    and self.capacity not in fake.fallback_caps
                 )
-                if fused and fake.marker and not self.marker_printed:
+                marker = fake.marker if fused else (
+                    fake.fallback_marker if self.capacity in fake.fallback_caps else None
+                )
+                if marker and not self.marker_printed:
                     self.marker_printed = True
-                    os.write(2, fake.marker.encode())
+                    os.write(2, marker.encode())
                 kernel = functools.partial(self._run, fused, x, route_weights, ids)
                 if fake.capturing is None:
                     kernel()
@@ -714,7 +727,10 @@ class _FakeRank:
                     )
                 route = (route_weights.tag, ids.tag)
                 used = route
-                if fake.stale_first_call and fake.last_route not in (None, route):
+                stale = fake.stale_first_call or (
+                    x.shape[0] in fake.stale_hot_tokens and "arange" in repr(ids.tag)
+                )
+                if stale and fake.last_route not in (None, route):
                     used = fake.last_route  # previous launch's route metadata
                 fake.last_route = route
                 self.output.tag = ("moe", x.tag, *used)
@@ -1009,3 +1025,148 @@ def test_megamoe_runtime_main_rejects_an_mtpr_target_that_falls_back(
     first, target = data["mtpr_activation"]
     assert (first["status"], first["fallback_allowed"]) == ("fail", True)
     assert (target["status"], target["fallback_allowed"]) == ("fail", False)
+
+
+def _target_resource_evidence(tmp_path, case="target_mtpr64"):
+    row = {
+        "threads": 256, "group_segment": 40304, "kernarg": 440, "vgpr": 168, "sgpr": 106,
+        "vgpr_spills": 4, "sgpr_spills": 0, "private": 20, "resident_workgroups": 3,
+    }
+    path = tmp_path / "target_resources.json"
+    path.write_text(json.dumps({"cases": {case: row}}))
+    return path
+
+
+def _shared_fallback_main(tmp_path, monkeypatch, *extra):
+    fake, output, main = _fake_megamoe_main(
+        tmp_path,
+        monkeypatch,
+        extra=(
+            "--target-guard", "64_uniform_mtpr64",
+            "--min-speedup", "1.0",
+            "--frozen-baseline-ms", "4.70",
+            *extra,
+        ),
+    )
+    fake.single_launch_caps = {64}
+    fake.fallback_caps = {8192}
+    return fake, output, main
+
+
+def test_megamoe_runtime_shared_fallback_claims_the_mtpr_target(tmp_path, monkeypatch):
+    fake, output, main = _shared_fallback_main(
+        tmp_path, monkeypatch, "--shared-fallback",
+        "--resource-evidence", str(_target_resource_evidence(tmp_path)),
+    )
+    assert main() == 0
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is True
+    assert data["claim_blockers"] == []
+    shared = data["shared_activation"]
+    assert (shared["status"], shared["path_marker"]) == ("pass", "path=FALLBACK")
+    assert data["activation"]["status"] == "pass"
+    assert data["activation"]["path_marker"] == "path=MEGA"
+    assert data["activation"]["target_guard"] == "64_uniform_mtpr64"
+    assert data["launch_count"] == 5  # frozen path of the shared operator
+    assert data["target_launch_count"] == 1
+    assert data["resources"] == {"status": "pass", "cases": ["target_mtpr64"]}
+    guards = {row["guard"] for row in data["accuracy_results"]}
+    assert {"128", "512", "8192", "64_uniform_mtpr64"} <= guards
+    assert not any(run["fused"] for run in fake.runs if run["capacity"] == 8192)
+
+
+def test_megamoe_runtime_shared_fallback_is_refused_without_the_flag(
+    tmp_path, monkeypatch
+):
+    _, _, main = _shared_fallback_main(
+        tmp_path, monkeypatch,
+        "--resource-evidence", str(_target_resource_evidence(tmp_path)),
+    )
+    with pytest.raises(AssertionError, match="must emit 2 kernels per rank"):
+        main()
+
+
+def test_megamoe_runtime_shared_fallback_requires_the_fallback_marker(
+    tmp_path, monkeypatch
+):
+    # Declared FALLBACK but the shared operator ran fused: the declaration is false.
+    fake, output, main = _shared_fallback_main(
+        tmp_path, monkeypatch, "--shared-fallback",
+        "--resource-evidence", str(_target_resource_evidence(tmp_path)),
+    )
+    fake.fallback_caps = set()
+    fake.single_launch_caps = set(range(1, 1 << 16))
+    assert main() == 1
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is False
+    assert data["claim_blockers"] == ["activation_marker_missing"]
+    assert data["shared_activation"]["status"] == "fail"
+    assert data["activation"]["status"] == "fail"
+
+
+def test_megamoe_runtime_shared_fallback_needs_target_resources(tmp_path, monkeypatch):
+    _, output, main = _shared_fallback_main(
+        tmp_path, monkeypatch, "--shared-fallback",
+        "--resource-evidence", str(_resource_evidence(tmp_path)),
+    )
+    with pytest.raises(AssertionError, match="missing resource case target_mtpr64"):
+        main()
+    runtime = _runtime_namespace()
+    incomplete = tmp_path / "incomplete.json"
+    incomplete.write_text(json.dumps({"cases": {"target_mtpr64": {"threads": 256}}}))
+    with pytest.raises(AssertionError, match="target_mtpr64.group_segment=-1 is missing"):
+        runtime["_resource_checks"](str(incomplete), "target_mtpr64")
+
+
+def test_megamoe_runtime_shared_fallback_needs_an_mtpr_target(tmp_path, monkeypatch):
+    _, _, main = _fake_megamoe_main(
+        tmp_path, monkeypatch, extra=("--shared-fallback",)
+    )
+    with pytest.raises(ValueError, match="needs an _mtpr<M> target guard"):
+        main()
+
+
+def test_megamoe_runtime_shared_fallback_records_the_baseline_hot_route_defect(
+    tmp_path, monkeypatch
+):
+    # The frozen path fails the moving-hot-rank check at 8192; a declared FALLBACK keeps it.
+    fake, output, main = _shared_fallback_main(
+        tmp_path, monkeypatch, "--shared-fallback",
+        "--resource-evidence", str(_target_resource_evidence(tmp_path)),
+        "--replays", "9",
+    )
+    fake.stale_hot_tokens = {8192}
+    assert main() == 0
+    data = json.loads(output.read_text())
+    assert data["claim_complete"] is True
+    [diagnostic] = data["shared_fallback_diagnostics"]
+    assert diagnostic["guard"] == "8192_moving-hot-rank"
+    assert (diagnostic["status"], diagnostic["gated"]) == ("fail", False)
+    assert "previous launch's route metadata" in diagnostic["error"]
+    guards = {row["guard"] for row in data["replay_results"]}
+    assert "8192_uniform" in guards and "8192_moving-hot-rank" not in guards
+    assert "64_moving-hot-rank_mtpr64" in guards
+
+
+def test_megamoe_runtime_shared_fallback_still_gates_the_target_hot_route(
+    tmp_path, monkeypatch
+):
+    fake, output, main = _shared_fallback_main(
+        tmp_path, monkeypatch, "--shared-fallback",
+        "--resource-evidence", str(_target_resource_evidence(tmp_path)),
+        "--replays", "9",
+    )
+    fake.stale_hot_tokens = {64}
+    with pytest.raises(AssertionError, match="previous launch's route metadata"):
+        main()
+    assert json.loads(output.read_text())["claim_complete"] is False
+
+
+def test_megamoe_consistency_limit_scales_only_with_measured_repeat_noise():
+    limit = _runtime_namespace()["_consistency_limit"]
+    assert limit(0.01, 0.0) == 0.01  # deterministic operator: fixed tolerance
+    assert limit(0.01, 0.004) == 0.01
+    assert limit(0.01, 0.05) == pytest.approx(0.10)  # frozen MTPR-64 repeat noise
+    replay = ast.unparse(_runtime_function("main"))
+    assert "limit = _consistency_limit(args.replay_consistency_rtol, noise)" in replay
+    assert "if drift >= limit:" in replay
