@@ -81,9 +81,19 @@ jobs:
       # never named is a test file that never runs — the same trap the contract checks
       # below were added to close. They also measure the modules that were dragging the
       # coverage gate down, which is what a suite nothing runs looks like from the outside.
+      # `pytest`, NOT `python -m pytest`: `-m` puts the invocation directory on
+      # sys.path[0], and this repo tracks a root-level `unittest.py` (the task-harness
+      # entry-point convention — the oracle task dirs have one). That shadows stdlib
+      # `unittest`, so anything importing `unittest.mock` — pytest's own startup on some
+      # versions, or torch, which L1 installs — dies with
+      #   ModuleNotFoundError: No module named 'unittest.mock'; 'unittest' is not a package
+      # Reproduced on box 2026-10-13: `python -m pytest` from the repo root fails before
+      # collection; the console script, which does not prepend cwd, passes. This job is
+      # green today only because its pytest build happens not to take that import path
+      # and torch is deliberately not installed here — neither is a property to rely on.
       - name: unit tests (no GPU)
         run: |
-          python -m pytest -q --cov --cov-report=term --cov-fail-under=0 \
+          pytest -q --cov --cov-report=term --cov-fail-under=0 \
             interface/test_run_e2e_recovery.py \
             interface/test_run_e2e_tuning_result.py \
             interface/test_run_e2e_alignment.py \

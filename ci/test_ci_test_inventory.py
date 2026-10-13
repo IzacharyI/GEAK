@@ -82,5 +82,38 @@ def test_exemptions_state_a_reason():
                       + "\n  ".join(thin))
 
 
+def test_ci_does_not_invoke_pytest_as_a_module_while_unittest_py_is_tracked():
+    """`python -m pytest` + a root-level `unittest.py` = stdlib `unittest` is shadowed.
+
+    `-m` puts the invocation directory on `sys.path[0]`. This repo tracks `unittest.py` at the
+    root -- the task-harness entry-point convention, which the oracle task dirs share, so it is
+    not renameable on a whim. Any import of `unittest.mock` under that shadow dies with
+    "No module named 'unittest.mock'; 'unittest' is not a package": pytest's own startup on some
+    builds, and torch unconditionally (`torch/_guards.py`). The `pytest` console script does not
+    prepend cwd and is unaffected, so the fix is the invocation, not the filename.
+
+    Reproduced on box 2026-10-13 from the repo root: `python -m pytest` failed before collection;
+    `pytest` passed. The L0 job is green on `-m` today only because its pytest build happens not
+    to take that import path and torch is deliberately not installed there -- it would start
+    failing the moment either changes, which is exactly the kind of latent break a contract
+    check exists to catch.
+    """
+    if not (REPO / "unittest.py").exists():
+        pytest.skip("no root-level unittest.py to shadow stdlib unittest")
+    offenders = []
+    for p in sorted(WORKFLOWS.glob("*.yml")):
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue  # a comment explaining the rule is not a violation of it
+            if re.search(r"\bpython[0-9.]*\s+-m\s+pytest\b", line):
+                offenders.append(f"{p.relative_to(REPO)}:{i}: {line.strip()}")
+    assert not offenders, (
+        "a workflow invokes pytest as a module while `unittest.py` is tracked at the repo root, "
+        "which shadows stdlib `unittest` for everything the run imports:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nUse the `pytest` console script instead -- it does not put cwd on sys.path."
+    )
+
+
 if __name__ == "__main__":  # convenience; CI runs this through pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
