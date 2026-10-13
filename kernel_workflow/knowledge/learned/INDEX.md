@@ -20,6 +20,8 @@ relevance without opening anything. Match on *meaning*, not on an exact string: 
 `split-k on skinny-M GEMM` is worth opening for a tall-K GEMM too. If nothing matches, that is a real
 answer — plan cold, exactly as this workflow does without any KB.
 
+**Platform coverage (generated):** 139 active card(s) — **gfx950**: 139. Nothing here was measured on any other generation. A card's `effect:` is a number from the generation it was measured on; on a different one it is a *hypothesis worth testing first*, not a number — the A/B still decides. See `README.md` -> "Architecture coverage" for where other generations are covered.
+
 ## attention
 - [gfx950 · memory-bound] Store the paged KV cache as e4m3 fp8 and dequant to bf16 in registers: halves KV HBM traffic on a scatter-bound attention op, ~1.9x on heavy shapes ★★ — (fp8-kv-storage-with-bf16-in-register-dequant-on-scatter-boun-attention-gfx950-memory-bound.md)
   - kernels: paged_attention_large · kw: paged-attention, fp8-kv-cache, hbm-bound, kv-cache-quant, memory-bound, gfx950, long-context

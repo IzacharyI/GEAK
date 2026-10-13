@@ -61,44 +61,38 @@ Each card also opens with the same **discovery header** (`name`, `description`, 
 `platforms`, `kernel_class`, `regime`, `confidence`), so it stays self-describing when opened directly or
 when the index is missing.
 
-### Architecture coverage — everything measured here is gfx950
-<!-- arch-coverage: gfx950 -->
-**Every active card in this folder was measured on gfx950 / MI355X. Not one was measured on gfx942 /
-MI300X.** This is a property of the whole folder, not of some operator in it — `dense_gemm` (11 cards)
-and `moe_grouped_gemm` (33) are in exactly the same position, as is everything else here. It simply
-records that the kernel-level campaigns run so far all ran on MI355; do not read a thin-looking arch
-spread for one `kernel_class` as that class being under-studied relative to another.
+### Architecture coverage — read it off `INDEX.md`, never from here
+**Which generations this folder actually covers is a generated line in `INDEX.md`** ("Platform
+coverage"), computed from every active card's `platforms:`. It is deliberately not restated here: a
+hand-written count is a second copy to maintain, and the copy that rots is the one claiming *nothing
+here fits your machine* while a card for it sits in the folder. Read the number there; this section is
+only for what the number does **not** tell you.
 
-It is also a statement about where the evidence came from, not a claim that these levers are
-gfx950-only — most of them are ordinary enough that they probably transfer. "Probably" is the whole
-problem: a card's `effect:` is a number from a specific machine, and on gfx942 you do not have that
-number, you have an analogy.
+**An arch spread is about where campaigns ran, not about what is studied.** It is a property of the
+folder as a whole, so do not read a narrow spread under one `kernel_class` as that class being less
+explored than another — every class reflects the same set of machines.
 
-The two generations differ in ways that reach straight into what these cards measure — fp8 is FNUZ on
-gfx942 and OCP on gfx950, gfx950 alone has FP4/MX block-scale hardware (so an A4W4 card has no gfx942
-path at all, it falls back), and LDS capacity differs, which moves every tile-geometry and
-LDS-padding conclusion. So on gfx942, read a card as **a hypothesis worth testing first**, and let
-the frozen-baseline A/B decide — the same rule as always, just with the prior weakened.
+**On a generation a card was not measured on, the card is a hypothesis, not a number.** Most of these
+levers are ordinary enough that they probably transfer; "probably" is the whole problem. The CDNA
+generations differ in ways that reach straight into what these cards measure — fp8 is FNUZ on gfx942
+and OCP on gfx950, gfx950 alone has FP4/MX block-scale hardware (so an A4W4 card has no gfx942 path at
+all, it falls back), and LDS capacity differs, which moves every tile-geometry and LDS-padding
+conclusion. Same rule as always: try it first, let the frozen-baseline A/B decide, just with the prior
+weakened.
 
-gfx942 is not absent from GEAK's knowledge, only from *this* layer — and it is worth knowing where it
-actually lives, because the three places are three different kinds of claim:
+**A generation missing from this layer is not missing from GEAK** — and the other places hold a
+*different kind of claim*, which is the part worth keeping straight:
 
-| where | gfx942 content | kind of claim |
-|---|---|---|
-| here (`kernel_workflow/.../learned/`) | **none** | — |
-| `e2e_workflow/knowledge/learned/` | several cards, arch in the filename and in `key:` (`moe-bf16-tune-gfx942`, `aiter-bf16-tuned-gemm-gfx942`, `paged-attn-nonpow2-gfx942`, …) | measured by us, but **e2e** deltas — a serving-level number, not an isolated kernel A/B |
-| `perf_knowledge/operators/<op>/`, `.../backends/` | extensive | **descriptive and source-cited** — what aiter/CK/asm ship, hardware traits, vendor-reported figures |
+| where | kind of claim |
+|---|---|
+| here (`kernel_workflow/.../learned/`) | measured by us — **isolated** frozen-baseline kernel A/B |
+| `e2e_workflow/knowledge/learned/` | measured by us — but **e2e** deltas, a serving-level number. Its cards carry no `platforms:`; the arch is in the filename and the `key:` line (e.g. `moe-bf16-tune-gfx942`) |
+| `perf_knowledge/operators/<op>/`, `.../backends/` | **descriptive and source-cited** — what aiter/CK/asm ship per `gens:`, hardware traits, vendor-reported figures |
 
-So the nearest gfx942 evidence to a card here is usually an e2e card, and the sibling sink's cards do
-not carry a `platforms:` field at all — they encode the arch in the filename and the `key:` line.
-Keep the kinds apart when you quote them: "AMD reports 3× on DeepSeek-V3 @ MI300X", "an e2e run gained
-+7.01% on gfx942" and "we measured an isolated 1.15x on this box" are three different statements, and
-only the last one is what a card in *this* folder means. The vendored tuning skillset keeps its own
-ledger of the same split in `tuning_skillset/docs/coverage_gfx950.md`.
-
-When the first gfx942 campaign lands, update the marker comment above — the `arch-coverage:` line is
-machine-read by `kernel_workflow/scripts/test_card_arch_coverage.py`, which fails if it disagrees
-with the cards, so this paragraph cannot quietly go stale.
+"AMD reports 3× on DeepSeek-V3 @ MI300X", "an e2e run gained +7.01% on gfx942" and "we measured an
+isolated 1.15x on this box" are three different statements, and only the last is what a card in *this*
+folder means. The vendored tuning skillset keeps its own ledger of the same split in
+`tuning_skillset/docs/coverage_gfx950.md`.
 
 `INDEX.md` is **generated** from those headers by `kernel_workflow/scripts/kb.py ... index`
 (grouped by `kernel_class`, ordered by confidence, plus the keyword vocabulary appendix). The generator is

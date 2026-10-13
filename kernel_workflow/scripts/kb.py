@@ -776,7 +776,39 @@ def _kw_fold(x):
     return re.sub(r"s$", "", _kw_normalize(x).replace("-", ""))
 
 
-def _index_header(d):
+def _platform_coverage(cards):
+    """One generated line stating which generations the active cards were actually measured on.
+
+    Derived, never asserted. A reader deciding whether to trust a card's `effect:` as a number needs
+    to know the arch spread of the folder, and that fact already lives in every card's `platforms:`
+    field -- writing it into prose would be a second copy to maintain, and the copy that goes stale
+    is the one that says "nothing here for your machine" while a card for it sits right there.
+
+    Deliberately says nothing about WHICH other generation to go look at: that is advice, it is not
+    derivable from the cards, and it belongs in README.md where advice is allowed to be hand-written.
+    """
+    if not cards:
+        return ""
+    n = Counter(p for c in cards for p in c["platforms"])
+    if not n:
+        # A sink whose cards carry no `platforms:` at all -- the e2e sink's frontmatter is lighter and
+        # encodes the arch in the filename and `key:` line. Say nothing rather than render a coverage
+        # claim out of an absence: "(unstated): 24, nothing on any other generation" would be a
+        # fabrication, and a generated fabrication is worse than the hand-written one this replaced.
+        return ""
+    stated = sum(1 for c in cards if c["platforms"])
+    spread = ", ".join(f"**{p}**: {k}" for p, k in sorted(n.items(), key=lambda kv: (-kv[1], kv[0])))
+    only = " Nothing here was measured on any other generation." if len(n) == 1 else ""
+    if stated < len(cards):
+        only += (f" ({len(cards) - stated} card(s) state no `platforms:` and are not counted — "
+                 f"their arch cannot be read off the frontmatter.)")
+    return (f"\n**Platform coverage (generated):** {stated} active card(s) — {spread}.{only} "
+            f"A card's `effect:` is a number from the generation it was measured on; on a different "
+            f"one it is a *hypothesis worth testing first*, not a number — the A/B still decides. See "
+            f"`README.md` -> \"Architecture coverage\" for where other generations are covered.\n")
+
+
+def _index_header(d, cards=()):
     o = _owner(d)
     return (f"""# Learned — index of distilled {o} experience cards
 
@@ -799,7 +831,7 @@ card's own description, the kernel symbols it was measured on, and its keywords 
 relevance without opening anything. Match on *meaning*, not on an exact string: a card written for
 `split-k on skinny-M GEMM` is worth opening for a tall-K GEMM too. If nothing matches, that is a real
 answer — plan cold, exactly as this workflow does without any KB.
-""")
+{_platform_coverage(cards)}""")
 
 
 def build_index(kb_dir):
@@ -875,7 +907,7 @@ def build_index(kb_dir):
                   ", ".join(f"{g} ({n})" for g, n in sorted(over.items())) +
                   ". Archive the lowest `confidence × freshness × standing` card in that class\n"
                   "> (★★★ is never auto-evicted), then regenerate.\n")
-    return _index_header(kb_dir) + body + footer
+    return _index_header(kb_dir, cards) + body + footer
 
 
 def cmd_index(kb, a):
