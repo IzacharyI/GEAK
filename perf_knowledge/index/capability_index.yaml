@@ -233,6 +233,35 @@ candidates:
       - https://rocm.blogs.amd.com/software-tools-optimization/matrix-cores-cdna/README.html
       - https://github.com/ROCm/aiter
   - operator: grouped_gemm_moe
+    backend: hipblaslt
+    gens: [gfx908, gfx90a, gfx942, gfx950]
+    dtypes: [bf16, fp16, fp8_e4m3_fnuz, fp8_e4m3]
+    regimes: [prefill, decode]
+    card: ../operators/grouped_gemm_moe/backends/hipblaslt.md
+    sources:
+      - https://rocm.docs.amd.com/projects/hipBLASLt/en/latest/
+      - https://rocm.blogs.amd.com/software-tools-optimization/hipblaslt-offline-tuning-part1/README.html
+      - ROCm/aiter@a6bb4993:aiter/tuned_gemm.py
+  - operator: grouped_gemm_moe
+    backend: hipkittens
+    gens: [gfx942, gfx950]
+    dtypes: [bf16, fp16]
+    regimes: [prefill]
+    card: ../operators/grouped_gemm_moe/backends/hipkittens.md
+    sources:
+      - https://arxiv.org/abs/2511.08083
+      - https://hazyresearch.stanford.edu/blog/2025-11-09-hk
+      - https://github.com/HazyResearch/HipKittens
+  - operator: grouped_gemm_moe
+    backend: rocwmma
+    gens: [gfx942, gfx950]
+    dtypes: [bf16, fp16, fp8_e4m3_fnuz]
+    regimes: [prefill, decode]
+    card: ../operators/grouped_gemm_moe/backends/rocwmma.md
+    sources:
+      - https://github.com/ROCm/rocWMMA
+      - https://rocm.blogs.amd.com/software-tools-optimization/matrix-cores-cdna/README.html
+  - operator: grouped_gemm_moe
     backend: tilelang
     gens: [gfx942, gfx950]
     dtypes: [bf16, fp16, fp8_e4m3_fnuz]
