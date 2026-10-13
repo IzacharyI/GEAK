@@ -12,7 +12,7 @@ A learned card is one run's conclusion. This file is the part no single card can
 
 Read it as a **prior about where to look first**, never as a verdict. [`README.md`](../README.md) applies unchanged: this base proposes candidates, the box decides.
 
-Corpus: **160 active cards** across kernel=136 (136 with keywords), e2e=24 (0 with keywords) · **94 axes published** (>= 3 distinct kernels), 149 below threshold.
+Corpus: **163 active cards** across kernel=139 (139 with keywords), e2e=24 (0 with keywords) · **94 axes published** (>= 3 distinct kernels), 157 below threshold.
 
 ## Cross-operator axes
 
@@ -20,39 +20,40 @@ An axis reaches this table at >= 3 distinct kernels and >= 3 distinct kernel cla
 
 | axis | paid on | closed on | how to measure | kernels | classes | cards |
 |---|---|---|---|---|---|---|
-| `launch-overhead` | 15 | 17 | 3 | 23 | 12 | 40 |
+| `launch-overhead` | 16 | 17 | 3 | 24 | 12 | 41 |
 | `occupancy` | 9 | 18 | 0 | 22 | 8 | 33 |
 | `roofline` | 4 | 11 | 2 | 17 | 7 | 14 |
-| `kernel-fusion` | 13 | 3 | 0 | 15 | 5 | 8 |
-| `cache-modifier` | 10 | 7 | 1 | 14 | 5 | 17 |
+| `kernel-fusion` | 14 | 3 | 0 | 16 | 5 | 9 |
+| `cache-modifier` | 11 | 7 | 1 | 15 | 5 | 18 |
+| `dispatch-collapse` | 13 | 2 | 0 | 14 | 4 | 9 |
 | `hip-graph` | 5 | 12 | 0 | 14 | 8 | 16 |
-| `dispatch-collapse` | 12 | 2 | 0 | 13 | 4 | 8 |
-| `grid-occupancy` | 9 | 2 | 0 | 11 | 5 | 7 |
+| `grid-occupancy` | 11 | 2 | 0 | 13 | 5 | 8 |
+| `graph-replay` | 5 | 5 | 2 | 11 | 8 | 10 |
 | `mfma` | 7 | 6 | 1 | 11 | 5 | 16 |
-| `graph-replay` | 4 | 5 | 2 | 10 | 7 | 9 |
 | `host-runtime` | 5 | 6 | 1 | 10 | 10 | 13 |
 | `num-stages` | 6 | 4 | 1 | 10 | 6 | 10 |
+| `cu-underfill` | 8 | 1 | 0 | 9 | 4 | 4 |
 | `paged-attention` | 8 | 6 | 2 | 9 | 3 | 22 |
+| `split-k` | 4 | 5 | 1 | 9 | 5 | 11 |
+| `tile-geometry` | 8 | 2 | 0 | 9 | 4 | 7 |
 | `cross-workgroup` | 6 | 2 | 0 | 8 | 3 | 4 |
 | `raw-hip` | 7 | 1 | 0 | 8 | 4 | 7 |
 | `size-gating` | 6 | 0 | 2 | 8 | 4 | 5 |
 | `stacking` | 5 | 0 | 3 | 8 | 3 | 5 |
-| `cu-underfill` | 6 | 1 | 0 | 7 | 3 | 3 |
+| `block-scale` | 7 | 1 | 1 | 7 | 4 | 13 |
 | `dispatch-floor` | 4 | 6 | 0 | 7 | 4 | 7 |
 | `measurement-discipline` | 3 | 2 | 2 | 7 | 3 | 5 |
+| `non-temporal-loads` | 5 | 2 | 1 | 7 | 3 | 7 |
 | `num-warps` | 5 | 4 | 0 | 7 | 5 | 9 |
-| `split-k` | 2 | 5 | 1 | 7 | 5 | 10 |
-| `tile-geometry` | 6 | 2 | 0 | 7 | 4 | 6 |
 | `waves-per-eu` | 5 | 2 | 0 | 7 | 3 | 6 |
-| `block-scale` | 6 | 1 | 1 | 6 | 4 | 12 |
 | `launch-config` | 5 | 1 | 1 | 6 | 5 | 7 |
-| `lds-tiling` | 4 | 3 | 0 | 6 | 4 | 7 |
+| `lds-tiling` | 3 | 3 | 0 | 6 | 4 | 6 |
 | `xcd-swizzle` | 3 | 3 | 0 | 6 | 3 | 5 |
+| `cuda-graph` | 1 | 4 | 0 | 5 | 3 | 5 |
 | `lds-staging` | 4 | 2 | 0 | 5 | 3 | 5 |
 | `non-temporal-store` | 5 | 0 | 0 | 5 | 3 | 3 |
 | `software-pipelining` | 1 | 4 | 0 | 5 | 4 | 4 |
 | `bit-exact` | 4 | 0 | 1 | 4 | 4 | 7 |
-| `cuda-graph` | 0 | 4 | 0 | 4 | 3 | 4 |
 | `paired-ab-rig` | 3 | 1 | 1 | 4 | 3 | 5 |
 | `software-prefetch` | 0 | 4 | 0 | 4 | 3 | 4 |
 | `unroll` | 4 | 0 | 0 | 4 | 3 | 3 |
@@ -96,31 +97,28 @@ Concentrated (>= 80% of the axis's kernels in one class) and therefore knowledge
 | [`fused_moe_grouped_gemm`](../operators/fused_moe_grouped_gemm/) | `m-bucket` | 3 | 0 | 3 | 3 |
 | [`fused_moe_grouped_gemm`](../operators/fused_moe_grouped_gemm/) | `mfma-nonkdim` | 1 | 2 | 3 | 3 |
 
-Kernel classes with cards but no operator id, left unfiled rather than filed plausibly: `composable` (1 cards), `fused_norm_gemm` (3 cards), `memory_movement` (4 cards), `method` (20 cards), `other` (24 cards). `method` and `composable` have no operator by construction — they are about how to measure, and a method row filed under an operator would be read as being about that operator. `other` is the parser's fallback for a card with no `kernel_class` at all, which is every e2e card. Anything else here wants a line in `CLASS_TO_OPERATOR`.
+Kernel classes with cards but no operator id, left unfiled rather than filed plausibly: `composable` (1 cards), `fused_norm_gemm` (3 cards), `memory_movement` (4 cards), `method` (21 cards), `other` (24 cards). `method` and `composable` have no operator by construction — they are about how to measure, and a method row filed under an operator would be read as being about that operator. `other` is the parser's fallback for a card with no `kernel_class` at all, which is every e2e card. Anything else here wants a line in `CLASS_TO_OPERATOR`.
 
 ## By authoring language
 
 The lane that lets a FlyDSL run see FlyDSL evidence instead of Triton evidence. It is fed by the card `language:` field, which is deliberately NOT backfilled onto older cards — a guessed language is worse than an absent one. Which write paths require it is not uniform; the breakdown below says which.
 
-**Empty, and not because nothing was measured:** 0 of 160 active cards carry a `language:` field. It fills from one side only, so which side matters:
-
-- **kernel** (136 cards today): `language:` is required. `kb.py propose` refuses a new card without one, and the lane fills it from `kernel_workflow/scripts/detect_language.py` reading the produced source rather than echoing the request.
-- **e2e** (24 cards today): `language:` is **not** required — these cards are hand-maintained markdown with no lint gate and no detection step on the write path, so they will keep arriving without one. A real gap, named here rather than averaged away.
-
-So this lane will populate for `kernel` cards as they land, and will stay silent for `e2e` ones until that write path gains the same gate. Read a future entry here as evidence from `kernel` specifically — not as the whole corpus having been language-tagged.
+| language | cards | axes |
+|---|---|---|
+| `flydsl` | 4 | `block-scale`, `cache-modifier`, `cu-underfill`, `cuda-graph`, `dispatch-collapse`, `graph-replay`, `grid-occupancy`, `kernel-fusion`, `l2-residency`, `launch-overhead`, `non-temporal-loads`, `split-k`, `tile-geometry` |
 
 ## By architecture
 
 Axes whose verdict differs across `gfx` targets — the rows worth carrying into [`hardware/`](../hardware/). Needs one axis measured on two platforms.
 
-**Structurally empty on this corpus, not measured-and-equal:** the platform census is `gfx950`=136. A row here needs one axis measured on two gfx targets; with a single-platform corpus no comparison exists to report. Read this as *unmeasured*, not as *no difference*.
+**Structurally empty on this corpus, not measured-and-equal:** the platform census is `gfx950`=139. A row here needs one axis measured on two gfx targets; with a single-platform corpus no comparison exists to report. Read this as *unmeasured*, not as *no difference*.
 
 ## Below threshold
 
 Seen, but on fewer than 3 distinct kernels. Listed so the pipeline is visible: an axis absent from this file entirely has never been tried, which is a different thing from tried twice.
 
-- **2 kernel(s)**: `ab-protocol` · `bottleneck-shift` · `config-sweep` · `counter-guided` · `cshuffle` · `dependency-chain` · `dispatch-bound` · `dtype-emulation` · `gated-lever` · `grid-fill` · `grid-gating` · `harness-artifact` · `host-dispatch` · `instruction-schedule` · `isa-census` · `measurement-floor` · `measurement-rig` · `memoization` · `mfma-tiling` · `packed-valu` · `pipeline-version` · `prefetch` · `skinny-m` · `small-effect` · `static-isa-screen` · `tile-shape` · `verification` · `w4a16` · `workgroup-mapping`
-- **1 kernel(s)**: `ab-harness` · `accumulator` · `agpr` · `amortization` · `argmin-dispatch` · `assembly-inspection` · `async-copy` · `atomic-combine` · `backend-routing` · `bit-exact-gate` · `bit-reinterpret` · `bitcast` · `block-m` · `block-scaled` · `block-scaled-gemm` · `block-size-k` · `bucket-routing` · `cache-line` · `caching` · `co-residency` · `code-size` · `convert-layout` · `counter-falsification` · `cpu-locate-gpu-price` · `critical-path` · `cshuffle-epilogue` · `ctypes` · `custom-op` · `dep-chain` · `dep-stall` · `dequant-hoist` · `dispatch-cache` · `dispatch-overhead` · `dispatch-shim` · `division` · `dot-scaled` · `double-buffer` · `dtype-bitcast` · `emulation-fallback` · `false-negative` · `flash-decode` · `fnuz` · `fp8-kv-cache` · `fp8-mfma` · `fusion-width` · `gemv` · `gqa-head-sharing` · `grid-collapse` · `grid-dedup` · `harness` · `hbm-bound` · `host-overhead` · `host-shim` · `host-submit` · `host-tuning` · `hot-loop` · `ilp` · `int4-dequant` · `jit` · `jit-rebuild` · `k-loop` · `l2-reuse` · `l2-swizzle` · `launch-meta` · `launch-tuning` · `lds` · `lds-bank-conflict` · `lds-capacity` · `m-coarsening` · `measurement-noise` · `mfma-interlock` · `mfma-nonkdim16` · `module-aliasing` · `moe-router` · `native-convert` · `numerics` · `packed-loads` · `paged-decode` · `parity-gate` · `per-bucket-tuning` · `percent-of-peak` · `persistent-grid` · `ping-pong` · `pipeline-variant` · `power-cap` · `preshuffle` · `profiling-method` · `quantization-contract` · `read-only-twin` · `reciprocal` · `reduction-order` · `register-math` · `register-spill` · `register-staging` · `scale-operand` · `search-strategy` · `serialisation` · `sign-consistency` · `split-entry` · `stale-binary` · `store-bandwidth` · `store-vectorization` · `sub-k-coarsening` · `sub-variance` · `super-tile` · `thermal-drift` · `threadfence` · `tile-selection` · `timing-drift` · `tiny-kernel` · `torch-library` · `triton-pipeliner` · `varlen` · `vendor-library` · `weight-only-quant` · `weight-quantization` · `wg-geometry` · `wrapper-overhead` · `wrapper-relaunch` · `xcd-partitioning`
+- **2 kernel(s)**: `a4w4` · `ab-protocol` · `bottleneck-shift` · `config-sweep` · `counter-guided` · `cshuffle` · `dependency-chain` · `dispatch-bound` · `dtype-emulation` · `gated-lever` · `grid-fill` · `grid-gating` · `harness-artifact` · `host-dispatch` · `instruction-schedule` · `isa-census` · `measurement-floor` · `measurement-rig` · `memoization` · `mfma-tiling` · `packed-valu` · `pipeline-version` · `prefetch` · `skinny-m` · `small-effect` · `static-isa-screen` · `tile-shape` · `verification` · `w4a16` · `wave-quantisation` · `workgroup-mapping`
+- **1 kernel(s)**: `ab-harness` · `accumulator` · `agpr` · `amortization` · `api-surface` · `argmin-dispatch` · `assembly-inspection` · `async-copy` · `atomic-combine` · `backend-routing` · `bit-exact-gate` · `bit-reinterpret` · `bitcast` · `block-m` · `block-scaled` · `block-scaled-gemm` · `block-size-k` · `bucket-routing` · `cache-line` · `caching` · `campaign-brief` · `co-residency` · `code-size` · `convert-layout` · `counter-falsification` · `cpu-locate-gpu-price` · `critical-path` · `cshuffle-epilogue` · `ctypes` · `custom-op` · `dep-chain` · `dep-stall` · `dequant-hoist` · `dispatch-cache` · `dispatch-overhead` · `dispatch-shim` · `division` · `dot-scaled` · `double-buffer` · `dtype-bitcast` · `emulation-fallback` · `false-negative` · `flash-decode` · `fnuz` · `fp8-kv-cache` · `fp8-mfma` · `gemv` · `gqa-head-sharing` · `grid-collapse` · `grid-dedup` · `harness` · `hbm-bound` · `host-overhead` · `host-shim` · `host-submit` · `host-tuning` · `hot-loop` · `ilp` · `infinity-cache` · `int4-dequant` · `jit` · `jit-rebuild` · `k-loop` · `l2-reuse` · `l2-swizzle` · `launch-meta` · `launch-tuning` · `lds` · `lds-bank-conflict` · `lds-capacity` · `llc-capacity` · `m-coarsening` · `measurement-noise` · `mfma-interlock` · `mfma-nonkdim16` · `module-aliasing` · `moe-router` · `native-convert` · `numerics` · `packed-loads` · `paged-decode` · `parity-gate` · `per-bucket-tuning` · `percent-of-peak` · `persistent-grid` · `ping-pong` · `pipeline-variant` · `power-cap` · `preshuffle` · `profiling-method` · `quantization-contract` · `read-only-twin` · `reciprocal` · `reduction-order` · `register-math` · `register-spill` · `register-staging` · `scale-operand` · `search-strategy` · `serialisation` · `sign-consistency` · `split-entry` · `stale-binary` · `store-bandwidth` · `store-vectorization` · `sub-k-coarsening` · `sub-variance` · `super-tile` · `thermal-drift` · `threadfence` · `tile-selection` · `timing-drift` · `tiny-kernel` · `torch-library` · `triton-pipeliner` · `tuning-knobs` · `upstream-diff` · `varlen` · `vendor-library` · `vendored-source` · `weight-only-quant` · `weight-quantization` · `wg-geometry` · `wrapper-overhead` · `wrapper-relaunch` · `xcd-partitioning`
 
 ## Evidence
 
@@ -129,9 +127,9 @@ Every published axis with the cards behind it, so a row can be audited back to t
 One card per line on purpose: this file is regenerated on every run that writes a card and CI diffs it, so a single new card should produce a one-line diff rather than rewrite a paragraph.
 
 ### `launch-overhead`
-23 distinct kernels · 12 classes · scope `general` · platforms gfx950
+24 distinct kernels · 12 classes · scope `general` · platforms gfx950
 
-**paid** — 15 kernels, 12 cards:
+**paid** — 16 kernels, 13 cards:
 - [arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed.md)
 - [bypass-the-jit-launcher-for-a-dispatch-bound-triton-op-moe-router-topk-gfx950-both](../../kernel_workflow/knowledge/learned/bypass-the-jit-launcher-for-a-dispatch-bound-triton-op-moe-router-topk-gfx950-both.md)
 - [cache-the-per-call-host-work-when-the-host-owns-a-large-shar-dense-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/cache-the-per-call-host-work-when-the-host-owns-a-large-shar-dense-gemm-gfx950-decode.md)
@@ -144,6 +142,7 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [dispatch-collapse-first-then-per-regime-specialisation-on-la-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/dispatch-collapse-first-then-per-regime-specialisation-on-la-attention-decode-gfx950-decode.md)
 - [dispatch-floored-router-select-spend-the-budget-on-the-host--topk-router-gfx950-both](../../kernel_workflow/knowledge/learned/dispatch-floored-router-select-spend-the-budget-on-the-host--topk-router-gfx950-both.md)
 - [raw-driver-launch-for-a-dispatch-bound-copy-op-memory-movement-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/raw-driver-launch-for-a-dispatch-bound-copy-op-memory-movement-gfx950-launch-bound.md)
+- [the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode.md)
 **closed** — 17 kernels, 25 cards:
 - [a-stuck-tiny-case-may-be-floored-by-the-timing-bracket-not-t-method-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/a-stuck-tiny-case-may-be-floored-by-the-timing-bracket-not-t-method-gfx950-launch-bound.md)
 - [axes-that-stay-closed-once-a-quant-cast-graph-sits-at-two-no-quantize-cast-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/axes-that-stay-closed-once-a-quant-cast-graph-sits-at-two-no-quantize-cast-gfx950-launch-bound.md)
@@ -236,23 +235,24 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [scale-percent-of-peak-to-the-cus-the-box-actually-exposes-method-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/scale-percent-of-peak-to-the-cus-the-box-actually-exposes-method-gfx950-compute-bound.md)
 
 ### `kernel-fusion`
-15 distinct kernels · 5 classes · scope `general` · platforms gfx950
+16 distinct kernels · 5 classes · scope `general` · platforms gfx950
 
-**paid** — 13 kernels, 5 cards:
+**paid** — 14 kernels, 6 cards:
 - [collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both.md)
 - [collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound.md)
 - [delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both.md)
 - [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
 - [fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both](../../kernel_workflow/knowledge/learned/fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both.md)
+- [the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode.md)
 **closed** — 3 kernels, 3 cards:
 - [axes-that-stayed-closed-on-a-bf16-fused-moe-with-a-decode-we-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-stayed-closed-on-a-bf16-fused-moe-with-a-decode-we-moe-grouped-gemm-gfx950-both.md)
 - [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
 - [split-kv-decode-the-two-dispatch-shape-is-welded-budget-the--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/split-kv-decode-the-two-dispatch-shape-is-welded-budget-the--attention-decode-gfx950-decode.md)
 
 ### `cache-modifier`
-14 distinct kernels · 5 classes · scope `general` · platforms gfx950
+15 distinct kernels · 5 classes · scope `general` · platforms gfx950
 
-**paid** — 10 kernels, 10 cards:
+**paid** — 11 kernels, 11 cards:
 - [buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode.md)
 - [cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both.md)
 - [choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode.md)
@@ -260,6 +260,7 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode.md)
 - [drop-the-non-temporal-cache-hint-on-once-read-kv-streams-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/drop-the-non-temporal-cache-hint-on-once-read-kv-streams-attention-decode-gfx950-decode.md)
 - [get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both.md)
+- [put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode.md)
 - [reinterpret-a-frozen-launch-through-an-exported-wrapper-obje-quantize-cast-gfx950-memory-bound](../../kernel_workflow/knowledge/learned/reinterpret-a-frozen-launch-through-an-exported-wrapper-obje-quantize-cast-gfx950-memory-bound.md)
 - [shorten-the-load-to-dot-chain-before-chasing-bytes-linear-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/shorten-the-load-to-dot-chain-before-chasing-bytes-linear-attention-gfx950-prefill.md)
 - [streaming-non-temporal-store-for-write-once-output-linear-attention-gfx950-memory-bound](../../kernel_workflow/knowledge/learned/streaming-non-temporal-store-for-write-once-output-linear-attention-gfx950-memory-bound.md)
@@ -272,6 +273,21 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [only-adding-or-removing-a-dependency-moves-a-tuned-paged-att-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/only-adding-or-removing-a-dependency-moves-a-tuned-paged-att-attention-decode-gfx950-decode.md)
 **how to measure** — 1 kernels, 1 cards:
 - [ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode.md)
+
+### `dispatch-collapse`
+14 distinct kernels · 4 classes · scope `general` · platforms gfx950
+
+**paid** — 13 kernels, 7 cards:
+- [collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both.md)
+- [collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound.md)
+- [collapse-the-partition-grid-instead-of-optimizing-the-round--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/collapse-the-partition-grid-instead-of-optimizing-the-round--attention-decode-gfx950-decode.md)
+- [delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both.md)
+- [fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both](../../kernel_workflow/knowledge/learned/fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both.md)
+- [one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode.md)
+- [the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode.md)
+**closed** — 2 kernels, 2 cards:
+- [measure-the-empty-graph-replay-floor-before-funding-a-captur-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/measure-the-empty-graph-replay-floor-before-funding-a-captur-attention-decode-gfx950-decode.md)
+- [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
 
 ### `hip-graph`
 14 distinct kernels · 8 classes · scope `general` · platforms gfx950
@@ -295,32 +311,36 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [the-residual-axes-on-a-decoded-fp8-gemm-are-already-closed-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/the-residual-axes-on-a-decoded-fp8-gemm-are-already-closed-quantized-gemm-gfx950-compute-bound.md)
 - [where-a-native-mfma-block-scaled-moe-gemm-has-no-headroom-le-moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/where-a-native-mfma-block-scaled-moe-gemm-has-no-headroom-le-moe-grouped-gemm-gfx950-mixed.md)
 
-### `dispatch-collapse`
-13 distinct kernels · 4 classes · scope `general` · platforms gfx950
-
-**paid** — 12 kernels, 6 cards:
-- [collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both.md)
-- [collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/collapse-the-graph-nodes-first-then-shape-gate-a-single-work-quantize-cast-gfx950-launch-bound.md)
-- [collapse-the-partition-grid-instead-of-optimizing-the-round--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/collapse-the-partition-grid-instead-of-optimizing-the-round--attention-decode-gfx950-decode.md)
-- [delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both.md)
-- [fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both](../../kernel_workflow/knowledge/learned/fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both.md)
-- [one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode.md)
-**closed** — 2 kernels, 2 cards:
-- [measure-the-empty-graph-replay-floor-before-funding-a-captur-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/measure-the-empty-graph-replay-floor-before-funding-a-captur-attention-decode-gfx950-decode.md)
-- [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
-
 ### `grid-occupancy`
-11 distinct kernels · 5 classes · scope `general` · platforms gfx950
+13 distinct kernels · 5 classes · scope `general` · platforms gfx950
 
-**paid** — 9 kernels, 5 cards:
+**paid** — 11 kernels, 6 cards:
 - [derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode.md)
 - [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
 - [fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both](../../kernel_workflow/knowledge/learned/fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both.md)
+- [narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode.md)
 - [pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill.md)
 - [unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode.md)
 **closed** — 2 kernels, 2 cards:
 - [count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch.md)
 - [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
+
+### `graph-replay`
+11 distinct kernels · 8 classes · scope `general` · platforms gfx950
+
+**paid** — 5 kernels, 3 cards:
+- [arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed.md)
+- [collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both.md)
+- [the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode.md)
+**closed** — 5 kernels, 5 cards:
+- [axes-that-stay-closed-once-the-store-pipe-is-saturated-linear-attention-gfx950-memory-bound](../../kernel_workflow/knowledge/learned/axes-that-stay-closed-once-the-store-pipe-is-saturated-linear-attention-gfx950-memory-bound.md)
+- [four-axes-that-stayed-closed-on-a-latency-floored-paged-deco-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/four-axes-that-stayed-closed-on-a-latency-floored-paged-deco-attention-decode-gfx950-decode.md)
+- [four-host-side-axes-that-a-dispatch-bound-tiny-op-has-alread-memory-movement-gfx950-both](../../kernel_workflow/knowledge/learned/four-host-side-axes-that-a-dispatch-bound-tiny-op-has-alread-memory-movement-gfx950-both.md)
+- [price-the-host-fraction-before-spending-a-round-on-the-launc-attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/price-the-host-fraction-before-spending-a-round-on-the-launc-attention-decode-gfx950-both.md)
+- [six-axes-that-stayed-closed-on-a-graph-replay-timed-sparse-p-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/six-axes-that-stayed-closed-on-a-graph-replay-timed-sparse-p-attention-gfx950-prefill.md)
+**how to measure** — 2 kernels, 2 cards:
+- [a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a.md)
+- [measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both](../../kernel_workflow/knowledge/learned/measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both.md)
 
 ### `grouped-gemm`
 11 distinct kernels · 2 classes · scope `operator` · platforms gfx950
@@ -398,22 +418,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [prove-the-edit-built-and-prove-the-win-separately-from-the-h-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/prove-the-edit-built-and-prove-the-win-separately-from-the-h-method-gfx950-n-a.md)
 - [route-discarded-sub-noise-knobs-per-shape-instead-of-shippin-moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/route-discarded-sub-noise-knobs-per-shape-instead-of-shippin-moe-grouped-gemm-gfx950-mixed.md)
 
-### `graph-replay`
-10 distinct kernels · 7 classes · scope `general` · platforms gfx950
-
-**paid** — 4 kernels, 2 cards:
-- [arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed.md)
-- [collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/collapse-the-dispatch-chain-inside-each-shape-regime-arm-fused-norm-gemm-gfx950-both.md)
-**closed** — 5 kernels, 5 cards:
-- [axes-that-stay-closed-once-the-store-pipe-is-saturated-linear-attention-gfx950-memory-bound](../../kernel_workflow/knowledge/learned/axes-that-stay-closed-once-the-store-pipe-is-saturated-linear-attention-gfx950-memory-bound.md)
-- [four-axes-that-stayed-closed-on-a-latency-floored-paged-deco-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/four-axes-that-stayed-closed-on-a-latency-floored-paged-deco-attention-decode-gfx950-decode.md)
-- [four-host-side-axes-that-a-dispatch-bound-tiny-op-has-alread-memory-movement-gfx950-both](../../kernel_workflow/knowledge/learned/four-host-side-axes-that-a-dispatch-bound-tiny-op-has-alread-memory-movement-gfx950-both.md)
-- [price-the-host-fraction-before-spending-a-round-on-the-launc-attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/price-the-host-fraction-before-spending-a-round-on-the-launc-attention-decode-gfx950-both.md)
-- [six-axes-that-stayed-closed-on-a-graph-replay-timed-sparse-p-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/six-axes-that-stayed-closed-on-a-graph-replay-timed-sparse-p-attention-gfx950-prefill.md)
-**how to measure** — 2 kernels, 2 cards:
-- [a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a.md)
-- [measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both](../../kernel_workflow/knowledge/learned/measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both.md)
-
 ### `host-runtime`
 10 distinct kernels · 10 classes · scope `general` · platforms gfx950
 
@@ -451,6 +455,16 @@ One card per line on purpose: this file is regenerated on every run that writes 
 **how to measure** — 1 kernels, 1 cards:
 - [re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound.md)
 
+### `cu-underfill`
+9 distinct kernels · 4 classes · scope `general` · platforms gfx950
+
+**paid** — 8 kernels, 3 cards:
+- [derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode.md)
+- [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
+- [narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode.md)
+**closed** — 1 kernels, 1 cards:
+- [measure-the-launch-floor-before-buying-a-device-side-round-o-dense-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/measure-the-launch-floor-before-buying-a-device-side-round-o-dense-gemm-gfx950-decode.md)
+
 ### `paged-attention`
 9 distinct kernels · 3 classes · scope `general` · platforms gfx950
 
@@ -480,6 +494,24 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [a-b-in-the-graded-case-mix-and-price-a-direction-against-the-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-b-in-the-graded-case-mix-and-price-a-direction-against-the-method-gfx950-n-a.md)
 - [ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode.md)
 
+### `split-k`
+9 distinct kernels · 5 classes · scope `general` · platforms gfx950
+
+**paid** — 4 kernels, 3 cards:
+- [narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode.md)
+- [split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch.md)
+- [unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode.md)
+**closed** — 5 kernels, 7 cards:
+- [a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both.md)
+- [axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound.md)
+- [axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both.md)
+- [count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch.md)
+- [once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound.md)
+- [the-in-source-ceiling-of-an-mfma-bound-dense-gemm-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/the-in-source-ceiling-of-an-mfma-bound-dense-gemm-dense-gemm-gfx950-compute-bound.md)
+- [where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound.md)
+**how to measure** — 1 kernels, 1 cards:
+- [re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound.md)
+
 ### `split-kv`
 9 distinct kernels · 1 classes · scope `operator` · platforms gfx950
 
@@ -494,6 +526,19 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [high-lds-wait-counters-next-to-a-high-roofline-fraction-can--attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/high-lds-wait-counters-next-to-a-high-roofline-fraction-can--attention-decode-gfx950-both.md)
 - [reproduce-the-golden-s-own-rounding-before-costing-a-kv-reas-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/reproduce-the-golden-s-own-rounding-before-costing-a-kv-reas-attention-decode-gfx950-decode.md)
 - [split-kv-decode-the-two-dispatch-shape-is-welded-budget-the--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/split-kv-decode-the-two-dispatch-shape-is-welded-budget-the--attention-decode-gfx950-decode.md)
+
+### `tile-geometry`
+9 distinct kernels · 4 classes · scope `general` · platforms gfx950
+
+**paid** — 8 kernels, 5 cards:
+- [amortize-int4-dequant-across-m-blocks-instead-of-shrinking-i-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/amortize-int4-dequant-across-m-blocks-instead-of-shrinking-i-moe-grouped-gemm-gfx950-both.md)
+- [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
+- [narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/narrow-bn-to-multiply-the-decode-grid-on-an-mxfp4-two-stage--moe-grouped-gemm-gfx950-decode.md)
+- [pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill.md)
+- [retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill.md)
+**closed** — 2 kernels, 2 cards:
+- [axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both.md)
+- [once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound.md)
 
 ### `cross-workgroup`
 8 distinct kernels · 3 classes · scope `general` · platforms gfx950
@@ -554,6 +599,26 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [force-the-rebuild-pair-the-blocks-dump-the-registers-before--method-gfx950-n-a](../../kernel_workflow/knowledge/learned/force-the-rebuild-pair-the-blocks-dump-the-registers-before--method-gfx950-n-a.md)
 - [scope-a-closure-a-gate-and-a-stack-by-case-regime-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/scope-a-closure-a-gate-and-a-stack-by-case-regime-method-gfx950-n-a.md)
 
+### `block-scale`
+7 distinct kernels · 4 classes · scope `general` · platforms gfx950
+
+**paid** — 7 kernels, 10 cards:
+- [32x32-mfma-remap-carries-a-block-scale-moe-grouped-gemm-epil-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/32x32-mfma-remap-carries-a-block-scale-moe-grouped-gemm-epil-moe-grouped-gemm-gfx950-both.md)
+- [arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed.md)
+- [bitcast-the-fp8-flavour-the-matrix-pipe-actually-has-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/bitcast-the-fp8-flavour-the-matrix-pipe-actually-has-dense-gemm-gfx950-both.md)
+- [block-scale-moe-grouped-gemm-fund-the-scale-metadata-path-no-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/block-scale-moe-grouped-gemm-fund-the-scale-metadata-path-no-moe-grouped-gemm-gfx950-both.md)
+- [collapse-the-dequant-chain-in-a-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/collapse-the-dequant-chain-in-a-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound.md)
+- [de-scale-the-fp8-gemm-k-loop-then-feed-the-native-non-scaled-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/de-scale-the-fp8-gemm-k-loop-then-feed-the-native-non-scaled-quantized-gemm-gfx950-compute-bound.md)
+- [mfma-32-plus-a-lds-pad-on-a-frozen-gridwise-ck-block-scale-m-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/mfma-32-plus-a-lds-pad-on-a-frozen-gridwise-ck-block-scale-m-moe-grouped-gemm-gfx950-both.md)
+- [put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode.md)
+- [reinterpret-legacy-fp8-bits-to-the-arch-native-fp8-type-to-r-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/reinterpret-legacy-fp8-bits-to-the-arch-native-fp8-type-to-r-quantized-gemm-gfx950-compute-bound.md)
+- [split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch.md)
+**closed** — 1 kernels, 2 cards:
+- [five-closed-axes-above-an-ilp-bound-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/five-closed-axes-above-an-ilp-bound-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound.md)
+- [where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound.md)
+**how to measure** — 1 kernels, 1 cards:
+- [re-measure-shelved-partials-after-the-bound-class-moves-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/re-measure-shelved-partials-after-the-bound-class-moves-method-gfx950-n-a.md)
+
 ### `composable-kernel`
 7 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
 
@@ -568,15 +633,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 **how to measure** — 2 kernels, 2 cards:
 - [per-region-isa-census-before-hot-loop-tuning-locate-on-cpu-p-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/per-region-isa-census-before-hot-loop-tuning-locate-on-cpu-p-method-gfx950-n-a.md)
 - [prove-the-edit-built-and-prove-the-win-separately-from-the-h-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/prove-the-edit-built-and-prove-the-win-separately-from-the-h-method-gfx950-n-a.md)
-
-### `cu-underfill`
-7 distinct kernels · 3 classes · scope `general` · platforms gfx950
-
-**paid** — 6 kernels, 2 cards:
-- [derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/derive-the-split-kv-decode-launch-shape-from-a-constant-byte-attention-decode-gfx950-decode.md)
-- [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
-**closed** — 1 kernels, 1 cards:
-- [measure-the-launch-floor-before-buying-a-device-side-round-o-dense-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/measure-the-launch-floor-before-buying-a-device-side-round-o-dense-gemm-gfx950-decode.md)
 
 ### `dispatch-floor`
 7 distinct kernels · 4 classes · scope `general` · platforms gfx950
@@ -603,6 +659,20 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [a-closure-is-conditional-on-the-body-that-measured-it-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-closure-is-conditional-on-the-body-that-measured-it-method-gfx950-n-a.md)
 - [a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/a-fixed-order-a-a-control-measures-order-bias-and-then-hides-method-gfx950-n-a.md)
 
+### `non-temporal-loads`
+7 distinct kernels · 3 classes · scope `general` · platforms gfx950
+
+**paid** — 5 kernels, 5 cards:
+- [buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode.md)
+- [choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode.md)
+- [decode-attention-pay-the-host-tax-first-then-halve-kv-bytes--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/decode-attention-pay-the-host-tax-first-then-halve-kv-bytes--attention-decode-gfx950-decode.md)
+- [get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both.md)
+- [put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode.md)
+**closed** — 2 kernels, 1 cards:
+- [axes-that-stayed-closed-on-a-roof-bound-fused-norm-gemm-path-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-stayed-closed-on-a-roof-bound-fused-norm-gemm-path-fused-norm-gemm-gfx950-both.md)
+**how to measure** — 1 kernels, 1 cards:
+- [ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode.md)
+
 ### `num-warps`
 7 distinct kernels · 5 classes · scope `general` · platforms gfx950
 
@@ -618,35 +688,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [near-the-practical-hbm-ceiling-the-bandwidth-knobs-are-a-clo-quantize-cast-gfx950-memory-bound](../../kernel_workflow/knowledge/learned/near-the-practical-hbm-ceiling-the-bandwidth-knobs-are-a-clo-quantize-cast-gfx950-memory-bound.md)
 - [occupancy-axis-closes-when-the-backend-pins-waves-per-eu-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/occupancy-axis-closes-when-the-backend-pins-waves-per-eu-dense-gemm-gfx950-compute-bound.md)
 
-### `split-k`
-7 distinct kernels · 5 classes · scope `general` · platforms gfx950
-
-**paid** — 2 kernels, 2 cards:
-- [split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch.md)
-- [unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/unclamp-the-kv-tile-from-the-page-size-then-de-rate-it-by-he-attention-decode-gfx950-decode.md)
-**closed** — 5 kernels, 7 cards:
-- [a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both.md)
-- [axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound.md)
-- [axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both.md)
-- [count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/count-the-blocks-before-you-attribute-a-dependency-stall-to--moe-grouped-gemm-gfx950-small-batch.md)
-- [once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound.md)
-- [the-in-source-ceiling-of-an-mfma-bound-dense-gemm-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/the-in-source-ceiling-of-an-mfma-bound-dense-gemm-dense-gemm-gfx950-compute-bound.md)
-- [where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound.md)
-**how to measure** — 1 kernels, 1 cards:
-- [re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/re-price-the-dead-list-when-the-operating-point-moves-method-gfx950-compute-bound.md)
-
-### `tile-geometry`
-7 distinct kernels · 4 classes · scope `general` · platforms gfx950
-
-**paid** — 6 kernels, 4 cards:
-- [amortize-int4-dequant-across-m-blocks-instead-of-shrinking-i-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/amortize-int4-dequant-across-m-blocks-instead-of-shrinking-i-moe-grouped-gemm-gfx950-both.md)
-- [fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both](../../kernel_workflow/knowledge/learned/fill-the-cus-with-a-hidden-dim-block-axis-then-hoist-the-k-l-composable-gfx950-both.md)
-- [pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/pack-heads-per-workgroup-then-strip-the-inner-loop-attention-gfx950-prefill.md)
-- [retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill.md)
-**closed** — 2 kernels, 2 cards:
-- [axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-returned-about-1-00x-on-a-register-bound-quantized-moe-grouped-gemm-gfx950-both.md)
-- [once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/once-it-routes-to-tuned-vendor-assembly-out-generating-it-is-dense-gemm-gfx950-compute-bound.md)
-
 ### `waves-per-eu`
 7 distinct kernels · 3 classes · scope `general` · platforms gfx950
 
@@ -658,25 +699,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 **closed** — 2 kernels, 2 cards:
 - [high-lds-wait-counters-next-to-a-high-roofline-fraction-can--attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/high-lds-wait-counters-next-to-a-high-roofline-fraction-can--attention-decode-gfx950-both.md)
 - [occupancy-axis-closes-when-the-backend-pins-waves-per-eu-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/occupancy-axis-closes-when-the-backend-pins-waves-per-eu-dense-gemm-gfx950-compute-bound.md)
-
-### `block-scale`
-6 distinct kernels · 4 classes · scope `general` · platforms gfx950
-
-**paid** — 6 kernels, 9 cards:
-- [32x32-mfma-remap-carries-a-block-scale-moe-grouped-gemm-epil-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/32x32-mfma-remap-carries-a-block-scale-moe-grouped-gemm-epil-moe-grouped-gemm-gfx950-both.md)
-- [arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/arg-plan-replay-beats-graph-replay-at-low-dispatch-counts-an-quantized-gemm-gfx950-mixed.md)
-- [bitcast-the-fp8-flavour-the-matrix-pipe-actually-has-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/bitcast-the-fp8-flavour-the-matrix-pipe-actually-has-dense-gemm-gfx950-both.md)
-- [block-scale-moe-grouped-gemm-fund-the-scale-metadata-path-no-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/block-scale-moe-grouped-gemm-fund-the-scale-metadata-path-no-moe-grouped-gemm-gfx950-both.md)
-- [collapse-the-dequant-chain-in-a-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/collapse-the-dequant-chain-in-a-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound.md)
-- [de-scale-the-fp8-gemm-k-loop-then-feed-the-native-non-scaled-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/de-scale-the-fp8-gemm-k-loop-then-feed-the-native-non-scaled-quantized-gemm-gfx950-compute-bound.md)
-- [mfma-32-plus-a-lds-pad-on-a-frozen-gridwise-ck-block-scale-m-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/mfma-32-plus-a-lds-pad-on-a-frozen-gridwise-ck-block-scale-m-moe-grouped-gemm-gfx950-both.md)
-- [reinterpret-legacy-fp8-bits-to-the-arch-native-fp8-type-to-r-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/reinterpret-legacy-fp8-bits-to-the-arch-native-fp8-type-to-r-quantized-gemm-gfx950-compute-bound.md)
-- [split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch](../../kernel_workflow/knowledge/learned/split-k-by-2-to-fill-the-grid-on-the-tiny-m-case-quantized-gemm-gfx950-small-batch.md)
-**closed** — 1 kernels, 2 cards:
-- [five-closed-axes-above-an-ilp-bound-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/five-closed-axes-above-an-ilp-bound-block-scaled-fp8-gemm-quantized-gemm-gfx950-compute-bound.md)
-- [where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/where-the-headroom-is-not-and-the-two-floors-that-tell-you-s-quantized-gemm-gfx950-compute-bound.md)
-**how to measure** — 1 kernels, 1 cards:
-- [re-measure-shelved-partials-after-the-bound-class-moves-method-gfx950-n-a](../../kernel_workflow/knowledge/learned/re-measure-shelved-partials-after-the-bound-class-moves-method-gfx950-n-a.md)
 
 ### `frozen-baseline`
 6 distinct kernels · 2 classes · scope `operator` · platforms gfx950
@@ -707,28 +729,14 @@ One card per line on purpose: this file is regenerated on every run that writes 
 ### `lds-tiling`
 6 distinct kernels · 4 classes · scope `general` · platforms gfx950
 
-**paid** — 4 kernels, 4 cards:
+**paid** — 3 kernels, 3 cards:
 - [buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode.md)
 - [gluon-register-staged-wide-k-mfma-for-fp16-dense-gemm-dense-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/gluon-register-staged-wide-k-mfma-for-fp16-dense-gemm-dense-gemm-gfx950-compute-bound.md)
 - [pad-the-epilogue-lds-row-stride-off-the-32-bank-period-moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/pad-the-epilogue-lds-row-stride-off-the-32-bank-period-moe-grouped-gemm-gfx950-mixed.md)
-- [share-the-dequantised-weight-tile-across-row-blocks-widen-m--moe-grouped-gemm-gfx950-prefill](../../kernel_workflow/knowledge/learned/share-the-dequantised-weight-tile-across-row-blocks-widen-m--moe-grouped-gemm-gfx950-prefill.md)
 **closed** — 3 kernels, 3 cards:
 - [price-a-counter-with-a-deletion-control-before-funding-a-rou-moe-grouped-gemm-gfx950-prefill](../../kernel_workflow/knowledge/learned/price-a-counter-with-a-deletion-control-before-funding-a-rou-moe-grouped-gemm-gfx950-prefill.md)
 - [the-operand-feed-residual-of-a-scale-free-fp8-gemm-is-a-clos-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/the-operand-feed-residual-of-a-scale-free-fp8-gemm-is-a-clos-quantized-gemm-gfx950-compute-bound.md)
 - [the-residual-axes-on-a-decoded-fp8-gemm-are-already-closed-quantized-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/the-residual-axes-on-a-decoded-fp8-gemm-are-already-closed-quantized-gemm-gfx950-compute-bound.md)
-
-### `non-temporal-loads`
-6 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
-
-**paid** — 4 kernels, 4 cards:
-- [buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/buy-prefetch-depth-with-a-global-to-lds-dma-on-bandwidth-bou-attention-decode-gfx950-decode.md)
-- [choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode.md)
-- [decode-attention-pay-the-host-tax-first-then-halve-kv-bytes--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/decode-attention-pay-the-host-tax-first-then-halve-kv-bytes--attention-decode-gfx950-decode.md)
-- [get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both](../../kernel_workflow/knowledge/learned/get-the-nt-bit-onto-kv-loads-by-loading-one-native-128-bit-v-attention-decode-gfx950-both.md)
-**closed** — 2 kernels, 1 cards:
-- [axes-that-stayed-closed-on-a-roof-bound-fused-norm-gemm-path-fused-norm-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/axes-that-stayed-closed-on-a-roof-bound-fused-norm-gemm-path-fused-norm-gemm-gfx950-both.md)
-**how to measure** — 1 kernels, 1 cards:
-- [ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode.md)
 
 ### `paged-kv`
 6 distinct kernels · 1 classes · scope `operator` · platforms gfx950
@@ -769,6 +777,17 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [gate-a-tiny-kernel-win-on-a-median-or-a-paired-a-b-method-gfx950-launch-bound](../../kernel_workflow/knowledge/learned/gate-a-tiny-kernel-win-on-a-median-or-a-paired-a-b-method-gfx950-launch-bound.md)
 - [measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both](../../kernel_workflow/knowledge/learned/measure-a-tiny-op-with-the-harness-s-own-protocol-rotated-ag-method-gfx950-both.md)
 
+### `cuda-graph`
+5 distinct kernels · 3 classes · scope `general` · platforms gfx950
+
+**paid** — 1 kernels, 1 cards:
+- [the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/the-cuda-graph-launch-floor-is-per-replay-not-per-node-moe-grouped-gemm-gfx950-decode.md)
+**closed** — 4 kernels, 4 cards:
+- [a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both.md)
+- [axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound.md)
+- [positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode.md)
+- [the-residual-launch-axis-on-decode-attention-closes-once-hos-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/the-residual-launch-axis-on-decode-attention-closes-once-hos-attention-decode-gfx950-decode.md)
+
 ### `empty-workgroups`
 5 distinct kernels · 2 classes · scope `operator` · platforms gfx950
 
@@ -790,6 +809,19 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [test-the-allocator-before-designing-a-kernel-fix-for-a-perio-method-gfx950-decode](../../kernel_workflow/knowledge/learned/test-the-allocator-before-designing-a-kernel-fix-for-a-perio-method-gfx950-decode.md)
 **how to measure** — 1 kernels, 1 cards:
 - [ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/ask-whether-the-traffic-is-removable-before-you-tune-how-it--attention-decode-gfx950-decode.md)
+
+### `l2-residency`
+5 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
+
+**paid** — 3 kernels, 4 cards:
+- [cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both.md)
+- [choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode.md)
+- [narrow-the-streamed-weight-operand-first-then-chase-the-mfma-moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/narrow-the-streamed-weight-operand-first-then-chase-the-mfma-moe-grouped-gemm-gfx950-mixed.md)
+- [put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode](../../kernel_workflow/knowledge/learned/put-the-non-temporal-bit-on-the-block-scale-stream-not-just--moe-grouped-gemm-gfx950-decode.md)
+**closed** — 4 kernels, 3 cards:
+- [axes-that-close-once-decode-attention-sits-on-its-read-roof-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/axes-that-close-once-decode-attention-sits-on-its-read-roof-attention-decode-gfx950-decode.md)
+- [diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed.md)
+- [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
 
 ### `launch-shape`
 5 distinct kernels · 2 classes · scope `operator` · platforms gfx950
@@ -894,15 +926,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both](../../kernel_workflow/knowledge/learned/fuse-the-quant-passes-behind-a-tag-slot-grid-barrier-quantize-cast-gfx950-both.md)
 - [one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/one-dispatch-for-split-kv-decode-and-the-protocol-that-pays--attention-decode-gfx950-decode.md)
 
-### `cuda-graph`
-4 distinct kernels · 3 classes · scope `general` · platforms gfx950
-
-**closed** — 4 kernels, 4 cards:
-- [a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/a-hand-written-loop-has-to-out-schedule-not-out-structure-th-dense-gemm-gfx950-both.md)
-- [axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound](../../kernel_workflow/knowledge/learned/axes-that-closed-on-a-dequant-latency-bound-quantized-groupe-moe-grouped-gemm-gfx950-compute-bound.md)
-- [positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode.md)
-- [the-residual-launch-axis-on-decode-attention-closes-once-hos-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/the-residual-launch-axis-on-decode-attention-closes-once-hos-attention-decode-gfx950-decode.md)
-
 ### `epilogue`
 4 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
 
@@ -963,18 +986,6 @@ One card per line on purpose: this file is regenerated on every run that writes 
 - [retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill](../../kernel_workflow/knowledge/learned/retile-to-one-program-per-query-then-delete-every-per-trip-r-attention-gfx950-prefill.md)
 **closed** — 1 kernels, 1 cards:
 - [positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/positive-cache-counters-and-a-cheaper-launcher-can-both-buy--attention-decode-gfx950-decode.md)
-
-### `l2-residency`
-4 distinct kernels · 2 classes · scope `narrow` · platforms gfx950
-
-**paid** — 2 kernels, 3 cards:
-- [cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both](../../kernel_workflow/knowledge/learned/cache-policy-is-a-per-buffer-per-bucket-decision-on-a-bf16-f-moe-grouped-gemm-gfx950-both.md)
-- [choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/choose-the-non-temporal-hint-per-operand-not-per-kernel-attention-decode-gfx950-decode.md)
-- [narrow-the-streamed-weight-operand-first-then-chase-the-mfma-moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/narrow-the-streamed-weight-operand-first-then-chase-the-mfma-moe-grouped-gemm-gfx950-mixed.md)
-**closed** — 4 kernels, 3 cards:
-- [axes-that-close-once-decode-attention-sits-on-its-read-roof-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/axes-that-close-once-decode-attention-sits-on-its-read-roof-attention-decode-gfx950-decode.md)
-- [diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed](../../kernel_workflow/knowledge/learned/diagnose-dependency-chain-vs-load-latency-before-spending-a--moe-grouped-gemm-gfx950-mixed.md)
-- [price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode](../../kernel_workflow/knowledge/learned/price-the-residual-before-funding-fusion-or-geometry-work-at-attention-decode-gfx950-decode.md)
 
 ### `loop-hoisting`
 4 distinct kernels · 2 classes · scope `narrow` · platforms gfx950

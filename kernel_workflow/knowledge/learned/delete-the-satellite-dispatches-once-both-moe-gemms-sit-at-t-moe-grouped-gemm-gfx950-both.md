@@ -3,12 +3,12 @@ key: bf16 unquantized fused-MoE expert GEMM pair (gate/up then down-proj) in Tri
 type: lever
 confidence: ★★
 effect: 1.26x geomean isolated vs frozen baseline, mean of 3, parity clean on all cases; per-case 1.21x at decode M=64, 1.12x at prefill M=1080, 1.49x at prefill M=7218 — run-to-run spread stayed under half the smallest per-case gain
-confirms_cited: 0
+confirms_cited: 1
 confirms_blind: 0
-losses: 0
-attempts: 2
+losses: 1
+attempts: 4
 toolchain: unknown
-last_seen: 2026-10-11
+last_seen: 2026-10-12
 name: delete-the-satellite-dispatches-once-both-moe-gemms-sit-at-t-moe-grouped-gemm-gfx950-both
 description: Tune the per-M-bucket launch config first, then buy the tail by deleting satellite dispatches into grids that already exist: 1.26x on bf16 Triton fused-MoE
 keywords: ['moe', 'grouped-gemm', 'dispatch-collapse', 'kernel-fusion', 'launch-overhead', 'm-bucket', 'prologue', 'bf16', 'triton', 'gfx950']
