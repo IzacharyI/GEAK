@@ -105,6 +105,11 @@ matrix badge links correctly.
 
 - **Every content file ends with `## Sources`** citing primary sources — ROCm docs/blogs, CDNA ISA §,
   GitHub `repo@commit:path`, arXiv, vendor benchmarks.
+- **Every `repo@commit:path` citation resolves on this box**, checked by `test_docs_contract.py`.
+  The commit is the identity and the path is not: five aiter checkouts live here at five different
+  commits, so resolve with
+  [`index/resolve_citation.py`](index/resolve_citation.py) (git-object based) rather than by
+  `grep`-ing whichever tree is nearest. See [`backends/aiter/overview.md`](backends/aiter/overview.md).
 - **Every performance number is measured** and tagged `value @ hardware, ROCm/lib version, date`, or
   explicitly labeled **vendor-reported**. No theoretical peak presented as achievable (MI300X commonly
   sustains ~45% of peak).

@@ -7,7 +7,7 @@ exists to remove: a claim that *looks* verifiable and is not is worse than no cl
 budgets trust against it. When this ran for the first time it found 25 content files with no
 `## Sources` — the banner had been wrong for a while and nothing said so.
 
-Two invariants:
+Three invariants:
 
 1. **Every relative markdown link resolves.** A knowledge base is navigated by following links; one
    that dead-ends sends the reader to `ls` and, more often, to a wrong assumption about what exists.
@@ -121,6 +121,46 @@ def check_sources():
     return checked, bad, exempted
 
 
+def check_citations():
+    """Every `repo@commit:path` citation resolves in a checkout on this box.
+
+    The third promise, and the one that was silently false the longest. A `## Sources` section
+    satisfies check_sources() whether or not a single line in it points at anything real: the second
+    invariant checks that sources were CITED, never that the citations RESOLVE. Two did not -- a
+    path that moved under `aiter/ops/` before the cited commit -- and the suite was green over them
+    for as long as they existed.
+
+    The check is delegated to `index/resolve_citation.py`, which resolves through git objects rather
+    than through a path, because this box holds five aiter checkouts at five commits and "the file
+    is not there" usually means "you are standing in the wrong tree". Returns (checked, [failures]).
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "resolve_citation", os.path.join(HERE, "index", "resolve_citation.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    cites = mod.kb_citations()
+    per_repo, bad = {}, []
+    for repo, _, _, _ in cites:
+        name = repo.split("/")[-1]
+        if name not in per_repo:
+            per_repo[name] = mod.checkouts(name)
+    seen = {}
+    for repo, commit, path, src in cites:
+        seen.setdefault((repo, commit, path), []).append(src)
+    for (repo, commit, path), srcs in sorted(seen.items()):
+        trees = per_repo[repo.split("/")[-1]]
+        if not trees:
+            # No checkout of that repo on this box: not a defect in the card. Say so and move on,
+            # rather than reporting a citation nobody can check here as a broken one.
+            continue
+        r = mod.resolve(commit, path, trees)
+        if not r["ok"]:
+            bad.append(f"{sorted(set(srcs))[0]} -> {repo}@{commit[:8]}:{path} ({r['reason']})")
+    return len(cites), bad
+
+
 def main():
     failures = []
 
@@ -134,6 +174,13 @@ def main():
           f"({n_exempt} exempt, each with a stated reason)")
     failures += bad_src
 
+    n_cite, bad_cite = check_citations()
+    print(f"cites:   {n_cite} `repo@commit:path` citations resolved against on-box checkouts, "
+          f"{len(bad_cite)} unresolved")
+    print("         (resolved through git objects, not through a path -- see "
+          "index/resolve_citation.py)")
+    failures += bad_cite
+
     if failures:
         print(f"\nFAIL: {len(failures)} problem(s) in {REL}/", file=sys.stderr)
         for f in failures[:60]:
@@ -144,7 +191,8 @@ def main():
               "SOURCES_EXEMPT with the reason.", file=sys.stderr)
         return 1
 
-    print(f"\nOK: {REL}/ links all resolve and every content file cites its sources")
+    print(f"\nOK: {REL}/ links all resolve, every content file cites its sources, "
+          "and every citation resolves on this box")
     return 0
 
 

@@ -187,19 +187,6 @@ entries:
       - https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html
       - https://rocm.docs.amd.com/en/latest/how-to/rocm-for-ai/inference-optimization/workload.html
   - operator: grouped_gemm_moe
-    backend: asm
-    status: competitive
-    gens: [gfx942, gfx950]
-    dtypes: [fp8_e4m3_fnuz, int8, bf16, fp16, fp4_e2m1]
-    regimes: [prefill, decode]
-    card: ../operators/grouped_gemm_moe/backends/asm.md
-    sources:
-      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_moe_2stage.cu
-      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_fmoe.cu
-      - ROCm/aiter@4faf8713:aiter/fused_moe.py
-      - ROCm/aiter@4faf8713:hsa/codegen.py
-      - https://rocm.blogs.amd.com/software-tools-optimization/matrix-cores-cdna/README.html
-  - operator: grouped_gemm_moe
     backend: aiter
     status: sota
     gens: [gfx942, gfx950]
@@ -211,6 +198,18 @@ entries:
       - ROCm/aiter@a6bb4993:aiter/jit/core.py
       - https://github.com/ROCm/aiter
       - https://rocm.blogs.amd.com/artificial-intelligence/aiter-intergration-s/README.html
+  - operator: grouped_gemm_moe
+    backend: asm
+    status: competitive
+    gens: [gfx942, gfx950]
+    dtypes: [fp8_e4m3_fnuz, int8, bf16, fp16, fp4_e2m1]
+    regimes: [prefill, decode]
+    card: ../operators/grouped_gemm_moe/backends/asm.md
+    sources:
+      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_moe_2stage.cu
+      - ROCm/aiter@4faf8713:csrc/py_itfs_cu/asm_fmoe.cu
+      - ROCm/aiter@4faf8713:aiter/fused_moe.py
+      - ROCm/aiter@4faf8713:hsa/codegen.py
   - operator: grouped_gemm_moe
     backend: ck
     status: competitive
@@ -243,8 +242,9 @@ entries:
     card: ../operators/grouped_gemm_moe/backends/gluon.md
     sources:
       - ROCm/aiter@4faf8713:aiter/ops/triton/_gluon_kernels/gfx1250/moe/
+      - ROCm/aiter@4faf8713:aiter/ops/triton/_gluon_kernels/gfx950/moe/moe_op_gemm_a16w4.py
+      - ROCm/aiter@4faf8713:aiter/ops/triton/_gluon_kernels/gfx942/moe/moe_op_gemm_int8_smoothquant.py
       - ROCm/aiter@4faf8713:aiter/ops/triton/moe/moe_op_gemm_a16w4.py
-      - https://rocm.blogs.amd.com/software-tools-optimization/gluon-gemm-tutorial/README.html
   - operator: grouped_gemm_moe
     backend: hip
     status: competitive
@@ -746,7 +746,6 @@ entries:
     regimes: [training]
     card: ../operators/mla_attention/backends/flydsl.md
     sources:
-      - Attention-Kernels/geak_trans_py2flydsl/fmha_backward/FMHA_BWD_FlyDSL_Skills.md
       - https://arxiv.org/abs/2511.08083
   - operator: mla_attention
     backend: hip
