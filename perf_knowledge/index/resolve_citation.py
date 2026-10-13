@@ -149,7 +149,11 @@ def kb_citations():
                  os.path.join(PK, "landscape")):
         for dirpath, _, files in os.walk(base):
             for fn in files:
-                if not fn.endswith(".md"):
+                # `.yaml` too: sota_registry / capability_index are the machine-consumed copies of
+                # the card frontmatter, and they are GENERATED -- so a card fixed without re-running
+                # `index/_gen_registry.py` leaves the broken citation live in exactly the file the
+                # workflows read, while the audit over the cards reports clean. (Observed.)
+                if not (fn.endswith(".md") or fn.endswith(".yaml")):
                     continue
                 p = os.path.join(dirpath, fn)
                 try:

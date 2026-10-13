@@ -1554,7 +1554,7 @@ entries:
     sources:
       - https://gau-nernst.github.io/amd-a2a/
       - https://github.com/ROCm/mori
-      - ROCm/aiter@a6bb499375849eec45d68c5ccaebc8865fd422c0:aiter/moe_sorting.py
+      - ROCm/aiter@a6bb499375849eec45d68c5ccaebc8865fd422c0:aiter/ops/moe_sorting.py
   - operator: moe_dispatch_combine
     backend: mori
     status: sota

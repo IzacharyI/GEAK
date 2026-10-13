@@ -7,7 +7,7 @@ exists to remove: a claim that *looks* verifiable and is not is worse than no cl
 budgets trust against it. When this ran for the first time it found 25 content files with no
 `## Sources` — the banner had been wrong for a while and nothing said so.
 
-Three invariants:
+Four invariants:
 
 1. **Every relative markdown link resolves.** A knowledge base is navigated by following links; one
    that dead-ends sends the reader to `ls` and, more often, to a wrong assumption about what exists.
@@ -19,6 +19,16 @@ Three invariants:
    it can be traced. A file with no sources is indistinguishable from a file whose numbers were
    invented, and the reader cannot tell which they are holding.
 
+3. **Every `repo@commit:path` citation resolves on this box**, through git objects rather than
+   through a path. Five aiter checkouts live here at five commits, so the same path holds a
+   different file in each and a path-based check would both miss real breakage and invent fake.
+
+4. **The generated indexes still match the cards.** `index/{sota_registry,capability_index}.yaml`
+   and `index/sota_matrix.md` are derived from card frontmatter and are what the workflows read; a
+   card fixed without re-running the generator leaves the stale copy live where it is consumed while
+   checks 1-3 over the cards report clean. Observed: a path corrected in a card stayed broken in both
+   YAMLs for a commit.
+
 Exemptions are enumerated with a reason each, never as a pattern that happens to make the run green.
 
 Run: `python3 perf_knowledge/test_docs_contract.py`
@@ -26,6 +36,7 @@ Run: `python3 perf_knowledge/test_docs_contract.py`
 
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -161,6 +172,21 @@ def check_citations():
     return len(cites), bad
 
 
+def check_index_fresh():
+    """`index/{sota_registry,capability_index}.yaml` + `sota_matrix.md` still match the cards.
+
+    These three are GENERATED from card frontmatter and are what a workflow actually reads. A card
+    edited without re-running the generator leaves the old status, dtypes and sources live in the
+    machine-consumed copy while the card itself looks right -- so the other three checks pass and the
+    agent is handed the stale answer.
+    """
+    r = subprocess.run([sys.executable, os.path.join(HERE, "index", "_gen_registry.py"), "--check"],
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        return []
+    return [(r.stderr.strip() or r.stdout.strip() or "index/_gen_registry.py --check failed")]
+
+
 def main():
     failures = []
 
@@ -181,6 +207,10 @@ def main():
           "index/resolve_citation.py)")
     failures += bad_cite
 
+    bad_index = check_index_fresh()
+    print(f"index:   generated index/ vs. card frontmatter, {len(bad_index)} stale file-set")
+    failures += bad_index
+
     if failures:
         print(f"\nFAIL: {len(failures)} problem(s) in {REL}/", file=sys.stderr)
         for f in failures[:60]:
@@ -191,8 +221,8 @@ def main():
               "SOURCES_EXEMPT with the reason.", file=sys.stderr)
         return 1
 
-    print(f"\nOK: {REL}/ links all resolve, every content file cites its sources, "
-          "and every citation resolves on this box")
+    print(f"\nOK: {REL}/ links all resolve, every content file cites its sources, every citation "
+          "resolves on this box, and the generated indexes match the cards")
     return 0
 
 
