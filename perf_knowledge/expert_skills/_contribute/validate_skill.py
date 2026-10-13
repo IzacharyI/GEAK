@@ -439,7 +439,7 @@ def planner_extension_errors(skill_path, fm):
 
     bindings = extension.get("ir_bindings")
     allowed_bindings = {
-        "target", "work_domains", "regions", "buffers", "counters", "queues",
+        "target", "target_by_bucket", "work_domains", "regions", "buffers", "counters", "queues",
         "events", "abi", "resources", "schedule", "compiler_constraints",
         "evidence_requirements", "known_unknowns",
     }
@@ -465,8 +465,22 @@ def planner_extension_errors(skill_path, fm):
             elif len(present) != len(set(present)):
                 errs.append(f"planner ir_bindings.{collection} ids must be unique")
             binding_ids[collection] = set(present)
-        target = bindings.get("target") or {}
-        if isinstance(target, dict):
+        targets = {"target": bindings.get("target") or {}}
+        by_bucket = bindings.get("target_by_bucket") or {}
+        if not isinstance(by_bucket, dict):
+            errs.append("planner ir_bindings.target_by_bucket must map a capacity to a target")
+            by_bucket = {}
+        for bucket, bucket_target in by_bucket.items():
+            if not str(bucket).isdigit() or not isinstance(bucket_target, dict):
+                errs.append(
+                    f"planner ir_bindings.target_by_bucket[{bucket!r}] must be a target "
+                    "keyed by a capacity"
+                )
+                continue
+            targets[f"target_by_bucket[{bucket}]"] = bucket_target
+        for name, target in targets.items():
+            if not isinstance(target, dict):
+                continue
             for field, collection in (
                 ("required_regions", "regions"),
                 ("required_queues", "queues"),
@@ -475,7 +489,7 @@ def planner_extension_errors(skill_path, fm):
                 unknown = set(map(str, values)) - binding_ids.get(collection, set())
                 if unknown:
                     errs.append(
-                        f"planner ir_bindings.target names unknown {field}: " +
+                        f"planner ir_bindings.{name} names unknown {field}: " +
                         ", ".join(sorted(unknown))
                     )
 
