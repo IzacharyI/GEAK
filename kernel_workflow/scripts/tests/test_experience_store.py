@@ -832,16 +832,20 @@ def test_both_planes_offer_the_same_candidates(tmp_path):
     stacked(root, "20260101_000000_c", speedup=1.01, direction="unroll")   # below the floor
     store = seed_store(tmp_path, root)
 
+    # `--framework-version` is pinned rather than left to the box: without it the read takes the
+    # ROCm version off `/opt/rocm/.info/version`, so this test's identity -- and therefore which rung
+    # it lands on -- changes with the image it runs in. It passed on a box with no ROCm installed and
+    # failed on ROCm 7.2, which is a property of the machine and not of the two planes agreeing.
     local = resolve(root, str(tmp_path / "r1"), "fused_moe_kernel", "triton", "gfx950",
                     "--min-speedup", "1.05")
     remote = resolve_remote(store, str(tmp_path / "r2"), "fused_moe_kernel", "triton", "gfx950",
-                            "--min-speedup", "1.05")
+                            "--min-speedup", "1.05", "--framework-version", "7.2")
     assert remote["read_reason"] == local["read_reason"] == "read"
     keys = ("rank", "speedup", "direction", "comparable", "kernel_name", "language", "gfx")
     assert [{k: c.get(k) for k in keys} for c in remote["candidates"]] == \
            [{k: c.get(k) for k in keys} for c in local["candidates"]]
     assert remote["filtered"]["below_min_speedup"] == local["filtered"]["below_min_speedup"] == 1
-    assert remote["canonical_id"] == "geak:kernel:gfx950:fused_moe_kernel:triton:rocm"
+    assert remote["canonical_id"] == "geak:kernel:gfx950:fused_moe_kernel:triton:rocm:7.2"
 
 
 def test_the_store_plane_curates_what_the_store_itself_cannot(tmp_path):
