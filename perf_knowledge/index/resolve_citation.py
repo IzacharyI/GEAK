@@ -173,11 +173,13 @@ def main():
     ap.add_argument("--list", action="store_true", help="every on-box checkout, with HEAD")
     ap.add_argument("--audit", action="store_true", help="resolve every aiter@ citation in the KB")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--name", default="aiter", help="checkout directory name to search for")
+    ap.add_argument("--name", default=None,
+                    help="checkout directory name to search for (default: the citation's own repo, "
+                         "else aiter)")
     ap.add_argument("--context", type=int, default=0, help="lines of context around a cited line")
     a = ap.parse_args()
 
-    trees = checkouts(a.name)
+    trees = checkouts(a.name or "aiter")
 
     if a.list:
         if a.json:
@@ -232,7 +234,15 @@ def main():
             rc = 1
             continue
         commit, path = m.group("commit"), m.group("path")
-        r = resolve(commit, path, trees)
+        # Search the checkouts named after the citation's OWN repo, the way `--audit` already does.
+        # Hardcoding `aiter` here made every `ROCm/mori@...` citation report
+        # "no checkout under /sgl-workspace holds commit 96ffa169; git fetch origin ... first" while
+        # `/sgl-workspace/mori` sat at exactly that commit -- a false MISS whose advice was to fetch a
+        # commit already present. The role guardrails tell every role to resolve citations with this
+        # command, so the single-citation path has to key on the repo as well.
+        repo = m.group("repo")
+        scope = trees if a.name or not repo else checkouts(repo.split("/")[-1])
+        r = resolve(commit, path, scope)
         if not r["ok"]:
             print(f"MISS  {raw}\n      {r['detail']}", file=sys.stderr)
             rc = 1
