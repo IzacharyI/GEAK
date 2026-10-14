@@ -174,12 +174,23 @@ check("corpus hypothesis diversity is checked before engineer dispatch",
       "CORPUS_EXPLORATION_CONTRACT" in lane
       and lane.index("corpusPlanViolation(plan)") < lane.index("const results = await pipeline("),
       "a post-run attribution edit cannot undo hypothesis anchoring")
-check("a multi-direction round keeps a profile/free hypothesis",
+check("a multi-direction round keeps a hypothesis neither source seeded",
       "CORPUS_COLD_DIRECTION" in lane
-      and "no executable direction has a profile/free hypothesis" in lane
+      and "no executable direction is seeded by neither corpus nor learned cards" in lane
       and "rawDirections = rawDirections.filter(" in lane
       and "hypothesis_source" in lane,
       "semantic/constraint cards are unlimited; performance history must not decide every hypothesis")
+# One invariant, one switch, one predicate. Both halves of "recorded knowledge" have to be checked
+# together: a round split between a card-seeded and a corpus-seeded direction once satisfied the two
+# knobs separately while holding no control at all.
+check("the cold-direction invariant has a single switch",
+      "KB_COLD_DIRECTION &&" in lane
+      and lane.count("const CORPUS_COLD_DIRECTION") == 1,
+      "corpus_cold_direction must narrow kb_cold_direction, never act as a second independent knob")
+check("an independent direction is seeded by neither corpus nor cards",
+      "const independentDirection =" in lane
+      and "learned_refs) || []).length" in lane,
+      "hypothesis_source alone reads a card-only direction as `profile` and misses the violation")
 check("there is no fixed cap on corpus-using directions",
       "CORPUS_DIR_CAP" not in lane and "corpus_dir_cap" not in lane,
       "API and constraint knowledge should be available to every direction")

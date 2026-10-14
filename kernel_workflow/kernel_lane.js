@@ -262,8 +262,15 @@ let kbCapBound = 0;      // rounds where the cap actually had to strip something
 // Every direction may use source-corpus semantics, APIs and hard constraints. The only diversity
 // guard is on where the optimization HYPOTHESIS came from: in a multi-direction round at least one
 // hypothesis must originate in the current profile rather than historical performance precedent.
+//
+// This is the SAME promise as KB_COLD_DIRECTION above, so it rides on the same switch rather than a
+// second one. It arrived as `corpus_cold_direction`, and two knobs for one invariant left a hole in
+// the middle: each predicate saw one half of "recorded knowledge" (cards there, corpus decisions
+// here), and a round whose directions were half card-seeded and half corpus-seeded satisfied both
+// while containing no control at all. `a.corpus_cold_direction` is still accepted so existing
+// callers keep working, but it now only narrows the shared switch, never widens it.
 const CORPUS_COLD_DIRECTION =
-  String(A.corpus_cold_direction != null ? A.corpus_cold_direction : 'true') === 'true';
+  KB_COLD_DIRECTION && String(A.corpus_cold_direction != null ? A.corpus_cold_direction : 'true') === 'true';
 let corpusColdViolationRounds = 0;
 let corpusForcedReplans = 0;
 const UPDATE_EXPERIENCE = String(A.update_experience != null ? A.update_experience : 'on').trim().toLowerCase() || 'on';
@@ -1787,12 +1794,18 @@ while (!skipLoop && dispatched < BUDGET && noImprove < MAX_NO_IMPROVE) {
     if (['profile', 'corpus', 'mixed', 'free'].includes(explicit)) return explicit;
     return normalizeDecisionRefs(direction && direction.decision_refs).length ? 'corpus' : 'profile';
   };
+  // Independent = seeded by NEITHER recorded source. Testing `hypothesis_source` alone was not
+  // enough: the fallback above reads "no decision_refs" as `profile`, so a direction planned
+  // entirely off a learned card reported itself independent and a round could satisfy this gate
+  // with no control in it. `learned_refs` is the other half, and both have to be empty.
+  const independentDirection = (d) =>
+    ['profile', 'free'].includes(hypothesisSource(d))
+    && !((d && d.learned_refs) || []).length;
   const corpusPlanViolation = (candidatePlan) => {
     if (!USE_PERF_KNOWLEDGE) return '';
     const ds = executablePlanDirections(candidatePlan);
-    const independent = ds.filter(d => ['profile', 'free'].includes(hypothesisSource(d)));
-    if (CORPUS_COLD_DIRECTION && ds.length >= 2 && !independent.length) {
-      return 'no executable direction has a profile/free hypothesis';
+    if (CORPUS_COLD_DIRECTION && ds.length >= 2 && !ds.filter(independentDirection).length) {
+      return 'no executable direction is seeded by neither corpus nor learned cards';
     }
     return '';
   };
