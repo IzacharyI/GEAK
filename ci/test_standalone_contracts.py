@@ -38,6 +38,7 @@ CONTRACT_CHECKS = [
     "kernel_workflow/scripts/test_knowledge_reachable.py",
     "perf_knowledge/test_docs_contract.py",
     "e2e_workflow/scripts/tests/test_e2e_lane_defaults.py",
+    "e2e_workflow/scripts/tests/test_kb_identity_flags.py",
 ]
 
 # The generated-artifact gates from the same CI step: the KB must lint clean and its
