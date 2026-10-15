@@ -450,8 +450,10 @@ denominator.
    with a named hole in it; the hole is written down, not papered over. Omit the block entirely only
    when the candidate fuses nothing.
 
-8. **Attribution and scoped score whenever launches change.** Return `attribution.changed_us` and
-   `replaced_sum_us` from a genuinely comparable same-guard collection, plus both residuals. Do not
+8. **Attribution and scoped score whenever launches change.** Return `attribution.changed_us` (device
+   time of the candidate's own kernels) and `replaced_sum_us` (summed device time of the frozen kernels
+   they replace), both positive durations and never their difference, from a genuinely comparable
+   same-guard collection, plus both residuals. Do not
    manufacture them by summing stage timers that the harness captures in separate graphs or reduces
    on different ranks; in that case say the comparable kernel measure is unavailable. Under
    `PROMOTION_METRIC=operator_e2e`, the exact `TARGET_GUARDS` per-case rank-max result creates credit

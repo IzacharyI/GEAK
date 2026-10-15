@@ -279,7 +279,9 @@ batch may contain all finalists for one exhaustive comparison.
    `launches` and `launches_base` in its evidence row. Do not reject a
    faster partial candidate merely because it has not reached the launch target. When requested, also require controlled non-zero overlap,
    launch-change attribution on a named target guard (absolute to the frozen baseline) and distinct
-   JIT/cache/ISA hashes.
+   JIT/cache/ISA hashes. In attribution, `changed_us` is the device time of the candidate's own
+   kernel(s) and `replaced_sum_us` the summed device time of the frozen kernels they replace; both
+   are positive durations, never their difference.
    For every entry in `BIMODAL_GUARDS`, start with the configured pair count. Pool base/candidate
    readings arm-blind; if both arms populate two states separated by at least 3%, extend that candidate
    to 16 raw pairs and compute the guard from pairs where both arms are in the fast state. Do not
