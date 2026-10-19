@@ -163,22 +163,15 @@ def test_per_bucket_targets_are_planir_bindings_checked_like_the_target(tmp_path
     assert any("target_by_bucket['small'] must be a target" in error for error in errors)
 
 
-def test_repository_small_token_bucket_has_its_own_target_and_template():
+def test_repository_large_token_skill_routes_the_small_regime_to_its_own_skill():
     extension = yaml.safe_load((SKILL_DIR / "planner_extension.yaml").read_text())
-    small = extension["ir_bindings"]["target_by_bucket"]["64"]
-    assert small["launch_count"] == 1
-    assert set(small["required_regions"]) == set(
-        extension["ir_bindings"]["target"]["required_regions"]
-    )
-    template = next(
-        item for item in extension["candidate_templates"]
-        if item["id"] == "small_token_single_launch"
-    )
-    assert template["applies_to_buckets"] == ["64"]
-    assert template["target_topology"]["launch_count"] == 1
-    assert extension["selection_policy"]["preferred_template_by_bucket"] == {
-        "64": "small_token_single_launch"
-    }
+    assert "target_by_bucket" not in extension["ir_bindings"]
+    assert [item["id"] for item in extension["candidate_templates"]] == ["full_persistent_pipeline"]
+    skill = (SKILL_DIR / "skill.md").read_text()
+    assert "megamoe_small_mtpr_fusion" in skill
+    assert "Small-token profile" not in skill
+    small = SKILL_DIR.parent / "megamoe_small_mtpr_fusion"
+    assert (small / "skill.md").is_file() and (small / "runtime_validation.py").is_file()
 
 
 def test_generated_index_exposes_planner_extension():

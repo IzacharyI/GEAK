@@ -57,11 +57,4 @@ measured:
     g2_completion: per_workgroup_deferred
     combine_readiness: coarse_barrier
     certified_by_finalist: false
-  best_known_cap64:
-    guard: 64_uniform_mtpr64
-    speedup: 1.1315
-    launches: 1
-    quantization: inline_in_dispatch_producers
-    combine: per_token_arrival_on_bn_invariant_units
-    combine_column_group: 7
   timed_diagnostics: false

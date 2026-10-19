@@ -197,8 +197,8 @@ Done: no Stage2/Combine tail launch remains.
 
 - Clear claim heads, increment generation, pre-arm omitted tokens, keep arrivals
   monotone.
-- Verify active `path=MEGA` ×8 and the bucket profile's launch count (two for large tokens, one in
-  the small-token profile) before using numerical evidence.
+- Verify active `path=MEGA` ×8 and two launches on the shared large-token operator (at most two
+  for an `_mtpr` target) before using numerical evidence.
 - Then run 128→512→8192 accuracy, route-changing replay, and finally paired
   performance on the target guard (8192-uniform unless the workflow names another).
 
@@ -289,36 +289,11 @@ that way and kept the output bit-identical.
 - Stacked: the three G1 items above together (last-K anchor, 8-column SiluQuant, SGPR row base)
   measured 4.115-4.127 -> 3.925-3.933 ms on the column-grouped build (-4.6%), spills 75 -> 31,
   private 272 -> 92 B; more than the sum of their separate measurements on another build. Keep them behind a compile key of
-  the large-token path so the small-token kernel stays byte-identical.
+  the large-token path so other buckets' kernels stay byte-identical.
 - G2 K-loop: the in-order `vmcnt` wait drained the A prefetch behind later loads. Issue B and the
   A scales before the barrier and before the next A DMA: about +3%.
 - These GEMM1 edits live in shared code, so they also speed the unfused path. Credit them with the
   same tree's switch-off control, not as fusion gains.
-
-## Small-token build notes (MTPR 64)
-
-The structure and its measured lineage are in `skill.md`, "Small-token profile". These are the
-invariants that broke on the way; each cost at least one round.
-
-- Select the path from `max_tok_per_rank` passed as a keyword; a positional capacity silently ran
-  the fallback.
-- Key every cross-rank counter on units that are the same on every rank and every call. Stage2 BN
-  is chosen per rank (128 below 48 tokens), so per-(token, n-block) cells disagreed between ranks:
-  the ragged switch test read relL2 0.394, then every later call hit the spin bound. 256-column
-  units with a bump weight of `BN/128` fixed it.
-- A role that runs before the epoch gate may read only what was published under the epoch it waits
-  on. Publishing parity at the gate while pre-gate producers had already read it hung.
-- No per-claim agent release fence on the GEMM1 path: it lowers to a full L2 writeback and added
-  73 us, which alone made the first single launch 0.856x. Use write-through stores (cache 17/19)
-  and `s_waitcnt 0` instead.
-- Broadcast one work id through LDS and derive `has_work` from it on every lane. A separate LDS
-  flag raced with the id and made repeated runs non-bit-exact.
-- Keep `waves_per_eu=3` on the merged kernel: lower values break co-residency and the spins time
-  out; a persistent Stage2 at 4 blocks per CU hung for the same reason.
-- A Combine wait that hits its bound must still advance its shadow by the full step, or one timeout
-  poisons every later call.
-- Spin diagnostics: a value created under a compile-time branch is not loop-carried; a "timeout"
-  read from it was a false positive.
 
 ## Failure handling
 
@@ -376,7 +351,7 @@ invariants that broke on the way; each cost at least one round.
   outer-loop iteration, right after the per-unit body returns. Move the GEMM body and its
   accumulators into a `@flyc.jit` per-unit helper so they die before the publish, keep
   descriptors inside the unit frame, and keep the continuation as carried scalars. If the
-  publish right after the body still faults (seen in the small-token single launch), publish
+  publish right after the body still faults (seen in a single-launch build), publish
   at the head of the next claim instead: keep the previous work id in an LDS word, then
   `s_waitcnt 0`, barrier, agent atomic. That is still once per stripe. Never
   "fix" a frame fault by claiming a whole m-tile or publishing once after a multi-stripe

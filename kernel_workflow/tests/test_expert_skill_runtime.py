@@ -1160,13 +1160,3 @@ def test_megamoe_runtime_shared_fallback_still_gates_the_target_hot_route(
     with pytest.raises(AssertionError, match="previous launch's route metadata"):
         main()
     assert json.loads(output.read_text())["claim_complete"] is False
-
-
-def test_megamoe_consistency_limit_scales_only_with_measured_repeat_noise():
-    limit = _runtime_namespace()["_consistency_limit"]
-    assert limit(0.01, 0.0) == 0.01  # deterministic operator: fixed tolerance
-    assert limit(0.01, 0.004) == 0.01
-    assert limit(0.01, 0.05) == pytest.approx(0.10)  # frozen MTPR-64 repeat noise
-    replay = ast.unparse(_runtime_function("main"))
-    assert "limit = _consistency_limit(args.replay_consistency_rtol, noise)" in replay
-    assert "if drift >= limit:" in replay

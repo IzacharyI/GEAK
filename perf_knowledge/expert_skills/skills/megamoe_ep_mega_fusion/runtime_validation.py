@@ -209,18 +209,6 @@ def _relative_l2(torch, dist, helper, output, reference, device):
     return helper._reduce_float(value, device, dist.ReduceOp.MAX)
 
 
-def _consistency_limit(rtol, noise):
-    """Stale-route threshold for the first call after a route change.
-
-    A deterministic operator repeats bit-exactly (noise 0), so the fixed tolerance applies. The
-    frozen small-capacity path is not deterministic: two repeats of one route differ by relL2
-    0.04-0.08 at MTPR 64 (measured on the frozen tree), and one pair alone ranged 0.03-0.07. There
-    a first call counts as stale only when it drifts beyond twice the largest of three
-    repeat-to-repeat pairs.
-    """
-    return max(rtol, 2.0 * noise)
-
-
 def _capture(torch, helper, body, warmup=None):
     helper._barrier()
     (warmup or body)()
@@ -703,7 +691,6 @@ def main():
             for route in only or routes:
                 checkpoints = []
                 drifts = []
-                noises = []
                 for replay in range(args.replays):
                     _, new_weights, new_ids = _make_route(
                         torch,
@@ -729,24 +716,12 @@ def main():
                         drift = _relative_l2(
                             torch, dist, helper, first, state["output"].float(), device
                         )
-                        # Repeat-to-repeat noise: the largest of three consecutive pairs.
-                        noise = 0.0
-                        for _ in range(3):
-                            repeat = state["output"].clone()
-                            graph.replay()
-                            torch.cuda.synchronize()
-                            noise = max(noise, _relative_l2(
-                                torch, dist, helper, repeat, state["output"].float(), device
-                            ))
                         drifts.append(drift)
-                        noises.append(noise)
-                        limit = _consistency_limit(args.replay_consistency_rtol, noise)
-                        if drift >= limit:
+                        if drift >= args.replay_consistency_rtol:
                             raise AssertionError(
                                 f"{tokens}/{route}{suffix} replay {replay + 1}: first "
                                 f"call after the route change differs from a repeated "
-                                f"call (relL2={drift:.6f}, limit {limit:.6f} from repeat "
-                                f"noise {noise:.6f}); a producer read the "
+                                f"call (relL2={drift:.6f}); a producer read the "
                                 f"previous launch's route metadata"
                             )
                         reference = helper._reference(
@@ -778,7 +753,6 @@ def main():
                     "routing_changes": args.replays,
                     "max_checkpoint_relL2": max(checkpoints),
                     "max_first_vs_repeat_relL2": max(drifts),
-                    "max_repeat_vs_repeat_relL2": max(noises),
                     "consistency_threshold": args.replay_consistency_rtol,
                 }
                 result["replay_results"].append(replay_row)
