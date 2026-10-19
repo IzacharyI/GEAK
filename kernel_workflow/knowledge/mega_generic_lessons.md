@@ -98,6 +98,13 @@ Which sections to read:
      one hot source rank that moves on every call, 32/32 (or a hang).
    - Gate on the first call against a repeated call of the same input at a tight tolerance, and
      make every reader of the metadata wait for it, not only the ones in a particular role.
+8. **A baseline that is not bit-exact on repeated input has a bug; find it before tolerating it.**
+   - Fixed-order reductions repeat bit-exactly. If two calls with the same input differ, some
+     reader sees the wrong value. Measured once: two repeats differed by relL2 0.04–0.08 and the
+     cause was one shared on-chip control word that a writer overwrote without a barrier while slow
+     readers still needed its first value.
+   - Do not widen a tolerance to fit that drift: it also hides the stale reads that item 7 exists
+     to catch. Fix the race on every path the candidate runs, including the fallback path.
 
 ## §3 Code generation and compiler traps
 
