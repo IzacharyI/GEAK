@@ -14,14 +14,23 @@ measured:
   target: 8192_uniform_rank_max
   token_range:
     validated_mtpr: [8192]
-    measured_gain_older_build:
-      '256': 1.043
+    method: paired CUDA-graph A/B vs frozen, 3 rotated passes, bit-exact, path=MEGA x8 (512/1024 official test, 5 runs)
+    measured_older_build_v10:
+      '64': 0.90
+      '128': 0.877
+      '256': 1.035
       '512': 1.060
       '1024': 1.050
-    measured_loss:
-      '64': 0.999
-      '128': 0.885
-    not_measured: ['2048', '4096', '>=16384']
+      '2048': 1.096
+      '4096': 1.207
+      '8192': 1.163
+      '16384': 1.081
+    measured_current_levers_8192_tuning:
+      '2048': 1.075
+      '4096': 1.179
+      '8192': 1.216
+      '16384': 1.194
+    not_measured: ['>16384']
   isolated: 1.0448
   reference_speedup: 1.0448
   parity: pass

@@ -50,9 +50,14 @@ Measured at tokens = mtpr = 64: frozen baseline 0.3458 ms (4 launches:
 quantize, stage1 dispatch+GEMM1, stage2 GEMM2, combine) → **0.2946 ms
 (1.174x, official bench median)**, graph time ≈291 µs, one launch
 (quantization fused; keeping it as a separate launch costs ≈2–3 µs).
-Only 64 is measured; 32 and 128 lie in the same regime by the first-order
-model but have no measurement of this recipe. At 128 the large-token
-two-launch structure measured 0.885x, so 128 belongs here rather than there.
+Only 64 is measured (paired graph A/B: 1.19x). 32 and 128 lie in the same
+regime by the first-order model, but the v3.5 build does not run there: its
+single-kernel path asserts `stage2.block_m == stage1.sort_block_m`, a
+non-persistent and nontemporal Stage2, and the frozen 128 and 256 bucket
+configurations fail that (measured: AssertionError at both). Extending the
+recipe to 128 needs a bucket configuration that meets it, then measurement. At
+128 the large-token two-launch structure measured 0.877x, so 128 belongs here
+rather than there; at 256 it measured 1.035x.
 
 Inside that range this Skill is a **seed recipe**: reproduce it first (it is the
 fastest known point), then search beyond it. It is not normative: the Planner

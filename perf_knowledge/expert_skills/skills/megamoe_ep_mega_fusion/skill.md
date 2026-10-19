@@ -51,20 +51,27 @@ in one persistent grid.
 Token range of the evidence (operator capacity `max_tok_per_rank` = tokens per
 rank, uniform route, rank-max against the frozen baseline):
 
-| mtpr | this structure | evidence |
-|---|---|---|
-| 64 | 0.999x (quantization launch + persistent grid) | not this Skill's range |
-| 128 | 0.885x | not this Skill's range |
-| 256 / 512 / 1024 | 1.043x / 1.060x / 1.050x | official test, 5 interleaved runs, an earlier build of this structure; not re-measured with the current levers |
-| 2048, 4096 | not measured | |
-| 8192 | 1.155x pinned Skill run; ~1.22x with the current levers (not certified) | validated |
-| 16384 and above | not measured | |
+| mtpr | earlier build (v10) | current levers (8192 tuning) | evidence |
+|---|---|---|---|
+| 64 | 0.90x | | not this Skill's range |
+| 128 | 0.877x | | not this Skill's range |
+| 256 | 1.035x | | |
+| 512 / 1024 | 1.060x / 1.050x | | official test, 5 interleaved runs |
+| 2048 | 1.096x | 1.075x | |
+| 4096 | 1.207x | 1.179x | |
+| 8192 | 1.163x | 1.216x | validated (1.155x certified pinned-Skill run) |
+| 16384 | 1.081x | 1.194x | |
 
-So the validated point is 8192; 256-1024 measured a gain with an older build;
-at 128 and below use `megamoe_small_mtpr_fusion`. Treat 2048-4096 and 16384+
-as unknown: the first-order model places them in the same compute and
-communication regime as 8192, but measure the frozen baseline and this
-structure there before relying on it.
+Unless marked otherwise: paired CUDA-graph A/B against the frozen tree
+(`tools/mega_graph_ab.py`, 3 rotated passes, all passes faster), output
+bit-exact with the frozen tree, `path=MEGA` on all eight ranks. The
+current-lever build ran its 8192 tuning unchanged at the other sizes; replay
+with route mutation and the acceptance chain were run only at 8192.
+
+So this structure wins from 256 up to at least 16384 and loses at 128 and below,
+where `megamoe_small_mtpr_fusion` applies. Below 2048 the earlier build is
+ahead, so the current levers (tuned at 8192) need re-tuning per size; at
+16384 they matter most.
 
 This Skill declares measured Pattern evidence; it does not own applicability
 control flow. Analyze reports the current semantic fingerprint and bindings.

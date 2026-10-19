@@ -33,8 +33,12 @@ Measured anchors (rank-max, CUDA graph, this machine; frozen baseline, 4 launche
 | T = mtpr | frozen baseline | best known fused | where it came from |
 |---|---|---|---|
 | 64 | 0.3458 ms | 0.2946 ms (1.174x) | single persistent kernel, Expert Skill `megamoe_small_mtpr_fusion` |
-| 128 | 0.3688 ms | not measured | — |
-| 8192 | 4.6751 ms | ≈4.47 ms (1.045x) | two-launch pipeline, Expert Skill `megamoe_ep_mega_fusion` |
+| 128 | 0.3612 ms | none faster yet (two-launch 0.877x; single-kernel recipe does not run) | — |
+| 256 | 0.4573 ms | 1.035x (graph A/B) | two-launch pipeline, earlier build |
+| 2048 | 1.5721 ms | 1.096x (graph A/B) | two-launch pipeline, earlier build |
+| 4096 | 2.5075 ms | 1.207x (graph A/B) | two-launch pipeline, earlier build |
+| 8192 | 4.6751 ms | ≈3.85 ms (1.216x graph A/B; 1.155x certified run) | two-launch pipeline, Expert Skill `megamoe_ep_mega_fusion` |
+| 16384 | 9.0004 ms | 1.194x (graph A/B) | two-launch pipeline, 8192 tuning |
 
 Any other size: **measure the frozen baseline at that size first** (official bench,
 `--tokens T --mtpr T`, at least 3 passes, rank-max). Do not interpolate the table.

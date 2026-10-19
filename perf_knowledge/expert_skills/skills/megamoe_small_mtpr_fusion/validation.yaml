@@ -14,7 +14,9 @@ measured:
   target: 64_uniform_mtpr64_rank_max
   token_range:
     validated_mtpr: [64]
-    not_measured: ['32', '128']
+    graph_ab_64: 1.19
+    not_runnable_v35_build: ['128', '256']
+    not_measured: ['32']
   frozen_baseline_ms: 0.3458
   official_median_ms: 0.2946
   isolated: 1.174
