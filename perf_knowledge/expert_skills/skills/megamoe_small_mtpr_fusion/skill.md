@@ -50,6 +50,9 @@ Measured at tokens = mtpr = 64: frozen baseline 0.3458 ms (4 launches:
 quantize, stage1 dispatch+GEMM1, stage2 GEMM2, combine) → **0.2946 ms
 (1.174x, official bench median)**, graph time ≈291 µs, one launch
 (quantization fused; keeping it as a separate launch costs ≈2–3 µs).
+Only 64 is measured; 32 and 128 lie in the same regime by the first-order
+model but have no measurement of this recipe. At 128 the large-token
+two-launch structure measured 0.885x, so 128 belongs here rather than there.
 
 Inside that range this Skill is a **seed recipe**: reproduce it first (it is the
 fastest known point), then search beyond it. It is not normative: the Planner

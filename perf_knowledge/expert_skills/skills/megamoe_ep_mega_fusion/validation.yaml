@@ -12,6 +12,16 @@ usage:
   - candidate_validation
 measured:
   target: 8192_uniform_rank_max
+  token_range:
+    validated_mtpr: [8192]
+    measured_gain_older_build:
+      '256': 1.043
+      '512': 1.060
+      '1024': 1.050
+    measured_loss:
+      '64': 0.999
+      '128': 0.885
+    not_measured: ['2048', '4096', '>=16384']
   isolated: 1.0448
   reference_speedup: 1.0448
   parity: pass

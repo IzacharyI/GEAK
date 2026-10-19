@@ -66,8 +66,9 @@ Any other size: **measure the frozen baseline at that size first** (official ben
 - As T grows toward 1024, compute per byte grows (6T rows per expert ⇒ 384 rows/expert at 64,
   6144 at 1024). Larger M tiles become worthwhile and A re-reads start to matter; the dispatch
   payload (7 KiB × 6T per rank) grows to ~44 MB at 1024, so dispatch/combine overlap matters again.
-- Middle sizes (256–1024) are untested: start from the R2 recipe, re-tune M tiles and the G2
-  queue, and measure where the time goes before changing structure.
+- Middle sizes (256–1024): the large-token two-launch structure measured 1.043x / 1.060x /
+  1.050x at 256 / 512 / 1024 (an earlier build); the single-kernel R2 recipe is untested there.
+  Measure both families at the size before choosing.
 
 ### R3 compute + communication (T ≥ ~2048)
 - Compute ≈ 0.16 µs·T (1.3 ms at 8192) and the dispatch/combine payloads (~0.7 ms each way at
