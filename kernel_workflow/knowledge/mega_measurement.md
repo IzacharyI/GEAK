@@ -21,6 +21,7 @@ Read the section for your role:
 | `benchmark_engineer`, PHASE=`setup` | §4.1 |
 | `verify_engineer` (`verify`), `director` (`select_mega`) | §4.2 |
 | mega engineer (`optimize`), optional self-check | §4.3 |
+| mega engineer (`optimize`), fast A/B while iterating | §5 |
 
 ---
 
@@ -320,3 +321,23 @@ catches accuracy, replay and activation failures early, and the watchdog names t
 
 Never edit the adapter. If the adapter cannot drive your candidate (for example, a changed
 constructor or call signature), your candidate broke the operator's interface; fix the candidate.
+
+## §5 Fast paired A/B while iterating (`MEGA_AB_TOOL`, mega engineer)
+
+`MEGA_AB_TOOL` times arms against each other in CUDA graphs: one torchrun job per arm and pass,
+rotated arm order, rank-max graph time, the paired delta against the first arm, an output relL2 /
+bit-exact screen against the first arm, and `[megamoe] path=` marker counts per leg.
+
+```
+python3 $MEGA_AB_TOOL --tokens <T> --mtpr <M> \
+    --arm base=<frozen tree> --arm cand=<candidate tree>#<switch>=<value> \
+    --expect-path cand=MEGA --passes 3 --work-dir $EVAL_DIR/ab_<tag> \
+    --jit-root <a directory outside every tree> --json-output <file>
+```
+
+- Wrap it in the GPU lock like every GPU command; give each arm only the switches the candidate
+  reads.
+- Graph timing noise is about ±1 µs. Keep a change only after at least 3 passes with a consistent
+  sign; below about 1 µs use at least 5.
+- It is for choosing what to keep. The score still comes from the workflow's paired A/B and the
+  graph contract (§4.2).

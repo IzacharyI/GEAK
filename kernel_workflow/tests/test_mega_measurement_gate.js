@@ -28,6 +28,9 @@ ok(gmi('mega', false).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement
   'generic mega gets the guide');
 ok(gmi('mega', false).MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lessons.md',
   'generic mega gets the lessons');
+ok(gmi('mega', false).MEGA_AB_TOOL === '/wf/tools/mega_graph_ab.py' &&
+   !('MEGA_REGIMES_GUIDE' in gmi('mega', false)),
+  'generic mega gets the paired graph A/B tool, not the regime guide');
 ok(!('MEGA_KNOWLEDGE' in gmi('mega', false, { mega_knowledge: 'read /k.md' })),
   'no launch argument can hand the generic mega roles extra knowledge files');
 

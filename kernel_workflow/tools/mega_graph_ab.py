@@ -4,7 +4,7 @@
 Each arm is ``NAME=TREE[#KEY=VAL[#KEY=VAL...]]``: a source tree (an aiter checkout
 that contains ``op_tests/multigpu_tests/bench_mega_moe_v2.py``) plus environment
 switches applied only to that arm. The first arm is the base of every paired
-delta. Values may contain commas (``#MM_OPT=a,b``). Example::
+delta. Values may contain commas (``#SWITCH=a,b``). Example::
 
     mega_graph_ab.py --tokens 64 --mtpr 64 \
         --arm base=$FROZEN_TREE \
