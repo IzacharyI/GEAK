@@ -568,7 +568,9 @@ def discover_amd_smi_device_map() -> Mapping[int, Path]:
             check=True,
             capture_output=True,
             text=True,
-            timeout=3,
+            # amd-smi takes about 3.1 s on an 8 x MI355X node; a 3 s limit returned an empty map
+            # and every lock with the idle check on failed with "cannot resolve sysfs devices".
+            timeout=30,
         )
         return parse_amd_smi_device_map(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
