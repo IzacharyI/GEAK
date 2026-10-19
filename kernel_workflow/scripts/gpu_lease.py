@@ -867,18 +867,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 device_map=device_map,
                 fail_open=False,
             )
-        stale_idle_checker = SysfsIdleChecker(
-            drm_root=Path(args.sysfs_root),
-            max_busy_pct=args.max_busy_pct,
-            # orphaned children hold VRAM, so the stale proof always checks it
-            max_vram_mb=args.max_vram_mb if args.max_vram_mb >= 0 else 1024,
-            device_map=(
-                idle_checker.device_map if idle_checker is not None
-                else discover_amd_smi_device_map()
-                if Path(args.sysfs_root) == Path("/sys/class/drm") else {}
-            ),
-            fail_open=False,
-        )
+        stale_checker = []
+
+        def stale_idle_checker(gpu_id):
+            # Built on first use: only a lease left by another PID namespace needs it, and the
+            # amd-smi device map costs seconds per lock on a large node.
+            if not stale_checker:
+                stale_checker.append(SysfsIdleChecker(
+                    drm_root=Path(args.sysfs_root),
+                    max_busy_pct=args.max_busy_pct,
+                    # orphaned children hold VRAM, so the stale proof always checks it
+                    max_vram_mb=args.max_vram_mb if args.max_vram_mb >= 0 else 1024,
+                    device_map=(
+                        idle_checker.device_map if idle_checker is not None
+                        else discover_amd_smi_device_map()
+                        if Path(args.sysfs_root) == Path("/sys/class/drm") else {}
+                    ),
+                    fail_open=False,
+                ))
+            return stale_checker[0](gpu_id)
+
         return run_command(
             request,
             command,
