@@ -239,8 +239,9 @@ denominator.
    --rtol <ACCURACY_THRESHOLD> --target-guard <the first TARGET_GUARDS entry>
    --frozen-baseline-ms <BASELINE_PER_CASE latency of that same entry>
    [--min-speedup <MIN_TARGET_SPEEDUP>, only when MIN_TARGET_SPEEDUP is given]
-   [--shared-fallback, only when that target is an `_mtpr<M>` guard and the candidate declares
-   the shared capacity a FALLBACK bucket; the resource JSON then carries `target_mtpr<M>`]
+   [--shared-fallback, only when the validator's --help lists it, that target is an `_mtpr<M>`
+   guard and the candidate declares the shared capacity a FALLBACK bucket; the resource JSON then
+   carries `target_mtpr<M>`]
    --resource-evidence "$VERIFY_DIR/resources.json"
    --json-output "$VERIFY_DIR/graph_contract.json"`. `EXPERT_SKILL_RUNTIME_FILE` is the validator
    itself (never the `validation.yaml` data file); build `resources.json` in the format the Skill's
