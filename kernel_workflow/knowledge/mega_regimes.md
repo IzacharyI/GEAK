@@ -1,7 +1,7 @@
 # MegaMoE size regimes — what limits each tokens/rank, and which levers fit it
 
-You get this file as `MEGA_REGIMES_GUIDE` in every `mode=mega` run on a MoE
-dispatch→expert→combine operator. It says **which design family fits which size**, so a run at a new
+You get this file as `MEGA_REGIMES_GUIDE` in a `mode=mega` run that pins a MegaMoE Expert Skill
+(or sets `mega_regimes=true`). It names Skill designs, so a generic run does not get it. It says **which design family fits which size**, so a run at a new
 tokens/rank (`T`, the call's tokens per rank; `mtpr` is the operator capacity `max_tok_per_rank`)
 can choose a direction instead of re-discovering it. It never replaces measurement: every number
 below is a planning estimate or a measurement on one machine, and the run must re-measure what it

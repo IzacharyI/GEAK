@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generic-mega measurement inputs must be empty for Expert-Skill runs and every non-mega mode:
 // a skill-on mega wave has to replay with byte-identical prompts after this line was added.
-// The MoE regime inputs (MRI) are the deliberate exception: every MoE mega run gets them.
+// The MoE regime inputs (MRI) are the deliberate exception: runs pinning a megamoe Skill get them.
 'use strict';
 
 const fs = require('fs');
@@ -45,17 +45,17 @@ const mri = (MODE, USE_EXPERT_SKILLS, ANALYSIS_SKILL, EXPERT_SKILL_ID, A = {}) =
 };
 ok(Object.keys(mri('optimize', false, 'moe_bottleneck', '')).length === 0, 'non-mega gets no regime inputs');
 ok(Object.keys(mri('mega', false, 'none', '')).length === 0, 'non-MoE mega gets no regime inputs');
-ok(mri('mega', false, 'moe_bottleneck', '').MEGA_REGIMES_GUIDE === '/wf/knowledge/mega_regimes.md',
-  'generic MoE mega gets the regime guide');
-ok(mri('mega', false, 'moe_bottleneck', '').MEGA_GENERIC_LESSONS === undefined,
-  'generic MoE mega gets the lessons from GMI only');
+ok(Object.keys(mri('mega', false, 'moe_bottleneck', '')).length === 0,
+  'a generic MoE mega run gets no regime guide: it names Skill designs');
 const skillOn = mri('mega', true, 'none', 'megamoe_small_mtpr_fusion');
 ok(skillOn.MEGA_AB_TOOL === '/wf/tools/mega_graph_ab.py' &&
   skillOn.MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lessons.md' &&
   skillOn.MEGA_MEASUREMENT_GUIDE === undefined, 'skill-on MoE mega gets regime inputs + lessons, no measurement guide');
 ok(Object.keys(mri('mega', true, 'moe_bottleneck', 'x', { mega_regimes: 'false' })).length === 0,
   'mega_regimes=false turns them off');
-ok(mri('mega', false, 'none', '', { mega_regimes: 'true' }).MEGA_REGIMES_GUIDE, 'mega_regimes=true turns them on');
+ok(mri('mega', false, 'none', '', { mega_regimes: 'true' }).MEGA_REGIMES_GUIDE &&
+   mri('mega', false, 'none', '', { mega_regimes: 'true' }).MEGA_GENERIC_LESSONS === undefined,
+  'mega_regimes=true turns them on explicitly; a generic run keeps its lessons from GMI only');
 const mriUses = src.split('\n').filter((l) => /\bMRI\b/.test(l) && !/const MRI =/.test(l));
 ok(mriUses.filter((l) => /\.\.\.MRI\b/.test(l)).length === 7, 'MRI spread at the 7 GMI spread sites');
 ok(mriUses.every((l) => /\.\.\.GMI, \.\.\.MRI\b/.test(l) || /MRI\.MEGA_REGIMES_GUIDE \?/.test(l)),

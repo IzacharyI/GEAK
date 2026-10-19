@@ -525,10 +525,10 @@ const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
   MEGA_GENERIC_LESSONS: `${WORKFLOW_DIR}/knowledge/mega_generic_lessons.md`,
 } : {};
-// MoE regime guide + paired graph A/B for MoE mega runs; args.mega_regimes='true'|'false' overrides.
+// MoE regime guide + paired graph A/B for runs pinning a megamoe Skill (it names Skill designs, so a
+// generic run never gets it by default); args.mega_regimes='true'|'false' overrides.
 const MEGA_REGIMES_ON = MODE === 'mega' && (A.mega_regimes != null
-  ? String(A.mega_regimes) === 'true'
-  : (ANALYSIS_SKILL === 'moe_bottleneck' || /^megamoe/.test(EXPERT_SKILL_ID)));
+  ? String(A.mega_regimes) === 'true' : /^megamoe/.test(EXPERT_SKILL_ID));
 const MRI = MEGA_REGIMES_ON ? {
   MEGA_REGIMES_GUIDE: `${WORKFLOW_DIR}/knowledge/mega_regimes.md`,
   MEGA_AB_TOOL: `${WORKFLOW_DIR}/tools/mega_graph_ab.py`,
