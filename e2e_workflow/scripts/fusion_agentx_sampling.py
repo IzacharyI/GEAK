@@ -475,7 +475,7 @@ def main(argv=None):
     p_run.add_argument("--base-url", default=None, help="defaults to $BASE_URL")
     p_run.add_argument("--server-trace-root", default=None,
                        help="points/ as the SERVER sees it, if it differs (container)")
-    p_run.add_argument("--steady-timeout", type=float, default=1800,
+    p_run.add_argument("--steady-timeout", type=float, default=900,
                        help="per point: seconds to reach the planned resident batch (long "
                             "agentic contexts prefill for minutes before decode is steady)")
     p_run.add_argument("--arm-timeout", type=float, default=600)
