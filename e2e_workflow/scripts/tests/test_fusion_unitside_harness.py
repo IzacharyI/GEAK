@@ -1,0 +1,1048 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+
+SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPTS)
+import fusion_unitside_harness as uh
+
+
+class _UnitsideFixture(object):
+    def _candidates(self):
+        # one collective (AR+norm) with a captured [4,7168] decode member shape, and
+        # one single-GPU B (norm+quant).
+        return {"candidates": [
+            {"candidate_id": "dc_ar", "family": "collective_norm",
+             "phase": "decode", "implementation_class": "existing_flag_or_env",
+             "existing_apis": [{"name": "aiter fused_allreduce_rmsnorm "
+                               "(--enable-aiter-allreduce-fusion)"}],
+             "members": [
+                 {"stage": "communication", "shape": {"input_dims": [[4, 7168]]}},
+                 {"stage": "norm", "shape": {"input_dims": [[4, 7168], [7168]]}}]},
+            {"candidate_id": "dc_nq", "family": "norm_quant",
+             "phase": "decode", "implementation_class": "existing_api_needs_adapter",
+             "existing_apis": [{"name": "aiter add_rmsnorm_quant"}],
+             "members": [
+                 {"stage": "norm", "shape": {"input_dims": [[4, 7168]]}}]},
+        ]}
+
+    def _verdict(self, **over):
+        v = {"candidate_id": "dc_ar", "family": "collective_norm",
+             "fused_fn": "aiter fused_allreduce_rmsnorm", "tested_shape": [4, 7168],
+             "dtypes": ["bf16"], "tol": 0.02, "parity": "pass",
+             "ref_ms": 0.20, "cand_ms": 0.12, "isolated_speedup": 1.67,
+             "engaged": True, "tp": 8,
+             "ref_ops": ["all_reduce", "rms_norm"], "outside_work_removed": []}
+        v.update(over)
+        return v
+
+    def _run(self, candidates, verdicts, min_speedup=1.0,
+             require_coverage=False, waivers=None, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = os.path.join(tmp, "c.json")
+            with open(cpath, "w") as fh:
+                json.dump(candidates, fh)
+            vdir = os.path.join(tmp, "verdicts")
+            os.makedirs(vdir)
+            for i, v in enumerate(verdicts):
+                with open(os.path.join(vdir, "v%d.json" % i), "w") as fh:
+                    json.dump(v, fh)
+            return uh.validate(cpath, vdir, min_speedup,
+                               require_coverage=require_coverage,
+                               waivers=waivers, **kw)
+
+    def _status(self, result, cid):
+        for r in result["results"]:
+            if r["candidate_id"] == cid:
+                return r["unit_side_status"]
+        return None
+
+    def _candidates_decode_bucket(self):
+        # decode collective with NO captured member dims (runtime_probe_wrapper),
+        # only selected_bucket.batch_size -> provenance falls back to the token count.
+        return {"candidates": [
+            {"candidate_id": "dc_probe", "family": "collective_norm",
+             "phase": "decode", "implementation_class": "existing_flag_or_env",
+             "selected_bucket": {"phase": "decode", "batch_size": 4,
+                                 "input_tokens": 0},
+             "existing_apis": [{"name": "aiter fused_allreduce_rmsnorm"}],
+             "members": [{"stage": "communication", "shape": {"input_dims": []}},
+                         {"stage": "norm", "shape": {"input_dims": []}}]}]}
+
+
+class FusionUnitsideTest(_UnitsideFixture, unittest.TestCase):
+    def test_clean_pass(self):
+        res = self._run(self._candidates(), [self._verdict()])
+        self.assertEqual(res["status"], "pass")           # no errors
+        self.assertEqual(self._status(res, "dc_ar"), "pass")
+        self.assertEqual(res["counts"]["pass"], 1)
+
+    def test_parity_fail_is_needs_diagnosis_not_fail(self):
+        # A mis-fed kernel takes a wrong branch and mis-times, so `fail` (terminal
+        # on the board) would close a candidate that was never actually measured.
+        res = self._run(self._candidates(), [self._verdict(parity="fail")])
+        self.assertEqual(self._status(res, "dc_ar"), "needs_diagnosis")
+        self.assertEqual(res["status"], "fail")           # undiagnosed -> gate fails
+        self.assertTrue(any("elimination record" in e for e in res["errors"]))
+
+    def test_parity_fail_with_a_diagnosis_does_not_fail_the_gate(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(parity="fail",
+                                       parity_diagnosis="ruled out layout, fnuz/fn, "
+                                                        "group_size, scale orient")])
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "dc_ar"), "needs_diagnosis")
+
+    def test_report_separates_diagnosed_from_open_parity_failures(self):
+        # A diagnosed functional failure must not read as "not refuted, just unmeasured".
+        diagnosed = self._run(self._candidates(),
+                              [self._verdict(parity="fail",
+                                             parity_diagnosis="KV-cache layout not addressable")])
+        md = uh.render_markdown(diagnosed)
+        self.assertIn("已诊断 → `functional`", md)
+        self.assertIn("needs_diagnosis (functional)", md)
+        self.assertNotIn("（未诊断）", md)
+        open_row = uh.render_markdown(
+            self._run(self._candidates(), [self._verdict(parity="fail")]))
+        self.assertIn("（未诊断）", open_row)
+        self.assertNotIn("needs_diagnosis (functional)", open_row)
+
+    def test_no_speedup_fails(self):
+        res = self._run(self._candidates(), [self._verdict(isolated_speedup=0.98)])
+        self.assertEqual(self._status(res, "dc_ar"), "fail")
+
+    def test_not_engaged_is_blocked(self):
+        # collective whose fused path fell back to split -> blocked, not fail
+        res = self._run(self._candidates(),
+                        [self._verdict(engaged=False)])
+        self.assertEqual(self._status(res, "dc_ar"), "blocked")
+
+    def test_shape_mismatch_is_error(self):
+        # tested a shape the candidate never captured -> untrustworthy -> harness error
+        res = self._run(self._candidates(),
+                        [self._verdict(tested_shape=[8, 8192])])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("tested_shape" in e for e in res["errors"]))
+        self.assertIsNone(self._status(res, "dc_ar"))   # no row from a bad verdict
+
+    def test_fused_fn_not_in_apis_is_error(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(fused_fn="some_unrelated_kernel")])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("fused_fn" in e for e in res["errors"]))
+
+    def test_unknown_candidate_is_error(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(candidate_id="nope")])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("unknown candidate" in e for e in res["errors"]))
+
+    def test_missing_fields_is_error(self):
+        res = self._run(self._candidates(), [{"candidate_id": "dc_ar"}])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("missing fields" in e for e in res["errors"]))
+
+    def test_decode_bucket_provenance_pass(self):
+        v = self._verdict(candidate_id="dc_probe", tested_shape=[4, 7168])
+        res = self._run(self._candidates_decode_bucket(), [v],
+                        allow_shapeless_candidate="runtime_probe_wrapper decode")
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "dc_probe"), "pass")
+
+    def test_decode_bucket_wrong_token_count_is_error(self):
+        v = self._verdict(candidate_id="dc_probe", tested_shape=[16, 7168])
+        res = self._run(self._candidates_decode_bucket(), [v],
+                        allow_shapeless_candidate="runtime_probe_wrapper decode")
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("token count" in e for e in res["errors"]))
+
+    def test_single_gpu_b_pass_and_render(self):
+        v = {"candidate_id": "dc_nq", "family": "norm_quant",
+             "fused_fn": "add_rmsnorm_quant", "tested_shape": [4, 7168],
+             "parity": "pass", "isolated_speedup": 1.3, "ref_ms": 0.1,
+             "cand_ms": 0.077, "engaged": True, "tp": 1,
+             "ref_ops": ["rms_norm", "quant"], "outside_work_removed": []}
+        res = self._run(self._candidates(), [v])
+        self.assertEqual(self._status(res, "dc_nq"), "pass")
+        md = uh.render_markdown(res)
+        self.assertIn("单侧 Gate", md)
+        self.assertIn("dc_nq", md)
+
+
+class IntegrationCheckTest(_UnitsideFixture, unittest.TestCase):
+    """I10: eager parity is not enough; the server runs under inference_mode + graphs."""
+
+    PASSED = {"inference_mode": {"status": "pass"}, "graph_replay": {"status": "pass"}}
+
+    def _result(self, res, cid="dc_ar"):
+        return [r for r in res["results"] if r["candidate_id"] == cid][0]
+
+    def test_both_checks_pass_keeps_the_pass(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self.PASSED)])
+        self.assertEqual(self._status(res, "dc_ar"), "pass")
+        self.assertFalse(any("integration_checks" in w for w in res["warnings"]))
+
+    def test_a_failed_check_fails_only_that_candidate(self):
+        checks = {"inference_mode": {"status": "fail", "error":
+                                     "Inference tensors do not track version counter."},
+                  "graph_replay": {"status": "pass"}}
+        nq = self._verdict(candidate_id="dc_nq", family="norm_quant",
+                           fused_fn="aiter add_rmsnorm_quant", tested_shape=[4, 7168],
+                           engaged=True, ref_ops=["rms_norm"],
+                           integration_checks=self.PASSED)
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=checks), nq])
+        row = self._result(res)
+        self.assertEqual(row["unit_side_status"], "fail")
+        self.assertEqual(row["failure_kind"], "integration")
+        self.assertIn("version counter", row["reason"])
+        # never blocks the gate or the other candidate
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "dc_nq"), "pass")
+
+    def test_missing_or_skipped_checks_only_warn(self):
+        for checks in (None, {"inference_mode": {"status": "skipped"},
+                              "graph_replay": "pass"}):
+            verdict = self._verdict()
+            if checks is not None:
+                verdict["integration_checks"] = checks
+            res = self._run(self._candidates(), [verdict])
+            self.assertEqual(self._status(res, "dc_ar"), "pass")
+            self.assertEqual(res["status"], "pass")
+            self.assertTrue(any("integration_checks" in w for w in res["warnings"]))
+
+    def test_parity_failure_still_wins_over_integration(self):
+        checks = {"inference_mode": {"status": "fail"}, "graph_replay": {"status": "fail"}}
+        res = self._run(self._candidates(),
+                        [self._verdict(parity="fail", integration_checks=checks,
+                                       parity_diagnosis="eliminated layout/scales")])
+        self.assertEqual(self._result(res)["failure_kind"], "functional")
+
+
+class ShapeEnvelopeTest(_UnitsideFixture, unittest.TestCase):
+    """The patched seam must be run at the ends of the serving token envelope, not only
+    at the captured steady-state shape (vLLM DSv4.1 e02, 2026-10-19: unit-tested at M=24,
+    faulted while the server captured the M=1008 graph)."""
+
+    ENV = {"backend": "vllm", "phases": {
+        "graph": {"min_tokens": 1, "max_tokens": 1024,
+                  "source": "max-cudagraph-capture-size"}}, "notes": []}
+    BASE = {"inference_mode": {"status": "pass"}, "graph_replay": {"status": "pass"}}
+
+    def _checks(self, points):
+        return dict(self.BASE, shape_envelope={"status": "pass", "points": points})
+
+    def _row(self, res, cid="dc_ar"):
+        return [r for r in res["results"] if r["candidate_id"] == cid][0]
+
+    def test_both_ends_engaged_or_declined_keep_the_pass(self):
+        pts = [{"tokens": 1, "result": "declined"}, {"tokens": 1024, "result": "pass"}]
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self._checks(pts))],
+                        shape_envelope=self.ENV)
+        self.assertEqual(self._status(res, "dc_ar"), "pass")
+
+    def test_untested_max_fails_only_that_candidate(self):
+        nq = self._verdict(candidate_id="dc_nq", family="norm_quant",
+                           fused_fn="aiter add_rmsnorm_quant", tested_shape=[4, 7168],
+                           ref_ops=["rms_norm"], integration_checks=self._checks(
+                               [{"tokens": 1, "result": "pass"},
+                                {"tokens": 1024, "result": "declined"}]))
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self.BASE), nq],
+                        shape_envelope=self.ENV)
+        row = self._row(res)
+        self.assertEqual(row["unit_side_status"], "fail")
+        self.assertEqual(row["failure_kind"], "integration")
+        self.assertIn("[1, 1024]", row["reason"])
+        self.assertEqual(self._status(res, "dc_nq"), "pass")
+        self.assertEqual(res["status"], "pass")
+
+    def test_a_crashing_point_fails_even_without_an_envelope(self):
+        pts = [{"tokens": 1008, "result": "fail",
+                "error": "HSA_STATUS_ERROR_MEMORY_FAULT"}]
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self._checks(pts))])
+        row = self._row(res)
+        self.assertEqual(row["failure_kind"], "integration")
+        self.assertIn("M=1008", row["reason"])
+        self.assertIn("MEMORY_FAULT", row["reason"])
+
+    def test_no_envelope_keeps_old_verdicts_passing_silently(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self.BASE)])
+        self.assertEqual(self._status(res, "dc_ar"), "pass")
+        self.assertFalse(any("shape_envelope" in w for w in res["warnings"]))
+
+    def test_an_unpinned_phase_only_warns(self):
+        env = {"backend": "vllm", "phases": {"prefill": {
+            "min_tokens": 1, "max_tokens": 16384}}, "notes": []}
+        res = self._run(self._candidates(),
+                        [self._verdict(integration_checks=self.BASE)], shape_envelope=env)
+        self.assertEqual(self._status(res, "dc_ar"), "pass")
+        self.assertTrue(any("shape_envelope" in w for w in res["warnings"]))
+
+    def test_the_cli_reads_the_envelope_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            epath = os.path.join(tmp, "env.json")
+            with open(epath, "w") as fh:
+                json.dump(self.ENV, fh)
+            res = self._run(self._candidates(),
+                            [self._verdict(integration_checks=self.BASE)],
+                            shape_envelope=epath)
+        self.assertEqual(self._row(res)["failure_kind"], "integration")
+
+
+class RefScopeTest(_UnitsideFixture, unittest.TestCase):
+    """ref_ops must cover every removable member, judged per member: a member is covered
+    when either its parent_operator or its kernel name appears in ref_ops."""
+
+    QUANT = {"row_id": "r2", "parent_operator": "aiter::dynamic_per_token_scaled_quant",
+             "kernel": "_ZN5aiter37dynamic_per_group_scaled_quant_kernelIDF16bDB8_Li",
+             "shape": {"input_dims": [[4, 4096]]}}
+
+    def _case(self, head, ref_ops, removable=("r1",), extra=()):
+        cands = {"candidates": [
+            {"candidate_id": "dc_x", "family": "norm_quant", "phase": "decode",
+             "implementation_class": "existing_api_needs_adapter",
+             "existing_apis": [{"name": "fused_x"}],
+             "removable_row_ids": list(removable),
+             "members": [dict(head, row_id="r1", shape={"input_dims": [[4, 4096]]}),
+                         self.QUANT] + list(extra)}]}
+        v = {"candidate_id": "dc_x", "family": "norm_quant", "fused_fn": "fused_x",
+             "tested_shape": [4, 4096], "parity": "pass", "isolated_speedup": 1.26,
+             "ref_ms": 0.021, "cand_ms": 0.0165, "engaged": True, "tp": 1,
+             "ref_ops": ref_ops, "outside_work_removed": []}
+        return self._run(cands, [v])
+
+    def test_operator_name_alone_covers_a_member(self):
+        # 0930 e05: ref_ops names the op, the trace's kernel name shares no substring.
+        res = self._case({"parent_operator": "LayerNormFn",
+                          "kernel": "_layer_norm_fwd_1pass_kernel"},
+                         ["LayerNormFn", "aiter::dynamic_per_token_scaled_quant"])
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(self._status(res, "dc_x"), "pass")
+
+    def test_mangled_kernel_name_is_not_required(self):
+        # 0929 e03: aiter::silu_and_mul vs the mangled act_and_mul_kernel symbol.
+        res = self._case({"parent_operator": "aiter::silu_and_mul",
+                          "kernel": "_ZN5aiter18act_and_mul_kernelIfDF16bTnPFfRKT_EXadL_ZNS_11sil"},
+                         ["aiter::silu_and_mul", "aiter::dynamic_per_token_scaled_quant"])
+        self.assertEqual(self._status(res, "dc_x"), "pass")
+
+    def test_kernel_name_alone_covers_a_member(self):
+        res = self._case({"parent_operator": "LayerNormFn",
+                          "kernel": "_layer_norm_fwd_1pass_kernel"},
+                         ["_layer_norm_fwd_1pass_kernel", "dynamic_per_token_scaled_quant"])
+        self.assertEqual(self._status(res, "dc_x"), "pass")
+
+    def test_a_removable_member_the_ref_never_ran_is_still_rejected(self):
+        # The DSR1 failure the gate exists for: the ref leg skipped a member the fusion
+        # deletes, so isolated_speedup measures a narrower region.
+        res = self._case({"parent_operator": "LayerNormFn",
+                          "kernel": "_layer_norm_fwd_1pass_kernel"},
+                         ["aiter::dynamic_per_token_scaled_quant"])
+        self.assertIsNone(self._status(res, "dc_x"))
+        self.assertEqual(len(res["errors"]), 1)
+        self.assertIn("LayerNormFn / _layer_norm_fwd_1pass_kernel", res["errors"][0])
+
+    def test_a_non_removable_member_may_sit_outside_the_ref(self):
+        gemm = {"row_id": "r3", "parent_operator": "aiter::gemm_a8w8_blockscale",
+                "kernel": "kernel_gemm_xdl_cshuffle_v3", "shape": {"input_dims": [[4, 4096]]}}
+        res = self._case({"parent_operator": "LayerNormFn",
+                          "kernel": "_layer_norm_fwd_1pass_kernel"},
+                         ["LayerNormFn"], extra=[gemm])
+        self.assertEqual(self._status(res, "dc_x"), "pass")
+
+    def test_without_removable_ids_every_member_must_be_covered(self):
+        res = self._case({"parent_operator": "LayerNormFn",
+                          "kernel": "_layer_norm_fwd_1pass_kernel"},
+                         ["LayerNormFn"], removable=())
+        self.assertIsNone(self._status(res, "dc_x"))
+        self.assertIn("aiter::dynamic_per_token_scaled_quant", res["errors"][0])
+
+
+class ShapeProvenanceTest(_UnitsideFixture, unittest.TestCase):
+    """A gate that vanishes when its input is missing is worse than no gate.
+
+    DSR1 2026-08-31: the candidates carried no member shapes, so `cand_shapes` was
+    empty and the strict check was skipped. A microbench on [4,512] (rebuilt from
+    config as input_tokens x kv_lora_rank -- no batch axis, no rope columns) was
+    accepted, the kernel took a degenerate path, and the resulting parity fail plus
+    distorted timing blocked two fusions worth +20.6% and +14.0% e2e."""
+
+    def test_shapeless_candidate_is_an_error_by_default(self):
+        v = self._verdict(candidate_id="dc_probe", tested_shape=[4, 7168])
+        res = self._run(self._candidates_decode_bucket(), [v])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("no captured member shape" in e for e in res["errors"]))
+
+    def test_opt_in_restores_the_token_count_check(self):
+        v = self._verdict(candidate_id="dc_probe", tested_shape=[4, 7168])
+        res = self._run(self._candidates_decode_bucket(), [v],
+                        allow_shapeless_candidate="probe wrapper")
+        self.assertEqual(res["status"], "pass")
+
+
+class StatusAxesTest(_UnitsideFixture, unittest.TestCase):
+    """correctness and perf are independent; collapsing them double-counts a fault."""
+
+    def test_win_is_pass_on_both_axes(self):
+        r = self._run(self._candidates(), [self._verdict()])["results"][0]
+        self.assertEqual((r["correctness_status"], r["perf_status"]), ("pass", "win"))
+        self.assertEqual(r["failure_kind"], "none")
+
+    def test_slow_but_correct_is_a_performance_failure(self):
+        r = self._run(self._candidates(),
+                      [self._verdict(isolated_speedup=0.98)])["results"][0]
+        self.assertEqual(r["unit_side_status"], "fail")
+        self.assertEqual((r["correctness_status"], r["perf_status"]),
+                         ("pass", "no_win"))
+        self.assertEqual(r["failure_kind"], "performance")
+
+    def test_divergence_without_a_diagnosis_is_unmeasured_not_functional(self):
+        r = self._run(self._candidates(), [self._verdict(parity="fail")])["results"][0]
+        self.assertEqual((r["correctness_status"], r["perf_status"]),
+                         ("fail", "undefined"))
+        self.assertEqual(r["failure_kind"], "unmeasured")
+        self.assertIsNone(r["isolated_speedup"])
+
+    def test_divergence_with_a_diagnosis_is_a_functional_failure(self):
+        r = self._run(self._candidates(),
+                      [self._verdict(parity="fail",
+                                     parity_diagnosis="ruled out fnuz/fn, layout, "
+                                                      "group_size, scale orientation")
+                       ])["results"][0]
+        self.assertEqual(r["failure_kind"], "functional")
+        self.assertEqual(r["perf_status"], "undefined")
+
+    def test_collective_not_engaged_is_neither_kind_of_failure(self):
+        r = self._run(self._candidates(), [self._verdict(engaged=False)])["results"][0]
+        self.assertEqual(r["unit_side_status"], "blocked")
+        self.assertEqual(r["failure_kind"], "not_engaged")
+
+    def test_both_axes_are_rendered(self):
+        res = self._run(self._candidates(),
+                        [self._verdict(isolated_speedup=0.98)])
+        md = uh.render_markdown(res)
+        self.assertIn("correctness", md)
+        self.assertIn("performance", md)
+
+
+class PhaseGeneralizationTest(unittest.TestCase):
+    """A kernel that wins in one phase must be ANSWERED FOR in every other phase.
+
+    DSR1 2026-08-31: fused_qk_rope_concat_and_cache_mla passed 单侧 at 2.76x
+    parity-exact -- in prefill only, because the candidate that claimed it was a
+    prefill candidate. prefill is 2.48% of wall clock, so both rows were correctly
+    deferred. The same kernel in decode was worth +20.61% e2e. Coverage was counted
+    per CANDIDATE, every candidate had a verdict, so no cell ever went red."""
+
+    def _cands(self):
+        common = {"family": "norm_quant",
+                  "implementation_class": "existing_api_needs_adapter",
+                  "existing_apis": [{"name": "aiter add_rmsnorm_quant"}],
+                  "members": [{"stage": "norm",
+                               "shape": {"input_dims": [[4, 7168]]}}]}
+        return {"candidates": [dict(common, candidate_id="d0", phase="decode"),
+                               dict(common, candidate_id="p0", phase="prefill")]}
+
+    def _verdict(self, cid, **over):
+        v = {"candidate_id": cid, "family": "norm_quant",
+             "fused_fn": "aiter add_rmsnorm_quant", "tested_shape": [4, 7168],
+             "parity": "pass", "isolated_speedup": 1.3, "ref_ms": 0.1,
+             "cand_ms": 0.077, "engaged": True, "tp": 1,
+             "ref_ops": ["rms_norm", "quant"], "outside_work_removed": []}
+        v.update(over)
+        return v
+
+    def _run(self, verdicts, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = os.path.join(tmp, "c.json")
+            with open(cpath, "w") as fh:
+                json.dump(self._cands(), fh)
+            vdir = os.path.join(tmp, "verdicts")
+            os.makedirs(vdir)
+            for i, v in enumerate(verdicts):
+                with open(os.path.join(vdir, "v%d.json" % i), "w") as fh:
+                    json.dump(v, fh)
+            kw.setdefault("require_coverage", False)
+            return uh.validate(cpath, vdir, 1.0, **kw)
+
+    def test_a_winner_unbenched_in_the_other_phase_is_a_gap(self):
+        res = self._run([self._verdict("d0")])
+        self.assertEqual(res["status"], "fail")
+        gaps = res["phase_generalization"]["open_gaps"]
+        self.assertEqual([(g["fused_fn"], g["phase"]) for g in gaps],
+                         [("aiter add_rmsnorm_quant", "prefill")])
+
+    def test_benching_it_in_both_phases_closes_the_gap(self):
+        res = self._run([self._verdict("d0"), self._verdict("p0")])
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(res["phase_generalization"]["open_gaps"], [])
+
+    def test_a_waiver_closes_the_gap_with_a_reason_on_the_record(self):
+        res = self._run(
+            [self._verdict("d0")],
+            phase_waivers={"aiter add_rmsnorm_quant@prefill": "no norm+quant seam"})
+        self.assertEqual(res["status"], "pass")
+
+    def test_a_loser_generates_no_gap(self):
+        # only a WINNER has to be answered for elsewhere
+        res = self._run([self._verdict("d0", isolated_speedup=0.9)])
+        self.assertEqual(res["phase_generalization"]["open_gaps"], [])
+
+    def test_unrelated_candidate_in_other_phase_is_not_a_gap(self):
+        cands = self._cands()
+        cands["candidates"][1]["existing_apis"] = [
+            {"name": "aiter unrelated_prefill_fusion"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = os.path.join(tmp, "c.json")
+            with open(cpath, "w") as fh:
+                json.dump(cands, fh)
+            vdir = os.path.join(tmp, "verdicts")
+            os.makedirs(vdir)
+            with open(os.path.join(vdir, "v.json"), "w") as fh:
+                json.dump(self._verdict("d0"), fh)
+            res = uh.validate(cpath, vdir, 1.0, require_coverage=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(res["phase_generalization"]["open_gaps"], [])
+
+
+class CoverageGateTest(unittest.TestCase):
+    """Recall, not precision: a candidate nobody benched must not render as done.
+
+    Regression for DSR1 2026-08-26, where 16 of 42 candidates were microbenched and
+    the report read "总计 16 条 verdict：pass 16 / fail 0 ... status=pass"."""
+
+    def _cands(self, n_scope=3, n_tierc=0):
+        cands = []
+        for i in range(n_scope):
+            cands.append({
+                "candidate_id": "c%d" % i, "family": "norm_quant",
+                "phase": "decode" if i % 2 == 0 else "prefill",
+                "implementation_class": "existing_api_needs_adapter",
+                "existing_apis": [{"name": "aiter add_rmsnorm_quant"}],
+                "members": [{"stage": "norm",
+                             "shape": {"input_dims": [[4, 7168]]}}]})
+        for i in range(n_tierc):
+            cands.append({
+                "candidate_id": "t%d" % i, "family": "topk_shared_append",
+                "phase": "decode", "implementation_class": "new_helper_kernel",
+                "existing_apis": [],
+                "members": [{"stage": "topk", "shape": {"input_dims": [[4, 7168]]}}]})
+        return {"candidates": cands}
+
+    def _verdict(self, cid):
+        return {"candidate_id": cid, "family": "norm_quant",
+                "fused_fn": "aiter add_rmsnorm_quant", "tested_shape": [4, 7168],
+                "parity": "pass", "isolated_speedup": 1.3, "ref_ms": 0.1,
+                "cand_ms": 0.077, "engaged": True, "tp": 1,
+                "ref_ops": ["rms_norm", "quant"], "outside_work_removed": []}
+
+    def _run(self, cands, verdicts, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = os.path.join(tmp, "c.json")
+            with open(cpath, "w") as fh:
+                json.dump(cands, fh)
+            vdir = os.path.join(tmp, "verdicts")
+            os.makedirs(vdir)
+            for i, v in enumerate(verdicts):
+                with open(os.path.join(vdir, "v%d.json" % i), "w") as fh:
+                    json.dump(v, fh)
+            return uh.validate(cpath, vdir, 1.0, **kw)
+
+    def _status(self, res, cid):
+        for r in res["results"]:
+            if r["candidate_id"] == cid:
+                return r["unit_side_status"]
+        return None
+
+    def test_full_coverage_passes(self):
+        res = self._run(self._cands(3), [self._verdict("c%d" % i) for i in range(3)])
+        self.assertEqual(res["status"], "pass")
+        self.assertTrue(res["coverage"]["complete"])
+        self.assertEqual(res["coverage"]["not_validated"], 0)
+
+    def test_missing_verdict_is_not_validated_and_fails(self):
+        # THE regression: 1 of 3 benched used to render as a clean pass.
+        res = self._run(self._cands(3), [self._verdict("c0")])
+        self.assertEqual(res["status"], "fail")
+        self.assertEqual(self._status(res, "c1"), "not_validated")
+        self.assertEqual(self._status(res, "c2"), "not_validated")
+        self.assertEqual(res["coverage"]["in_scope"], 3)
+        self.assertEqual(res["coverage"]["validated"], 1)
+        self.assertEqual(res["coverage"]["not_validated"], 2)
+        self.assertEqual(sorted(res["coverage"]["not_validated_ids"]), ["c1", "c2"])
+        self.assertFalse(res["coverage_ok"])
+
+    def test_gap_is_visible_in_the_markdown(self):
+        res = self._run(self._cands(3), [self._verdict("c0")])
+        md = uh.render_markdown(res)
+        self.assertIn("覆盖率", md)
+        self.assertIn("覆盖率缺口", md)
+        self.assertIn("c1", md)
+        self.assertIn("c2", md)
+
+    def test_per_phase_breakdown(self):
+        # c0,c2 decode / c1 prefill; bench only decode -> prefill 0/1 must show.
+        res = self._run(self._cands(3),
+                        [self._verdict("c0"), self._verdict("c2")])
+        by_phase = res["coverage"]["by_phase"]
+        self.assertEqual(by_phase["decode"]["validated"], 2)
+        self.assertEqual(by_phase["prefill"]["validated"], 0)
+        self.assertEqual(by_phase["prefill"]["not_validated"], 1)
+
+    def test_waiver_with_reason_is_accepted(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        waivers={"c1": "needs paged-KV state, deferred to round 2"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "c1"), "waived")
+        self.assertIn("paged-KV", self._reason(res, "c1"))
+        self.assertEqual(res["coverage"]["waived"], 1)
+
+    def _reason(self, res, cid):
+        for r in res["results"]:
+            if r["candidate_id"] == cid:
+                return r["reason"]
+        return ""
+
+    def test_waiver_for_unknown_candidate_is_an_error(self):
+        res = self._run(self._cands(1), [self._verdict("c0")],
+                        waivers={"ghost": "typo"})
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("unknown candidate_id" in e for e in res["errors"]))
+
+    def test_waiver_without_reason_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            uh._parse_waivers(["c1"])
+        with self.assertRaises(SystemExit):
+            uh._parse_waivers(["c1="])
+
+    def test_tier_c_is_deferred_not_missing(self):
+        # no existing kernel -> nothing to microbench; counted + shown, never a gap.
+        res = self._run(self._cands(1, n_tierc=2), [self._verdict("c0")])
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "t0"), "deferred_author")
+        self.assertEqual(res["coverage"]["deferred_author"], 2)
+        self.assertEqual(res["coverage"]["in_scope"], 1)
+        self.assertEqual(res["coverage"]["not_validated"], 0)
+
+    def test_allow_partial_reports_gap_without_failing(self):
+        res = self._run(self._cands(3), [self._verdict("c0")],
+                        require_coverage=False,
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(res["coverage"]["not_validated"], 2)   # still reported
+        self.assertIn("覆盖率缺口", uh.render_markdown(res))     # still loud
+
+    def test_untrustworthy_verdict_is_not_also_a_coverage_gap(self):
+        # a submitted-but-rejected verdict is already a loud error; it must not be
+        # double-reported as a silent absence.
+        bad = self._verdict("c0")
+        bad["tested_shape"] = [999, 7168]
+        res = self._run(self._cands(1), [bad])
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("tested_shape" in e for e in res["errors"]))
+        self.assertEqual(res["coverage"]["not_validated"], 0)
+        self.assertIsNone(self._status(res, "c0"))
+
+    def test_dsr1_shape_regression(self):
+        # the exact shape of the bug: 42 candidates (40 in scope + 2 tier-C),
+        # 16 verdicts -> must be a LOUD fail, not "pass 16 / fail 0".
+        cands = self._cands(40, n_tierc=2)
+        res = self._run(cands, [self._verdict("c%d" % i) for i in range(16)])
+        self.assertEqual(res["status"], "fail")
+        self.assertEqual(res["coverage"]["candidates_total"], 42)
+        self.assertEqual(res["coverage"]["in_scope"], 40)
+        self.assertEqual(res["coverage"]["validated"], 16)
+        self.assertEqual(res["coverage"]["not_validated"], 24)
+        self.assertEqual(res["coverage"]["deferred_author"], 2)
+
+    def test_topk_limits_coverage_to_execution_list_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cpath = os.path.join(tmp, "c.json")
+            with open(cpath, "w") as fh:
+                json.dump(self._cands(3), fh)
+            topk_path = os.path.join(tmp, "topk.json")
+            with open(topk_path, "w") as fh:
+                json.dump({"execution_list": [{
+                    "exec_id": "e01", "candidate_ids": ["c0"]}]}, fh)
+            vdir = os.path.join(tmp, "verdicts")
+            os.makedirs(vdir)
+            with open(os.path.join(vdir, "c0.json"), "w") as fh:
+                json.dump(self._verdict("c0"), fh)
+            res = uh.validate(
+                cpath, vdir, 1.0, topk_path=topk_path,
+                require_phase_generalization=False)
+            self.assertEqual(res["status"], "pass")
+            self.assertEqual(res["coverage"]["in_scope"], 1)
+            self.assertEqual(res["coverage"]["not_validated"], 0)
+            self.assertEqual(res["coverage"]["deferred_rank_budget"], 2)
+            self.assertEqual(res["counts"]["deferred_rank_budget"], 2)
+
+
+class BudgetVsSubsumptionTest(unittest.TestCase):
+    """Running out of budget and being covered by a ladder top are OPPOSITES.
+
+    Regression for DSR1 2026-09-03: 17 budget overruns were passed in as
+    `--waive`, rendered `waived`, dropped out of the unvalidated set, and
+    coverage reported complete over a board where the ★★★-prior oproj candidate
+    had never been measured. 「没测」不得渲染成「测过了」."""
+
+    _cands = CoverageGateTest._cands
+    _verdict = CoverageGateTest._verdict
+    _run = CoverageGateTest._run
+    _status = CoverageGateTest._status
+    _reason = CoverageGateTest._reason
+
+    def test_budget_skipped_counts_as_not_covered_and_fails(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        budget_skipped={"c1": "unit-side budget 1 exhausted"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "fail")
+        self.assertEqual(self._status(res, "c1"), "budget_skipped")
+        self.assertFalse(res["coverage"]["complete"])
+        self.assertEqual(res["coverage"]["budget_skipped"], 1)
+        self.assertEqual(res["coverage"]["not_validated"], 1)
+        self.assertIn("c1", res["coverage"]["not_validated_ids"])
+        # and it is NOT quietly counted as a waiver
+        self.assertEqual(res["coverage"]["waived"], 0)
+
+    def test_a_waiver_cannot_launder_a_budget_skip(self):
+        # Same candidate presented BOTH ways: the skip wins, loudly.
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        waivers={"c1": "past budget"},
+                        budget_skipped={"c1": "budget exhausted"},
+                        require_phase_generalization=False)
+        self.assertEqual(self._status(res, "c1"), "budget_skipped")
+        self.assertEqual(res["status"], "fail")
+
+    def test_subsumed_pass_is_covered_without_its_own_microbench(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        subsumed={"c1": "e01"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "c1"), "subsumed_pass")
+        self.assertIn("e01", self._reason(res, "c1"))
+        self.assertTrue(res["coverage"]["complete"])
+        self.assertEqual(res["coverage"]["subsumed_pass"], 1)
+        self.assertEqual(res["coverage"]["not_validated"], 0)
+
+    def test_equivalent_pass_is_covered_by_one_representative_microbench(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        equivalent={"c1": "c0"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "c1"), "equivalent_pass")
+        self.assertEqual(res["coverage"]["validated"], 1)
+        self.assertEqual(res["coverage"]["equivalent_pass"], 1)
+        self.assertEqual(res["coverage"]["not_validated"], 0)
+
+    def test_equivalent_inherits_a_failing_representative_once(self):
+        losing = self._verdict("c0")
+        losing["isolated_speedup"] = 0.9
+        res = self._run(self._cands(2), [losing],
+                        equivalent={"c1": "c0"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "pass")
+        self.assertEqual(self._status(res, "c1"), "equivalent_fail")
+        self.assertTrue(res["coverage"]["complete"])
+        self.assertEqual(res["coverage"]["equivalent_covered"], 1)
+        self.assertEqual(res["coverage"]["equivalent_pass"], 0)
+
+    def test_a_row_cannot_be_both_covered_and_never_measured(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        subsumed={"c1": "e01"},
+                        budget_skipped={"c1": "budget exhausted"},
+                        require_phase_generalization=False)
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("covered and --budget-skipped" in e
+                            for e in res["errors"]))
+
+    def test_unknown_ids_in_the_new_maps_are_errors(self):
+        res = self._run(self._cands(1), [self._verdict("c0")],
+                        subsumed={"ghost": "e01"},
+                        budget_skipped={"phantom": "budget"})
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("--subsumed references unknown" in e
+                            for e in res["errors"]))
+        self.assertTrue(any("--budget-skipped references unknown" in e
+                            for e in res["errors"]))
+
+    def test_the_markdown_says_never_measured_not_waived(self):
+        res = self._run(self._cands(2), [self._verdict("c0")],
+                        budget_skipped={"c1": "unit-side budget exhausted"},
+                        require_phase_generalization=False)
+        md = uh.render_markdown(res)
+        self.assertIn("从未测过", md)
+        self.assertIn("覆盖率缺口", md)
+        self.assertIn("c1", md)
+
+    def test_subsumed_and_skipped_are_separate_columns_in_coverage(self):
+        res = self._run(self._cands(3), [self._verdict("c0")],
+                        subsumed={"c1": "e01"},
+                        budget_skipped={"c2": "budget exhausted"},
+                        require_phase_generalization=False)
+        cov = res["coverage"]
+        self.assertEqual((cov["validated"], cov["subsumed_pass"],
+                          cov["budget_skipped"], cov["waived"]), (1, 1, 1, 0))
+        self.assertEqual(cov["not_validated"], 1)
+
+
+class ScreenFormatUnitsideTest(unittest.TestCase):
+    """fusion_screen.py candidates (row_ids / matched_existing_kernels / self_author).
+
+    Qwen3.5-397B 20261010: Phase 3.0 never ran; fed to the legacy checks these
+    candidates were all "out of scope" because they carry no existing_apis."""
+
+    def _fixture(self, tmp, verdicts, with_table=True, topk_over=None):
+        table = {"tables": [{"phase": "decode", "rows": [
+            {"row_id": "r1", "raw_name": "_fused_qk_gemma_rmsnorm_kernel",
+             "parent_operator": "sglang::qk_norm", "phase": "decode",
+             "step_batch_size": 4, "step_input_tokens": 4,
+             "shape": {"source": "kernel_exact", "input_dims": [[4, 4096]]}},
+            {"row_id": "r2", "raw_name": "mrope_kernel", "parent_operator": "aten::rope",
+             "phase": "decode", "step_batch_size": 4, "step_input_tokens": 4,
+             "shape": {"source": "unresolved", "input_dims": []}},
+            {"row_id": "r3", "raw_name": "cross_device_reduce_1stage",
+             "parent_operator": "sglang::all_reduce", "phase": "decode",
+             "step_batch_size": 4, "step_input_tokens": 4,
+             "shape": {"source": "unresolved", "input_dims": []}},
+            {"row_id": "r4", "raw_name": "dynamic_per_group_scaled_quant",
+             "parent_operator": "aiter::quant", "phase": "decode",
+             "step_batch_size": 4, "step_input_tokens": 4,
+             "shape": {"source": "unresolved", "input_dims": []}}]}]}
+        cands = {"candidates": [
+            {"candidate_id": "c07", "phase": "decode", "kind": "serial",
+             "row_ids": ["r1", "r2"], "op_tags": ["norm", "rope"],
+             "kernel_names": ["_fused_qk_gemma_rmsnorm_kernel", "mrope_kernel"],
+             "matched_existing_kernels": [{"name": "fused_qk_norm_rope_cache_quant_shuffle"}],
+             "self_author": True},
+            {"candidate_id": "c40", "phase": "decode", "kind": "serial",
+             "row_ids": ["r3", "r4"], "op_tags": ["allreduce", "quant"],
+             "kernel_names": ["cross_device_reduce_1stage", "dynamic_per_group_scaled_quant"],
+             "matched_existing_kernels": [], "self_author": True}]}
+        topk = {"execution_list": [{"exec_id": "e01", "candidate_ids": ["c07"]},
+                                   {"exec_id": "e02", "candidate_ids": ["c40"]}]}
+        if topk_over:
+            topk = topk_over(topk)
+        paths = {}
+        for name, doc in (("c.json", cands), ("t.json", table), ("k.json", topk)):
+            paths[name] = os.path.join(tmp, name)
+            with open(paths[name], "w") as fh:
+                json.dump(doc, fh)
+        vdir = os.path.join(tmp, "verdict")
+        os.makedirs(vdir)
+        for i, v in enumerate(verdicts):
+            with open(os.path.join(vdir, "v%d.json" % i), "w") as fh:
+                json.dump(v, fh)
+        return uh.validate(paths["c.json"], vdir, topk_path=paths["k.json"],
+                           semantic_table_path=paths["t.json"] if with_table else None,
+                           require_coverage=True)
+
+    def _v(self, **over):
+        v = {"candidate_id": "c07", "fused_fn": "fused_qk_norm_rope_cache_quant_shuffle",
+             "tested_shape": [4, 4096], "parity": "pass", "ref_ms": 0.03, "cand_ms": 0.02,
+             "isolated_speedup": 1.5, "engaged": True,
+             "ref_ops": ["_fused_qk_gemma_rmsnorm_kernel", "mrope_kernel"],
+             "outside_work_removed": []}
+        v.update(over)
+        return v
+
+    def test_screen_candidates_are_in_scope_and_unbenched_ones_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._fixture(tmp, [self._v()])
+            self.assertEqual(res["coverage"]["in_scope"], 2)
+            self.assertEqual(res["coverage"]["not_validated_ids"], ["c40"])
+            self.assertEqual(res["status"], "fail")
+
+    def test_members_are_grafted_from_the_semantic_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._fixture(tmp, [self._v(tested_shape=[8, 4096])])
+            self.assertTrue(any("not among the candidate's captured member shapes" in e
+                                for e in res["errors"]), res["errors"])
+
+    def test_self_authored_side_needs_its_source_on_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._fixture(tmp, [self._v(implementation="self_authored",
+                                              fused_fn="geak_qknorm_rope",
+                                              kernel_source="/nope/k.py")])
+            self.assertTrue(any("does not exist" in e for e in res["errors"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "k.py")
+            open(src, "w").write("# kernel\n")
+            res = self._fixture(tmp, [self._v(implementation="self_authored",
+                                              fused_fn="geak_qknorm_rope",
+                                              kernel_source=src)])
+            row = next(r for r in res["results"] if r["candidate_id"] == "c07")
+            self.assertEqual(row["unit_side_status"], "pass")
+            self.assertEqual(row["side"], "self_authored")
+
+    def test_best_side_wins_and_both_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "k.py")
+            open(src, "w").write("# kernel\n")
+            res = self._fixture(tmp, [
+                self._v(isolated_speedup=0.9),
+                self._v(implementation="self_authored", fused_fn="geak_qknorm_rope",
+                        kernel_source=src, isolated_speedup=1.4)])
+            rows = [r for r in res["results"] if r["candidate_id"] == "c07"]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["unit_side_status"], "pass")
+            self.assertEqual(sorted(s["side"] for s in rows[0]["sides"]),
+                             ["existing", "self_authored"])
+            self.assertIn("双侧对比", uh.render_markdown(res))
+
+    def test_unresolved_shapes_fall_back_to_the_step_token_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "k.py")
+            open(src, "w").write("# kernel\n")
+            ok = dict(candidate_id="c40", implementation="self_authored",
+                      fused_fn="geak_ar_quant", kernel_source=src, tested_shape=[4, 4096],
+                      ref_ops=["cross_device_reduce_1stage", "dynamic_per_group_scaled_quant"])
+            res = self._fixture(tmp, [self._v(), self._v(**ok)])
+            self.assertEqual(res["status"], "pass", res["errors"])
+            self.assertTrue(res["warnings"])
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "k.py")
+            open(src, "w").write("# kernel\n")
+            bad = dict(ok, kernel_source=src, tested_shape=[16, 4096])
+            res = self._fixture(tmp, [self._v(), self._v(**bad)])
+            self.assertTrue(any("token count" in e for e in res["errors"]))
+
+    def test_collective_entries_are_flagged_for_the_serving_lease(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._fixture(tmp, [self._v()])
+            self.assertEqual(res["collective_candidate_ids"], ["c40"])
+
+    def test_alt_rungs_and_pool_items_validate_outside_the_denominator(self):
+        def over(topk):
+            topk["execution_list"][0]["alt_ladder"] = [
+                {"rung": 0, "row_ids": ["r1", "r2"]},
+                {"rung": 1, "kind": "serial", "row_ids": ["r1"],
+                 "kernel_names": ["_fused_qk_gemma_rmsnorm_kernel"],
+                 "matched_existing_kernels": [{"name": "fused_qk_rmsnorm"}]}]
+            topk["candidate_pool"] = [
+                {"exec_id": "p01", "candidate_ids": ["cp1"], "phase": "decode",
+                 "row_ids": ["r4"], "kernel_names": ["dynamic_per_group_scaled_quant"],
+                 "matched_existing_kernels": []}]
+            return topk
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "k.py")
+            open(src, "w").write("# kernel\n")
+            rung = self._v(candidate_id="e01.r1", fused_fn="fused_qk_rmsnorm",
+                           ref_ops=["_fused_qk_gemma_rmsnorm_kernel"], isolated_speedup=0.8)
+            pool = self._v(candidate_id="cp1", implementation="self_authored",
+                           fused_fn="geak_quant", kernel_source=src,
+                           ref_ops=["dynamic_per_group_scaled_quant"])
+            res = self._fixture(tmp, [self._v(), rung, pool], topk_over=over)
+            self.assertFalse(any("unknown candidate" in e for e in res["errors"]), res["errors"])
+            status = {r["candidate_id"]: r["unit_side_status"] for r in res["results"]}
+            self.assertEqual(status["e01.r1"], "fail")
+            self.assertEqual(status["cp1"], "pass")
+            # still only the Top-K candidates count toward coverage
+            self.assertEqual(res["coverage"]["in_scope"], 2)
+
+    def test_an_untested_alt_rung_is_on_demand_not_a_coverage_gap(self):
+        def over(topk):
+            topk["execution_list"][0]["alt_ladder"] = [
+                {"rung": 0, "row_ids": ["r1", "r2"]},
+                {"rung": 1, "kind": "serial", "row_ids": ["r1"],
+                 "kernel_names": ["_fused_qk_gemma_rmsnorm_kernel"]}]
+            return topk
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Only the Top-K candidate has a verdict: the deeper rung is tested on demand
+            # during apply-back, so its missing verdict is neither an error nor a gap.
+            res = self._fixture(tmp, [self._v()], topk_over=over)
+            self.assertFalse(any("e01.r1" in e for e in res["errors"]), res["errors"])
+            row = next(r for r in res["results"] if r["candidate_id"] == "e01.r1")
+            self.assertEqual(row["unit_side_status"], "deferred_rank_budget")
+            self.assertIn("on demand during apply-back", row["reason"])
+            self.assertNotIn("e01.r1", res["coverage"]["not_validated_ids"])
+
+    def test_legacy_candidates_pass_through_unchanged(self):
+        legacy = {"candidate_id": "x", "members": [], "existing_apis": []}
+        self.assertIs(uh.normalize_screen_candidate(legacy, {}), legacy)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ObservedWorkloadWeightingTest(_UnitsideFixture, unittest.TestCase):
+    """AgentX trace replay: the gate is the call-weighted speedup over every
+    sampling point of the candidate's phase, recomputed from the verdict's timings."""
+
+    @staticmethod
+    def _workload():
+        return {"kind": "agentx_trace_replay", "weighting": "observed",
+                "serving_weight_model": {"source": "observed_workload",
+                                         "evidence_path": "/eval/observed_workload.json"},
+                "cases": [
+                    {"sig": "de_4", "regime": "decode", "m": 4, "effective_calls": 900},
+                    {"sig": "de_32", "regime": "decode", "m": 32, "effective_calls": 100},
+                    {"sig": "pr_2048", "regime": "prefill", "m": 2048, "effective_calls": 50}]}
+
+    def _weighted_verdict(self, cases, **over):
+        return self._verdict(weighted_cases=cases, **over)
+
+    def test_weighted_speedup_is_the_gate(self):
+        # de_4 is 9x the calls and does not win; de_32 wins big. Weighted by
+        # baseline_ms*calls the workload barely moves, and that is the verdict.
+        res = self._run(self._candidates(), [self._weighted_verdict([
+            {"sig": "de_4", "ref_ms": 0.10, "cand_ms": 0.10},
+            {"sig": "de_32", "ref_ms": 0.20, "cand_ms": 0.10}])],
+            observed_workload=self._workload())
+        row = next(r for r in res["results"] if r["candidate_id"] == "dc_ar")
+        expected = (0.10 * 900 + 0.20 * 100) / (0.10 * 900 + 0.10 * 100)
+        self.assertAlmostEqual(row["weighted_speedup"], round(expected, 4))
+        self.assertEqual(row["isolated_speedup"], round(expected, 4))
+        self.assertEqual(row["analysis_shape_speedup"], 1.67)
+        self.assertEqual(row["speedup_basis"], "observed_workload_weighted")
+        self.assertEqual(row["unit_side_status"], "pass")
+        self.assertIn("AgentX 观测负载加权", uh.render_markdown(res))
+
+    def test_a_weighted_loss_fails_even_when_the_analysis_shape_wins(self):
+        res = self._run(self._candidates(), [self._weighted_verdict([
+            {"sig": "de_4", "ref_ms": 0.10, "cand_ms": 0.12},
+            {"sig": "de_32", "ref_ms": 0.20, "cand_ms": 0.15}])],
+            observed_workload=self._workload())
+        self.assertEqual(self._status(res, "dc_ar"), "fail")
+        row = next(r for r in res["results"] if r["candidate_id"] == "dc_ar")
+        self.assertEqual(row["failure_kind"], "performance")
+
+    def test_a_missing_positive_mass_point_is_an_error(self):
+        res = self._run(self._candidates(), [self._weighted_verdict([
+            {"sig": "de_32", "ref_ms": 0.20, "cand_ms": 0.10}])],
+            observed_workload=self._workload())
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("de_4" in e for e in res["errors"]))
+
+    def test_no_weighted_cases_is_an_error(self):
+        res = self._run(self._candidates(), [self._verdict()],
+                        observed_workload=self._workload())
+        self.assertEqual(res["status"], "fail")
+        self.assertTrue(any("weighted_cases" in e for e in res["errors"]))
+
+    def test_a_point_of_another_phase_is_rejected(self):
+        res = self._run(self._candidates(), [self._weighted_verdict([
+            {"sig": "de_4", "ref_ms": 0.10, "cand_ms": 0.09},
+            {"sig": "de_32", "ref_ms": 0.20, "cand_ms": 0.10},
+            {"sig": "pr_2048", "ref_ms": 1.0, "cand_ms": 0.5}])],
+            observed_workload=self._workload())
+        self.assertTrue(any("pr_2048" in e for e in res["errors"]))
+
+    def test_without_an_observed_workload_nothing_changes(self):
+        res = self._run(self._candidates(), [self._verdict()])
+        row = next(r for r in res["results"] if r["candidate_id"] == "dc_ar")
+        self.assertEqual(row["speedup_basis"], "analysis_shape")
+        self.assertIsNone(row["weighted_speedup"])
+        self.assertEqual(row["isolated_speedup"], 1.67)

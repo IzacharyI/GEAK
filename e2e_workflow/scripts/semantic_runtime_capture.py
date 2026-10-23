@@ -1,0 +1,1106 @@
+#!/usr/bin/env python3
+"""GEAK Semantics 1.2 runtime metadata and profiler-marker injection.
+
+This module is copied into the serving runtime and installed after ModelRunner
+loads the model.  It records metadata only and wraps each selected module call
+in a profiler record_function marker so launched kernels can be proven to be
+contained by the wrapper that supplied the Shape.
+"""
+import json
+import functools
+import importlib
+import contextlib
+import inspect
+import os
+import re
+import sys
+import threading
+
+
+_LAYER_RE = re.compile(
+    r"(?:^|\.)(?:layers|h|blocks)\.(\d+)(?:\.|$)", re.IGNORECASE)
+_MAIN_LAYER_RE = re.compile(
+    r"(?:^|\.)(?:layers|h|blocks)\.(\d+)$", re.IGNORECASE)
+_TRUE = ("1", "true", "True", "TRUE", "yes", "on")
+_LOGGER = None
+_INSTALLED_CLASSES = set()
+_PATCHED_CALLABLES = set()
+_GRAPH_CAPTURE_PROFILER_INSTALLED = False
+_OPERATOR_SCHEMA_MANIFEST_DUMPED = False
+
+
+def _flag(name, default="0"):
+    return os.environ.get(name, default) in _TRUE
+
+
+def _csv_int(name):
+    value = os.environ.get(name, "")
+    return set(int(item) for item in value.split(",") if item.strip())
+
+
+def _csv_upper(name):
+    return set(
+        item.strip().upper()
+        for item in os.environ.get(name, "").split(",")
+        if item.strip())
+
+
+def _canonical_phase(value):
+    value = str(value or "").upper()
+    if value in ("EXTEND", "PREFILL", "PROMPT"):
+        return "PREFILL"
+    if value in ("DECODE", "GENERATION"):
+        return "DECODE"
+    # Speculative decoding: the target generates with TARGET_VERIFY.
+    if value in ("TARGET_VERIFY", "VERIFY"):
+        return "VERIFY"
+    if value in ("DRAFT_EXTEND", "DRAFT_EXTEND_V2"):
+        return "DRAFT"
+    return value
+
+
+# DECODE and VERIFY are the same generation phase for filtering: a caller
+# asking for "decode" on a speculative server must still see TARGET_VERIFY.
+_GENERATION = ("DECODE", "VERIFY")
+
+
+def _phase_requested(phase, requested):
+    """Whether a runtime forward phase passes the GEAK_SEMANTICS_PHASES filter."""
+    if not requested:
+        return True
+    phase = _canonical_phase(phase)
+    wanted = {_canonical_phase(item) for item in requested}
+    if phase in _GENERATION:
+        return bool(wanted & set(_GENERATION))
+    return phase in wanted
+
+
+def _profiler_active():
+    """Return whether record_function ranges can reach the active trace."""
+    try:
+        import torch
+        probe = getattr(torch.autograd, "_profiler_enabled", None)
+        return bool(probe and probe())
+    except Exception:
+        return False
+
+
+def _stream_capturing():
+    """Whether the current stream is recording a CUDA/HIP graph."""
+    try:
+        import torch
+        return bool(torch.cuda.is_current_stream_capturing())
+    except Exception:
+        return False
+
+
+def _distributed_rank():
+    try:
+        import torch.distributed as dist
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_rank())
+    except Exception:
+        pass
+    return 0
+
+
+def _graph_capture_trace_path(rank):
+    path = os.environ.get("GEAK_SEMANTICS_GRAPH_CAPTURE_TRACE", "")
+    if not path:
+        return ""
+    try:
+        return path.format(rank=rank)
+    except (KeyError, ValueError):
+        return path
+
+
+def _operator_targets():
+    return [
+        item.strip()
+        for item in os.environ.get(
+            "GEAK_SEMANTICS_OPERATOR_TARGETS", "").split(",")
+        if item.strip()]
+
+
+def _value_or_call(value, default=None):
+    if value is None:
+        return default
+    try:
+        return value() if callable(value) else value
+    except Exception:
+        return default
+
+
+def _alias_info(alias):
+    if alias is None:
+        return None
+    return {
+        "text": str(alias),
+        "is_write": bool(_value_or_call(
+            getattr(alias, "is_write", None), False)),
+        "before_set": sorted(str(item) for item in (
+            _value_or_call(getattr(alias, "before_set", None), []) or [])),
+        "after_set": sorted(str(item) for item in (
+            _value_or_call(getattr(alias, "after_set", None), []) or [])),
+    }
+
+
+def _schema_argument(argument, index):
+    has_default = bool(_value_or_call(
+        getattr(argument, "has_default_value", None), False))
+    default = getattr(argument, "default_value", None)
+    return {
+        "index": index,
+        "name": str(getattr(argument, "name", "arg_%d" % index)),
+        "type": str(getattr(argument, "type", "unknown")),
+        "kwarg_only": bool(getattr(argument, "kwarg_only", False)),
+        "has_default": has_default,
+        "default": str(default) if has_default else None,
+        "alias_info": _alias_info(getattr(argument, "alias_info", None)),
+    }
+
+
+def _schema_record(schema):
+    name = str(getattr(schema, "name", ""))
+    overload = str(getattr(schema, "overload_name", "") or "")
+    return {
+        "name": name,
+        "overload_name": overload,
+        "qualified_name": name + ("." + overload if overload else ""),
+        "schema": str(schema),
+        "arguments": [
+            _schema_argument(argument, index)
+            for index, argument in enumerate(
+                list(getattr(schema, "arguments", []) or []))],
+        "returns": [
+            _schema_argument(argument, index)
+            for index, argument in enumerate(
+                list(getattr(schema, "returns", []) or []))],
+    }
+
+
+def dump_operator_schema_manifest():
+    """Dump registered dispatcher schemas after runtime/model initialization.
+
+    The pre-capture operator target list is an observational prior only.  The
+    complete registered schema inventory is exported so operators actually
+    observed in the graph-construction trace can still be named even when the
+    prior missed them.
+    """
+    global _OPERATOR_SCHEMA_MANIFEST_DUMPED
+    if _OPERATOR_SCHEMA_MANIFEST_DUMPED:
+        return
+    path = os.environ.get(
+        "GEAK_SEMANTICS_OPERATOR_SCHEMA_MANIFEST", "")
+    if not path:
+        return
+    rank = _distributed_rank()
+    expected_rank = int(os.environ.get("GEAK_SEMANTICS_RANK", "0"))
+    if rank != expected_rank:
+        return
+    import torch
+    getter = getattr(torch._C, "_jit_get_all_schemas", None)
+    if getter is None:
+        raise RuntimeError(
+            "runtime torch does not expose _jit_get_all_schemas")
+    schemas = sorted(
+        (_schema_record(schema) for schema in getter()),
+        key=lambda item: (
+            item["name"], item["overload_name"], item["schema"]))
+    requested = sorted(set(_operator_targets()))
+    available = {item["name"] for item in schemas}
+    document = {
+        "schema_version": 1,
+        "producer": "geak.semantic_runtime_capture",
+        "rank": rank,
+        "capture_timing": "after_model_and_runtime_operator_registration",
+        "operator_targets_are_observational_prior_only": True,
+        "requested_operators": requested,
+        "requested_operator_resolution": [
+            {
+                "operator": name,
+                "registered": name in available,
+                "schema_count": sum(
+                    item["name"] == name for item in schemas),
+            }
+            for name in requested],
+        "schema_count": len(schemas),
+        "schemas": schemas,
+    }
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    temporary = "%s.tmp.%d" % (path, os.getpid())
+    with open(temporary, "w") as fh:
+        json.dump(document, fh, indent=2, sort_keys=True)
+    os.replace(temporary, path)
+    _OPERATOR_SCHEMA_MANIFEST_DUMPED = True
+    sys.stderr.write(
+        "[GEAK_SEMANTICS] exported %d operator schemas to %s\n" %
+        (len(schemas), path))
+
+
+# Speculative draft graph runners borrow CudaGraphRunner.capture without
+# subclassing it, and honour --enable-profile-cuda-graph themselves.
+_DRAFT_GRAPH_RUNNERS = (
+    ("sglang.srt.speculative.eagle_draft_cuda_graph_runner",
+     "EAGLEDraftCudaGraphRunner"),
+    ("sglang.srt.speculative.eagle_draft_extend_cuda_graph_runner",
+     "EAGLEDraftExtendCudaGraphRunner"),
+)
+
+
+def _install_draft_graph_profiler_noop():
+    """Give speculative draft graph runners a no-op capture profiler.
+
+    Semantic capture turns on --enable-profile-cuda-graph, which the draft
+    runners also read before calling the borrowed CudaGraphRunner.capture.
+    They lack the profile hooks (AttributeError at server start), and the draft
+    graph must not overwrite the target model's graph-capture trace anyway.
+    """
+    import importlib
+
+    def _init_noop(self):
+        return contextlib.nullcontext(None)
+
+    def _post_noop(self, prof_context):
+        return None
+
+    for module_name, class_name in _DRAFT_GRAPH_RUNNERS:
+        try:
+            cls = getattr(importlib.import_module(module_name), class_name)
+        except Exception:
+            continue
+        cls._init_profile_context_and_memory_record = _init_noop
+        cls._post_process_after_profile = _post_noop
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] draft graph profiler disabled for %s\n"
+            % class_name)
+
+
+def _is_draft_graph_runner(runner):
+    """True for a graph runner that belongs to a speculative draft worker.
+
+    DSPARK/DFLASH draft workers capture with the base decode graph runner class
+    itself (not a draft subclass the no-op above can patch), so their export
+    would overwrite the target model's graph-capture trace (same rank, same
+    path).
+    """
+    return bool(getattr(getattr(runner, "model_runner", None),
+                        "is_draft_worker", False))
+
+
+def install_graph_capture_profiler():
+    """Export a rank-0 trace of CUDA/HIP graph construction.
+
+    SGLang's ``--enable-profile-cuda-graph`` profiler normally prints only
+    aggregate tables and a memory snapshot.  Semantics needs the Chrome trace
+    containing GEAK record_function markers and the kernel launches nested in
+    them.  Profile rank 0 only, avoid memory-history recording, and leave graph
+    replay profiling to the normal clean workload profiler.
+    """
+    global _GRAPH_CAPTURE_PROFILER_INSTALLED
+    if _GRAPH_CAPTURE_PROFILER_INSTALLED:
+        return
+    if not os.environ.get("GEAK_SEMANTICS_GRAPH_CAPTURE_TRACE"):
+        return
+    try:
+        import torch
+        from torch.profiler import ProfilerActivity, profile
+        try:
+            from sglang.srt.model_executor.cuda_graph_runner import (
+                CudaGraphRunner)
+        except ImportError:
+            # Newer SGLang moved the decode graph runner; the two profile
+            # hooks keep the same names and signatures there.
+            from sglang.srt.model_executor.runner.decode_cuda_graph_runner \
+                import DecodeCudaGraphRunner as CudaGraphRunner
+
+        def _init_profile_context_and_memory_record(self):
+            if _is_draft_graph_runner(self) or _distributed_rank() != int(
+                    os.environ.get("GEAK_SEMANTICS_RANK", "0")):
+                return contextlib.nullcontext(None)
+            return profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_stack=False,
+            )
+
+        def _post_process_after_profile(self, prof_context):
+            rank = _distributed_rank()
+            if _is_draft_graph_runner(self):
+                return
+            if prof_context is None or rank != int(os.environ.get(
+                    "GEAK_SEMANTICS_RANK", "0")):
+                return
+            path = _graph_capture_trace_path(rank)
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            prof_context.export_chrome_trace(path)
+            sys.stderr.write(
+                "[GEAK_SEMANTICS] graph-capture trace exported to %s\n" % path)
+
+        CudaGraphRunner._init_profile_context_and_memory_record = (
+            _init_profile_context_and_memory_record)
+        CudaGraphRunner._post_process_after_profile = (
+            _post_process_after_profile)
+        _install_draft_graph_profiler_noop()
+        _GRAPH_CAPTURE_PROFILER_INSTALLED = True
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] installed rank-0 graph-capture profiler export\n")
+    except Exception as exc:
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] graph-capture profiler install failed: %s\n" % exc)
+        raise
+
+
+def _phase_of(forward_batch):
+    try:
+        mode = forward_batch.forward_mode
+    except Exception:
+        return "UNKNOWN", -1, -1
+    phase = "UNKNOWN"
+    # Speculative modes first: ForwardMode.is_extend() is also True for
+    # TARGET_VERIFY and DRAFT_EXTEND, which would mislabel them as prefill.
+    for method, candidate in (
+            ("is_target_verify", "TARGET_VERIFY"),
+            ("is_draft_extend", "DRAFT_EXTEND"),
+            ("is_decode", "DECODE"),
+            ("is_extend", "EXTEND"),
+            ("is_prefill", "PREFILL")):
+        try:
+            if getattr(mode, method, lambda: False)():
+                phase = candidate
+                break
+        except Exception:
+            pass
+    if phase == "UNKNOWN":
+        phase = str(getattr(mode, "name", mode)).upper()
+    batch_size = -1
+    for name in ("batch_size", "bs"):
+        value = getattr(forward_batch, name, None)
+        if isinstance(value, int):
+            batch_size = value
+            break
+    input_tokens = -1
+    try:
+        input_ids = getattr(forward_batch, "input_ids", None)
+        if input_ids is not None:
+            input_tokens = int(input_ids.numel())
+    except Exception:
+        pass
+    if batch_size == -1:
+        try:
+            batch_size = int(forward_batch.seq_lens.shape[0])
+        except Exception:
+            pass
+    return phase, batch_size, input_tokens
+
+
+def _layer_id(path):
+    match = _LAYER_RE.search(path or "")
+    return int(match.group(1)) if match else -1
+
+
+def _op_path(path):
+    if path.startswith("layers."):
+        return "model." + path
+    return path
+
+
+def _metadata(value, aliases=None):
+    import torch
+    aliases = aliases if aliases is not None else {}
+    if isinstance(value, torch.Tensor):
+        identity = id(value)
+        if identity not in aliases:
+            aliases[identity] = "tensor-%d" % len(aliases)
+        try:
+            stride = list(value.stride())
+        except Exception:
+            stride = None
+        return {
+            "kind": "tensor",
+            "alias_id": aliases[identity],
+            "shape": list(value.shape),
+            "dtype": str(value.dtype).replace("torch.", ""),
+            "device": str(value.device),
+            "stride": stride,
+            "contiguous": bool(value.is_contiguous()),
+            "requires_grad": bool(value.requires_grad),
+        }
+    if isinstance(value, tuple):
+        return {"kind": "tuple", "items": [
+            _metadata(item, aliases) for item in value]}
+    if isinstance(value, list):
+        return {"kind": "list", "items": [
+            _metadata(item, aliases) for item in value]}
+    if isinstance(value, dict):
+        return {"kind": "dict", "items": {
+            str(key): _metadata(item, aliases)
+            for key, item in value.items()}}
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return {
+            "kind": "scalar", "type": type(value).__name__,
+            "value": value,
+        }
+    return {
+        "kind": "object",
+        "type": "%s.%s" % (
+            type(value).__module__, type(value).__name__),
+    }
+
+
+class SemanticRuntimeLogger(object):
+    def __init__(self):
+        self.enabled = _flag("GEAK_SEMANTICS_CAPTURE")
+        self.path = os.environ.get("GEAK_SEMANTICS_SHAPE_LOG", "")
+        self.rank = int(os.environ.get("GEAK_SEMANTICS_RANK", "0"))
+        self.layers = _csv_int("GEAK_SEMANTICS_LAYERS")
+        self.phases = _csv_upper("GEAK_SEMANTICS_PHASES")
+        self.layer_scopes = _flag("GEAK_SEMANTICS_LAYER_SCOPES", "1")
+        self._scope_state = threading.local()
+        self.require_profiler = _flag(
+            "GEAK_SEMANTICS_REQUIRE_PROFILER")
+        self._profile_seen = False
+        self.max_forwards = int(os.environ.get(
+            "GEAK_SEMANTICS_FORWARDS_PER_BUCKET", "1"))
+        self._context = {
+            "phase": "UNKNOWN", "batch_size": -1, "input_tokens": -1}
+        self._bucket_forwards = {}
+        self._next_id = 0
+        self._rank = None
+        self._lock = threading.Lock()
+        self._stacks = threading.local()
+        self._fh = None
+        if self.enabled and self.path:
+            os.makedirs(os.path.dirname(os.path.abspath(self.path)),
+                        exist_ok=True)
+            self._fh = open(self.path, "a", buffering=1)
+
+    def active(self):
+        return self._fh is not None and self._rank_ok()
+
+    def _rank_ok(self):
+        if self._rank is None:
+            try:
+                import torch.distributed as dist
+                self._rank = (
+                    dist.get_rank()
+                    if dist.is_available() and dist.is_initialized() else 0)
+            except Exception:
+                self._rank = 0
+        return self._rank == self.rank
+
+    def set_context(self, phase, batch_size, input_tokens):
+        self._context = {
+            "phase": phase,
+            "batch_size": batch_size,
+            "input_tokens": input_tokens,
+        }
+
+    def mark_forward(self):
+        # Count only forwards that were ELIGIBLE to be recorded. `_allowed` already
+        # refuses everything before the profiler is live (so a warmup forward leaves no
+        # trace marker to match), but this counter used to be incremented regardless --
+        # so the warmup silently exhausted every bucket and the capture window then found
+        # them all full. The shape log came out EMPTY, which downstream cannot tell apart
+        # from "this phase genuinely has no shapes".
+        #
+        # sglang never saw it because its dedicated replay arms the profiler at load
+        # start. Any driver that warms up first -- bench_e2e.sh does, by design -- hits it
+        # every time. Guard the counter with the same latch that guards the recording.
+        if self.require_profiler and not self._profile_seen:
+            return
+        key = (
+            self._context["phase"], self._context["batch_size"],
+            self._context["input_tokens"])
+        self._bucket_forwards[key] = self._bucket_forwards.get(key, 0) + 1
+
+    def _allowed(self, layer_id):
+        if not self.active():
+            return False
+        # Benchmark warmups run before torch.profiler starts.  Consuming the
+        # one-forward bucket there records shape JSON but leaves no matching
+        # trace marker, which used to remove every steady decode bucket.
+        #
+        # Profiler-enabled state can be thread-local: prefill may observe it
+        # while the subsequent decode worker does not.  Latch the first active
+        # observation for the rest of this benchmark capture.
+        if self.require_profiler and not self._profile_seen:
+            if not _profiler_active():
+                return False
+            self._profile_seen = True
+        if layer_id < 0 or (self.layers and layer_id not in self.layers):
+            return False
+        if (self.phases
+                and not _phase_requested(self._context["phase"], self.phases)):
+            return False
+        key = (
+            self._context["phase"], self._context["batch_size"],
+            self._context["input_tokens"])
+        return self._bucket_forwards.get(key, 0) < self.max_forwards
+
+    def _layer_scope_source(self, layer_id):
+        """Which main-layer boundary marker, if any, this forward emits.
+
+        Unlike Shape logging this intentionally ignores ``self.layers``: the
+        boundary donor must cover the complete main stack, and it records no
+        tensor metadata for non-representative layers.
+
+        ``"capture"``: the forward being recorded into a CUDA/HIP graph.  Its
+        kernel launches are exactly what graph replay -- the Clean Trace --
+        executes, while eager warmups may also run one-shot work (overlay
+        self-checks, lazy init) that never reaches the graph.  ``"eager"``: the
+        first per-bucket eager forward(s), kept for Shape marker containment
+        and as the donor fallback when no capture pass is available.
+        """
+        if not self.layer_scopes or not self.active() or layer_id < 0:
+            return None
+        if (self.phases
+                and not _phase_requested(self._context["phase"], self.phases)):
+            return None
+        if _stream_capturing():
+            return "capture"
+        key = (
+            self._context["phase"], self._context["batch_size"],
+            self._context["input_tokens"])
+        if self._bucket_forwards.get(key, 0) < self.max_forwards:
+            return "eager"
+        return None
+
+    def layer_scope(self, layer_id, op_path):
+        """Return a record_function context for one complete main-layer body."""
+        open_layers = self._open_layer_scopes()
+        if layer_id in open_layers:
+            # Already inside this layer's scope (e.g. a configured layer entry
+            # called from the wrapped ``forward``): one marker per layer body.
+            return contextlib.nullcontext()
+        source = self._layer_scope_source(layer_id)
+        if source is None:
+            return contextlib.nullcontext()
+        context = dict(self._context)
+        marker = (
+            "GEAK_LAYER_SCOPE|phase=%s|bs=%s|toks=%s|layer=%s|src=%s|path=%s"
+            % (context["phase"], context["batch_size"],
+               context["input_tokens"], layer_id, source, op_path))
+        try:
+            import torch
+            factory = getattr(
+                getattr(torch, "profiler", None), "record_function", None)
+            if factory is None:
+                factory = torch.autograd.profiler.record_function
+            scope = factory(marker)
+        except Exception:
+            return contextlib.nullcontext()
+        return self._tracked_layer_scope(scope, layer_id, open_layers)
+
+    @contextlib.contextmanager
+    def layer_active(self, layer_id, op_path):
+        """Make the main-layer body the active parent for targeted launcher
+        probes. A layer body that is entered through a plain function (not a
+        hooked module call) otherwise leaves launchers called directly from
+        it without a parent, so begin_callable records nothing."""
+        entry = {"layer_id": layer_id, "op_path": op_path,
+                 "kind": "layer_entry"}
+        active = self._active_modules()
+        active.append(entry)
+        try:
+            yield
+        finally:
+            if active and active[-1] is entry:
+                active.pop()
+            elif entry in active:
+                active.remove(entry)
+
+    def _open_layer_scopes(self):
+        """Layer ids whose scope is open on this thread."""
+        layers = getattr(self._scope_state, "layers", None)
+        if layers is None:
+            layers = self._scope_state.layers = set()
+        return layers
+
+    @contextlib.contextmanager
+    def _tracked_layer_scope(self, scope, layer_id, open_layers):
+        open_layers.add(layer_id)
+        try:
+            with scope:
+                yield
+        finally:
+            open_layers.discard(layer_id)
+
+    def _stack(self):
+        if not hasattr(self._stacks, "value"):
+            self._stacks.value = {}
+        return self._stacks.value
+
+    def _active_modules(self):
+        if not hasattr(self._stacks, "active_modules"):
+            self._stacks.active_modules = []
+        return self._stacks.active_modules
+
+    def begin(self, module, layer_id, op_path):
+        if not self._allowed(layer_id):
+            return
+        with self._lock:
+            self._next_id += 1
+            op_id = "geak-op-%08d" % self._next_id
+        context = dict(self._context)
+        marker = (
+            "GEAK_SEMANTICS|op=%s|phase=%s|bs=%s|toks=%s|layer=%s|path=%s"
+            % (op_id, context["phase"], context["batch_size"],
+               context["input_tokens"], layer_id, op_path))
+        record = None
+        try:
+            import torch
+            factory = getattr(
+                getattr(torch, "profiler", None), "record_function", None)
+            if factory is None:
+                factory = torch.autograd.profiler.record_function
+            record = factory(marker)
+            record.__enter__()
+        except Exception:
+            record = None
+        entry = {
+            "op_id": op_id,
+            "marker": marker,
+            "record": record,
+            "context": context,
+            "layer_id": layer_id,
+            "op_path": op_path,
+        }
+        self._stack().setdefault(id(module), []).append(entry)
+        self._active_modules().append(entry)
+
+    def end(self, module, layer_id, op_name, op_type, op_path,
+            args, kwargs, output):
+        entries = self._stack().get(id(module), [])
+        if not entries:
+            return output
+        entry = entries.pop()
+        active = self._active_modules()
+        if active and active[-1] is entry:
+            active.pop()
+        elif entry in active:
+            active.remove(entry)
+        if entry["record"] is not None:
+            try:
+                entry["record"].__exit__(None, None, None)
+            except Exception:
+                pass
+        aliases = {}
+        parameters = {}
+        try:
+            for name, value in module.named_parameters(recurse=False):
+                parameters[name] = value
+            for name, value in module.named_buffers(recurse=False):
+                parameters[name] = value
+        except Exception:
+            pass
+        payload = {
+            "schema": "geak.semantics_runtime.v2",
+            "op_instance_id": entry["op_id"],
+            "marker": entry["marker"],
+            "rank": self.rank,
+            "layer_id": layer_id,
+            "phase": entry["context"]["phase"].lower(),
+            "batch_size": entry["context"]["batch_size"],
+            "input_tokens": entry["context"]["input_tokens"],
+            "op_name": op_name,
+            "op_type": op_type,
+            "op_path": op_path,
+            "mapping_cardinality": "1:N",
+            "evidence_level": "runtime_marker_containment",
+            "inputs": _metadata(args, aliases),
+            "kwargs": _metadata(kwargs, aliases),
+            "parameters": _metadata(parameters, aliases),
+            "output": _metadata(output, aliases),
+        }
+        with self._lock:
+            self._fh.write(json.dumps(
+                payload, sort_keys=True, separators=(",", ":")) + "\n")
+        return output
+
+    def begin_callable(self, target, args, kwargs, callable_obj):
+        active = self._active_modules()
+        if not active:
+            return None
+        parent = active[-1]
+        layer_id = parent["layer_id"]
+        if not self._allowed(layer_id):
+            return None
+        with self._lock:
+            self._next_id += 1
+            op_id = "geak-call-%08d" % self._next_id
+        context = dict(self._context)
+        op_path = "%s::launcher:%s" % (parent["op_path"], target)
+        marker = (
+            "GEAK_SEMANTICS|op=%s|phase=%s|bs=%s|toks=%s|layer=%s|path=%s"
+            % (op_id, context["phase"], context["batch_size"],
+               context["input_tokens"], layer_id, op_path))
+        record = None
+        try:
+            import torch
+            factory = getattr(
+                getattr(torch, "profiler", None), "record_function", None)
+            if factory is None:
+                factory = torch.autograd.profiler.record_function
+            record = factory(marker)
+            record.__enter__()
+        except Exception:
+            record = None
+        aliases = {}
+        signature_text = None
+        binding_status = "generic_args"
+        try:
+            signature = inspect.signature(callable_obj)
+            signature_text = str(signature)
+            bound = signature.bind_partial(*args, **kwargs)
+            named_inputs = dict(bound.arguments)
+            binding_status = "inspect_signature_bind_partial"
+        except (TypeError, ValueError):
+            named_inputs = {
+                "args": args,
+                "kwargs": kwargs,
+            }
+        return {
+            "op_id": op_id,
+            "marker": marker,
+            "record": record,
+            "context": context,
+            "layer_id": layer_id,
+            "op_path": op_path,
+            "target": target,
+            # Snapshot input metadata before invoking the target.  Some
+            # launchers mutate output/cache arguments in-place; reading the
+            # arguments in finally used to blur pre-call and post-call state.
+            "aliases": aliases,
+            "inputs": _metadata(named_inputs, aliases),
+            "callable_signature": signature_text,
+            "argument_binding": binding_status,
+        }
+
+    def end_callable(self, entry, args, kwargs, output):
+        if entry is None:
+            return output
+        if entry["record"] is not None:
+            try:
+                entry["record"].__exit__(None, None, None)
+            except Exception:
+                pass
+        aliases = entry["aliases"]
+        payload = {
+            "schema": "geak.semantics_runtime.v3",
+            "op_instance_id": entry["op_id"],
+            "marker": entry["marker"],
+            "rank": self.rank,
+            "layer_id": entry["layer_id"],
+            "phase": entry["context"]["phase"].lower(),
+            "batch_size": entry["context"]["batch_size"],
+            "input_tokens": entry["context"]["input_tokens"],
+            "op_name": entry["target"].split(":")[-1],
+            "op_type": "targeted_python_launcher",
+            "op_path": entry["op_path"],
+            "mapping_cardinality": "probe_required",
+            "evidence_level": "targeted_launcher_probe",
+            "callable_signature": entry["callable_signature"],
+            "argument_binding": entry["argument_binding"],
+            "input_snapshot_timing": "before_call",
+            "inputs": entry["inputs"],
+            "kwargs": _metadata({}, aliases),
+            "parameters": _metadata({}, aliases),
+            "output": _metadata(output, aliases),
+        }
+        with self._lock:
+            self._fh.write(json.dumps(
+                payload, sort_keys=True, separators=(",", ":")) + "\n")
+        return output
+
+
+def get_logger():
+    global _LOGGER
+    if _LOGGER is None:
+        _LOGGER = SemanticRuntimeLogger()
+    return _LOGGER
+
+
+def _callable_targets():
+    return [
+        item.strip()
+        for item in os.environ.get(
+            "GEAK_SEMANTICS_CALLABLE_TARGETS", "").split(",")
+        if item.strip()]
+
+
+def _install_callable_probes():
+    logger = get_logger()
+    for target in _callable_targets():
+        if target in _PATCHED_CALLABLES:
+            continue
+        module_name, separator, attr_name = target.partition(":")
+        if not separator:
+            raise RuntimeError(
+                "invalid GEAK callable target %r; expected module:attr" %
+                target)
+        module = importlib.import_module(module_name)
+        original = getattr(module, attr_name)
+        if not callable(original):
+            raise RuntimeError(
+                "GEAK callable target is not callable: %s" % target)
+
+        @functools.wraps(original)
+        def wrapped(*args, __original=original, __target=target, **kwargs):
+            entry = logger.begin_callable(
+                __target, args, kwargs, __original)
+            output = None
+            try:
+                output = __original(*args, **kwargs)
+                return output
+            finally:
+                logger.end_callable(entry, args, kwargs, output)
+
+        setattr(module, attr_name, wrapped)
+        _PATCHED_CALLABLES.add(target)
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] targeted launcher wrapped %s\n" % target)
+
+
+def _canonical_named_modules(model):
+    """(path, module) once per module, under its shortest path.
+
+    ``named_modules()`` reports each module under the FIRST path it reaches.
+    A model that keeps a registered back-reference to another layer (e.g. a
+    ``_next_layer`` link from layer i to layer i+1) then reports layer i+1 as
+    ``layers.i._next_layer`` and the ``layers.<n>`` main-layer path is lost.
+    Choose the path with the fewest segments instead (first one on ties).
+    """
+    best = {}
+    order = []
+    for raw_path, module in model.named_modules(remove_duplicate=False):
+        key = id(module)
+        depth = raw_path.count(".") + (1 if raw_path else 0)
+        if key not in best:
+            order.append(key)
+            best[key] = (depth, raw_path, module)
+        elif depth < best[key][0]:
+            best[key] = (depth, raw_path, module)
+    return [(best[key][1], best[key][2]) for key in order]
+
+
+def _register_hooks(model):
+    logger = get_logger()
+    if not logger.active():
+        return
+    count = 0
+    layer_scope_count = 0
+    for raw_path, module in _canonical_named_modules(model):
+        if not raw_path:
+            continue
+        path = _op_path(raw_path)
+        layer = _layer_id(path)
+        main_layer_match = _MAIN_LAYER_RE.search(path)
+        if main_layer_match and not getattr(
+                module, "_geak_semantics_layer_scope_wrapped", False):
+            original_forward = module.forward
+
+            @functools.wraps(original_forward)
+            def layer_scoped_forward(
+                    *args, __forward=original_forward,
+                    __layer=layer, __path=path, **kwargs):
+                with logger.layer_scope(__layer, __path), \
+                        logger.layer_active(__layer, __path):
+                    return __forward(*args, **kwargs)
+
+            module.forward = layer_scoped_forward
+            module._geak_semantics_layer_scope_wrapped = True
+            layer_scope_count += 1
+        if logger.layers and layer not in logger.layers:
+            continue
+        children = list(module.children())
+        class_name = module.__class__.__name__
+        is_key = any(token in class_name for token in (
+            "Attention", "MoE", "Moe", "MLP", "DecoderLayer",
+            "RMSNorm", "LayerNorm", "Linear", "Expert"))
+        if children and not is_key:
+            continue
+
+        def make_pre(layer_id, op_path):
+            def pre_hook(mod, args, kwargs=None):
+                logger.begin(mod, layer_id, op_path)
+            return pre_hook
+
+        def make_post(layer_id, op_name, op_type, op_path):
+            def post_hook(mod, args, kwargs, output):
+                return logger.end(
+                    mod, layer_id, op_name, op_type, op_path,
+                    args, kwargs, output)
+            return post_hook
+
+        try:
+            module.register_forward_pre_hook(
+                make_pre(layer, path), with_kwargs=True)
+            module.register_forward_hook(
+                make_post(layer, path.split(".")[-1], class_name, path),
+                with_kwargs=True)
+            count += 1
+        except TypeError:
+            # GEAK Semantics 1.2 requires kwargs-capable hooks for reliable
+            # tensor roles; fail explicitly instead of silently mislabelling.
+            raise RuntimeError(
+                "runtime torch lacks kwargs-capable forward hooks")
+    layer_scope_count += _wrap_layer_entry_functions(model, logger)
+    sys.stderr.write(
+        "[GEAK_SEMANTICS] registered %d all-layer scopes and %d "
+        "marker+metadata hooks\n" % (layer_scope_count, count))
+
+
+def install_hooks_only(model):
+    """Register the marker+metadata hooks WITHOUT wrapping the model's forward.
+
+    `install_on_model` below also wraps `Model.forward` to read sglang's `forward_batch`
+    out of the positional args and derive (phase, bs, toks) from it. vLLM's model forward
+    has no such argument -- the batch description lives on the ENGINE side, in the
+    scheduler output handed to `GPUModelRunner.execute_model`. So on vLLM the phase
+    context is driven externally (see vllm_semantic_capture) and only the module hooks
+    are installed here. The hooks themselves are framework-agnostic: they walk
+    `named_modules()` and key off class names and the `layers.<n>` path.
+    """
+    logger = get_logger()
+    if not logger.active():
+        return model
+    if not getattr(model, "_geak_semantics_hooked", False):
+        _register_hooks(model)
+        model._geak_semantics_hooked = True
+    _install_callable_probes()
+    return model
+
+
+# Per-layer entries that bypass ``layer.forward``.  Some runtimes drive each
+# main layer through another method of the layer module, or through a plain
+# function that takes the layer as its first argument, so the ``forward``
+# wrapper above never fires.  The semantics mapper finds that entry in the
+# runtime source and lists it as ``layer_entry_callables`` in the structural
+# pattern document; run_semantics_1_2 hands it to this process as
+#   GEAK_SEMANTICS_LAYER_ENTRY_METHODS    method names on main-layer modules
+#   GEAK_SEMANTICS_LAYER_ENTRY_FUNCTIONS  ``module:function`` (layer is arg 0)
+# Both are empty by default; nothing beyond ``forward`` is wrapped then.
+def _layer_entry_names(variable):
+    return tuple(dict.fromkeys(
+        item.strip() for item in os.environ.get(variable, "").split(",")
+        if item.strip()))
+
+
+def _wrap_layer_entry_functions(model, logger):
+    methods = _layer_entry_names("GEAK_SEMANTICS_LAYER_ENTRY_METHODS")
+    functions = _layer_entry_names("GEAK_SEMANTICS_LAYER_ENTRY_FUNCTIONS")
+    if not methods and not functions:
+        return 0
+    layer_paths = {}
+    for raw_path, module in _canonical_named_modules(model):
+        path = _op_path(raw_path) if raw_path else ""
+        if path and _MAIN_LAYER_RE.search(path):
+            layer_paths[id(module)] = (module, _layer_id(path), path)
+    if not layer_paths:
+        raise RuntimeError(
+            "GEAK layer entry callables are configured but the model has no "
+            "main-layer modules")
+    wrapped = 0
+    for name in methods:
+        found = 0
+        for module, layer, path in layer_paths.values():
+            flag = "_geak_semantics_entry_wrapped_" + name
+            original = getattr(module, name, None)
+            if original is None:
+                continue
+            found += 1
+            if getattr(module, flag, False):
+                continue
+
+            @functools.wraps(original)
+            def scoped_method(*args, __fn=original, __layer=layer,
+                              __path=path, **kwargs):
+                with logger.layer_scope(__layer, __path), \
+                        logger.layer_active(__layer, __path):
+                    return __fn(*args, **kwargs)
+
+            setattr(module, name, scoped_method)
+            setattr(module, flag, True)
+            wrapped += 1
+        if not found:
+            raise RuntimeError(
+                "GEAK layer entry method %r is not defined on any main-layer "
+                "module" % name)
+    by_module = {id(m): (layer, path) for m, layer, path in layer_paths.values()}
+    for target in functions:
+        module_name, sep, attr = target.partition(":")
+        if not sep or not module_name or not attr:
+            raise RuntimeError(
+                "invalid GEAK layer entry function %r; expected module:function"
+                % target)
+        namespace = importlib.import_module(module_name)
+        original = getattr(namespace, attr, None)
+        if not callable(original):
+            raise RuntimeError(
+                "GEAK layer entry function is not callable: %s" % target)
+        if getattr(original, "_geak_semantics_entry_wrapped", False):
+            continue
+
+        @functools.wraps(original)
+        def scoped_function(layer_module, *args, __fn=original, **kwargs):
+            owner = by_module.get(id(layer_module))
+            if owner is None:
+                return __fn(layer_module, *args, **kwargs)
+            with logger.layer_scope(owner[0], owner[1]), \
+                    logger.layer_active(owner[0], owner[1]):
+                return __fn(layer_module, *args, **kwargs)
+
+        scoped_function._geak_semantics_entry_wrapped = True
+        setattr(namespace, attr, scoped_function)
+        wrapped += len(layer_paths)
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] layer scope wrapped %s\n" % target)
+    return wrapped
+
+
+def install_on_model(model, is_draft=False):
+    install_graph_capture_profiler()
+    dump_operator_schema_manifest()
+    logger = get_logger()
+    if not logger.active():
+        return model
+    if is_draft:
+        # Speculative draft model (MTP/NEXTN/EAGLE head).  It may share the
+        # main model's class and its layers are numbered from 0, so its
+        # markers would collide with main layer 0.  Tag every module so the
+        # class-level forward wrapper leaves it uninstrumented.
+        for module in model.modules():
+            module._geak_semantics_draft = True
+        sys.stderr.write(
+            "[GEAK_SEMANTICS] skipped speculative draft model %s\n"
+            % model.__class__.__name__)
+        return model
+    model_class = model.__class__
+    if model_class not in _INSTALLED_CLASSES:
+        original_forward = model_class.forward
+
+        def wrapped_forward(self, *args, **kwargs):
+            if getattr(self, "_geak_semantics_draft", False):
+                return original_forward(self, *args, **kwargs)
+            forward_batch = args[2] if len(args) >= 3 else None
+            forward_batch = kwargs.get("forward_batch", forward_batch)
+            if forward_batch is not None:
+                logger.set_context(*_phase_of(forward_batch))
+            if not getattr(self, "_geak_semantics_hooked", False):
+                _register_hooks(self)
+                self._geak_semantics_hooked = True
+            result = original_forward(self, *args, **kwargs)
+            if forward_batch is not None:
+                logger.mark_forward()
+            return result
+
+        model_class.forward = wrapped_forward
+        _INSTALLED_CLASSES.add(model_class)
+    elif not getattr(model, "_geak_semantics_hooked", False):
+        _register_hooks(model)
+        model._geak_semantics_hooked = True
+    _install_callable_probes()
+    sys.stderr.write(
+        "[GEAK_SEMANTICS] wrapped %s.forward\n" % model_class.__name__)
+    return model
