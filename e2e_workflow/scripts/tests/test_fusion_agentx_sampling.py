@@ -177,6 +177,23 @@ class FusionAgentxSamplingTest(unittest.TestCase):
         self.assertEqual(decode[0]["effective_calls"], 10.0)
         self.assertEqual([c["m"] for c in wl["cases"] if c["regime"] == "prefill"], [8192])
 
+    def test_aiperf_phase_lines_scope_the_log_to_the_measured_window(self):
+        # Current aiperf: time-only stamps, `Phase profiling (profiling) started|complete`.
+        bench = os.path.join(self.root, "bench.log")
+        with open(bench, "w") as fh:
+            fh.write("00:00:11.500 NOTICE   Phase profiling (profiling) started | target: 3600.0s\n"
+                     "00:00:13.900 NOTICE   Phase profiling (profiling) sending complete | sent=3\n"
+                     "00:00:14.500 NOTICE   Phase profiling (profiling) complete | completed=3\n")
+        fas.main(["plan", "--log", self.log, "--server-info", self.info, "-n", "4",
+                  "--bench-log", bench, "--out-dir", self.plan_dir])
+        with open(os.path.join(self.plan_dir, "observed_workload.json")) as fh:
+            ow = json.load(fh)
+        self.assertEqual(ow["measured_window"]["start"], "2026-10-01T00:00:11.500000")
+        self.assertEqual(ow["measured_window"]["end"], "2026-10-01T00:00:14.500000")
+        # 00:00:12 prefill x2 and 00:00:13/14 decode rows fall inside; the rest are outside.
+        self.assertEqual(ow["counts"]["prefill_batches"], 2)
+        self.assertEqual(ow["counts"]["decode_iterations"], 20)
+
     def test_synthetic_shape_needs_no_log(self):
         with open(self.info, "w") as fh:
             json.dump({"enable_dp_attention": True, "dp_size": 8}, fh)

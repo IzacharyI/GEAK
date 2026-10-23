@@ -16,6 +16,12 @@ takes its per-request median from. DP-attention prefixes (`DP0 TP0 EP0`) and an
 optional `[step]` tag after `Prefill/Decode batch` are accepted. The extra fields are
 skipped, never parsed.
 
+It also reads the measured window from the CURRENT aiperf client log, whose phase lines are
+`HH:MM:SS.fff NOTICE Phase profiling (profiling) started|complete` -- no date and no quoted
+phase name, so the skill's `--bench-log` reader finds nothing and stops. When the skill's own
+reader would not match, `--bench-log` is turned into `--window-start/--window-end` (the date is
+the serving log's), and the leg stays scoped to its measured window.
+
 Stdlib only.
 """
 import importlib.util
@@ -95,8 +101,74 @@ def register_hybrid_dialect(mod):
     mod.LOG_DIALECTS.append((DIALECT, [prefill, decode]))
 
 
+AIPERF_PHASE_RE = re.compile(
+    r"^(?P<t>\d\d:\d\d:\d\d(?:\.\d+)?)\s+\w+\s+Phase (?P<ph>\w+) \(\w+\) "
+    r"(?P<ev>started|complete)\b")
+SKILL_PHASE_RE = re.compile(r"phase ['\"]?\w+['\"]? (?:started|complete)")
+LOG_DATE_RE = re.compile(r"^\[(\d{4}-\d\d-\d\d) \d\d:\d\d:\d\d")
+
+
+def _first_log_date(paths):
+    for path in paths:
+        op = __import__("gzip").open if path.endswith(".gz") else open
+        with op(path, "rt", errors="replace") as fh:
+            for line in fh:
+                m = LOG_DATE_RE.match(line)
+                if m:
+                    return m.group(1)
+    return None
+
+
+def aiperf_window(bench_log, phase, log_paths):
+    """(start, end) 'YYYY-MM-DD HH:MM:SS.f' strings from aiperf's phase lines, else None."""
+    start = end = None
+    with open(bench_log, "r", errors="replace") as fh:
+        for raw in fh:
+            for line in raw.split("\r"):
+                m = AIPERF_PHASE_RE.match(line.strip())
+                if not m or m.group("ph") != phase:
+                    continue
+                if m.group("ev") == "started":
+                    start = start or m.group("t")
+                elif "sending complete" not in line:
+                    end = m.group("t")
+    day = _first_log_date(log_paths)
+    if not (start and end and day):
+        return None
+    import datetime as dt
+    d0 = dt.date.fromisoformat(day)
+    # The serving log starts before the client: a window that wraps midnight ends next day.
+    d1 = d0 + dt.timedelta(days=1) if end < start else d0
+    return "%s %s" % (d0.isoformat(), start), "%s %s" % (d1.isoformat(), end)
+
+
+def translate_bench_log(argv):
+    """Replace --bench-log with an explicit window when only aiperf's phase dialect is in it."""
+    if "--bench-log" not in argv or "--window-start" in argv:
+        return argv
+    i = argv.index("--bench-log")
+    bench_log = argv[i + 1]
+    phase = argv[argv.index("--bench-phase") + 1] if "--bench-phase" in argv else "profiling"
+    with open(bench_log, "r", errors="replace") as fh:
+        if SKILL_PHASE_RE.search(fh.read()):
+            return argv
+    logs = []
+    if "--log" in argv:
+        for tok in argv[argv.index("--log") + 1:]:
+            if tok.startswith("--"):
+                break
+            logs.append(tok)
+    window = aiperf_window(bench_log, phase, logs)
+    if window is None:
+        return argv  # let the skill report it
+    print("fusion_observed_workload: measured window from aiperf phase lines: %s -> %s"
+          % window, file=sys.stderr)
+    return argv[:i] + argv[i + 2:] + ["--window-start", window[0], "--window-end", window[1]]
+
+
 def main():
     mod = load_skill_module()
+    sys.argv = [sys.argv[0]] + translate_bench_log(sys.argv[1:])
     return mod.main()
 
 
