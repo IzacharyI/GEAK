@@ -22,7 +22,10 @@ import fusion_serving_probe as probe  # noqa: E402
 class FakeSglang:
     def __init__(self, dp=2, vocab=5000, step_name="TARGET_VERIFY"):
         self.dp, self.vocab, self.step_name = dp, vocab, step_name
+        self.step_fmt = None
         self.running = 0
+        self.per_rank = [0] * dp
+        self.routed = []
         self.lock = threading.Lock()
         self.prompts = []
         self.profiled = None
@@ -41,9 +44,9 @@ class FakeSglang:
 
             def do_GET(self):
                 if self.path == "/metrics":
-                    per = fake.running // fake.dp
                     lines = []
                     for r in range(fake.dp):
+                        per = fake.per_rank[r]
                         lines.append('sglang:num_running_reqs{dp_rank="%d"} %d' % (r, per))
                         lines.append('sglang:gen_throughput{dp_rank="%d"} %d' % (r, 10 if per else 0))
                     body = ("\n".join(lines) + "\n").encode()
@@ -59,14 +62,20 @@ class FakeSglang:
                 if self.path == "/generate":
                     ids = req["input_ids"]
                     fake.prompts.append(ids)
+                    rank = req.get("routed_dp_rank")
+                    fake.routed.append(rank)
+                    # Without pinning, the fake balancer piles everything onto rank 0.
+                    rank = 0 if rank is None else rank
                     assert max(ids) < fake.vocab, "token id past the vocabulary"
                     mnt = req["sampling_params"]["max_new_tokens"]
                     if mnt > 1:
                         with fake.lock:
                             fake.running += 1
+                            fake.per_rank[rank] += 1
                         time.sleep(3.0)
                         with fake.lock:
                             fake.running -= 1
+                            fake.per_rank[rank] -= 1
                     self._json(200, {"text": "", "meta_info": {
                         "prompt_tokens": len(ids), "completion_tokens": mnt,
                         "finish_reason": {"type": "length"}}})
@@ -78,7 +87,8 @@ class FakeSglang:
                     for r in range(fake.dp):
                         ev = []
                         for i in range(4):
-                            ev.append({"cat": "gpu_user_annotation", "name": "step[%s bs=%d]" % (fake.step_name, bs),
+                            name = fake.step_fmt or ("step[%s bs=%d]" % (fake.step_name, bs))
+                            ev.append({"cat": "gpu_user_annotation", "name": name,
                                        "ts": i * 1000, "dur": 800})
                             ev.append({"cat": "kernel", "name": "k", "ts": i * 1000 + 10, "dur": 150})
                         with gzip.open(os.path.join(out, "t-TP-%d.trace.json.gz" % r), "wt") as fh:
@@ -110,15 +120,17 @@ class ServingProbeTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.points = os.path.join(self.tmp.name, "points.json")
         with open(self.points, "w") as fh:
-            json.dump({"points": [{"point_id": "de_3", "phase": "DECODE", "batch_size": 3,
-                                   "context_tokens": 3000}]}, fh)
+            json.dump({"points": [
+                {"point_id": "de_3", "phase": "DECODE", "batch_size": 3, "context_tokens": 3000},
+                {"point_id": "pr_700", "phase": "PREFILL", "new_tokens": 700, "running": 12,
+                 "cached_tokens": 2000}]}, fh)
 
-    def run_probe(self, *extra):
-        out = os.path.join(self.tmp.name, "de_3.journal.json")
+    def run_probe(self, *extra, point="de_3"):
+        out = os.path.join(self.tmp.name, point + ".journal.json")
         proc = subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "fusion_serving_probe.py"), "--points", self.points,
-             "--point-id", "de_3", "--base-url", self.fake.url,
-             "--trace-dir", os.path.join(self.tmp.name, "de_3"), "--dp-size", "2",
+             "--point-id", point, "--base-url", self.fake.url,
+             "--trace-dir", os.path.join(self.tmp.name, point), "--dp-size", "2",
              "--record-shapes", "--with-stack", "--steady-timeout", "60", "--decode-tokens", "64",
              "--num-steps", "4", "--out", out, *extra],
             capture_output=True, text=True, timeout=180)
@@ -138,6 +150,9 @@ class ServingProbeTest(unittest.TestCase):
         self.assertEqual(len(batch), 6)
         self.assertTrue(all(p[:2488] == warm[0] for p in batch))
         self.assertEqual(len({tuple(p[2488:]) for p in batch}), 6)
+        # Every request is pinned: one warm-up per rank, then the batch split evenly.
+        self.assertEqual(self.fake.routed[:2], [0, 1] if self.fake.routed[0] == 0 else [1, 0])
+        self.assertEqual(sorted(self.fake.routed[2:]), [0, 0, 0, 1, 1, 1])
         # TARGET_VERIFY (speculative decoding) is the target's decode step.
         self.assertEqual(doc["step_cost"]["us_per_step"], 150.0)
         self.assertEqual(doc["step_cost"]["basis"], "kernel_device_time")
@@ -146,6 +161,20 @@ class ServingProbeTest(unittest.TestCase):
         self.assertTrue(self.fake.profiled["with_stack"])
         done = [e for e in doc["journal"] if e["event"] == "request_done" and e["label"].startswith("decode")]
         self.assertTrue(all(e.get("completion_tokens") == 64 for e in done))
+
+    def test_prefill_point_is_one_sequence_per_rank_over_its_cached_prefix(self):
+        self.fake.step_fmt = "step[EXTEND bs=1 toks=700]"
+        proc, doc = self.run_probe(point="pr_700")
+        self.assertEqual(doc["status"], "ok", proc.stdout + proc.stderr)
+        events = [e["event"] for e in doc["journal"]]
+        # The cached context is in place BEFORE the window opens, so the window holds the extend.
+        self.assertLess(events.index("prefix_cached"), events.index("armed"))
+        warm = [p for p in self.fake.prompts if len(p) == 2000]
+        seqs = [p for p in self.fake.prompts if len(p) == 2700]
+        self.assertEqual(len(warm), 2)
+        # `running` (12) is the decode population beside the batch, not a sequence count.
+        self.assertEqual(len(seqs), 2)
+        self.assertTrue(all(p[:2000] == warm[0] for p in seqs))
 
     def test_fully_distinct_prompts_on_request(self):
         proc, doc = self.run_probe("--shared-prefix", "0")

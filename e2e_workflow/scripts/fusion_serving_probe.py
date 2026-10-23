@@ -124,14 +124,18 @@ def rand_ids(n, seed, vocab_size):
     return [rnd.randint(1000, hi) for _ in range(n)]
 
 
-def generate(base, ids, max_new_tokens, journal, label, timeout=1800):
+def generate(base, ids, max_new_tokens, journal, label, timeout=1800, dp_rank=None):
     body = {"input_ids": ids,
             "sampling_params": {"max_new_tokens": max_new_tokens, "temperature": 0.0,
                                 "ignore_eos": True}}
+    if dp_rank is not None:
+        # DP attention: pin the request to one rank. The server's own balancer spread a probe
+        # batch 1..14 per rank on DeepSeek-V4-Pro, so "every rank holds bs" never happened.
+        body["routed_dp_rank"] = int(dp_rank)
     t0 = time.time()
     try:
         txt = post(base, "/generate", body, timeout=timeout)
-        rec = {"event": "request_done", "label": label,
+        rec = {"event": "request_done", "label": label, "dp_rank": dp_rank,
                "prompt_tokens": len(ids), "max_new_tokens": max_new_tokens,
                "wall_s": round(time.time() - t0, 2)}
         # What the server actually did: a request that "finished" in seconds was aborted or
@@ -341,17 +345,32 @@ def verify_trace(paths, want_phase, want_shape_key, want_shape, journal):
 
 
 # --------------------------------------------------------------------------- #
-def drive_prefill(base, point, args, journal):
-    """One request per intended sequence, each long enough to produce the token count."""
+def prefill_prefix(point, args):
+    """The point's cached context, as a shared prefix (empty when the point has none)."""
+    cached = int(point.get("cached_tokens") or 0)
+    if not args.shared_prefix or cached <= 0:
+        return []
+    return rand_ids(cached, args.seed + 98, args.vocab_size)
+
+
+def drive_prefill(base, point, args, journal, prefix=()):
+    """One sequence per rank: the point's cached prefix (already in the cache) plus exactly
+    `new_tokens` uncached tokens, so the extend step is the planned shape.
+
+    The point is ONE batch of the log: `new_tokens` is that batch's uncached work and
+    `cached_tokens` its prefix hits. `running` is the decode population resident beside it,
+    not a count of prefill sequences; sending `running` sequences of `new_tokens` each made
+    the scheduler pack them into full chunks (pr_3333 came back as 8192-token steps).
+    """
     toks = int(point["new_tokens"])
-    # DP attention: the point is one rank's batch; every rank gets the same one.
-    nseq = int(point.get("running") or 1) * max(1, int(getattr(args, "dp_size", 1) or 1))
+    dp = max(1, int(getattr(args, "dp_size", 1) or 1))
+    prefix = list(prefix)
     # max_new_tokens=1 keeps the request in prefill: we are measuring the context
     # forward, and a long generation would mix decode into the window.
-    with ThreadPoolExecutor(max_workers=nseq) as ex:
-        for i in range(nseq):
-            ex.submit(generate, base, rand_ids(toks, args.seed + i, args.vocab_size), 1, journal,
-                      "prefill_seq%d" % i, args.request_timeout)
+    with ThreadPoolExecutor(max_workers=dp) as ex:
+        for i in range(dp):
+            ex.submit(generate, base, prefix + rand_ids(toks, args.seed + i, args.vocab_size), 1,
+                      journal, "prefill_seq%d" % i, args.request_timeout, i if dp > 1 else None)
 
 
 def prepare_cached_prefix(base, prefix, args, journal):
@@ -367,7 +386,8 @@ def prepare_cached_prefix(base, prefix, args, journal):
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=n) as ex:
         for i in range(n):
-            ex.submit(generate, base, prefix, 1, journal, "prefix_warm%d" % i, args.request_timeout)
+            ex.submit(generate, base, prefix, 1, journal, "prefix_warm%d" % i, args.request_timeout,
+                      i if n > 1 else None)
     journal.append({"event": "prefix_cached", "prefix_tokens": len(prefix), "requests": n,
                     "wall_s": round(time.time() - t0, 1)})
 
@@ -389,9 +409,11 @@ def drive_decode(base, point, args, journal):
     else:
         suffix = ctx
     ex = ThreadPoolExecutor(max_workers=bs)
+    dp = max(1, int(getattr(args, "dp_size", 1) or 1))
     for i in range(bs):
         ex.submit(generate, base, prefix + rand_ids(suffix, args.seed + 100 + i, args.vocab_size),
-                  args.decode_tokens, journal, "decode_req%d" % i, args.request_timeout)
+                  args.decode_tokens, journal, "decode_req%d" % i, args.request_timeout,
+                  (i % dp) if dp > 1 else None)
     return ex
 
 
@@ -413,7 +435,9 @@ def main():
                          "shape hook installed")
     ap.add_argument("--steady-timeout", type=float, default=300)
     ap.add_argument("--window-timeout", type=float, default=900)
-    ap.add_argument("--decode-tokens", type=int, default=512)
+    ap.add_argument("--decode-tokens", type=int, default=4096,
+                    help="decode: tokens per request; with speculation (accept ~6) 512 tokens "
+                         "lived ~5 s, too short to confirm occupancy and arm")
     ap.add_argument("--request-timeout", type=float, default=1800)
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--record-shapes", action="store_true",
@@ -432,7 +456,7 @@ def main():
                          "unique suffix (1, default) instead of a fully distinct prompt (0)")
     ap.add_argument("--unique-suffix-tokens", type=int, default=512,
                     help="decode: per-request unique tokens after the shared prefix")
-    ap.add_argument("--occupancy-tolerance", type=int, default=0,
+    ap.add_argument("--occupancy-tolerance", type=int, default=1,
                     help="decode: accepted |running - batch_size| per rank before arming")
     ap.add_argument("--out", required=True, help="journal JSON for this point")
     args = ap.parse_args()
@@ -483,12 +507,15 @@ def main():
                                     "or lower --num-steps"})
                     break
         else:
-            # Prefill is a single forward per request: arm first, then send, because
-            # there is no resident state to confirm. The window is still bounded by
-            # num_steps and still closed explicitly.
+            # Prefill is a single forward per request: put the cached prefix in place,
+            # arm, then send, because there is no resident state to confirm. The window
+            # is still bounded by num_steps and still closed explicitly.
+            prefix = prefill_prefix(point, args)
+            if prefix:
+                prepare_cached_prefix(args.base_url, prefix, args, journal)
             start_profile(args.base_url, server_dir, num_steps, journal, args.arm_timeout,
                           record_shapes=args.record_shapes, with_stack=args.with_stack)
-            drive_prefill(args.base_url, point, args, journal)
+            drive_prefill(args.base_url, point, args, journal, prefix)
         ok = True
     except Exception as exc:
         journal.append({"event": "probe_failed", "error": "%s: %s"
