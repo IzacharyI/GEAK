@@ -840,7 +840,17 @@ def _install_callable_probes():
                 "invalid GEAK callable target %r; expected module:attr" %
                 target)
         module = importlib.import_module(module_name)
-        original = getattr(module, attr_name)
+        # `attr` may name a class member (`MQALayer.forward`): walk to its owner and patch
+        # it there, keeping a staticmethod/classmethod descriptor what it was.
+        parts = attr_name.split(".")
+        owner = module
+        for part in parts[:-1]:
+            owner = getattr(owner, part)
+        attr_name = parts[-1]
+        descriptor = inspect.getattr_static(owner, attr_name)
+        kind = type(descriptor) if isinstance(
+            descriptor, (staticmethod, classmethod)) else None
+        original = descriptor.__func__ if kind else getattr(owner, attr_name)
         if not callable(original):
             raise RuntimeError(
                 "GEAK callable target is not callable: %s" % target)
@@ -856,7 +866,7 @@ def _install_callable_probes():
             finally:
                 logger.end_callable(entry, args, kwargs, output)
 
-        setattr(module, attr_name, wrapped)
+        setattr(owner, attr_name, kind(wrapped) if kind else wrapped)
         _PATCHED_CALLABLES.add(target)
         sys.stderr.write(
             "[GEAK_SEMANTICS] targeted launcher wrapped %s\n" % target)

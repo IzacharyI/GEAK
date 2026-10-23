@@ -431,3 +431,55 @@ class DraftGraphRunnerTest(unittest.TestCase):
     def test_a_runner_without_a_model_runner_is_the_target(self):
         self.assertFalse(capture._is_draft_graph_runner(object()))
 
+
+
+class CallableProbeClassMemberTest(unittest.TestCase):
+    """A callable target may name a class member (`module:Class.method`). DeepSeek-V4's
+    `MQALayer.forward` target crashed every scheduler at load with AttributeError when the
+    probe looked the dotted name up on the module."""
+
+    def test_class_members_are_wrapped_where_they_live(self):
+        import types
+        import semantic_runtime_capture as cap
+        mod = types.ModuleType("geak_fake_probe_target")
+
+        class Layer:
+            def forward(self, x):
+                return x + 1
+
+            @staticmethod
+            def s(x):
+                return x * 2
+
+            @classmethod
+            def c(cls, x):
+                return (cls.__name__, x)
+
+        mod.Layer = Layer
+        sys.modules[mod.__name__] = mod
+        self.addCleanup(sys.modules.pop, mod.__name__, None)
+        seen = []
+
+        class Logger:
+            def begin_callable(self, target, *_):
+                seen.append(target)
+
+            def end_callable(self, *_):
+                pass
+
+        saved_logger, saved_env = cap._LOGGER, os.environ.get("GEAK_SEMANTICS_CALLABLE_TARGETS")
+        self.addCleanup(setattr, cap, "_LOGGER", saved_logger)
+        cap._LOGGER = Logger()
+        os.environ["GEAK_SEMANTICS_CALLABLE_TARGETS"] = ",".join(
+            mod.__name__ + ":" + a for a in ("Layer.forward", "Layer.s", "Layer.c"))
+        try:
+            cap._install_callable_probes()
+        finally:
+            if saved_env is None:
+                os.environ.pop("GEAK_SEMANTICS_CALLABLE_TARGETS", None)
+            else:
+                os.environ["GEAK_SEMANTICS_CALLABLE_TARGETS"] = saved_env
+        self.assertEqual(Layer().forward(1), 2)
+        self.assertEqual(Layer.s(3), 6)
+        self.assertEqual(Layer.c(4), ("Layer", 4))
+        self.assertEqual(len(seen), 3)
