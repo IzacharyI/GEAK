@@ -38,6 +38,7 @@ e2e_workflow/scripts/fusion_priors.py
 e2e_workflow/scripts/fusion_screen.py
 e2e_workflow/scripts/fusion_serving_probe.py
 e2e_workflow/scripts/fusion_serving_session.sh
+e2e_workflow/scripts/fusion_shape_replay_bench.sh
 e2e_workflow/scripts/fusion_topk_harness.py
 e2e_workflow/scripts/fusion_unitside_harness.py
 e2e_workflow/scripts/probes/README.md

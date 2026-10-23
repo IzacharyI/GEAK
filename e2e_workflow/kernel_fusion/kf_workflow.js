@@ -701,10 +701,11 @@ const SEMANTICS_PHASE_INPUTS = {
 };
 // Default graph-construction Shape replay setup for this host (sglang, local execution). The
 // caller's args.semantics_shape_capture_setup wins key by key. The replay drives a short native
-// synthetic load: it only has to make the server run forwards while graph capture records shapes.
+// synthetic load through fusion_shape_replay_bench.sh (bench_e2e.sh without the run's AgentX metric
+// identity): it only has to make the server run forwards while graph capture records shapes.
 const SEMANTICS_SHAPE_CAPTURE_SETUP = Object.assign({
   backend: BACKEND, execution_mode: 'local', model: MODEL_PATH,
-  benchmark: `${EVAL_DIR}/bench_e2e.sh`, benchmark_repository: EVAL_DIR,
+  benchmark: `${WORKFLOW_DIR}/scripts/fusion_shape_replay_bench.sh`, benchmark_repository: EVAL_DIR,
   bench_client: 'native', port: 0, tensor_parallel_size: SERVING_TP, gpu_ids: SERVING_GPU,
   extra_server_args: curFlags, extra_env: curEnv,
   workload: { concurrency: CONC, input_length: Math.min(ISL, 2048), output_length: 64,

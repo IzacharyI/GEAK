@@ -33,7 +33,8 @@ and pass the same list wherever a script takes `--require-phases`. This is the d
 narrowing `run_semantics_1_2.py` supports; it is not a coverage failure, and a missing prefill table
 is expected. Decode boundaries and shapes still come from PHASE=complete_table's graph-construction
 replay. `SHAPE_CAPTURE_SETUP` arrives pre-filled for this host (`execution_mode: local`, the stage's
-`EVAL_DIR/bench_e2e.sh` wrapper as `benchmark`, native client, the deployed flags/env); validate it
+`scripts/fusion_shape_replay_bench.sh` as `benchmark` -- bench_e2e.sh without the run's AgentX metric
+identity, native client --, the deployed flags/env); validate it
 and fill only what is missing.
 
 ## PHASE=build_table
