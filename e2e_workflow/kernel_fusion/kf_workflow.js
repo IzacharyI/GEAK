@@ -123,6 +123,12 @@ const FUSION_LEASE_WAIT_S = 540;
 const FUSION_LEASE_WAIT_ROUNDS = Math.max(1, parseInt(
   A.fusion_lease_wait_rounds != null ? A.fusion_lease_wait_rounds : 2, 10));
 const FUSION_UNIT_ALL_RUNGS = String(A.fusion_unit_all_rungs != null ? A.fusion_unit_all_rungs : 'false') === 'true';
+// Ladder descent: when no rung-0 job of a Top-K entry passes (it may be waived, blocked or
+// unmeasurable -- a whole-attention or MoE megafusion cannot be isolated from its paged-KV /
+// distributed state), unit-test that entry's narrower rungs in a second wave. Without it a
+// waived top rung hid every rung below it: on DeepSeek-V4 all 8 entries were waived and nothing
+// reached apply-back although their 2-3-kernel rungs are ordinary single-card unit tests.
+const FUSION_UNIT_DESCEND = String(A.fusion_unit_descend != null ? A.fusion_unit_descend : 'true') === 'true';
 const FUSION_BUDGET_S_ARG = A.fusion_budget_s != null ? parseInt(A.fusion_budget_s, 10) : null;
 const FUSION_BUDGET_FRAC = parseFloat(A.fusion_budget_frac != null ? A.fusion_budget_frac : 0.6);
 const FUSION_BUDGET_DEFAULT_S = 28800;
@@ -608,6 +614,18 @@ function fusionEntryIsCollective(entry) {
 // before the cut are still sent (the integrator records their disposition in a minute or
 // two). Without the eligible-id list this is the plain first-N slice. Must match
 // fusion_applyback_harness._budget_cutoff_rank.
+// Each execution-list entry as the widest rung that passed its unit test: the entry itself when
+// rung 0 is eligible, else its first eligible narrower rung, else the entry unchanged.
+function fusionApplyRungs(list, eligibleIds) {
+  if (!Array.isArray(eligibleIds)) return list.slice();
+  const eligible = new Set(eligibleIds.map(String));
+  const ok = (e) => ((Array.isArray(e.candidate_ids) && e.candidate_ids.length)
+    ? e.candidate_ids : [e.candidate_id || e.exec_id]).some((cid) => eligible.has(String(cid)));
+  return list.map((entry) => {
+    if (!entry || ok(entry)) return entry;
+    return fusionAltLadder(entry).slice(1).find(ok) || entry;
+  });
+}
 function fusionApplyBudgetEntries(list, eligibleIds, budget) {
   const n = Math.max(0, budget);
   if (!Array.isArray(eligibleIds)) return list.slice(0, n);
@@ -1088,6 +1106,33 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             : 'unit validator returned no verdict';
         }
       }
+      if (FUSION_UNIT_DESCEND && !FUSION_UNIT_ALL_RUNGS && stageFits('unitside')) {
+        const passed = (job) => fusionUnitStatusFromResult(job.result) === 'pass';
+        const before = unitJobs.length;
+        const stuck = [];
+        for (const entry of fusionExecutionList) {
+          if (!entry || !entry.exec_id) continue;
+          const top = unitJobs.filter((j) => j.kind === 'topk' && j.entry.exec_id === entry.exec_id);
+          if (!top.length || top.some(passed)) continue;
+          stuck.push(entry.exec_id);
+          for (const rungEntry of fusionAltLadder(entry).slice(1)) {
+            const cids = (Array.isArray(rungEntry.candidate_ids) && rungEntry.candidate_ids.length)
+              ? rungEntry.candidate_ids : [rungEntry.candidate_id || rungEntry.exec_id];
+            for (const cid of cids) addJob(rungEntry, cid, 'alt');
+          }
+        }
+        const descend = unitJobs.slice(before).filter((j) => !j.collective);
+        log(`KernelFusion Phase 3.0 ladder descent: ${stuck.length} Top-K entr(ies) without a passing ` +
+            `rung 0 (${stuck.join(', ') || '-'}); unit-testing ${descend.length} narrower rung(s).`);
+        if (descend.length) {
+          const UNIT_ISO2 = makeSem(GPU_LIST);
+          await parallel(descend.map((job) => async () => UNIT_ISO2.with(1, async (cards) => {
+            job.result = await validateUnit(job, cards.join(','), fusionLeaseInputs(`unit_${job.cid}`));
+            if (!job.result) job.why = 'unit validator returned no verdict';
+          })));
+          await fusionLeaseSettle('*', 'Phase 3.0 ladder-descent barrier');
+        }
+      }
       for (const job of unitJobs) {
         if (job.kind !== 'topk' && job.result) fusionExtraUnitResults[job.cid] = job.result;
       }
@@ -1150,7 +1195,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
   if (FUSION_INPUTS.FUSION_TOPK_JSON && FUSION_INPUTS.FUSION_UNITSIDE_JSON && stageFits('applyback')) {
     phase('ApplyBack');
     const fusionApplyEntries = fusionApplyBudgetEntries(
-      fusionExecutionList, fusionUnitEligibleIds, FUSION_BUDGET);
+      fusionApplyRungs(fusionExecutionList, fusionUnitEligibleIds), fusionUnitEligibleIds, FUSION_BUDGET);
     let applyState = {
       accepted_fusions: [], final_overlay: curOverlay,
       e2e_throughput_tok_s: curTput, accepted_flags: curFlags, accepted_env: curEnv,

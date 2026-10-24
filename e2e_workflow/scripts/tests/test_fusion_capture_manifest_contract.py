@@ -179,6 +179,21 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
                       out["prompts"]["semantics-mapper:fusion"])
         self.assertEqual(out["ret"]["status"], "applied")
 
+    def test_a_waived_top_rung_descends_to_the_narrower_rungs(self):
+        out = self.run_stage("descend")
+        labels = out["labels"]
+        # Wave 1: rung 0 of each entry. Neither passes, so the ladder below e1 is tested.
+        self.assertIn("fusion_unit_validator:e1:c1", labels)
+        self.assertIn("fusion_unit_validator:e1:e1.r1", labels)
+        self.assertIn("fusion_unit_validator:e1:e1.r2", labels)
+        self.assertLess(labels.index("fusion_unit_validator:e2:c2"),
+                        labels.index("fusion_unit_validator:e1:e1.r1"))
+        self.assertTrue(any("ladder descent: 2 Top-K entr" in line for line in out["logs"]))
+        # Apply-back authors the rung that passed, under its slot.
+        self.assertIn("fusion_integrator:author_one:e1", labels)
+        author = out["prompts"]["fusion_integrator:author_one:e1"]
+        self.assertIn('"candidate_ids":["e1.r1"]', author.replace(" ", ""))
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")
