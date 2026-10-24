@@ -22,6 +22,44 @@ import run_semantic_shape_capture
 DEFAULT_REQUIRE_PHASES = ("prefill", "decode")
 
 
+def _wait_for_free_gpus(timeout_s=900, max_vram_pct=10):
+    """Block until no GPU holds more than `max_vram_pct`% VRAM (rocm-smi), or timeout.
+
+    A replay launched right after the previous one tore its server down can find the
+    weights still resident and die at load; the previous server's memory must be back."""
+    import re
+    import subprocess
+    import time
+    deadline = time.time() + timeout_s
+    while True:
+        try:
+            out = subprocess.run(["rocm-smi", "--showmemuse"], capture_output=True,
+                                 text=True, timeout=60).stdout
+            used = [float(v) for v in re.findall(r"VRAM%\)?:\s*([\d.]+)", out)]
+        except (OSError, subprocess.SubprocessError):
+            return
+        if not used or max(used) <= max_vram_pct or time.time() >= deadline:
+            return
+        time.sleep(10)
+
+
+def _recapture(setup_path, plan_path, out_dir, layer_entry_callables):
+    """One Shape replay on the rebuilt plan, retried once after the GPUs drain; None if
+    both attempts fail (the run then keeps the first capture's evidence and says so)."""
+    import subprocess
+    for attempt in (1, 2):
+        _wait_for_free_gpus()
+        target = out_dir if attempt == 1 else out_dir + "_retry"
+        try:
+            return run_semantic_shape_capture.capture(
+                setup_path, plan_path, target,
+                layer_entry_callables=layer_entry_callables)
+        except (subprocess.CalledProcessError, RuntimeError) as exc:
+            print("[semantics] re-capture attempt %d failed: %s (log: %s)"
+                  % (attempt, exc, os.path.join(target, "benchmark.log")), file=sys.stderr)
+    return None
+
+
 def _rebuilt_layers_uncovered(plan_path, capture_results):
     """Representative layers of `plan_path` that no graph capture in `capture_results`
     marked (sorted), or [] when every one is covered or nothing was captured."""
@@ -228,18 +266,29 @@ def run(config_path, trace_path, shape_log_path, out_dir,
         # unresolved. Capture once more on the rebuilt plan when it needs layers the
         # first capture did not mark, and map Shape evidence from that capture.
         uncovered = _rebuilt_layers_uncovered(source_plan_path, capture_results)
-        if uncovered and capture_setup_path:
+        # A loaded capture result names the setup that produced it, so a run that reuses
+        # the broad replay (--capture-result) can still extend it to the rebuilt layers.
+        recapture_setup = capture_setup_path or next(
+            (result.get("capture_setup") for result in capture_results
+             if result.get("capture_setup")
+             and os.path.isfile(result.get("capture_setup"))), "")
+        rebuilt_capture = None
+        if uncovered and recapture_setup:
             print("[semantics] rebuilt plan needs layers %s the capture did not mark; "
                   "re-capturing on the rebuilt plan" % uncovered, file=sys.stderr)
-            rebuilt_capture = run_semantic_shape_capture.capture(
-                capture_setup_path, source_plan_path,
-                os.path.join(out_dir, "capture_rebuilt"),
-                layer_entry_callables=layer_entry_callables)
+            rebuilt_capture = _recapture(
+                recapture_setup, source_plan_path,
+                os.path.join(out_dir, "capture_rebuilt"), layer_entry_callables)
+        if rebuilt_capture is not None:
             rebuilt_capture["recaptured_for_layers"] = uncovered
             capture_results = [
                 result for result in capture_results
                 if result.get("shape_capture_execution") != "graph_capture"
             ] + [rebuilt_capture]
+        elif uncovered:
+            print("[semantics] WARNING: layers %s stay unmarked (no capture setup, or the "
+                  "re-capture failed twice); their pattern rows remain unresolved"
+                  % uncovered, file=sys.stderr)
 
     probe_tables = []
     probe_runs = []

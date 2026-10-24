@@ -517,3 +517,31 @@ class RebuiltLayerCoverageTest(unittest.TestCase):
             self.assertEqual(rs._rebuilt_layers_uncovered(plan, covered), [])
             # Loaded / non-graph evidence is not a capture this check can extend.
             self.assertEqual(rs._rebuilt_layers_uncovered(plan, [{"representative_layers": []}]), [])
+
+
+class RecaptureRetryTest(unittest.TestCase):
+    """The rebuilt-layer replay starts right after the broad one tore its server down; on
+    DeepSeek-V4 the first try died at launch (bench rc=2). It waits for the GPUs to drain
+    and retries once; two failures leave the first capture in place instead of aborting."""
+
+    def test_retry_once_then_give_up_without_raising(self):
+        import subprocess
+        from unittest import mock
+        import run_semantics_1_2 as rs
+        calls = []
+
+        def fail_then_pass(setup, plan, out_dir, layer_entry_callables=None):
+            calls.append(out_dir)
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(2, ["bash"])
+            return {"shape_capture_execution": "graph_capture", "representative_layers": [30, 47]}
+
+        with mock.patch.object(rs, "_wait_for_free_gpus"), \
+                mock.patch.object(rs.run_semantic_shape_capture, "capture", side_effect=fail_then_pass):
+            result = rs._recapture("setup.json", "plan.json", "/x/capture_rebuilt", [])
+        self.assertEqual(result["representative_layers"], [30, 47])
+        self.assertEqual(calls, ["/x/capture_rebuilt", "/x/capture_rebuilt_retry"])
+        with mock.patch.object(rs, "_wait_for_free_gpus"), \
+                mock.patch.object(rs.run_semantic_shape_capture, "capture",
+                                  side_effect=subprocess.CalledProcessError(2, ["bash"])):
+            self.assertIsNone(rs._recapture("setup.json", "plan.json", "/x/c", []))

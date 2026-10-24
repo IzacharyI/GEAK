@@ -634,6 +634,7 @@ wait "$geak_wrapper"
         "execution_mode": execution_mode,
         "port": port,
         "representative_layers": layers,
+        "capture_setup": os.path.abspath(setup_path),
         "all_main_layer_scopes": True,
         "workload": workload,
         "callable_targets": callable_targets,
