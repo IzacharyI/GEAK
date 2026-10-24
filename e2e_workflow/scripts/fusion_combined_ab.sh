@@ -57,6 +57,13 @@ python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\"
 
 run_side() {
   local side="$1" overlay="$2"
+  # REUSE_COMPLETED_SIDES=1: a side that already has its throughput summary and gsm8k (e.g. the
+  # base leg of an A/B whose cand server failed to start) is kept instead of re-measured.
+  if [ "${REUSE_COMPLETED_SIDES:-0}" = 1 ] && [ -s "$OUT_DIR/$side/bench_summary.json" ] \
+      && [ -s "$OUT_DIR/$side/gsm8k.json" ]; then
+    echo ">>> combined A/B: $side reused (complete in $OUT_DIR/$side) $(date -Is)"
+    return 0
+  fi
   echo ">>> combined A/B: $side (overlay='${overlay:-<none>}') $(date -Is)"
   OUT_DIR="$OUT_DIR/$side" OVERLAY_PYTHONPATH="$overlay" SESSION_CMD="$SIDE_CMD" \
     bash "$SESSION" > "$OUT_DIR/$side.log" 2>&1

@@ -80,6 +80,12 @@ dir may be passed to STACK on top of.
    stack — Python loads only the first on PYTHONPATH. Use a **combined-loader** dir whose
    single `sitecustomize.py` does `runpy.run_path(...)` on each overlay file, and put only
    that loader dir on PYTHONPATH. Overlays that patch disjoint modules don't collide.
+   The loader must NOT import `sitecustomize` (no "chain to the real sitecustomize"): with the
+   loader dir first on sys.path that import resolves to the loader itself and recurses to the
+   recursion limit, which leaves numpy half-initialised, and the server then dies at its first
+   `import numpy` ("CPU dispatcher tracer already initialized"; DeepSeek-V4 run 9). Before the
+   A/B, check it on CPU: `PYTHONPATH=<loader dir> python3 -c "import numpy, torch, sglang"` must
+   succeed and print each overlay's "loaded" line exactly once.
 
 **Bypass a platform gate, never a correctness gate.** A fused path is often switched off by a
 condition in the model file. A platform check (`current_platform.is_cuda()`) says only where it was
