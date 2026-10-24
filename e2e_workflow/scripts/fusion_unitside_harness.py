@@ -488,6 +488,8 @@ def _op_covered(needle, haystack):
         # meaning here, so it must not carry a veto.
         return "".join(ch for ch in str(value).lower().split("(")[0]
                        if ch.isalnum())
+    def letters(value):
+        return "".join(ch for ch in value if ch.isalpha())
     n = norm(needle)
     if not n:
         return True
@@ -497,6 +499,13 @@ def _op_covered(needle, haystack):
         for part in re.split(r"[/,|]", str(hay)):
             h = norm(part)
             if h and (n in h or h in n):
+                return True
+            # An Itanium-mangled kernel name puts length digits between the name parts
+            # (`_ZN5aiter37dynamic_per_group_scaled_quant_kernel...`), so "aiter::
+            # dynamic_per_group_scaled_quant" is not a substring of it. Compare letters
+            # only for names long enough that this cannot match by accident.
+            hl, nl = letters(h), letters(n)
+            if len(hl) >= 10 and len(nl) >= 10 and (hl in nl or nl in hl):
                 return True
     return False
 
