@@ -209,6 +209,16 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         self.assertTrue(any("re-aggregating once" in line for line in out["logs"]))
         self.assertIn("fusion_integrator:author_one:e1", out["labels"])
 
+    def test_earlier_passing_verdicts_are_reused_not_reauthored(self):
+        out = self.run_stage("reuse_unit")
+        labels = out["labels"]
+        self.assertIn("fusion-reuse-verdicts", labels)
+        self.assertIn("--from /old1 --from /old2", out["prompts"]["fusion-reuse-verdicts"])
+        self.assertNotIn("fusion_unit_validator:e1:c1", labels)
+        self.assertIn("fusion_unit_validator:e2:c2", labels)
+        self.assertTrue(any("reused 1 passing verdict" in line for line in out["logs"]))
+        self.assertIn("fusion_integrator:author_one:e1", labels)
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")

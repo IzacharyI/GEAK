@@ -36,6 +36,7 @@ e2e_workflow/scripts/fusion_ladders.py
 e2e_workflow/scripts/fusion_leg_wait.sh
 e2e_workflow/scripts/fusion_observed_workload.py
 e2e_workflow/scripts/fusion_priors.py
+e2e_workflow/scripts/fusion_reuse_verdicts.py
 e2e_workflow/scripts/fusion_screen.py
 e2e_workflow/scripts/fusion_serving_probe.py
 e2e_workflow/scripts/fusion_serving_session.sh
@@ -73,6 +74,7 @@ e2e_workflow/scripts/tests/test_fusion_combined_ab_session.py
 e2e_workflow/scripts/tests/test_fusion_combined_decide.py
 e2e_workflow/scripts/tests/test_fusion_gpu_lease.py
 e2e_workflow/scripts/tests/test_fusion_priors.py
+e2e_workflow/scripts/tests/test_fusion_reuse_verdicts.py
 e2e_workflow/scripts/tests/test_fusion_screen.py
 e2e_workflow/scripts/tests/test_fusion_serving_probe.py
 e2e_workflow/scripts/tests/test_fusion_serving_session.py

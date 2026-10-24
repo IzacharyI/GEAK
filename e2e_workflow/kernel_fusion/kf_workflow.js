@@ -151,6 +151,13 @@ const BASELINE_PURPOSE = String(A.fusion_baseline_purpose || 'parity');
 // verified sampling (traces, manifest, observed workload) are reused in place, and the stage starts
 // at Semantics. A changed stack, flag set or workload invalidates them; the reuse agent checks.
 const REUSE_DIR = String(A.fusion_reuse_eval_dir || '').replace(/\/+$/, '');
+// Earlier KernelFusion eval dirs of the same deployment and Top-K whose PASSING unit-side
+// verdicts (and the kernels they point at) seed this round: a candidate with one is not
+// re-authored. Authoring is not repeatable -- e01.r4 measured 1.50x in one round and 0.97x in
+// another -- so without this a re-run loses earlier wins at random.
+const REUSE_UNIT_DIRS = (Array.isArray(A.fusion_reuse_unitside_dirs)
+  ? A.fusion_reuse_unitside_dirs : String(A.fusion_reuse_unitside_dirs || '').split(','))
+  .map((d) => String(d).trim().replace(/\/+$/, '')).filter(Boolean);
 let FUSION_INPUTS = { FUSION_TOPK_JSON: '', FUSION_CANDIDATES_JSON: '', FUSION_VALIDATION_JSON: '', FUSION_UNITSIDE_JSON: '' };
 
 // ---- run state ----
@@ -255,6 +262,10 @@ const FUSION_AUTHOR_SCHEMA = obj({
   candidate_ids: { type: 'array', items: { type: 'string' } }, parity: { type: 'string' },
   reason: { type: 'string' },
 }, ['exec_id', 'status']);
+const FUSION_REUSE_SCHEMA = obj({
+  ok: { type: 'boolean' }, reused: { type: 'object', additionalProperties: true },
+  reason: { type: 'string' },
+}, ['ok']);
 const FUSION_LADDERS_SCHEMA = obj({
   ok: { type: 'boolean' }, ladders: { type: 'object', additionalProperties: true },
   reason: { type: 'string' },
@@ -1084,8 +1095,29 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           }),
         { phase: 'KernelFusion', label: `fusion_unit_validator:${job.entry.exec_id}:${job.cid}`,
           schema: FUSION_UNIT_SCHEMA }, 1);
-      const singleJobs = unitJobs.filter((j) => !j.collective);
-      const collectiveJobs = unitJobs.filter((j) => j.collective);
+      let reusedUnit = {};
+      if (REUSE_UNIT_DIRS.length) {
+        const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
+        const got = await fusionScriptOp(
+          `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_reuse_verdicts.py --to ${EVAL_DIR}/verdict ` +
+          REUSE_UNIT_DIRS.map((d) => `--from ${d}`).join(' '),
+          'fusion-reuse-verdicts', FUSION_REUSE_SCHEMA);
+        reusedUnit = (got && got.reused && typeof got.reused === 'object') ? got.reused : {};
+        log(`KernelFusion Phase 3.0: reused ${Object.keys(reusedUnit).length} passing verdict(s) from ` +
+            `${REUSE_UNIT_DIRS.length} earlier round(s): ` +
+            Object.entries(reusedUnit).map(([c, r]) => `${c} ${r.speedup}x`).join(', '));
+      }
+      // A reused pass stands in for the validator: same verdict file, same kernel.
+      const takeReused = (job) => {
+        const r = reusedUnit[job.cid];
+        if (!r) return false;
+        job.result = { candidate_id: job.cid, verdict_path: `${EVAL_DIR}/verdict/${job.cid}__${r.side}.json`,
+          parity: 'pass', isolated_speedup: Number(r.speedup), engaged: true,
+          notes: `reused from ${r.from}` };
+        return true;
+      };
+      const singleJobs = unitJobs.filter((j) => !j.collective && !takeReused(j));
+      const collectiveJobs = unitJobs.filter((j) => j.collective && !j.result);
       const kinds = (k) => unitJobs.filter((j) => j.kind === k).length;
       log(`KernelFusion Phase 3.0: ${unitJobs.length} unit test(s) over ${fusionExecutionList.length} ` +
           `Top-K entr(ies) (${kinds('topk')} Top-K, ${kinds('alt')} alternative rung(s), ${kinds('pool')} pool` +
@@ -1149,7 +1181,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             for (const cid of cids) addJob(rungEntry, cid, 'alt');
           }
         }
-        const descend = unitJobs.slice(before).filter((j) => !j.collective);
+        const descend = unitJobs.slice(before).filter((j) => !j.collective && !takeReused(j));
         log(`KernelFusion Phase 3.0 ladder descent: ${stuck.length} Top-K entr(ies) without a passing ` +
             `rung 0 (${stuck.join(', ') || '-'}); unit-testing ${descend.length} narrower rung(s).`);
         if (descend.length) {

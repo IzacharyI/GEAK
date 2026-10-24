@@ -18,6 +18,7 @@ const respond = (prompt, opts) => {
   if (l.startsWith('fusion-trace-collector:capture')) return { trace_manifest_json: '/e/fusion_capture/profile_trace_manifest.json', observed_workload_json: '/e/fusion_capture/sampling/fusion_observed_workload.json', analysis_points: { decode: 'de_16' }, phase_evidence_status: 'measured_annotation', sampling_summary_json: '/e/s.json' };
   if (l === 'semantics-mapper:fusion') return { status: 'partial', semantic_table_json: '/e/t.json', phases_in_tables: [], missing_required_phases: ['decode'], structural_patterns_json: '/e/p.json', shape_capture_plan_json: '/e/plan.json' };
   if (l === 'semantics-mapper:shape-completion') return { status: 'pass', semantic_table_json: '/e/t2.json', phases_in_tables: ['decode'], missing_required_phases: [] };
+  if (l === 'fusion-reuse-verdicts') return { ok: true, reused: { c1: { side: 'self', speedup: 1.43, from: '/old/verdict/c1__self.json' } } };
   if (l === 'fusion-ladders') return { ok: true, ladders: { e1: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] } };
   if (l === 'fusion-screen' && scenario === 'descend_noladder') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1' }], candidate_pool: [] };
   if (l === 'fusion-screen' && scenario === 'descend') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1', alt_ladder: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [] };
@@ -50,6 +51,7 @@ const args = {
   workload_spec: scenario === 'fixed_shape' ? {} : { kind: 'agentx_trace_replay', concurrency: 128 },
   isl: 1024, osl: 1024, conc: 64,
   ...(scenario === 'reuse' ? { fusion_reuse_eval_dir: '/old/' } : {}),
+  ...(scenario === 'reuse_unit' ? { fusion_reuse_unitside_dirs: ['/old1', '/old2/'] } : {}),
   initial_extra_server_args: '--tp 8', initial_extra_env: 'E=1', initial_overlay_pythonpath: '',
 };
 const fn = new Function('args', 'agent', 'parallel', 'phase', 'log', 'return (async () => {\n' + src + '\n})();');
