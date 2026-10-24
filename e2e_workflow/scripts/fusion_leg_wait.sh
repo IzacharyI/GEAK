@@ -13,7 +13,9 @@ end=$(( $(date +%s) + slice ))
 rc=2
 while :; do
   if [ -s "$done_file" ]; then rc=0; break; fi
-  if ! kill -0 "$pid" 2>/dev/null; then
+  # A finished leg whose parent has not reaped it is a zombie: kill -0 still succeeds on it, and
+  # the waiter would report LEG_RUNNING forever (DeepSeek-V4 run 9: the combined A/B exited in 5 s).
+  if ! kill -0 "$pid" 2>/dev/null || [ "$(ps -o stat= -p "$pid" 2>/dev/null | cut -c1)" = Z ]; then
     [ -s "$done_file" ] && rc=0 || rc=3
     break
   fi
