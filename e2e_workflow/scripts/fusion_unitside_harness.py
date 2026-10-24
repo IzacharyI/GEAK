@@ -470,6 +470,21 @@ def _member_names(member):
     return tuple(names)
 
 
+_RUNTIME_BUFFER_OP = re.compile(r"__amd_rocclr_(?:fill|copy)Buffer", re.I)
+
+
+def _verdict_speedup(verdict):
+    """The verdict's weighted (else isolated) speedup, or 0.0 when it has none."""
+    for key in ("weighted_speedup", "observed_weighted_speedup", "isolated_speedup"):
+        try:
+            value = float(verdict.get(key))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0.0
+
+
 def _uncovered_members(members, ref_ops):
     """Members none of whose names appear in ref_ops, as sorted name strings."""
     return sorted(" / ".join(names) for names in map(_member_names, members)
@@ -499,6 +514,11 @@ def _op_covered(needle, haystack):
         for part in re.split(r"[/,|]", str(hay)):
             h = norm(part)
             if h and (n in h or h in n):
+                return True
+            # "aiter::_fused_clamp_silu_mul" names the kernel
+            # "_fused_clamp_silu_mul_kernel_BLOCK_SIZE_N_4096...": the namespace is not in it.
+            bare = norm(part.split("(")[0].rsplit("::", 1)[-1])
+            if len(bare) >= 8 and (bare in n or n in bare):
                 return True
             # An Itanium-mangled kernel name puts length digits between the name parts
             # (`_ZN5aiter37dynamic_per_group_scaled_quant_kernel...`), so "aiter::
@@ -870,6 +890,16 @@ def validate(candidates_path, verdicts_path, min_speedup=1.0,
             if removable:
                 members = [m for m in members if m.get("row_id") in removable]
             uncovered = _uncovered_members(members, ref_ops)
+            # Runtime buffer operations (the HIP runtime's fill/copy blits for a workspace) are
+            # the cheapest members of a region; leaving one out of the reference makes the
+            # reference faster, so the measured speedup can only be UNDER-stated. That is no
+            # reason to distrust a pass, so it is a warning; a failing verdict keeps the error.
+            runtime_only = [m for m in uncovered if _RUNTIME_BUFFER_OP.search(m)]
+            if runtime_only and len(runtime_only) == len(uncovered) and _verdict_speedup(verdict) > 1.0:
+                warnings.append(
+                    "%s ref_ops omit runtime buffer op(s) %s; the speedup is a lower bound"
+                    % (vp, runtime_only))
+                uncovered = []
             if uncovered:
                 errors.append(
                     "%s ref_ops %s does not cover the removable member ops %s — the "
