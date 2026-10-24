@@ -69,6 +69,37 @@ Return JSON:
  "bench_script":"<EVAL_DIR>/bench_e2e.sh","notes":"..."}
 ```
 
+## PHASE=reuse_baseline
+
+Extra input: `REUSE_EVAL_DIR`, an earlier KernelFusion eval dir of the same deployment. Nothing runs
+on the GPUs in this phase.
+
+1. Read `$REUSE_EVAL_DIR/baseline/run_leg.sh` (or `bench.log`'s header lines `Model:`, `Extra args:`,
+   `Extra env:`, `Overlay PP:`) and `$REUSE_EVAL_DIR/kf_args.json` when present. Reuse ONLY when the
+   model path, `EXTRA_SERVER_ARGS`, `EXTRA_ENV`, `OVERLAY_PYTHONPATH`, TP/GPU set and workload
+   (AgentX corpus/concurrency/duration, or ISL/OSL/CONC) are the ones you were given, and
+   `$REUSE_EVAL_DIR/baseline/bench_summary.json` holds a positive `throughput_tok_s_median`.
+   Otherwise return `status: "failed"` with the first difference in `notes` (the workflow then
+   measures a fresh baseline).
+2. `mkdir -p "$EVAL_DIR"` and write the bench wrapper exactly as PHASE=baseline step 1 does.
+3. Return the PHASE=baseline JSON pointing at the REUSED files (`server_log`, `bench_log`,
+   `bench_summary_json` under `$REUSE_EVAL_DIR/baseline/`), with `reused_from: REUSE_EVAL_DIR`.
+   Do not copy or edit them.
+
+## PHASE=reuse_capture
+
+Extra inputs: `REUSE_EVAL_DIR`, `ANALYSIS_PHASES`. Nothing runs on the GPUs.
+
+1. Read `$REUSE_EVAL_DIR/fusion_capture/sampling/fusion_sampling_summary.json` and
+   `$REUSE_EVAL_DIR/fusion_capture/profile_trace_manifest.json`. Reuse only when the manifest
+   `status` is `pass`, its `agentx_sampling.analysis_phases` equals `ANALYSIS_PHASES`, and every
+   trace file the manifest names exists.
+2. Return the PHASE=capture JSON with those paths as they are (`trace_manifest_json`,
+   `observed_workload_json` = `.../sampling/fusion_observed_workload.json`, `sampling_summary_json`,
+   `analysis_points` from the summary, `trace_dir`, `trace_files`, `analysis_rank_trace` from the
+   manifest), `source: "reused-sampling"` and `notes` naming `REUSE_EVAL_DIR`. If any check fails,
+   return `phase_evidence_status: "failed"` with the reason; the workflow then samples afresh.
+
 ## PHASE=capture
 
 Extra inputs: `CAPTURE_DIR`, `TRACE_MANIFEST_JSON`, `SAMPLING_DIR`, `SAMPLING_POINTS`,

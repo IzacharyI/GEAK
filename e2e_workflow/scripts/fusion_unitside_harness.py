@@ -121,6 +121,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -421,15 +422,52 @@ def synthesize_extra_candidates(topk, rows_by_id):
     return out
 
 
+# PyTorch's generic elementwise launchers name the op only inside the functor template
+# (`vectorized_elementwise_kernel<4, AUnaryFunctor<long,...,MulFunctor<long>>, ...>`), while
+# a verdict names it as the aten op (`aten::mul`). Each pattern adds that aten spelling.
+_TORCH_KERNEL_OPS = (
+    (r"MulFunctor", "aten::mul"), (r"Functor(?:OnSelf)?_add|AddFunctor", "aten::add"),
+    (r"Functor(?:OnSelf)?_sub|SubFunctor", "aten::sub"), (r"DivFunctor|div_true|div_floor", "aten::div"),
+    (r"remainder_kernel", "aten::remainder"), (r"direct_copy_kernel|copy_kernel", "aten::copy"),
+    (r"tofloat32|tobfloat16|tofloat16|to_kernel", "aten::to"), (r"fill_kernel|FillFunctor", "aten::fill"),
+    (r"where_kernel", "aten::where"), (r"index_elementwise_kernel|index_kernel", "aten::index"),
+    (r"clamp_kernel|ClampFunctor", "aten::clamp"), (r"neg_kernel", "aten::neg"),
+    (r"__amd_rocclr_copyBuffer", "aten::copy"), (r"__amd_rocclr_fillBuffer", "aten::fill"),
+)
+
+
+def _parent_operator_name(value):
+    """The resolved op a member's `parent_operator` names, or None.
+
+    Semantic tables carry it either as a plain name or as the mapping record
+    {canonical_op, mapping_level, ...}; an unresolved record names nothing, and its
+    repr must not be matched against ref_ops as if it were an op name."""
+    if isinstance(value, dict):
+        op = value.get("canonical_op") or value.get("op") or value.get("name")
+        return None if not op or str(op).lower() == "unresolved" else str(op)
+    text = str(value or "")
+    return None if not text or text.lower() == "unresolved" else text
+
+
 def _member_names(member):
     """The names one captured member goes by, as the reference must reproduce it.
 
     Members carry `parent_operator` (the aten/python-level op) and `kernel` (the device
     kernel); a reference leg may legitimately be described in either vocabulary, so a
     member is covered when EITHER name matches -- coverage is judged per member, never
-    per name, or every member would need both spellings in ref_ops."""
-    return tuple(str(member[key]) for key in ("parent_operator", "kernel")
-                 if member.get(key))
+    per name, or every member would need both spellings in ref_ops. A generic PyTorch
+    elementwise kernel also goes by the aten op its functor implements."""
+    names = []
+    parent = _parent_operator_name(member.get("parent_operator"))
+    if parent:
+        names.append(parent)
+    kernel = str(member.get("kernel") or "")
+    if kernel:
+        names.append(kernel)
+        for pattern, aten in _TORCH_KERNEL_OPS:
+            if re.search(pattern, kernel):
+                names.append(aten)
+    return tuple(names)
 
 
 def _uncovered_members(members, ref_ops):
@@ -454,11 +492,12 @@ def _op_covered(needle, haystack):
     if not n:
         return True
     for hay in haystack:
-        h = norm(hay)
-        if not h:
-            continue
-        if n in h or h in n:
-            return True
+        # One ref_ops entry may name several spellings of the same op
+        # ("aten::clone/direct_copy(long)"); each one counts on its own.
+        for part in re.split(r"[/,|]", str(hay)):
+            h = norm(part)
+            if h and (n in h or h in n):
+                return True
     return False
 
 

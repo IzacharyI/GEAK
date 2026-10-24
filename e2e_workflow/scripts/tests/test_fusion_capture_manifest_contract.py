@@ -165,6 +165,20 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         self.assertNotIn("BASELINE_LOG", capture)
         self.assertIn("- AB_REPEAT_MODE: warm_server", out["prompts"]["fusion_integrator:combined_ab"])
 
+    def test_an_earlier_eval_dir_resumes_at_semantics(self):
+        out = self.run_stage("reuse")
+        labels = out["labels"]
+        self.assertIn("fusion-trace-collector:reuse_baseline", labels)
+        self.assertIn("fusion-trace-collector:reuse_capture", labels)
+        self.assertNotIn("fusion-trace-collector:baseline", labels)
+        self.assertNotIn("fusion-trace-collector:capture", labels)
+        self.assertEqual(out["ret"]["baseline_throughput_tok_s"], 799.42)
+        self.assertEqual(out["ret"]["analysis_points"], {"decode": "de_5"})
+        self.assertIn("- REUSE_EVAL_DIR: /old", out["prompts"]["fusion-trace-collector:reuse_baseline"])
+        self.assertIn("/old/fusion_capture/profile_trace_manifest.json",
+                      out["prompts"]["semantics-mapper:fusion"])
+        self.assertEqual(out["ret"]["status"], "applied")
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")

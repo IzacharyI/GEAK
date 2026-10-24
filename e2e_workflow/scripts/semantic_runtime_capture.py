@@ -928,8 +928,22 @@ def _register_hooks(model):
         is_key = any(token in class_name for token in (
             "Attention", "MoE", "Moe", "MLP", "DecoderLayer",
             "RMSNorm", "LayerNorm", "Linear", "Expert"))
-        if children and not is_key:
+        # A container whose forward launches work itself (functional calls between its
+        # children) needs its own marker, or those kernels sit under the layer scope only
+        # and stay unresolved. Class names do not say which containers do that: DeepSeek-V4's
+        # attention is `MQALayer`, so 17 of a decode layer's 24 kernels (compressed-KV write,
+        # norm+rope, SWA scatter, MLA decode, inverse-rope quant) had no marker. Inside the
+        # selected (representative) layers every container is hooked; the marker mapping attributes a
+        # kernel to its DEEPEST enclosing marker, so a container never takes a kernel from
+        # the child that launched it. GEAK_SEMANTICS_HOOK_CONTAINERS=0 restores class-name
+        # selection.
+        hook_containers = (
+            os.environ.get("GEAK_SEMANTICS_HOOK_CONTAINERS", "1") != "0"
+            and layer >= 0 and bool(logger.layers))
+        if children and not is_key and not hook_containers:
             continue
+        if children and class_name in ("ModuleList", "ModuleDict"):
+            continue  # no forward of their own
 
         def make_pre(layer_id, op_path):
             def pre_hook(mod, args, kwargs=None):

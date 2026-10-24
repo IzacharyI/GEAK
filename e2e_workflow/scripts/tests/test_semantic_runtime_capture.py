@@ -483,3 +483,52 @@ class CallableProbeClassMemberTest(unittest.TestCase):
         self.assertEqual(Layer.s(3), 6)
         self.assertEqual(Layer.c(4), ("Layer", 4))
         self.assertEqual(len(seen), 3)
+
+
+class ContainerHookTest(unittest.TestCase):
+    """Inside the selected layers every container gets a marker, whatever its class name
+    (DeepSeek-V4's attention is `MQALayer`); GEAK_SEMANTICS_HOOK_CONTAINERS=0 restores the
+    class-name rule."""
+
+    def _hooked(self, env):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch unavailable")
+        import semantic_runtime_capture as cap
+
+        class MQALayer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.wq = torch.nn.Linear(2, 2)
+
+        class Block(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.self_attn = MQALayer()
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList([Block(), Block()])
+
+        model = Model()
+        logger = types.SimpleNamespace(
+            active=lambda: True, layers={1}, layer_scope=None, layer_active=None)
+        with mock.patch.object(cap, "get_logger", return_value=logger), \
+                mock.patch.object(cap, "_wrap_layer_entry_functions", return_value=0), \
+                mock.patch.dict(os.environ, env):
+            cap._register_hooks(model)
+        return {name for name, mod in model.named_modules() if mod._forward_pre_hooks}
+
+    def test_a_container_without_a_known_class_name_is_hooked_in_selected_layers(self):
+        hooked = self._hooked({"GEAK_SEMANTICS_HOOK_CONTAINERS": "1"})
+        self.assertIn("layers.1.self_attn", hooked)
+        self.assertIn("layers.1.self_attn.wq", hooked)
+        self.assertNotIn("layers.0.self_attn", hooked)      # not a selected layer
+        self.assertNotIn("layers", hooked)                  # a ModuleList has no forward
+
+    def test_the_class_name_rule_is_restorable(self):
+        hooked = self._hooked({"GEAK_SEMANTICS_HOOK_CONTAINERS": "0"})
+        self.assertNotIn("layers.1.self_attn", hooked)
+        self.assertIn("layers.1.self_attn.wq", hooked)

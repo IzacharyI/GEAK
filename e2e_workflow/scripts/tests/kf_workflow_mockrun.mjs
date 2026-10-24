@@ -11,6 +11,8 @@ const respond = (prompt, opts) => {
   const l = opts.label || '';
   calls.push({ label: l, prompt });
   if (scenario === 'baseline_fail' && l.startsWith('fusion-trace-collector:baseline')) return { status: 'failed', baseline_throughput_tok_s: 0, server_log: '' };
+  if (l === 'fusion-trace-collector:reuse_baseline') return { status: 'pass', baseline_throughput_tok_s: 799.42, server_log: '/old/baseline/server.log', reused_from: '/old' };
+  if (l === 'fusion-trace-collector:reuse_capture') return { trace_manifest_json: '/old/fusion_capture/profile_trace_manifest.json', observed_workload_json: '/old/fusion_capture/sampling/fusion_observed_workload.json', analysis_points: { decode: 'de_5' }, phase_evidence_status: 'measured_annotation', source: 'reused-sampling' };
   if (l.startsWith('fusion-trace-collector:baseline')) return { status: 'pass', baseline_throughput_tok_s: 1000, server_log: '/e/baseline/server.log', bench_log: '/e/baseline/bench.log', metric_basis: 'total' };
   if (l.startsWith('fusion-trace-collector:capture')) return { trace_manifest_json: '/e/fusion_capture/profile_trace_manifest.json', observed_workload_json: '/e/fusion_capture/sampling/fusion_observed_workload.json', analysis_points: { decode: 'de_16' }, phase_evidence_status: 'measured_annotation', sampling_summary_json: '/e/s.json' };
   if (l === 'semantics-mapper:fusion') return { status: 'partial', semantic_table_json: '/e/t.json', phases_in_tables: [], missing_required_phases: ['decode'], structural_patterns_json: '/e/p.json', shape_capture_plan_json: '/e/plan.json' };
@@ -36,6 +38,7 @@ const args = {
   gpu_ids: '0,1,2,3,4,5,6,7', eval_dir: '/e', exp_root: '/x', time_budget_s: scenario === 'tight' ? 3600 : 43200,
   workload_spec: scenario === 'fixed_shape' ? {} : { kind: 'agentx_trace_replay', concurrency: 128 },
   isl: 1024, osl: 1024, conc: 64,
+  ...(scenario === 'reuse' ? { fusion_reuse_eval_dir: '/old/' } : {}),
   initial_extra_server_args: '--tp 8', initial_extra_env: 'E=1', initial_overlay_pythonpath: '',
 };
 const fn = new Function('args', 'agent', 'parallel', 'phase', 'log', 'return (async () => {\n' + src + '\n})();');

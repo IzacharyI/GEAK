@@ -141,6 +141,10 @@ const FUSION_NOISE_BAND_PCT = parseFloat(A.fusion_noise_band_pct != null ? A.fus
   : (IS_AGENTX ? 1.0 : 0.5));
 // The baseline leg: on AgentX the CI-faithful parity window, one replay (the client warms itself).
 const BASELINE_PURPOSE = String(A.fusion_baseline_purpose || 'parity');
+// Resume from an earlier KernelFusion eval dir of the SAME deployment: its measured baseline and its
+// verified sampling (traces, manifest, observed workload) are reused in place, and the stage starts
+// at Semantics. A changed stack, flag set or workload invalidates them; the reuse agent checks.
+const REUSE_DIR = String(A.fusion_reuse_eval_dir || '').replace(/\/+$/, '');
 let FUSION_INPUTS = { FUSION_TOPK_JSON: '', FUSION_CANDIDATES_JSON: '', FUSION_VALIDATION_JSON: '', FUSION_UNITSIDE_JSON: '' };
 
 // ---- run state ----
@@ -181,7 +185,7 @@ const BASELINE_SCHEMA = obj({
   status: { type: 'string' }, eval_dir: { type: 'string' },
   baseline_throughput_tok_s: { type: 'number' }, metric_basis: { type: 'string' },
   bench_summary_json: { type: 'string' }, server_log: { type: 'string' }, bench_log: { type: 'string' },
-  bench_script: { type: 'string' }, notes: { type: 'string' },
+  bench_script: { type: 'string' }, reused_from: { type: 'string' }, notes: { type: 'string' },
 }, ['status', 'baseline_throughput_tok_s', 'server_log']);
 const CAPTURE_SCHEMA = obj({
   round: { type: ['number', 'string'] },
@@ -650,7 +654,26 @@ phase('Baseline');
 log(`KernelFusion stage: EVAL_DIR=${EVAL_DIR}, backend=${BACKEND}, TP=${SERVING_TP} on GPU=${SERVING_GPU}, ` +
     `workload=${IS_AGENTX ? `AgentX trace replay (conc ${CONC})` : `ISL ${ISL} / OSL ${OSL} / CONC ${CONC}`}, ` +
     `budget ${TIME_BUDGET_MS == null ? 'unbounded' : `${Math.round(TIME_BUDGET_MS / 60000)}min`}.`);
-if (FUSION_DISCOVERY_ON) {
+if (FUSION_DISCOVERY_ON && REUSE_DIR) {
+  baseline = await safeAgent(
+    roleAgent('fusion_trace_collector', 'reuse_baseline',
+      'Reuse the measured baseline of REUSE_EVAL_DIR for this stage: verify it was measured on this exact ' +
+      'deployment, write EVAL_DIR\'s bench_e2e.sh wrapper, and return that baseline. Run nothing on the GPUs.', {
+        EVAL_DIR, REUSE_EVAL_DIR: REUSE_DIR, MODEL_PATH, WORKLOAD,
+        OVERLAY_PYTHONPATH: curOverlay, EXTRA_SERVER_ARGS: curFlags, EXTRA_ENV: curEnv,
+        SKILL_DIR: WORKFLOW_DIR, ...FUSION_RUNTIME_INPUTS,
+      }),
+    { phase: 'Baseline', label: 'fusion-trace-collector:reuse_baseline', schema: BASELINE_SCHEMA }, 2);
+  if (baseline && Number(baseline.baseline_throughput_tok_s) > 0) {
+    baseline = { ...baseline, reused: true };
+    log(`KernelFusion: reusing the baseline of ${REUSE_DIR}.`);
+  } else {
+    log(`KernelFusion: REUSE_EVAL_DIR ${REUSE_DIR} has no reusable baseline ` +
+        `(${(baseline && baseline.notes) || 'no result'}); measuring a fresh one.`);
+    baseline = null;
+  }
+}
+if (FUSION_DISCOVERY_ON && !(baseline && Number(baseline.baseline_throughput_tok_s) > 0)) {
   baseline = await safeAgent(
     roleAgent('fusion_trace_collector', 'baseline',
       'Create EVAL_DIR, write its bench_e2e.sh wrapper, run ONE measured baseline leg on the deployed stack ' +
@@ -678,6 +701,8 @@ if (FUSION_DISCOVERY_ON) {
         }),
       { phase: 'Baseline', label: `fusion-trace-collector:baseline resume ${attempt}`, schema: BASELINE_SCHEMA }, 1);
   }
+}
+if (FUSION_DISCOVERY_ON) {
   BASELINE_TPUT = baseline ? Number(baseline.baseline_throughput_tok_s) || 0 : 0;
   curTput = BASELINE_TPUT;
   if (BASELINE_TPUT > 0) {
@@ -785,7 +810,25 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       SKILL_DIR: WORKFLOW_DIR, ...FUSION_RUNTIME_INPUTS,
     };
     let samplingStarted = false;
-    if (stageFits('sample')) {
+    if (REUSE_DIR && baseline && baseline.reused) {
+      samplingStarted = true;
+      fusionCapture = await safeAgent(
+        roleAgent('fusion_trace_collector', 'reuse_capture',
+          'Reuse the verified sampling of REUSE_EVAL_DIR (its manifest, traces and observed workload) for this ' +
+          'stage. Run nothing on the GPUs; return the capture result exactly as PHASE=reuse_capture specifies.', {
+            EVAL_DIR, REUSE_EVAL_DIR: REUSE_DIR, ANALYSIS_PHASES: FUSION_ANALYSIS_PHASES,
+            SKILL_DIR: WORKFLOW_DIR, ...FUSION_RUNTIME_INPUTS,
+          }),
+        { phase: 'Sample', label: 'fusion-trace-collector:reuse_capture', schema: CAPTURE_SCHEMA }, 2);
+      if (!(fusionCapture && fusionCapture.trace_manifest_json &&
+            !/fail/i.test(String(fusionCapture.phase_evidence_status || '')))) {
+        log(`KernelFusion: REUSE_EVAL_DIR ${REUSE_DIR} has no reusable sampling ` +
+            `(${(fusionCapture && fusionCapture.notes) || 'no result'}); sampling afresh.`);
+        fusionCapture = null;
+        samplingStarted = false;
+      }
+    }
+    if (!fusionCapture && stageFits('sample')) {
       samplingStarted = true;
       fusionCapture = await safeAgent(
         roleAgent('fusion_trace_collector', 'capture', captureTask, captureInputs),
