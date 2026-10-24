@@ -65,6 +65,32 @@ class ReuseVerdictsTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(out, "e01.r4__self.json.prev")))
             self.assertFalse(os.path.exists(os.path.join(out, "c23__self.json.prev")))
 
+    def test_a_renumbered_board_gets_verdicts_by_window(self):
+        def board(root, run, doc):
+            path = os.path.join(root, run, "fusion_capture", "fusion", "fusion_topk.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
+                json.dump(doc, fh)
+            return path
+        with tempfile.TemporaryDirectory() as tmp:
+            board(tmp, "r5", {"execution_list": [{"exec_id": "e01", "candidate_ids": ["c01"],
+                                                  "row_ids": ["a", "b", "c"],
+                                                  "alt_ladder": [{"rung": 0}, {"rung": 4, "row_ids": ["a", "b"]}]}]})
+            _verdict(tmp, "r5", "e01.r4__self.json", candidate_id="e01.r4", parity="pass", isolated_speedup=1.43)
+            _verdict(tmp, "r5", "c01__self.json", candidate_id="c01", parity="pass", isolated_speedup=1.2)
+            new = board(tmp, "now", {"execution_list": [
+                {"exec_id": "e01", "candidate_ids": ["c09"], "row_ids": ["x", "y"],
+                 "alt_ladder": [{"rung": 0}, {"rung": 1, "row_ids": ["a", "b"]}]},
+                {"exec_id": "e02", "candidate_ids": ["c01"], "row_ids": ["p", "q"]}]})
+            out = os.path.join(tmp, "now", "verdict")
+            frv.main(["--to", out, "--to-topk", new, "--from", os.path.join(tmp, "r5")])
+            # e01.r4's window is e01.r1 on the new board; old c01 (a,b,c) is not on it, and the
+            # new c01 is a different window, so nothing lands there.
+            self.assertEqual(os.listdir(out), ["e01.r1__self.json"])
+            with open(os.path.join(out, "e01.r1__self.json")) as fh:
+                doc = json.load(fh)
+            self.assertEqual((doc["candidate_id"], doc["reused_candidate_id"]), ("e01.r1", "e01.r4"))
+
 
 if __name__ == "__main__":
     unittest.main()

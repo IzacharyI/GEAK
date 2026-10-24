@@ -1182,6 +1182,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
         const got = await fusionScriptOp(
           `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_reuse_verdicts.py --to ${EVAL_DIR}/verdict ` +
+          `--to-topk ${FUSION_INPUTS.FUSION_TOPK_JSON} ` +
           REUSE_UNIT_DIRS.map((d) => `--from ${d}`).join(' '),
           'fusion-reuse-verdicts', FUSION_REUSE_SCHEMA);
         reusedUnit = (got && got.reused && typeof got.reused === 'object') ? got.reused : {};
@@ -1189,14 +1190,16 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             `${REUSE_UNIT_DIRS.length} earlier round(s): ` +
             Object.entries(reusedUnit).map(([c, r]) => `${c} ${r.speedup}x`).join(', '));
       }
-      // A reused pass stands in for the validator: same verdict file, same kernel.
+      // A reused pass stands in for the validator: same verdict file, same kernel. One below the
+      // best-of-N retry bar is still re-authored (it stays retryable; --prefer-best keeps it
+      // unless an attempt beats it).
       const takeReused = (job) => {
         const r = reusedUnit[job.cid];
         if (!r) return false;
         job.result = { candidate_id: job.cid, verdict_path: `${EVAL_DIR}/verdict/${job.cid}__${r.side}.json`,
           parity: 'pass', isolated_speedup: Number(r.speedup), engaged: true,
           notes: `reused from ${r.from}` };
-        job.reused = true;
+        job.reused = Number(r.speedup) >= FUSION_UNIT_RETRY_BELOW;
         return true;
       };
       const singleJobs = unitJobs.filter((j) => !j.collective && !takeReused(j));
