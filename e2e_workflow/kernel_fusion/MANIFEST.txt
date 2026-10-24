@@ -109,3 +109,5 @@ e2e_workflow/scripts/vllm_phase_annotate.py
 e2e_workflow/scripts/vllm_semantic_capture.py
 interface/run_kf_e2e.py
 interface/test_run_kf_e2e.py
+e2e_workflow/scripts/fusion_serving_unit.py
+e2e_workflow/scripts/tests/test_fusion_serving_unit.py

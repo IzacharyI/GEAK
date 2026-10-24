@@ -129,6 +129,28 @@ const FUSION_UNIT_ALL_RUNGS = String(A.fusion_unit_all_rungs != null ? A.fusion_
 // waived top rung hid every rung below it: on DeepSeek-V4 all 8 entries were waived and nothing
 // reached apply-back although their 2-3-kernel rungs are ordinary single-card unit tests.
 const FUSION_UNIT_DESCEND = String(A.fusion_unit_descend != null ? A.fusion_unit_descend : 'true') === 'true';
+// Compact rungs (at most this many kernels) are unit-tested with rung 0 in the first wave instead
+// of waiting for ladder descent: they are the fusions most likely to be authored correctly, and
+// on DeepSeek-V4 the wide rungs ahead of them came back not isolable round after round.
+const FUSION_COMPACT_RUNG_MAX = Math.max(0, parseInt(
+  A.fusion_compact_rung_max != null ? A.fusion_compact_rung_max : 4, 10) || 0);
+// Best-of-N authoring. One authoring pass is a draw, not a property of the window: the same rung
+// (DeepSeek-V4 e01.r4) measured 1.50x in one round and 0.97x in another. A unit job whose verdict
+// is a parity pass below FUSION_UNIT_RETRY_BELOW, or that did not engage, is re-authored until it
+// has FUSION_UNIT_ATTEMPTS attempts, each in its own directory, and the fastest parity-passing
+// verdict is the one the gate reads (fusion_reuse_verdicts.py --prefer-best).
+const FUSION_UNIT_ATTEMPTS = Math.max(1, parseInt(
+  A.fusion_unit_attempts != null ? A.fusion_unit_attempts : 3, 10) || 1);
+const FUSION_UNIT_RETRY_BELOW = parseFloat(
+  A.fusion_unit_retry_below != null ? A.fusion_unit_retry_below : 1.2);
+// Serving-side unit test (fusion_serving_unit.py) for windows the single-card validator could not
+// isolate (paged-KV / compressed-KV / SWA state of the serving attention backend): the overlay is
+// authored on one card, then timed on the live stack at every decode sampling point against a base
+// server, with gsm8k on both. One window per Top-K entry with no passing rung, best expected gain
+// first, at most FUSION_SERVING_UNIT_MAX of them (each costs one ~15 min server session).
+const FUSION_SERVING_UNIT = String(A.fusion_serving_unit != null ? A.fusion_serving_unit : 'true') === 'true';
+const FUSION_SERVING_UNIT_MAX = Math.max(0, parseInt(
+  A.fusion_serving_unit_max != null ? A.fusion_serving_unit_max : 5, 10) || 0);
 const FUSION_BUDGET_S_ARG = A.fusion_budget_s != null ? parseInt(A.fusion_budget_s, 10) : null;
 const FUSION_BUDGET_FRAC = parseFloat(A.fusion_budget_frac != null ? A.fusion_budget_frac : 0.6);
 const FUSION_BUDGET_DEFAULT_S = 28800;
@@ -265,6 +287,15 @@ const FUSION_AUTHOR_SCHEMA = obj({
 const FUSION_REUSE_SCHEMA = obj({
   ok: { type: 'boolean' }, reused: { type: 'object', additionalProperties: true },
   reason: { type: 'string' },
+}, ['ok']);
+const FUSION_SERVING_AUTHOR_SCHEMA = obj({
+  candidate_id: { type: 'string' }, status: { type: 'string', enum: ['authored', 'blocked'] },
+  loader_dir: { type: 'string' }, banner_tag: { type: 'string' }, kernel_source: { type: 'string' },
+  parity: { type: 'string' }, reason: { type: 'string' },
+}, ['candidate_id', 'status']);
+const FUSION_SERVING_MEASURE_SCHEMA = obj({
+  ok: { type: 'boolean' }, base_ok: { type: 'boolean' },
+  verdicts: { type: 'object', additionalProperties: true }, reason: { type: 'string' },
 }, ['ok']);
 const FUSION_LADDERS_SCHEMA = obj({
   ok: { type: 'boolean' }, ladders: { type: 'object', additionalProperties: true },
@@ -625,6 +656,18 @@ function fusionEntryIsCollective(entry) {
   return /all_?reduce|cross_device_reduce|reduce_scatter|all_?gather|custom_ar|^collective/i.test(names);
 }
 
+// A window over an expert-parallel MoE kernel needs the whole EP group (cross-GPU IPC,
+// EP-partitioned experts): no single-card unit test can run it. Mirrors fusion_screen._EP_MOE_KERNEL,
+// which rejects such windows; this keeps an older board's rungs out of the unit waves.
+function fusionRungCrossesEp(entry) {
+  return ((entry && entry.kernel_names) || []).some((n) =>
+    /megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_/i.test(String(n)));
+}
+function fusionRungIsCompact(entry) {
+  const n = ((entry && entry.kernel_names) || []).length;
+  return n > 0 && n <= FUSION_COMPACT_RUNG_MAX && String((entry && entry.gate) || 'pass') === 'pass';
+}
+
 // Execution-list entries the apply-back loop calls. The budget counts only entries with a
 // 单侧 apply-back-eligible candidate: an entry the unit-side gate already blocked costs no
 // serving A/B, so it must not take a slot from a later passing entry. Ineligible entries
@@ -633,6 +676,9 @@ function fusionEntryIsCollective(entry) {
 // fusion_applyback_harness._budget_cutoff_rank.
 // Each execution-list entry as the widest rung that passed its unit test: the entry itself when
 // rung 0 is eligible, else its first eligible narrower rung, else the entry unchanged.
+// The ladder lists compact rungs first (fusion_screen._compact_first), so "first eligible" would
+// prefer a 2-kernel window over a passing 10-kernel one: take the eligible rung with the highest
+// expected gain, ladder order breaking ties.
 function fusionApplyRungs(list, eligibleIds) {
   if (!Array.isArray(eligibleIds)) return list.slice();
   const eligible = new Set(eligibleIds.map(String));
@@ -640,7 +686,10 @@ function fusionApplyRungs(list, eligibleIds) {
     ? e.candidate_ids : [e.candidate_id || e.exec_id]).some((cid) => eligible.has(String(cid)));
   return list.map((entry) => {
     if (!entry || ok(entry)) return entry;
-    return fusionAltLadder(entry).slice(1).find(ok) || entry;
+    const passing = fusionAltLadder(entry).slice(1).filter(ok);
+    if (!passing.length) return entry;
+    const gain = (e) => { const g = fusionExpectedGainPct(e); return g == null ? -1 : g; };
+    return passing.reduce((best, e) => (gain(e) > gain(best) ? e : best), passing[0]);
   });
 }
 function fusionApplyBudgetEntries(list, eligibleIds, budget) {
@@ -1048,17 +1097,43 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       };
       const unitJobs = [];
       const seenCids = new Set();
+      const epSkipped = [];   // [{cid, kind}] windows over the EP MoE: no single-card unit test
       const addJob = (entry, cid, kind) => {
         if (!cid || seenCids.has(String(cid))) return;
         seenCids.add(String(cid));
+        if (fusionRungCrossesEp(entry)) { epSkipped.push({ cid: String(cid), kind }); return; }
         unitJobs.push({ entry, cid: String(cid), kind, collective: fusionEntryIsCollective(entry),
           result: null, why: '' });
       };
+      // The screen agent's echo of execution_list may drop alt_ladder (run 7 did); the first wave
+      // needs every entry's compact rungs, so read the missing ladders back from FUSION_TOPK_JSON.
+      const recoverLadders = async (entries) => {
+        const noLadder = entries.filter((e) => e && e.exec_id &&
+          !(Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1));
+        if (!noLadder.length) return;
+        const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
+        const got = await fusionScriptOp(
+          `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_ladders.py ${FUSION_INPUTS.FUSION_TOPK_JSON} ` +
+          noLadder.map((e) => `--exec ${e.exec_id}`).join(' '),
+          'fusion-ladders', FUSION_LADDERS_SCHEMA);
+        const ladders = (got && got.ladders && typeof got.ladders === 'object') ? got.ladders : {};
+        for (const entry of noLadder) {
+          if (Array.isArray(ladders[entry.exec_id]) && ladders[entry.exec_id].length > 1) {
+            entry.alt_ladder = ladders[entry.exec_id];
+          }
+        }
+        log(`KernelFusion Phase 3.0: recovered the ladders of ` +
+            `${noLadder.filter((e) => Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1).length}/` +
+            `${noLadder.length} entr(ies) the screen echo dropped, from FUSION_TOPK_JSON.`);
+      };
+      if (FUSION_COMPACT_RUNG_MAX > 0 || FUSION_UNIT_ALL_RUNGS) await recoverLadders(fusionExecutionList);
       let onDemandRungs = 0;
       for (const entry of fusionExecutionList) {
         if (!entry || !entry.exec_id) continue;
         for (const rungEntry of fusionAltLadder(entry)) {
-          if (Number(rungEntry.alt_rung) > 0 && !FUSION_UNIT_ALL_RUNGS) { onDemandRungs += 1; continue; }
+          if (Number(rungEntry.alt_rung) > 0 && !FUSION_UNIT_ALL_RUNGS && !fusionRungIsCompact(rungEntry)) {
+            onDemandRungs += 1; continue;
+          }
           const cids = (Array.isArray(rungEntry.candidate_ids) && rungEntry.candidate_ids.length)
             ? rungEntry.candidate_ids : [rungEntry.candidate_id || rungEntry.exec_id];
           for (const cid of cids) addJob(rungEntry, cid, Number(rungEntry.alt_rung) > 0 ? 'alt' : 'topk');
@@ -1081,6 +1156,13 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           (job.kind === 'alt' ? `This is rung ${job.entry.alt_rung} of alternative group ` +
             `${job.entry.alt_group || job.entry.exec_id} (UNIT_JOB_KIND=alt): unit-test this rung's window. ` : '') +
           (job.kind === 'pool' ? 'This is a candidate_pool item (UNIT_JOB_KIND=pool). ' : '') +
+          (extraInputs && extraInputs.AUTHOR_ATTEMPT
+            ? `AUTHORING ATTEMPT ${extraInputs.AUTHOR_ATTEMPT} of ${extraInputs.AUTHOR_ATTEMPTS}: PRIOR_VERDICT is an ` +
+              'earlier attempt at this same candidate (a parity pass that was too slow, or a kernel that did not ' +
+              'engage). Read it, then author an INDEPENDENT design that addresses why it was slow (different fusion ' +
+              'boundary, tiling, launch configuration, or the existing kernel side) -- do not resubmit that kernel. ' +
+              'Write ONLY under the VERDICT_DIR and KERNEL_DIR of this call; the workflow keeps the fastest attempt. '
+            : '') +
           'Return FUSION_UNIT_SCHEMA.' + (extraInputs && extraInputs.GPU_LEASE_ID
             ? fusionLeaseRules(extraInputs.GPU_LEASE_ID, job.collective) : ''), {
             EVAL_DIR, MODEL_PATH, MODEL_NAME, EXEC_ID: job.entry.exec_id, CANDIDATE_ID: job.cid,
@@ -1114,13 +1196,16 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         job.result = { candidate_id: job.cid, verdict_path: `${EVAL_DIR}/verdict/${job.cid}__${r.side}.json`,
           parity: 'pass', isolated_speedup: Number(r.speedup), engaged: true,
           notes: `reused from ${r.from}` };
+        job.reused = true;
         return true;
       };
       const singleJobs = unitJobs.filter((j) => !j.collective && !takeReused(j));
       const collectiveJobs = unitJobs.filter((j) => j.collective && !j.result);
       const kinds = (k) => unitJobs.filter((j) => j.kind === k).length;
       log(`KernelFusion Phase 3.0: ${unitJobs.length} unit test(s) over ${fusionExecutionList.length} ` +
-          `Top-K entr(ies) (${kinds('topk')} Top-K, ${kinds('alt')} alternative rung(s), ${kinds('pool')} pool` +
+          `Top-K entr(ies) (${kinds('topk')} Top-K, ${kinds('alt')} alternative rung(s) incl. compact ones, ${kinds('pool')} pool` +
+          (epSkipped.length ? `; ${epSkipped.length} window(s) over the EP MoE not unit-testable: ` +
+            epSkipped.map((x) => x.cid).join(', ') : '') +
           (onDemandRungs ? `; ${onDemandRungs} deeper alternative rung(s) not unit-tested (args.fusion_unit_all_rungs=true tests them)` : '') +
           '): ' +
           `${singleJobs.length} single-GPU in parallel on {${GPU_LIST.join(',')}}, ` +
@@ -1146,30 +1231,13 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       }
       if (FUSION_UNIT_DESCEND && !FUSION_UNIT_ALL_RUNGS && stageFits('unitside')) {
         const passed = (job) => fusionUnitStatusFromResult(job.result) === 'pass';
+        // Stuck = rung 0 did not pass (or could not be tested). A passing compact rung does not
+        // end the descent: a wider rung of the same slot may be worth several times more.
         const isStuck = (entry) => {
           const top = unitJobs.filter((j) => j.kind === 'topk' && j.entry.exec_id === entry.exec_id);
-          return top.length && !top.some(passed);
+          return !top.some(passed);
         };
-        // The screen agent's echo of execution_list may drop alt_ladder (run 7 did, and descent
-        // tested nothing); read the ladders of the stuck entries back from FUSION_TOPK_JSON.
-        const noLadder = fusionExecutionList.filter((e) => e && e.exec_id && isStuck(e) &&
-          !(Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1));
-        if (noLadder.length) {
-          const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
-          const got = await fusionScriptOp(
-            `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_ladders.py ${FUSION_INPUTS.FUSION_TOPK_JSON} ` +
-            noLadder.map((e) => `--exec ${e.exec_id}`).join(' '),
-            'fusion-ladders', FUSION_LADDERS_SCHEMA);
-          const ladders = (got && got.ladders && typeof got.ladders === 'object') ? got.ladders : {};
-          for (const entry of noLadder) {
-            if (Array.isArray(ladders[entry.exec_id]) && ladders[entry.exec_id].length > 1) {
-              entry.alt_ladder = ladders[entry.exec_id];
-            }
-          }
-          log(`KernelFusion Phase 3.0: recovered the ladders of ` +
-              `${noLadder.filter((e) => Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1).length}/` +
-              `${noLadder.length} entr(ies) the screen echo dropped, from FUSION_TOPK_JSON.`);
-        }
+        await recoverLadders(fusionExecutionList.filter((e) => e && e.exec_id && isStuck(e)));
         const before = unitJobs.length;
         const stuck = [];
         for (const entry of fusionExecutionList) {
@@ -1193,12 +1261,147 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           await fusionLeaseSettle('*', 'Phase 3.0 ladder-descent barrier');
         }
       }
+      // ---- best-of-N authoring: re-author the slow / non-engaging parity results ----
+      if (FUSION_UNIT_ATTEMPTS > 1 && stageFits('unitside')) {
+        const retryable = unitJobs.filter((j) => {
+          if (j.collective || j.reused || !j.result) return false;
+          const parity = String(j.result.parity || '').toLowerCase();
+          const sp = Number(j.result.isolated_speedup);
+          return parity === 'not_engaged' ||
+            (parity === 'pass' && (j.result.engaged === false || !Number.isFinite(sp) || sp < FUSION_UNIT_RETRY_BELOW));
+        });
+        const attempts = [];
+        for (const job of retryable) {
+          for (let k = 2; k <= FUSION_UNIT_ATTEMPTS; k += 1) attempts.push({ job, k });
+        }
+        log(`KernelFusion Phase 3.0 best-of-${FUSION_UNIT_ATTEMPTS}: ${retryable.length} candidate(s) passed parity ` +
+            `below ${FUSION_UNIT_RETRY_BELOW}x or did not engage (${retryable.map((j) => j.cid).join(', ') || '-'}); ` +
+            `${attempts.length} more authoring attempt(s).`);
+        if (attempts.length) {
+          const UNIT_ISO3 = makeSem(GPU_LIST);
+          await parallel(attempts.map((a) => async () => UNIT_ISO3.with(1, async (cards) => {
+            const dir = `${EVAL_DIR}/fusion/attempts/a${a.k}`;
+            await validateUnit(a.job, cards.join(','), {
+              ...fusionLeaseInputs(`unit_${a.job.cid}_a${a.k}`),
+              VERDICT_DIR: `${dir}/verdict`, KERNEL_DIR: `${dir}/unitside/${a.job.cid}`,
+              AUTHOR_ATTEMPT: a.k, AUTHOR_ATTEMPTS: FUSION_UNIT_ATTEMPTS,
+              PRIOR_VERDICT: a.job.result.verdict_path || '',
+            });
+          })));
+          await fusionLeaseSettle('*', 'Phase 3.0 best-of-N barrier');
+          const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
+          const dirs = [];
+          for (let k = 2; k <= FUSION_UNIT_ATTEMPTS; k += 1) dirs.push(`${EVAL_DIR}/fusion/attempts/a${k}`);
+          const got = await fusionScriptOp(
+            `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_reuse_verdicts.py --prefer-best --to ${EVAL_DIR}/verdict ` +
+            dirs.map((d) => `--from ${d}`).join(' '), 'fusion-best-of-n', FUSION_REUSE_SCHEMA);
+          const better = (got && got.reused && typeof got.reused === 'object') ? got.reused : {};
+          for (const job of retryable) {
+            const r = better[job.cid];
+            if (!r) continue;
+            job.result = { candidate_id: job.cid, verdict_path: `${EVAL_DIR}/verdict/${job.cid}__${r.side}.json`,
+              parity: 'pass', isolated_speedup: Number(r.speedup), engaged: true,
+              notes: `best of ${FUSION_UNIT_ATTEMPTS} authoring attempts: ${r.from}` };
+          }
+          log(`KernelFusion Phase 3.0 best-of-${FUSION_UNIT_ATTEMPTS}: a later attempt beat the first for ` +
+              `${Object.keys(better).length} candidate(s): ` +
+              Object.entries(better).map(([c, r]) => `${c} ${r.speedup}x`).join(', '));
+        }
+      }
+
+      // ---- serving-side unit test for windows a single card cannot isolate ----
+      if (FUSION_SERVING_UNIT && FUSION_SERVING_UNIT_MAX > 0 && fusionObservedWorkload && stageFits('unitside')) {
+        const passedJob = (j) => fusionUnitStatusFromResult(j.result) === 'pass';
+        const picks = [];
+        for (const entry of fusionOrderByExpectedGain(fusionExecutionList)) {
+          if (picks.length >= FUSION_SERVING_UNIT_MAX) break;
+          if (!entry || !entry.exec_id) continue;
+          const mine = unitJobs.filter((j) => j.entry.exec_id === entry.exec_id && !j.collective);
+          if (mine.some(passedJob)) continue;
+          // The validator answered (not isolable / not engaged / unmeasured) but nothing passed.
+          const tried = mine.filter((j) => j.result);
+          if (!tried.length) continue;
+          const gain = (j) => { const g = fusionExpectedGainPct(j.entry); return g == null ? -1 : g; };
+          picks.push(tried.reduce((best, j) => (gain(j) > gain(best) ? j : best), tried[0]));
+        }
+        log(`KernelFusion Phase 3.0 serving-side unit test: ${picks.length} window(s) with no passing rung ` +
+            `(${picks.map((j) => j.cid).join(', ') || '-'}).`);
+        if (picks.length) {
+          const tagOf = (cid) => `su_${String(cid).replace(/[^A-Za-z0-9]+/g, '_')}`;
+          const UNIT_ISO4 = makeSem(GPU_LIST);
+          const authored = [];
+          await parallel(picks.map((job) => async () => UNIT_ISO4.with(1, async (cards) => {
+            const dir = `${EVAL_DIR}/fusion/serving_unit/${job.cid}`;
+            const res = await safeAgent(
+              roleAgent('fusion_unit_validator', 'serving_author',
+                'Author the serving overlay for CANDIDATE_ID of TARGET_EXECUTION so it can be unit-tested ON THE ' +
+                'LIVE STACK (the single-card validator could not isolate it: PRIOR_VERDICT says why and may hold a ' +
+                'seed kernel under its KERNEL_DIR). Follow PHASE=serving_author in your role: the fused kernel under ' +
+                'KERNEL_DIR, a lazy overlay that patches the window seam in the installed serving code and prints the ' +
+                'BANNER_TAG banner, a combined-loader dir LOADER_DIR, and a kernel-level parity self-test on the card ' +
+                'in GPU_IDS. Never start a server. Return FUSION_SERVING_AUTHOR_SCHEMA.' +
+                fusionLeaseRules(`suauthor_${job.cid}`, false), {
+                  EVAL_DIR, MODEL_PATH, MODEL_NAME, EXEC_ID: job.entry.exec_id, CANDIDATE_ID: job.cid,
+                  TARGET_EXECUTION: job.entry, FUSION_TOPK_JSON: FUSION_INPUTS.FUSION_TOPK_JSON,
+                  SEMANTIC_TABLE_JSON: semanticTableJson, PRIOR_VERDICT: job.result.verdict_path || '',
+                  KERNEL_DIR: `${dir}/kernel`, LOADER_DIR: `${dir}/loader`, BANNER_TAG: tagOf(job.cid),
+                  SERVING_BACKEND: BACKEND, SERVING_FLAGS: curFlags || '', GPU_IDS: cards.join(','),
+                  ...fusionLeaseInputs(`suauthor_${job.cid}`), ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
+                }),
+              { phase: 'KernelFusion', label: `fusion_serving_author:${job.cid}`,
+                schema: FUSION_SERVING_AUTHOR_SCHEMA }, 1);
+            if (res && res.status === 'authored' && res.loader_dir && res.kernel_source) {
+              authored.push({ job, loader: res.loader_dir, banner: res.banner_tag || tagOf(job.cid),
+                kernel: res.kernel_source });
+            } else {
+              log(`KernelFusion serving-side unit test: ${job.cid} not authored: ${(res && res.reason) || 'no result'}`);
+            }
+          })));
+          await fusionLeaseSettle('*', 'Phase 3.0 serving-author barrier');
+          if (authored.length) {
+            const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
+            const cmd = `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_serving_unit.py batch ` +
+              `--root ${EVAL_DIR}/fusion/serving_unit --observed-workload ${fusionObservedWorkload} ` +
+              `--tp ${SERVING_TP} --verdict-dir ${EVAL_DIR}/verdict ` +
+              authored.map((a) => `--cand ${a.job.cid}::${a.loader}::${a.banner}::${a.kernel}`).join(' ');
+            const leased = await withFusionServingLease('serving_unit', (leaseIn) => safeAgent(
+              roleAgent('fusion_unit_validator', 'serving_measure',
+                'Run SERVING_UNIT_CMD on the serving GPUs (PHASE=serving_measure in your role): export the serving ' +
+                'config (BACKEND, MODEL, TP, GPU, EXTRA_SERVER_ARGS=SERVING_FLAGS, EXTRA_ENV=SERVING_ENV) and launch ' +
+                'it DETACHED, then wait for it with fusion_leg_wait.sh until it exits (one base session plus one ' +
+                'session per candidate, ~15 min each). Return its final JSON line as FUSION_SERVING_MEASURE_SCHEMA.' +
+                fusionLeaseRules('serving_unit', true), {
+                  EVAL_DIR, SERVING_UNIT_CMD: cmd, SERVING_UNIT_ROOT: `${EVAL_DIR}/fusion/serving_unit`,
+                  BACKEND, MODEL: MODEL_PATH, TP: SERVING_TP, GPU: SERVING_GPU,
+                  SERVING_FLAGS: curFlags || '', SERVING_ENV: curEnv || '',
+                  ...leaseIn, ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
+                }),
+              { phase: 'KernelFusion', label: 'fusion_serving_measure', schema: FUSION_SERVING_MEASURE_SCHEMA }, 1));
+            const measured = (leased.value && leased.value.verdicts) || {};
+            for (const a of authored) {
+              const v = measured[a.job.cid];
+              if (!v) continue;
+              // The serving verdict stands next to the single-card one; the harness keeps the best side.
+              a.job.servingResult = { candidate_id: a.job.cid, verdict_path: v.verdict_path,
+                parity: v.parity, isolated_speedup: Number(v.speedup), engaged: !!v.engaged };
+              if (fusionUnitStatusFromResult(a.job.servingResult) === 'pass') a.job.result = a.job.servingResult;
+            }
+            log(`KernelFusion Phase 3.0 serving-side unit test: ` + (leased.value
+              ? authored.map((a) => `${a.job.cid} ${(measured[a.job.cid] || {}).parity || 'no verdict'} ` +
+                `${(measured[a.job.cid] || {}).speedup || ''}`).join(', ')
+              : `not run (${leased.leaseBusy ? `serving lease busy: ${leased.reason}` : 'measure agent failed'})`));
+          }
+        }
+      }
+
       for (const job of unitJobs) {
         if (job.kind !== 'topk' && job.result) fusionExtraUnitResults[job.cid] = job.result;
       }
       // Only Top-K candidates are the harness's coverage denominator; a rung or pool item that
       // returned nothing is simply untested (it cannot land without a unit pass).
-      const neverMeasured = unitJobs.filter((j) => !j.result && j.kind === 'topk').map((j) => `${j.cid}=${j.why}`);
+      const neverMeasured = unitJobs.filter((j) => !j.result && j.kind === 'topk').map((j) => `${j.cid}=${j.why}`)
+        .concat(epSkipped.filter((x) => x.kind === 'topk').map((x) =>
+          `${x.cid}=window over the expert-parallel MoE (megamoe/ep_combine): needs the whole EP group, no single-card unit test`));
       const aggregateOnce = (extra) => safeAgent(
         roleAgent('fusion_unit_validator', 'aggregate',
           (extra || '') +

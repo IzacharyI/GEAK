@@ -210,6 +210,75 @@ def _load(path):
     with open(path) as fh:
         return json.load(fh)
 
+# Serving-side unit test (fusion_serving_unit.py): a window whose members live in the serving
+# attention backend's KV state cannot be rebuilt on one card, so its overlay is timed on the live
+# stack instead -- base server vs overlay server, every decode sampling point, gsm8k on both.
+# `weighted_cases` then carry the per-step device time OUTSIDE the EP MoE (the window's share of
+# a step), so the weighted ratio is a step-level speedup: a fusion worth 1% of the step reads
+# 1.01x. The gate is that ratio above SERVING_STEP_MIN_GAIN (the cross-session spread of the
+# non-EP step time is ~0.4% between ranks of one session), with gsm8k and the overlay banner
+# proving correctness and engagement. Shape provenance and ref_ops do not apply: the shapes are
+# the served ones by construction and the reference is the unmodified served step.
+SERVING_SCOPE = "serving_step"
+SERVING_STEP_MIN_GAIN = 0.004
+
+
+def _serving_step_row(cid, candidate, verdict, vp, observed_workload, errors):
+    """The result row of one serving-step verdict, or None (error recorded)."""
+    unit = verdict.get("serving_unit") or {}
+    sides = [unit.get("base_dir"), unit.get("cand_dir")]
+    if not all(d and os.path.isfile(os.path.join(str(d), "side.json")) for d in sides):
+        errors.append("%s serving_step verdict names no measured base/cand side (serving_unit."
+                      "base_dir / cand_dir with side.json)" % vp)
+        return None
+    parity = str(verdict.get("parity")).lower()
+    engaged = verdict.get("engaged") is True
+    detail, speedup = None, None
+    if parity == "pass" and engaged:
+        if observed_workload:
+            speedup, detail, err = observed_weighted_speedup(
+                verdict, candidate.get("phase"), observed_workload)
+            if err:
+                errors.append("%s %s" % (vp, err))
+                return None
+        else:
+            try:
+                speedup = float(verdict.get("ref_ms")) / float(verdict.get("cand_ms"))
+            except (TypeError, ValueError, ZeroDivisionError):
+                errors.append("%s serving_step verdict has no usable ref_ms/cand_ms" % vp)
+                return None
+    floor = 1.0 + SERVING_STEP_MIN_GAIN
+    if parity != "pass":
+        status, correctness, perf, kind = "fail", "fail", "undefined", (
+            "not_engaged" if parity == "not_engaged" else "functional")
+        reason = "serving step: parity %s (%s)" % (parity, verdict.get("notes") or "")
+        if parity in ("not_engaged", "not_measured"):
+            status = "blocked"
+    elif not engaged:
+        status, correctness, perf, kind = "blocked", "not_engaged", "undefined", "not_engaged"
+        reason = "serving step: the overlay banner did not engage on every rank"
+    elif speedup <= floor:
+        status, correctness, perf, kind = "fail", "pass", "no_win", "performance"
+        reason = ("PERF failure (功能正确): serving-step weighted speedup %.4f <= %.4f "
+                  "(non-EP step device time, every decode sampling point)" % (speedup, floor))
+    else:
+        status, correctness, perf, kind = "pass", "pass", "win", "none"
+        reason = ("serving step: gsm8k within noise, overlay engaged, non-EP step time "
+                  "weighted speedup %.4fx" % speedup)
+    valid = speedup is not None and parity == "pass" and engaged
+    return _row(cid, candidate, status, reason,
+                side="serving", kernel_source=verdict.get("kernel_source"),
+                correctness_status=correctness, perf_status=perf, failure_kind=kind,
+                parity=parity, isolated_speedup=round(speedup, 4) if valid else None,
+                isolated_speedup_raw=verdict.get("isolated_speedup"), speedup_valid=valid,
+                speedup_basis="serving_step_weighted",
+                weighted_speedup=round(speedup, 4) if valid else None, weighted_cases=detail,
+                ref_ms=verdict.get("ref_ms"), cand_ms=verdict.get("cand_ms"), engaged=engaged,
+                tested_shape=verdict.get("tested_shape"), fused_fn=verdict.get("fused_fn"),
+                tp=verdict.get("tp"), tol=verdict.get("tol"), ref_ops=[],
+                outside_work_removed=[], parity_diagnosis=verdict.get(DIAGNOSIS_FIELD),
+                measure_scope=SERVING_SCOPE)
+
 
 def _load_verdicts(path):
     """A directory of *.json (one verdict each) OR a combined json ({verdicts:[...]}
@@ -793,6 +862,11 @@ def validate(candidates_path, verdicts_path, min_speedup=1.0,
                 "%s fused_fn '%s' is not one of the candidate's existing_apis %s"
                 % (vp, verdict.get("fused_fn"),
                    [a.get("name") for a in candidate.get("existing_apis", [])]))
+            continue
+        if verdict.get("measure_scope") == SERVING_SCOPE:
+            row = _serving_step_row(cid, candidate, verdict, vp, observed_workload, errors)
+            if row:
+                results.append(row)
             continue
         # 4. shape provenance — the microbench must have tested the shape the candidate
         #    actually ran on (a pass on a different shape is meaningless). Two cases:

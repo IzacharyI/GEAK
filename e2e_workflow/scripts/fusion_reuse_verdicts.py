@@ -9,7 +9,11 @@ candidate id and side, the earlier verdict with the highest speedup among those 
 pass and speedup > 1 (its kernel stays where it was authored; the verdict points there).
 Candidates with no such verdict are left for this round's validators.
 
-    fusion_reuse_verdicts.py --to VERDICT_DIR --from EVAL_DIR [--from EVAL_DIR ...]
+    fusion_reuse_verdicts.py --to VERDICT_DIR --from EVAL_DIR [--from EVAL_DIR ...] [--prefer-best]
+
+--prefer-best is the best-of-N step inside one round: the --from dirs are this round's extra
+authoring attempts, and an attempt replaces this round's own verdict when it is faster (or the
+own verdict is not a parity pass). The replaced verdict is kept next to it as `<name>.json.prev`.
 
 Prints ONE JSON line: {"ok": true, "reused": {cid: {"side", "speedup", "from"}}}.
 Only earlier rounds of the SAME Top-K should be passed (same candidate ids for the same
@@ -65,13 +69,24 @@ def main(argv=None):
     ap.add_argument("--to", required=True, help="this round's VERDICT_DIR")
     ap.add_argument("--from", dest="sources", action="append", default=[],
                     help="an earlier eval dir of the same deployment and Top-K")
+    ap.add_argument("--prefer-best", action="store_true",
+                    help="replace this round's verdict when a --from verdict is faster")
     args = ap.parse_args(argv)
     os.makedirs(args.to, exist_ok=True)
     reused = {}
     for (cid, side), (speedup, path) in sorted(candidates(args.sources).items()):
         target = os.path.join(args.to, "%s__%s.json" % (cid, side))
         if os.path.exists(target):
-            continue  # this round already has its own verdict for it
+            if not args.prefer_best:
+                continue  # this round already has its own verdict for it
+            try:
+                with open(target) as fh:
+                    own = json.load(fh)
+            except (OSError, ValueError):
+                own = {}
+            if str(own.get("parity", "")).lower() == "pass" and _speedup(own) >= speedup:
+                continue
+            shutil.copyfile(target, target + ".prev")
         with open(path) as fh:
             doc = json.load(fh)
         doc["reused_from"] = os.path.abspath(path)

@@ -182,12 +182,15 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
     def test_a_waived_top_rung_descends_to_the_narrower_rungs(self):
         out = self.run_stage("descend")
         labels = out["labels"]
-        # Wave 1: rung 0 of each entry. Neither passes, so the ladder below e1 is tested.
+        # Wave 1: rung 0 of each entry plus the compact (2-kernel) rung e1.r1. Rung 0 of e1 does
+        # not pass, so the wider rung e1.r2 below it is tested in the descent wave.
         self.assertIn("fusion_unit_validator:e1:c1", labels)
         self.assertIn("fusion_unit_validator:e1:e1.r1", labels)
         self.assertIn("fusion_unit_validator:e1:e1.r2", labels)
+        self.assertLess(labels.index("fusion_unit_validator:e1:e1.r1"),
+                        labels.index("fusion_unit_validator:e2:c2"))
         self.assertLess(labels.index("fusion_unit_validator:e2:c2"),
-                        labels.index("fusion_unit_validator:e1:e1.r1"))
+                        labels.index("fusion_unit_validator:e1:e1.r2"))
         self.assertTrue(any("ladder descent: 2 Top-K entr" in line for line in out["logs"]))
         # Apply-back authors the rung that passed, under its slot.
         self.assertIn("fusion_integrator:author_one:e1", labels)
@@ -218,6 +221,46 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         self.assertIn("fusion_unit_validator:e2:c2", labels)
         self.assertTrue(any("reused 1 passing verdict" in line for line in out["logs"]))
         self.assertIn("fusion_integrator:author_one:e1", labels)
+
+    def test_slow_parity_passes_are_reauthored_and_the_fastest_kept(self):
+        out = self.run_stage("best_of_n")
+        labels = out["labels"]
+        # c1 and c2 pass parity at 1.1x (< 1.2x): two more attempts each, own dirs.
+        self.assertEqual(labels.count("fusion_unit_validator:e1:c1"), 3)
+        self.assertEqual(labels.count("fusion_unit_validator:e2:c2"), 3)
+        attempt = [c for c in out["prompts"].values() if "AUTHORING ATTEMPT" in c]
+        self.assertTrue(attempt)
+        pick = out["prompts"]["fusion-best-of-n"]
+        self.assertIn("fusion_reuse_verdicts.py --prefer-best --to /e/verdict", pick)
+        self.assertIn("--from /e/fusion/attempts/a2 --from /e/fusion/attempts/a3", pick)
+        self.assertTrue(any("beat the first for 1 candidate(s): c1 1.4x" in line for line in out["logs"]))
+
+    def test_a_window_over_the_ep_moe_is_not_unit_tested(self):
+        out = self.run_stage("ep")
+        labels = out["labels"]
+        self.assertNotIn("fusion_unit_validator:e1:c1", labels)
+        self.assertNotIn("fusion_unit_validator:e1:e1.r2", labels)
+        self.assertIn("fusion_unit_validator:e1:e1.r1", labels)
+        agg = out["prompts"]["fusion_unit_validator:aggregate"]
+        self.assertIn("c1=window over the expert-parallel MoE", agg)
+
+    def test_unisolable_windows_get_a_serving_side_unit_test(self):
+        out = self.run_stage("descend")
+        labels = out["labels"]
+        # e1 has a passing rung; e2's only window came back unmeasured -> serving test.
+        self.assertIn("fusion_serving_author:c2", labels)
+        self.assertNotIn("fusion_serving_author:c1", labels)
+        measure = out["prompts"]["fusion_serving_measure"]
+        self.assertIn("fusion_serving_unit.py batch --root /e/fusion/serving_unit", measure)
+        self.assertIn("--cand c2::/e/su/c2/loader::su_c2::/e/su/c2/k.py", measure)
+        self.assertLess(labels.index("fusion_serving_measure"),
+                        labels.index("fusion_unit_validator:aggregate"))
+        self.assertTrue(any("c2 pass 1.01" in line for line in out["logs"]))
+
+    def test_apply_back_takes_the_passing_rung_with_the_highest_expected_gain(self):
+        out = self.run_stage("apply_gain")
+        author = out["prompts"]["fusion_integrator:author_one:e1"]
+        self.assertIn('"candidate_ids":["e1.r2"]', author.replace(" ", ""))
 
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")

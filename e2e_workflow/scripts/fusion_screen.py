@@ -167,7 +167,7 @@ FORCED_PRIOR_EXTRA = 4
 NOISE_BAND_PCT = 1.0
 PRIOR_MATCH_MIN = 0.5
 NEGATIVE_PRIOR_FACTOR = 3.0
-LADDER_MAX = 6
+LADDER_MAX = 8
 EXISTING_DIFFICULTY = 1.0
 SIBLING_DIFFICULTY = 2.0
 SEAM_REWRITE_DIFFICULTY = 2.0
@@ -257,6 +257,13 @@ _ELEMENTWISE_NAMES = ("elementwise*", "vectorized_elementwise*", "unrolled_eleme
 _LAYOUT_NAMES = ("split", "reshape", "cat", "concat", "transpose", "permute",
                  "shuffle", "layout")
 _LAYER_PREFIX = re.compile(r"^model\.layers\.\d+\.?")
+# Expert-parallel MoE dispatch / expert / combine kernels. They run over the whole EP group
+# (cross-GPU IPC, EP-partitioned expert weights), so no window that contains one can be
+# unit-tested or authored on a single card (DeepSeek-V4 megamoe runs 5-8: every such window
+# came back "not isolable"). Windows stop at this boundary; the narrower windows on either
+# side of it are what gets screened.
+_EP_MOE_KERNEL = re.compile(r"megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_",
+                            re.IGNORECASE)
 
 
 # ---------------------------------------------------------------- table rows
@@ -1612,6 +1619,8 @@ def _record(kind, members, run_index, classes, kernels, weights, ctx):
                 invalid = "too_long_outside_one_seam"
     elif kind in FORWARD_KINDS and any(index > 0 for index in barriers):
         invalid = "barrier_consumer"
+    if not invalid and any(_EP_MOE_KERNEL.search(_name(member)) for member in members):
+        invalid = "crosses_ep_moe"
     unknown = [_name(member) for member in compute if _is_unknown(member)]
     consumers = compute[1:] if kind in FORWARD_KINDS else compute
     member_d = max([_member_difficulty(member, classes) for member in consumers] or [1.0])
@@ -2155,6 +2164,16 @@ def _attach_ladder(group_id, ladder, also_in=None, conflicts=None):
     head["alt_group_size"] = len(ladder)
 
 
+def _compact_first(rungs):
+    """Compact rungs (at most SERIAL_MAX kernels) ahead of the wider ones, each part keeping
+    its S/D order. A compact window is the fusion most likely to be authored correctly and to
+    pass a single-card unit test (DeepSeek-V4 runs 5-8: every passing rung had <= 11 kernels
+    and the wide ones came back not isolable); behind six wide rungs LADDER_MAX cut them off
+    and nothing ever tested them."""
+    compact = [e for e in rungs if len(e.get("kernel_names") or ()) <= SERIAL_MAX]
+    return compact + [e for e in rungs if len(e.get("kernel_names") or ()) > SERIAL_MAX]
+
+
 def build_alt_groups(entries, anchors=()):
     """Alternative groups (section 7.2): entries that eliminate the same kernel
     instance compete for one Top-K slot.
@@ -2189,7 +2208,8 @@ def build_alt_groups(entries, anchors=()):
     groups = []
     for head in heads:
         elim = _entry_rows(head)
-        groups.append([head] + [e for e in ordered if id(e) not in head_ids and _entry_rows(e) & elim])
+        groups.append([head] + _compact_first(
+            [e for e in ordered if id(e) not in head_ids and _entry_rows(e) & elim]))
     ids = ["g%02d" % index for index in range(1, len(groups) + 1)]
     also_in, conflicts = {}, {}
     for group_id, ladder in zip(ids, groups):

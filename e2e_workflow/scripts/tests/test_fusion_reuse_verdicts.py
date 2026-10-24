@@ -44,6 +44,27 @@ class ReuseVerdictsTest(unittest.TestCase):
             with open(os.path.join(tmp, "now", "verdict", "c23__self.json")) as fh:
                 self.assertEqual(json.load(fh)["isolated_speedup"], 1.01)
 
+    def test_prefer_best_keeps_the_fastest_attempt_of_this_round(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _verdict(tmp, "now", "e01.r4__self.json", candidate_id="e01.r4", parity="pass", isolated_speedup=0.97)
+            _verdict(tmp, "now", "c23__self.json", candidate_id="c23", parity="pass", isolated_speedup=1.30)
+            _verdict(tmp, "now", "e04.r3__self.json", candidate_id="e04.r3", parity="not_engaged", isolated_speedup=0)
+            _verdict(tmp, "a2", "e01.r4__self.json", candidate_id="e01.r4", parity="pass", isolated_speedup=1.22)
+            _verdict(tmp, "a3", "e01.r4__self.json", candidate_id="e01.r4", parity="pass", isolated_speedup=1.48)
+            _verdict(tmp, "a2", "c23__self.json", candidate_id="c23", parity="pass", isolated_speedup=1.10)
+            _verdict(tmp, "a3", "e04.r3__self.json", candidate_id="e04.r3", parity="pass", isolated_speedup=1.21)
+            out = os.path.join(tmp, "now", "verdict")
+            frv.main(["--prefer-best", "--to", out, "--from", os.path.join(tmp, "a2"),
+                      "--from", os.path.join(tmp, "a3")])
+            speed = {}
+            for name in ("e01.r4", "c23", "e04.r3"):
+                with open(os.path.join(out, name + "__self.json")) as fh:
+                    speed[name] = json.load(fh)["isolated_speedup"]
+            self.assertEqual(speed, {"e01.r4": 1.48, "c23": 1.30, "e04.r3": 1.21})
+            # the replaced first attempt is kept, but not as a verdict the harness would read
+            self.assertTrue(os.path.isfile(os.path.join(out, "e01.r4__self.json.prev")))
+            self.assertFalse(os.path.exists(os.path.join(out, "c23__self.json.prev")))
+
 
 if __name__ == "__main__":
     unittest.main()

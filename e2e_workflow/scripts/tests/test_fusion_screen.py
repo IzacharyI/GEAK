@@ -1021,5 +1021,36 @@ class NAfterTest(unittest.TestCase):
         self.assertEqual(screen._n_after("serial", rows, {}, True), 1)
 
 
+class EpMoeBoundaryAndCompactLadderTest(unittest.TestCase):
+    def test_a_window_over_the_ep_moe_is_rejected_and_its_neighbours_survive(self):
+        rows = screen.load_rows({"tables": [_stable([
+            _srow("q", "dynamic_per_group_scaled_quant_kernel", 40, 0, stage="quant"),
+            _srow("s", "_fused_clamp_silu_mul_kernel", 40, 1, stage="activation"),
+            _srow("p", "megamoe_prepare_compact_m32", 80, 2),
+            _srow("m", "megamoe_stage1_compact_t32x512", 160, 3),
+            _srow("c", "ep_combine_intranode_0", 40, 4),
+            _srow("e", "void at::native::vectorized_elementwise_kernel<4>", 40, 5, stage="elementwise"),
+        ], layers=40)]})
+        result = screen.screen(rows)
+        over = [r for r in result["all_records"] if {"p", "m", "c"} & set(r["row_ids"])]
+        self.assertTrue(over)
+        # Every one is rejected; a window that is also too long may carry that reason instead.
+        self.assertTrue(all(r["invalid"] for r in over))
+        self.assertTrue(all(r["invalid"] == "crosses_ep_moe" for r in over if len(r["row_ids"]) <= 4))
+        kept = [r["row_ids"] for r in result["all_records"] if not r["invalid"]]
+        self.assertIn(["q", "s"], kept)
+
+    def test_compact_rungs_lead_the_ladder(self):
+        def entry(eid, rows, score, n):
+            return {"entry_id": eid, "kind": "serial", "row_ids": rows, "kernel_names": ["k"] * n,
+                    "difficulty": 2.0, "score": score, "request_saved_us": score, "gate": "pass"}
+        head = entry("s1", ["a", "b", "c", "d", "e", "f"], 10.0, 6)
+        wide = entry("s2", ["b", "c", "d", "e", "f", "g"], 8.0, 6)
+        compact = entry("s3", ["a", "b"], 2.0, 2)
+        groups = screen.build_alt_groups([head, wide, compact])
+        self.assertEqual([e["entry_id"] for e in groups[0]], ["s1", "s3", "s2"])
+        self.assertEqual([r["entry_id"] for r in head["alt_ladder"]], ["s1", "s3", "s2"])
+
+
 if __name__ == "__main__":
     unittest.main()

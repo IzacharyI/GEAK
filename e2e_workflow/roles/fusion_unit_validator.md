@@ -116,6 +116,60 @@ If a candidate genuinely cannot be benched this round, waive it WITH A REASON
 (`--waive d1_kv_rope_write_cluster="needs paged-KV cache state; deferred to round 2"`).
 "skipped" is not a reason and an empty reason is rejected.
 
+### Authoring attempts (`AUTHOR_ATTEMPT`)
+
+When the call carries `AUTHOR_ATTEMPT` / `AUTHOR_ATTEMPTS` / `PRIOR_VERDICT`, an earlier attempt at
+the SAME candidate passed parity but was slow (below the retry bar), or did not engage. Read
+`PRIOR_VERDICT` and its kernel, then author an independent design aimed at what made it slow (a
+different fusion boundary, tiling or launch configuration, or the existing-kernel side) rather than
+resubmitting it. Everything else is PHASE=validate_one unchanged, except that `VERDICT_DIR` and
+`KERNEL_DIR` point at this attempt's own directory: write only there. The workflow keeps the
+fastest parity-passing attempt (`fusion_reuse_verdicts.py --prefer-best`).
+
+## PHASE=serving_author — the overlay for a serving-side unit test
+
+The single-card validation of `CANDIDATE_ID` could not produce a pass: `PRIOR_VERDICT` records
+why (typically: members read/write the paged-KV, compressed-KV or SWA ring state of the serving
+attention backend, which no standalone reference can rebuild). Such a window is unit-tested ON THE
+LIVE STACK instead, by `scripts/fusion_serving_unit.py` (next phase). Your job is the overlay it
+loads. Do not start a server; use only the card in `GPU_IDS`.
+
+1. Read the window (`TARGET_EXECUTION` rows in `SEMANTIC_TABLE_JSON`), the seam in the INSTALLED
+   serving code, and any seed kernel under `PRIOR_VERDICT`'s directory.
+2. Author the fused kernel under `KERNEL_DIR` (absolute path = `kernel_source`). It replaces the
+   window's members inside the module that calls them; it may read the live KV / pool tensors the
+   module already has at that point.
+3. Write the overlay exactly as `fusion_integrator.md` "The adapter pattern" prescribes (seam from
+   installed source, kernel-availability gate, lazy-load, stderr-only logging) with the banner
+   `[overlay-BANNER_TAG] ENGAGED` printed once per rank WHEN THE PATCHED PATH FIRST RUNS (not at
+   import), and a combined-loader dir `LOADER_DIR` whose single `sitecustomize.py` runs it.
+   It must survive CUDA-graph capture (no host sync, no allocation that changes per replay, static
+   shapes per captured batch size).
+4. Self-test on `GPU_IDS`: the fused kernel against the eager composition of the member ops on
+   tensors of the captured shapes (synthetic contents are fine here; the serving run's gsm8k is
+   the accuracy gate). A mismatch means the kernel is wrong: fix it or return `blocked`.
+5. Return `{candidate_id, status: "authored", loader_dir, banner_tag, kernel_source, parity}` or
+   `{candidate_id, status: "blocked", reason}`.
+
+## PHASE=serving_measure — run the serving-side unit tests
+
+You hold the serving-GPU lease. `SERVING_UNIT_CMD` is the complete command. Export the serving
+config first -- `BACKEND`, `MODEL`, `TP`, `GPU` from the inputs, `EXTRA_SERVER_ARGS` = `SERVING_FLAGS`
+and `EXTRA_ENV` = `SERVING_ENV`, verbatim -- then launch it DETACHED and wait for it as the
+"LONG MEASUREMENTS OUTLIVE YOUR TOOL CALL" block says:
+
+    setsid nohup bash -c '<exports>; <SERVING_UNIT_CMD>' > SERVING_UNIT_ROOT/run.out 2>&1 < /dev/null &
+    bash SKILL_DIR/scripts/fusion_leg_wait.sh SERVING_UNIT_ROOT/result.json <PID> SERVING_UNIT_ROOT/run.out 540
+
+(LEG_RUNNING => call the waiter again. The command writes its result to SERVING_UNIT_ROOT/result.json
+and as the last line of run.out; it runs one base server session and one per candidate, ~15 min
+each, and caches the base under SERVING_UNIT_ROOT/base). Register the pid under the lease. When it
+is done, return result.json unchanged as
+`{ok, base_ok, verdicts: {cid: {verdict_path, parity, speedup, engaged}}}`. Do not edit the
+verdicts it wrote (`VERDICT_DIR/<cid>__serving.json`, `measure_scope: serving_step`); the
+harness judges them: gsm8k z < 2, the banner on every rank, and the non-EP-MoE step time
+weighted over every decode sampling point above 1 + 0.4%.
+
 ## PHASE=aggregate — publish the Top-K denominator
 
 **VERDICT_DIR is read-only evidence in this phase.** Never move, rename, archive or delete a
