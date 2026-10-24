@@ -574,7 +574,9 @@ function fusionAltLadder(entry) {
     const rung = { ...entry, ...item, exec_id: entry.exec_id, alt_group: entry.alt_group,
       alt_rung: item.rung, candidate_id: cid, candidate_ids: [cid] };
     delete rung.alt_ladder;
-    delete rung.rung;
+    // Keep `rung`: validators name the rung's verdict from it (a deleted one produced
+    // `e01.rundefined__self.json`, which the harness then counts as never measured).
+    rung.rung = item.rung;
     out.push(rung);
   }
   return out;
