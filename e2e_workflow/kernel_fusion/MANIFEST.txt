@@ -32,6 +32,7 @@ e2e_workflow/scripts/fusion_combined_ab.sh
 e2e_workflow/scripts/fusion_combined_decide.py
 e2e_workflow/scripts/fusion_gpu_lease.py
 e2e_workflow/scripts/fusion_gsm8k_eval.py
+e2e_workflow/scripts/fusion_ladders.py
 e2e_workflow/scripts/fusion_leg_wait.sh
 e2e_workflow/scripts/fusion_observed_workload.py
 e2e_workflow/scripts/fusion_priors.py

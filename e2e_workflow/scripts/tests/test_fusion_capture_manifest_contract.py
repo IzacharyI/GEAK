@@ -194,6 +194,21 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         author = out["prompts"]["fusion_integrator:author_one:e1"]
         self.assertIn('"candidate_ids":["e1.r1"]', author.replace(" ", ""))
 
+    def test_ladders_the_screen_echo_dropped_are_read_back(self):
+        out = self.run_stage("descend_noladder")
+        labels = out["labels"]
+        self.assertIn("fusion-ladders", labels)
+        self.assertIn("/e/topk.json --exec e1", out["prompts"]["fusion-ladders"])
+        self.assertIn("fusion_unit_validator:e1:e1.r1", labels)
+        self.assertIn("fusion_integrator:author_one:e1", labels)
+
+    def test_an_aggregate_that_drops_a_validator_pass_is_rerun(self):
+        out = self.run_stage("agg_drop")
+        aggs = [l for l in out["labels"] if l == "fusion_unit_validator:aggregate"]
+        self.assertEqual(len(aggs), 2)
+        self.assertTrue(any("re-aggregating once" in line for line in out["logs"]))
+        self.assertIn("fusion_integrator:author_one:e1", out["labels"])
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")

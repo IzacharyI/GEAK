@@ -118,6 +118,12 @@ If a candidate genuinely cannot be benched this round, waive it WITH A REASON
 
 ## PHASE=aggregate — publish the Top-K denominator
 
+**VERDICT_DIR is read-only evidence in this phase.** Never move, rename, archive or delete a
+verdict file (not into a subdirectory either), and never `--waive` a candidate that has a verdict
+there: a waiver records that nobody could measure the candidate, not that its measurement was
+inconvenient. A verdict you believe is wrong stays where it is; the harness rejects it with a
+reason, and you report that reason.
+
 Inputs: `FUSION_TOPK_JSON`, `FUSION_CANDIDATES_JSON`, `FUSION_DIR`, `EVAL_DIR`,
 `FUSION_UNITSIDE_BUDGET`, `EQUIVALENT_COVERED`, `SUBSUMED_COVERED`,
 `BUDGET_SKIPPED`, and any explicit

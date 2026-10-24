@@ -5,6 +5,7 @@ import fs from 'fs';
 const [,, script, scenario] = process.argv;
 let src = fs.readFileSync(script, 'utf8').replace('export const meta', 'const meta');
 const calls = [];
+let aggCalls = 0;
 const phases = [];
 const logs = [];
 const respond = (prompt, opts) => {
@@ -17,10 +18,17 @@ const respond = (prompt, opts) => {
   if (l.startsWith('fusion-trace-collector:capture')) return { trace_manifest_json: '/e/fusion_capture/profile_trace_manifest.json', observed_workload_json: '/e/fusion_capture/sampling/fusion_observed_workload.json', analysis_points: { decode: 'de_16' }, phase_evidence_status: 'measured_annotation', sampling_summary_json: '/e/s.json' };
   if (l === 'semantics-mapper:fusion') return { status: 'partial', semantic_table_json: '/e/t.json', phases_in_tables: [], missing_required_phases: ['decode'], structural_patterns_json: '/e/p.json', shape_capture_plan_json: '/e/plan.json' };
   if (l === 'semantics-mapper:shape-completion') return { status: 'pass', semantic_table_json: '/e/t2.json', phases_in_tables: ['decode'], missing_required_phases: [] };
+  if (l === 'fusion-ladders') return { ok: true, ladders: { e1: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] } };
+  if (l === 'fusion-screen' && scenario === 'descend_noladder') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1' }], candidate_pool: [] };
   if (l === 'fusion-screen' && scenario === 'descend') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1', alt_ladder: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [] };
   if (l === 'fusion-screen') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], expected_gain_pct: 2 }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [], k_effective: 8, noise_band_pct: 1 };
-  if (l.startsWith('fusion_unit_validator:aggregate') && scenario === 'descend') return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['e1.r1'], unit_status_by_candidate: { c1: 'waived', 'e1.r1': 'pass', 'e1.r2': 'fail', c2: 'waived' } };
-  if (scenario === 'descend' && l.startsWith('fusion_unit_validator:')) { const cid = l.split(':').pop(); return cid === 'e1.r1' ? { candidate_id: cid, verdict_path: '/e/v.json', parity: 'pass', isolated_speedup: 1.3 } : { candidate_id: cid, verdict_path: '/e/v.json', parity: 'unmeasured' }; }
+  if (l.startsWith('fusion_unit_validator:aggregate') && scenario === 'agg_drop') {
+    aggCalls += 1;
+    return aggCalls === 1 ? { status: 'pass', fusion_unitside_json: '/e/u.json', unit_status_by_candidate: { c1: 'waived', c2: 'waived' } }
+      : { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['c1'], unit_status_by_candidate: { c1: 'pass', c2: 'waived' } };
+  }
+  if (l.startsWith('fusion_unit_validator:aggregate') && (scenario === 'descend' || scenario === 'descend_noladder')) return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['e1.r1'], unit_status_by_candidate: { c1: 'waived', 'e1.r1': 'pass', 'e1.r2': 'fail', c2: 'waived' } };
+  if ((scenario === 'descend' || scenario === 'descend_noladder') && l.startsWith('fusion_unit_validator:')) { const cid = l.split(':').pop(); return cid === 'e1.r1' ? { candidate_id: cid, verdict_path: '/e/v.json', parity: 'pass', isolated_speedup: 1.3 } : { candidate_id: cid, verdict_path: '/e/v.json', parity: 'unmeasured' }; }
   if (l.startsWith('fusion_unit_validator:aggregate')) return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['c1'], unit_status_by_candidate: { c1: 'pass', c2: 'unit_fail' } };
   if (l.startsWith('fusion_unit_validator:')) return { candidate_id: l.split(':').pop(), verdict_path: '/e/v.json', parity: 'pass', isolated_speedup: 1.1 };
   if (l.startsWith('fusion-lease:')) return { ok: true, alive_count: 0 };

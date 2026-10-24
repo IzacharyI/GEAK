@@ -255,6 +255,10 @@ const FUSION_AUTHOR_SCHEMA = obj({
   candidate_ids: { type: 'array', items: { type: 'string' } }, parity: { type: 'string' },
   reason: { type: 'string' },
 }, ['exec_id', 'status']);
+const FUSION_LADDERS_SCHEMA = obj({
+  ok: { type: 'boolean' }, ladders: { type: 'object', additionalProperties: true },
+  reason: { type: 'string' },
+}, ['ok']);
 const REPORT_SCHEMA = obj({
   kf_return_json: { type: 'string' }, report_md: { type: 'string' }, index_md: { type: 'string' },
   notes: { type: 'string' },
@@ -1110,12 +1114,34 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       }
       if (FUSION_UNIT_DESCEND && !FUSION_UNIT_ALL_RUNGS && stageFits('unitside')) {
         const passed = (job) => fusionUnitStatusFromResult(job.result) === 'pass';
+        const isStuck = (entry) => {
+          const top = unitJobs.filter((j) => j.kind === 'topk' && j.entry.exec_id === entry.exec_id);
+          return top.length && !top.some(passed);
+        };
+        // The screen agent's echo of execution_list may drop alt_ladder (run 7 did, and descent
+        // tested nothing); read the ladders of the stuck entries back from FUSION_TOPK_JSON.
+        const noLadder = fusionExecutionList.filter((e) => e && e.exec_id && isStuck(e) &&
+          !(Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1));
+        if (noLadder.length) {
+          const ex = EXEC_PREFIX ? `${EXEC_PREFIX} ` : '';
+          const got = await fusionScriptOp(
+            `${ex}python3 ${WORKFLOW_DIR}/scripts/fusion_ladders.py ${FUSION_INPUTS.FUSION_TOPK_JSON} ` +
+            noLadder.map((e) => `--exec ${e.exec_id}`).join(' '),
+            'fusion-ladders', FUSION_LADDERS_SCHEMA);
+          const ladders = (got && got.ladders && typeof got.ladders === 'object') ? got.ladders : {};
+          for (const entry of noLadder) {
+            if (Array.isArray(ladders[entry.exec_id]) && ladders[entry.exec_id].length > 1) {
+              entry.alt_ladder = ladders[entry.exec_id];
+            }
+          }
+          log(`KernelFusion Phase 3.0: recovered the ladders of ` +
+              `${noLadder.filter((e) => Array.isArray(e.alt_ladder) && e.alt_ladder.length > 1).length}/` +
+              `${noLadder.length} entr(ies) the screen echo dropped, from FUSION_TOPK_JSON.`);
+        }
         const before = unitJobs.length;
         const stuck = [];
         for (const entry of fusionExecutionList) {
-          if (!entry || !entry.exec_id) continue;
-          const top = unitJobs.filter((j) => j.kind === 'topk' && j.entry.exec_id === entry.exec_id);
-          if (!top.length || top.some(passed)) continue;
+          if (!entry || !entry.exec_id || !isStuck(entry)) continue;
           stuck.push(entry.exec_id);
           for (const rungEntry of fusionAltLadder(entry).slice(1)) {
             const cids = (Array.isArray(rungEntry.candidate_ids) && rungEntry.candidate_ids.length)
@@ -1141,8 +1167,11 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       // Only Top-K candidates are the harness's coverage denominator; a rung or pool item that
       // returned nothing is simply untested (it cannot land without a unit pass).
       const neverMeasured = unitJobs.filter((j) => !j.result && j.kind === 'topk').map((j) => `${j.cid}=${j.why}`);
-      const unitAgg = await safeAgent(
+      const aggregateOnce = (extra) => safeAgent(
         roleAgent('fusion_unit_validator', 'aggregate',
+          (extra || '') +
+          'Never move, rename or delete anything in VERDICT_DIR, and never --waive a candidate that has a ' +
+          'verdict file there: a waiver is only for a candidate nobody could measure. ' +
           'Run scripts/fusion_unitside_harness.py over VERDICT_DIR for the Top-K denominator (pass ' +
           '--semantic-table SEMANTIC_TABLE_JSON when set, --observed-workload OBSERVED_WORKLOAD_JSON when set, ' +
           '--shape-envelope SHAPE_ENVELOPE_JSON after generating it ' +
@@ -1161,6 +1190,25 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
           }),
         { phase: 'KernelFusion', label: 'fusion_unit_validator:aggregate', schema: FUSION_UNIT_AGG_SCHEMA }, 2);
+      let unitAgg = await aggregateOnce('');
+      // A validator pass the aggregate dropped (waived, moved away, missing) is re-aggregated once,
+      // naming those candidates: run 7's aggregate moved every verdict out of VERDICT_DIR and
+      // waived all eight, including a measured parity-pass at 1.04x.
+      const passedCids = unitJobs.filter((j) => fusionUnitStatusFromResult(j.result) === 'pass').map((j) => j.cid);
+      const aggStatus = (unitAgg && unitAgg.unit_status_by_candidate) || {};
+      const dropped = passedCids.filter((cid) =>
+        !['pass', 'equivalent_pass', 'subsumed_pass', 'fail', 'needs_diagnosis', 'blocked']
+          .includes(String(aggStatus[cid] || '')));
+      if (dropped.length) {
+        log(`KernelFusion Phase 3.0: the aggregate reported no measured status for validator pass(es) ` +
+            `${dropped.join(', ')} (${dropped.map((c) => aggStatus[c] || 'missing').join(', ')}); re-aggregating once.`);
+        const again = await aggregateOnce(
+          `RE-AGGREGATE: the previous aggregate dropped ${dropped.join(', ')}, whose validators returned ` +
+          'parity pass with a measured speedup. Restore any verdict file that was moved out of VERDICT_DIR ' +
+          '(e.g. from a subdirectory) to VERDICT_DIR, do not waive those candidates, and let the harness judge ' +
+          'their verdicts. ');
+        if (again) unitAgg = again;
+      }
       // Only a path the aggregate reported: the final apply-back gate passes it to the harness,
       // which must not be pointed at a file that was never written.
       FUSION_INPUTS.FUSION_UNITSIDE_JSON = (unitAgg && unitAgg.fusion_unitside_json) || '';
