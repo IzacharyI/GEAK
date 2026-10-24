@@ -968,6 +968,12 @@ class ScreenFormatUnitsideTest(unittest.TestCase):
             self.assertIn("on demand during apply-back", row["reason"])
             self.assertNotIn("e01.r1", res["coverage"]["not_validated_ids"])
 
+    def test_dotted_namespaces_and_repeat_counts_match_the_kernel(self):
+        ref = ["sglang._fill_padded_rows x3", "aten::copy_ x2 (topk_ids cast)"]
+        self.assertTrue(uh._op_covered("_fill_padded_rows_kernel", ref))
+        self.assertTrue(uh._op_covered("aten::copy_", ref))
+        self.assertFalse(uh._op_covered("rmsnorm_kernel", ref))
+
     def test_legacy_candidates_pass_through_unchanged(self):
         legacy = {"candidate_id": "x", "members": [], "existing_apis": []}
         self.assertIs(uh.normalize_screen_candidate(legacy, {}), legacy)

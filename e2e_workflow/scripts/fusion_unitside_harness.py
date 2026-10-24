@@ -586,7 +586,10 @@ def _op_covered(needle, haystack):
                 return True
             # "aiter::_fused_clamp_silu_mul" names the kernel
             # "_fused_clamp_silu_mul_kernel_BLOCK_SIZE_N_4096...": the namespace is not in it.
-            bare = norm(part.split("(")[0].rsplit("::", 1)[-1])
+            # Python-style dotted namespaces ("sglang._fill_padded_rows") and repeat counts
+            # ("... x3") are not part of the kernel name either.
+            bare = re.sub(r"\s+x\d+\s*$", "", part.split("(")[0].strip())
+            bare = norm(re.split(r"::|\.", bare)[-1])
             if len(bare) >= 8 and (bare in n or n in bare):
                 return True
             # An Itanium-mangled kernel name puts length digits between the name parts

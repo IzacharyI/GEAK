@@ -262,6 +262,14 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         author = out["prompts"]["fusion_integrator:author_one:e1"]
         self.assertIn('"candidate_ids":["e1.r2"]', author.replace(" ", ""))
 
+    def test_apply_back_wires_the_candidate_that_passed(self):
+        out = self.run_stage("apply_pick")
+        author = out["prompts"]["fusion_integrator:author_one:e1"]
+        # c2 measured faster but the harness did not admit it; c1 is what passed.
+        self.assertIn("- APPLY_CANDIDATE_ID: c1", author)
+        self.assertIn("- APPLY_VERDICT: /e/verdict/c1__self.json", author)
+        self.assertIn("Apply EXACTLY APPLY_CANDIDATE_ID", author)
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")

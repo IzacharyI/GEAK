@@ -333,15 +333,25 @@ Inputs: `TARGET_EXEC_ID`, `TARGET_EXECUTION`, `GPU_ID`, `FUSION_TOPK_JSON`,
 `FUSION_OVERLAYS_DIR`. Several entries are authored at once, one GPU each.
 
 1. Locate `TARGET_EXEC_ID`. Author only this entry: its ladder rungs are separate
-   execution-list entries and are authored by their own calls.
+   execution-list entries and are authored by their own calls. When `APPLY_CANDIDATE_ID` /
+   `APPLY_VERDICT` are given, they name the candidate whose unit test passed and the verdict that
+   measured it: wire THAT verdict's `kernel_source` (import it from there or copy it verbatim) at
+   that candidate's own window (`row_ids` of that candidate). Do not re-author a smaller or
+   different fusion, and do not switch to another candidate of the entry: the unit test is the
+   evidence for that kernel only. DeepSeek-V4 run 9 shipped, for every entry, something other than
+   what passed (e01: a 1.0x act+quant fold instead of the measured 1.42x window), and the A/B
+   measured nothing the unit side had found.
 2. Follow **The adapter pattern** above (seam from installed source, kernel-availability
    gate, lazy-load overlay with an `[overlay-<tag>] ENGAGED` banner, stderr-only logging).
    Write it to `FUSION_OVERLAYS_DIR/<model>/<tag>/<tag>_overlay.py`.
 3. Check parity on `GPU_ID` only (`HIP_VISIBLE_DEVICES=$GPU_ID`): call the patched seam and
    the split path on the candidate's captured member shape and compare. Do NOT launch a
    serving server and do NOT touch the other GPUs.
+   The `[overlay-<tag>] ENGAGED` banner prints from inside the patched call path the first time it
+   runs (not when the patch is installed), so a seam the serving code never calls shows up as not
+   engaged in the A/B preflight instead of passing silently.
 4. Return `{exec_id, status: "authored", fusion, overlay_dir, banner_tag, candidate_ids,
-   parity}`, or `{exec_id, status: "blocked", reason}` stating what was attempted (missing
+   parity}` (`candidate_ids` = the candidate the overlay wires), or `{exec_id, status: "blocked", reason}` stating what was attempted (missing
    kernel, no seam, parity failure with the measured error).
 
 ## PHASE=combined_ab — one A/B for every authored overlay (combined mode)
@@ -372,6 +382,12 @@ Inputs add `AUTHORED` (the author_one results), `PRIOR_APPLY_RESULT`, `COMBINED_
    the lease helper instead and follow that block).
    The AgentX client and its metric axis are already exported into your environment; never set
    `BENCH_CLIENT`, `E2E_METRIC` or `AGENTX_*` yourself.
+   **Exit 5 = engagement preflight failed** (the script boots the stacked server and sends a few
+   prompts BEFORE the legs): either the server did not start (fix the loader -- see **Stacking** --
+   and rerun) or the overlays it names never printed ENGAGED on every rank. Drop those overlays
+   from the combined loader (record them in `rejected` as `not_engaged` with the preflight
+   evidence) and rerun the script once with the rest; if none is left, return `reject` with that
+   reason. A non-engaging overlay runs nothing, so it can only add noise to a 2-hour A/B.
 3. **accept** → every kept overlay that is not in `not_engaged` goes into
    `accepted_fusions` (`throughput_delta_pct`/`tpot_delta_pct`: null — only the stack was
    measured; the post-fusion re-profile attributes it). Overlays in `not_engaged`, and

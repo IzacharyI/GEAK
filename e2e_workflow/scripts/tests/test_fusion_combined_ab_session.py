@@ -58,7 +58,17 @@ class CombinedAbSessionTest(unittest.TestCase):
     def test_replay_once_runs_one_leg_without_an_outer_warmup(self):
         self._run_ab("replay_once", "mode=legacy repeats=1 isolated=1")
 
-    def _run_ab(self, mode, expect_line):
+    def test_an_overlay_that_never_engages_stops_the_ab_before_the_legs(self):
+        proc, out = self._run_ab("replay_once", None, banners="fuse1 ghost", expect_rc=5)
+        self.assertIn("ghost(0/1)", proc.stderr)
+        self.assertNotIn("fuse1(", proc.stderr)
+        self.assertFalse(os.path.exists(os.path.join(out, "base", "bench_summary.json")))
+        self.assertFalse(os.path.exists(os.path.join(out, "combined_decision.json")))
+
+    def test_a_completed_side_is_reused(self):
+        self._run_ab("replay_once", "mode=legacy repeats=1 isolated=1", reuse_base=True)
+
+    def _run_ab(self, mode, expect_line, banners="fuse1", expect_rc=0, reuse_base=False):
         with tempfile.TemporaryDirectory(prefix="fusion ab ") as tmp:
             paths = {}
             for name, body in (("fake.sh", FAKE_ADAPTER), ("bench.sh", FAKE_BENCH),
@@ -71,11 +81,26 @@ class CombinedAbSessionTest(unittest.TestCase):
                        MODEL="/models/fake", ADAPTER=paths["fake.sh"],
                        BENCH_SCRIPT=paths["bench.sh"], GSM8K_EVAL_SCRIPT=paths["gsm8k.py"],
                        SERVING_GPU_LOCK=os.path.join(tmp, "gpu.lock"), AB_REPEATS="3",
-                       EXPECT_BANNERS="fuse1", NOISE_BAND_PCT="0.5", STALL_WINDOW_SEC="60",
+                       EXPECT_BANNERS=banners, NOISE_BAND_PCT="0.5", STALL_WINDOW_SEC="60",
                        AB_REPEAT_MODE=mode)
+            if reuse_base:
+                os.makedirs(os.path.join(out, "base"))
+                with open(os.path.join(out, "base", "bench_summary.json"), "w") as fh:
+                    json.dump({"throughput_tok_s_median": 1000, "all_throughput": [1000]}, fh)
+                with open(os.path.join(out, "base", "bench.log"), "w") as fh:
+                    fh.write("E2E_SUMMARY output_tok_s=1000 " + expect_line + "\n")
+                with open(os.path.join(out, "base", "gsm8k.json"), "w") as fh:
+                    json.dump({"exact_match": 0.9, "n": 200, "model": "served/name",
+                               "no_thinking": True}, fh)
+                env["REUSE_COMPLETED_SIDES"] = "1"
             proc = subprocess.run(["bash", AB], env=env, capture_output=True, text=True,
                                   timeout=300)
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(proc.returncode, expect_rc, proc.stdout + proc.stderr)
+            if expect_rc:
+                return proc, out
+            if reuse_base:
+                self.assertIn("base reused", proc.stdout)
+            self.assertIn("preflight ok", proc.stdout)
             for side, tp in (("base", 1000), ("cand", 1100)):
                 with open(os.path.join(out, side, "bench_summary.json")) as fh:
                     self.assertEqual(json.load(fh)["throughput_tok_s_median"], tp)

@@ -19,7 +19,8 @@
 # EXTRA_ENV, BENCH_CLIENT and the AgentX/bench protocol exports, SERVING_GPU_LOCK, ...) is passed
 # through from the caller's environment unchanged, so both sides use the run's serving config.
 # Writes $OUT_DIR/{base,cand}/ and $OUT_DIR/combined_decision.json; exits 0 once a decision
-# is written, 2 when a side produced no throughput summary.
+# is written, 2 when a side produced no throughput summary, 5 when the engagement preflight
+# failed (cand server did not start, or an EXPECT_BANNERS overlay never engaged).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,6 +70,37 @@ run_side() {
     bash "$SESSION" > "$OUT_DIR/$side.log" 2>&1
   echo ">>> combined A/B: $side rc=$? $(grep -m1 '^E2E_SUMMARY' "$OUT_DIR/$side/bench.log" 2>/dev/null) $(date -Is)"
 }
+
+# Engagement preflight (PREFLIGHT_ENGAGEMENT=1, the default when EXPECT_BANNERS is set): boot the
+# cand server, push a few gsm8k prompts through it, and require every EXPECT_BANNERS tag to print
+# "[overlay-<tag>] ENGAGED" on all TP ranks before the two full legs are spent. DeepSeek-V4 run 9
+# spent ~2h of A/B on a stack whose loader crashed the server, then on one where three of five
+# overlays never engaged. Exit 5 names what failed; the base leg has not run yet.
+if [ -n "${EXPECT_BANNERS:-}" ] && [ "${PREFLIGHT_ENGAGEMENT:-1}" = 1 ] \
+    && ! { [ "${REUSE_COMPLETED_SIDES:-0}" = 1 ] && [ -s "$OUT_DIR/cand/bench_summary.json" ]; }; then
+  _pf="$OUT_DIR/preflight"
+  mkdir -p "$_pf"
+  echo ">>> combined A/B: engagement preflight (cand overlay, ${PREFLIGHT_PROMPTS:-16} gsm8k prompts) $(date -Is)"
+  _pf_cmd="_served=\$(curl -sf \"\$BASE_URL/v1/models\" | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"data\"][0][\"id\"])' 2>/dev/null || echo \"\$MODEL\"); \
+python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\" --limit ${PREFLIGHT_PROMPTS:-16} \
+--max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-16} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1"
+  OUT_DIR="$_pf" OVERLAY_PYTHONPATH="$CAND_OVERLAY" SESSION_CMD="$_pf_cmd" bash "$SESSION" > "$_pf.log" 2>&1
+  _missing=""
+  for tag in $EXPECT_BANNERS; do
+    _n=$(grep -c "\[overlay-$tag\] ENGAGED" "$_pf/server.log" 2>/dev/null)
+    [ "${_n:-0}" -ge "${TP:-1}" ] || _missing="$_missing $tag(${_n:-0}/${TP:-1})"
+  done
+  if ! grep -q '"status": *"ok"' "$_pf/server_start.json" 2>/dev/null; then
+    echo "!!! combined A/B preflight: the cand server did not start ($_pf/server_start.json, $_pf/server.log)" >&2
+    exit 5
+  fi
+  if [ -n "$_missing" ]; then
+    echo "!!! combined A/B preflight: overlay(s) never ENGAGED on every rank:$_missing (see $_pf/server.log)." >&2
+    echo "!!! Fix their seam or drop them from the stack, then rerun; the full legs were not started." >&2
+    exit 5
+  fi
+  echo ">>> combined A/B: preflight ok, every overlay engaged on ${TP:-1} rank(s) $(date -Is)"
+fi
 
 run_side base "${BASE_OVERLAY:-}"
 run_side cand "$CAND_OVERLAY"

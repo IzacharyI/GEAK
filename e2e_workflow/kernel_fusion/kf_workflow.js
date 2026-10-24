@@ -692,6 +692,25 @@ function fusionApplyRungs(list, eligibleIds) {
     return passing.reduce((best, e) => (gain(e) > gain(best) ? e : best), passing[0]);
   });
 }
+// The candidate apply-back wires for one (rung) entry: its apply-back-eligible candidate with the
+// fastest measured unit-side verdict. An entry merges several candidates (patterns / sides), and
+// left to choose, the integrator wired one that never passed (DeepSeek-V4 run 9: e01 shipped c02's
+// re-authored act+quant at 1.0x instead of c01's measured 1.42x window).
+function fusionPickApplyCandidate(entry, eligibleIds, measured) {
+  if (!entry) return null;
+  const eligible = Array.isArray(eligibleIds) ? new Set(eligibleIds.map(String)) : null;
+  const cids = (Array.isArray(entry.candidate_ids) && entry.candidate_ids.length)
+    ? entry.candidate_ids : [entry.candidate_id || entry.exec_id];
+  let best = null;
+  for (const cid of cids.map(String)) {
+    if (eligible && !eligible.has(cid)) continue;
+    const m = measured[cid];
+    if (!m || !m.verdict_path) continue;
+    const sp = Number.isFinite(m.speedup) ? m.speedup : 0;
+    if (!best || sp > best.speedup) best = { cid, speedup: sp, verdict_path: m.verdict_path };
+  }
+  return best;
+}
 function fusionApplyBudgetEntries(list, eligibleIds, budget) {
   const n = Math.max(0, budget);
   if (!Array.isArray(eligibleIds)) return list.slice(0, n);
@@ -1074,6 +1093,9 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
     .slice(0, FUSION_POOL_MAX);
   // Validator returns for rungs / pool items, keyed by candidate id (fallback status source).
   const fusionExtraUnitResults = {};
+  // Every measured parity pass, by candidate id: {speedup, verdict_path}. Apply-back hands the
+  // integrator the exact passing candidate and its verdict (kernel_source) to wire.
+  const fusionUnitMeasured = {};
   if (FUSION_INPUTS.FUSION_TOPK_JSON && fusionExecutionList.length && stageFits('unitside')) {
     phase('UnitSide');
     if (!FUSION_UNITSIDE_ON) {
@@ -1399,6 +1421,10 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
 
       for (const job of unitJobs) {
         if (job.kind !== 'topk' && job.result) fusionExtraUnitResults[job.cid] = job.result;
+        if (fusionUnitStatusFromResult(job.result) === 'pass' && job.result.verdict_path) {
+          fusionUnitMeasured[job.cid] = { speedup: Number(job.result.isolated_speedup),
+            verdict_path: job.result.verdict_path };
+        }
       }
       // Only Top-K candidates are the harness's coverage denominator; a rung or pool item that
       // returned nothing is simply untested (it cannot land without a unit pass).
@@ -1482,6 +1508,8 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
   let combinedFailure = '';   // set when the combined A/B fails KernelFusion (no serial fallback)
   if (FUSION_INPUTS.FUSION_TOPK_JSON && FUSION_INPUTS.FUSION_UNITSIDE_JSON && stageFits('applyback')) {
     phase('ApplyBack');
+    const fusionApplyCandidate = (entry) =>
+      fusionPickApplyCandidate(entry, fusionUnitEligibleIds, fusionUnitMeasured);
     const fusionApplyEntries = fusionApplyBudgetEntries(
       fusionApplyRungs(fusionExecutionList, fusionUnitEligibleIds), fusionUnitEligibleIds, FUSION_BUDGET);
     let applyState = {
@@ -1592,9 +1620,19 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         const rs = await Promise.all(chunk.map((entry, slot) => safeAgent(
           roleAgent('fusion_integrator', 'author_one',
             'Author the overlay for exactly TARGET_EXEC_ID and check its parity on GPU_ID only. ' +
-            'Do not launch a serving server; other entries are being authored on the other cards.', {
+            'Do not launch a serving server; other entries are being authored on the other cards. ' +
+            (fusionApplyCandidate(entry)
+              ? `Apply EXACTLY APPLY_CANDIDATE_ID: wire the kernel its unit-side verdict APPLY_VERDICT measured ` +
+                '(its kernel_source) at that candidate\'s own window. Do not re-author a different kernel or switch to ' +
+                'another candidate or rung of this entry: the unit test is the evidence for that kernel only. ' +
+                'Print the ENGAGED banner from inside the patched call path (the first time it runs), not at patch time. '
+              : '') +
+            'Return candidate_ids = [the candidate the overlay wires].', {
               EVAL_DIR, MODEL_PATH, GPU_ID: String(GPU_LIST[slot % GPU_LIST.length] || GPU_LIST[0] || '0'),
               TP: SERVING_TP, TARGET_EXEC_ID: entry.exec_id, TARGET_EXECUTION: entry,
+              ...(fusionApplyCandidate(entry) ? { APPLY_CANDIDATE_ID: fusionApplyCandidate(entry).cid,
+                APPLY_VERDICT: fusionApplyCandidate(entry).verdict_path,
+                APPLY_UNIT_SPEEDUP: fusionApplyCandidate(entry).speedup } : {}),
               FUSION_TOPK_JSON: FUSION_INPUTS.FUSION_TOPK_JSON,
               FUSION_CANDIDATES_JSON: FUSION_INPUTS.FUSION_CANDIDATES_JSON,
               FUSION_UNITSIDE_JSON: FUSION_INPUTS.FUSION_UNITSIDE_JSON,
