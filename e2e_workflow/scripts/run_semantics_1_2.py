@@ -22,6 +22,30 @@ import run_semantic_shape_capture
 DEFAULT_REQUIRE_PHASES = ("prefill", "decode")
 
 
+def _rebuilt_layers_uncovered(plan_path, capture_results):
+    """Representative layers of `plan_path` that no graph capture in `capture_results`
+    marked (sorted), or [] when every one is covered or nothing was captured."""
+    try:
+        with open(plan_path) as fh:
+            plan = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    wanted = {
+        int(target["representative_layer_id"])
+        for target in plan.get("capture_targets", [])
+        if target.get("representative_layer_id") is not None}
+    wanted |= {int(layer) for layer in plan.get("representative_layer_filter") or []
+               if layer is not None}
+    captured = [result for result in capture_results
+                if result.get("shape_capture_execution") == "graph_capture"]
+    if not captured:
+        return []
+    marked = set()
+    for result in captured:
+        marked |= {int(layer) for layer in result.get("representative_layers") or []}
+    return sorted(wanted - marked)
+
+
 def _sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -197,6 +221,25 @@ def run(config_path, trace_path, shape_log_path, out_dir,
         semantic_source_mapping.map_plan(
             semantic["shape_capture_plan_json"], runtime_sources,
             source_plan_path)
+        # The capture above ran on the PRE-rebuild plan, whose representative layers
+        # were chosen before any layer boundary existed (DeepSeek-V4 verify: 1,2,3,4).
+        # The rebuilt patterns pick their own representatives (1,2,47,30); a layer the
+        # capture never marked maps nothing, so every member of those patterns stayed
+        # unresolved. Capture once more on the rebuilt plan when it needs layers the
+        # first capture did not mark, and map Shape evidence from that capture.
+        uncovered = _rebuilt_layers_uncovered(source_plan_path, capture_results)
+        if uncovered and capture_setup_path:
+            print("[semantics] rebuilt plan needs layers %s the capture did not mark; "
+                  "re-capturing on the rebuilt plan" % uncovered, file=sys.stderr)
+            rebuilt_capture = run_semantic_shape_capture.capture(
+                capture_setup_path, source_plan_path,
+                os.path.join(out_dir, "capture_rebuilt"),
+                layer_entry_callables=layer_entry_callables)
+            rebuilt_capture["recaptured_for_layers"] = uncovered
+            capture_results = [
+                result for result in capture_results
+                if result.get("shape_capture_execution") != "graph_capture"
+            ] + [rebuilt_capture]
 
     probe_tables = []
     probe_runs = []

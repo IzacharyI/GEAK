@@ -493,3 +493,27 @@ class RunSemantics12Test(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RebuiltLayerCoverageTest(unittest.TestCase):
+    """The first Shape replay runs on the pre-rebuild plan; once graph-capture layer cuts
+    rebuild the patterns, their representatives may be layers that replay never marked
+    (DeepSeek-V4 verify: captured 1-4, rebuilt representatives 1, 2, 47, 30)."""
+
+    def _plan(self, tmp, layers, targets):
+        path = os.path.join(tmp, "plan.json")
+        with open(path, "w") as fh:
+            json.dump({"representative_layer_filter": layers,
+                       "capture_targets": [{"representative_layer_id": t} for t in targets]}, fh)
+        return path
+
+    def test_layers_the_capture_did_not_mark_are_reported(self):
+        import run_semantics_1_2 as rs
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = self._plan(tmp, [1, 2, 30, 47], [1, 2, 30, 47])
+            first = [{"shape_capture_execution": "graph_capture", "representative_layers": [1, 2, 3, 4]}]
+            self.assertEqual(rs._rebuilt_layers_uncovered(plan, first), [30, 47])
+            covered = [{"shape_capture_execution": "graph_capture", "representative_layers": [1, 2, 30, 47]}]
+            self.assertEqual(rs._rebuilt_layers_uncovered(plan, covered), [])
+            # Loaded / non-graph evidence is not a capture this check can extend.
+            self.assertEqual(rs._rebuilt_layers_uncovered(plan, [{"representative_layers": []}]), [])
