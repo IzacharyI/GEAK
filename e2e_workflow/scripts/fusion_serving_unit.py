@@ -180,6 +180,8 @@ def session_body(args):
                 print("!!! server no longer answers /health after %s; ending this side" % pid,
                       flush=True)
                 return 3
+    if args.gsm8k_limit <= 0:
+        return 0
     served = args.model_name
     try:
         import urllib.request
@@ -200,34 +202,51 @@ def session_body(args):
 
 
 def measure_side(side_dir, overlay, args):
-    """Measure one side into side_dir (reused when its side.json is complete)."""
+    """Measure one side into side_dir (reused when its side.json is complete).
+
+    ONE server session per sampling point (gsm8k rides on the last one). Re-arming the
+    profiler on a live server hung a rank on DeepSeek-V4 twice (run 13 and run 14: the first
+    point traced, the second left one GPU idle and the other seven spinning in a collective),
+    so no server ever opens a second profiling window. A point whose journal is already ok is
+    not re-measured."""
     done = os.path.join(side_dir, "side.json")
     if os.path.isfile(done):
         doc = _load(done)
         if doc.get("ok"):
             return doc
     os.makedirs(side_dir, exist_ok=True)
-    body = " ".join(shlex.quote(c) for c in [
-        sys.executable, os.path.abspath(__file__), "session-body", "--points", args.points,
-        "--point-ids", args.point_ids, "--dp-size", str(args.dp_size),
-        "--gsm8k-limit", str(args.gsm8k_limit), "--gsm8k-concurrency", str(args.gsm8k_concurrency),
-        "--point-timeout-s", str(args.point_timeout_s),
-        "--model-name", os.environ.get("MODEL", "")])
-    env = dict(os.environ, OUT_DIR=side_dir, OVERLAY_PYTHONPATH=overlay or "", SESSION_CMD=body)
     started = time.time()
-    with open(os.path.join(side_dir, "session.log"), "w") as log:
-        rc = subprocess.call(["bash", os.path.join(HERE, "fusion_serving_session.sh")],
-                             env=env, stdout=log, stderr=subprocess.STDOUT)
-    points = {}
-    for pid in args.point_ids.split(","):
-        journal = os.path.join(side_dir, "points", pid + ".journal.json")
-        points[pid] = point_cost(journal) if os.path.isfile(journal) else {
-            "ok": False, "reason": "no probe journal"}
+    point_ids = args.point_ids.split(",")
+    rcs, points, last_log, gsm_path = {}, {}, "", ""
+    for i, pid in enumerate(point_ids):
+        sess = os.path.join(side_dir, "sess_" + pid)
+        journal = os.path.join(sess, "points", pid + ".journal.json")
+        last = i == len(point_ids) - 1
+        cost = point_cost(journal) if os.path.isfile(journal) else {"ok": False}
+        if not cost.get("ok") or (last and not os.path.isfile(os.path.join(sess, "gsm8k.json"))):
+            os.makedirs(sess, exist_ok=True)
+            body = " ".join(shlex.quote(c) for c in [
+                sys.executable, os.path.abspath(__file__), "session-body", "--points", args.points,
+                "--point-ids", pid, "--dp-size", str(args.dp_size),
+                "--gsm8k-limit", str(args.gsm8k_limit if last else 0),
+                "--gsm8k-concurrency", str(args.gsm8k_concurrency),
+                "--point-timeout-s", str(args.point_timeout_s),
+                "--model-name", os.environ.get("MODEL", "")])
+            env = dict(os.environ, OUT_DIR=sess, OVERLAY_PYTHONPATH=overlay or "", SESSION_CMD=body)
+            with open(os.path.join(sess, "session.log"), "w") as log:
+                rcs[pid] = subprocess.call(["bash", os.path.join(HERE, "fusion_serving_session.sh")],
+                                           env=env, stdout=log, stderr=subprocess.STDOUT)
+            cost = point_cost(journal) if os.path.isfile(journal) else {
+                "ok": False, "reason": "no probe journal"}
+        points[pid] = cost
+        last_log = os.path.join(sess, "server.log")
+        if last:
+            gsm_path = os.path.join(sess, "gsm8k.json")
     from fusion_combined_decide import load_gsm8k
-    gsm = load_gsm8k(os.path.join(side_dir, "gsm8k.json"))
-    doc = {"ok": rc == 0 and all(p.get("ok") for p in points.values()) and gsm is not None,
-           "session_rc": rc, "overlay": overlay or "", "points": points,
-           "gsm8k": list(gsm) if gsm else None, "server_log": os.path.join(side_dir, "server.log"),
+    gsm = load_gsm8k(gsm_path) if gsm_path else None
+    doc = {"ok": all(p.get("ok") for p in points.values()) and gsm is not None,
+           "session_rc": rcs, "overlay": overlay or "", "points": points,
+           "gsm8k": list(gsm) if gsm else None, "server_log": last_log, "side_dir": side_dir,
            "wall_s": round(time.time() - started, 1)}
     _dump(done, doc)
     return doc
@@ -287,8 +306,8 @@ def verdict_for(cid, banner, kernel_source, base, cand, args):
         "engaged": engaged,
         "tp": args.tp,
         "integration_checks": {"serving_graph_capture": "pass" if engaged else "not_engaged"},
-        "serving_unit": {"base_dir": os.path.dirname(base["server_log"]),
-                         "cand_dir": os.path.dirname(cand["server_log"]),
+        "serving_unit": {"base_dir": base.get("side_dir") or os.path.dirname(base["server_log"]),
+                         "cand_dir": cand.get("side_dir") or os.path.dirname(cand["server_log"]),
                          "cases": cases, "engaged_banner_lines": engaged_n, "gsm8k": acc,
                          "timing_basis": "non-EP-MoE kernel device time per decode step",
                          "problems": problems},
