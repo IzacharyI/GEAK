@@ -240,6 +240,13 @@ def _collect_step_spans_with_draft(events):
                       "legacy-%d" % index, "legacy_execute"))
         step_names["legacy-%d" % index] = span[5]
         legacy_ids.add("legacy-%d" % index)
+    # One forward can carry its step[...] annotation on SEVERAL GPU streams (DeepSeek-V4
+    # prefill: the same `step[EXTEND bs=1 toks=8192]` on stream 11 at 1334-2833 ms and on
+    # stream 12 at 1544-2826 ms). Read as two steps, the forward's 61 DecoderLayer spans
+    # split 1 + 60 between them, neither made a full pass, and the whole prefill phase was
+    # dropped from the table. Same-named annotations that overlap in time on different
+    # streams are one step: its window is their union, under the first one's id.
+    annotated = []
     for raw_index, event in enumerate(events):
         if not isinstance(event, dict) or event.get("cat") != "gpu_user_annotation":
             continue
@@ -247,12 +254,24 @@ def _collect_step_spans_with_draft(events):
         step = sglang_step_modes.parse_step(name)
         if step is None or event.get("ts") is None or event.get("dur") is None:
             continue
+        annotated.append([event["ts"], event["ts"] + event["dur"], raw_index, name, step,
+                          event.get("tid")])
+    annotated.sort(key=lambda item: (item[0], item[1], item[2]))
+    merged = []
+    for item in annotated:
+        prev = next((m for m in reversed(merged) if m[3] == item[3] and m[5] != item[5]
+                     and item[0] < m[1] and m[0] < item[1]), None)
+        if prev is not None:
+            prev[0], prev[1] = min(prev[0], item[0]), max(prev[1], item[1])
+            continue
+        merged.append(item)
+    for start, end, raw_index, name, step, _tid in merged:
         tag = {"prefill": "P", "decode": "D", "verify": "V",
                "draft": "S"}[step["phase"]]
         step_id = "step-%d" % raw_index
         step_names[step_id] = name
         spans.append((
-            event["ts"], event["ts"] + event["dur"], tag,
+            start, end, tag,
             step["tokens"], step["batch_size"], step_id,
             "sglang_step_annotation" if step["mode"] in ("EXTEND", "DECODE")
             else "sglang_step_annotation:%s" % step["mode"]))

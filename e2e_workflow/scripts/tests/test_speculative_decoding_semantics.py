@@ -197,6 +197,19 @@ class SemanticStepSpanTest(unittest.TestCase):
         self.assertEqual(drafts[0]["evidence"],
                          "speculative_stack_frame:_draft_extend_for_prefill")
 
+    def test_one_step_annotated_on_two_gpu_streams_is_one_step(self):
+        """DeepSeek-V4 prefill: the same step[EXTEND] on streams 11 and 12, overlapping."""
+        name = "step[EXTEND bs=1 toks=8192]"
+        events = [{"cat": "gpu_user_annotation", "name": name, "ts": 1334, "dur": 1499, "tid": 11},
+                  {"cat": "gpu_user_annotation", "name": name, "ts": 1544, "dur": 1282, "tid": 12}]
+        spans, drafts = mapping._collect_step_spans_with_draft(events)
+        self.assertEqual(len(spans), 1)
+        self.assertEqual((spans[0][0], spans[0][1], spans[0][2]), (1334, 2833, "P"))
+        # two consecutive steps of the same name on one stream stay two steps
+        later = dict(events[0], ts=4000, dur=500)
+        spans, _ = mapping._collect_step_spans_with_draft(events + [later])
+        self.assertEqual(len(spans), 2)
+
     def test_target_verify_is_decode_and_draft_mode_is_excluded(self):
         events = []
         events.append(_frame("verify", 759, 0, 1000))
