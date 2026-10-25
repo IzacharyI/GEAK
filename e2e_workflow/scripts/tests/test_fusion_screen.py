@@ -1047,6 +1047,13 @@ class EpMoeBoundaryAndCompactLadderTest(unittest.TestCase):
         kept = [r["row_ids"] for r in result["all_records"] if not r["invalid"]]
         self.assertIn(["q", "s"], kept)
 
+    def test_precompiled_mla_kernels_are_attention_barriers(self):
+        for name in ("_Z43opus_mla_v4_prefill_a8w8_16mx8_32nx1_kernelI43opus_mla_v4_prefill",
+                     "pa_sparse_prefill_fp8_gfx950_opus_fwd",
+                     "aiter::mla_a8w8_qh64_qseqlen1_gqaratio64_nm"):
+            row = {"raw_name": name, "short_name": name, "row_id": name, "phase": "prefill"}
+            self.assertEqual(screen.classify_row(row)["cls"], "attention", name)
+
     def test_compact_rungs_lead_the_ladder(self):
         def entry(eid, rows, score, n):
             return {"entry_id": eid, "kind": "serial", "row_ids": rows, "kernel_names": ["k"] * n,

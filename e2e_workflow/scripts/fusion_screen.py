@@ -242,7 +242,13 @@ _COLLECTIVE_NAMES = ("allreduce*", "all_reduce*", "cross_device_reduce*", "quick
                      "rccl*", "nccl*", "all_gather*", "allgather*", "reduce_scatter*")
 _ATTENTION_NAMES = ("attention*", "fmha*", "flash_attn*", "flash_fwd*", "paged_attention*",
                     "mla_decode*", "mla_prefill*", "attn_fwd*", "unified_attention*",
-                    "mha_fwd*", "mha_batch*", "pa_fwd*", "kentry_fmha*")
+                    "mha_fwd*", "mha_batch*", "pa_fwd*", "kentry_fmha*",
+                    # DeepSeek-V4 precompiled CK/HIP MLA kernels: `opus_mla_v4_prefill_a8w8_*`
+                    # read as "quant" (a8w8), so they were not barriers and a window could
+                    # claim the attention's own time as fusion headroom (run 13 e01: 2.4%
+                    # expected, <=1.05x measured, the attention being >99% of the window).
+                    "mla_v4_prefill*", "mla_v4_decode*", "mla_a8w8*", "pa_sparse_prefill*",
+                    "sparse_prefill*")
 _LINEAR_BODY_NAMES = ("chunk_gated_delta_rule*", "chunk_fwd_kernel_o", "recompute_w_u*",
                       "fused_recurrent_gated_delta_rule*", "causal_conv1d*",
                       "chunk_local_cumsum*", "kkt_solve*", "solve_tril*",
