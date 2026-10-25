@@ -406,9 +406,17 @@ Inputs add `AUTHORED` (the author_one results), `PRIOR_APPLY_RESULT`, `COMBINED_
    CAND_OVERLAY="<combined dir>" EXPECT_BANNERS="<kept banner tags>" \
    AB_REPEATS="$AB_REPEATS" AB_REPEAT_MODE="$AB_REPEAT_MODE" NOISE_BAND_PCT="$NOISE_BAND_PCT" \
    GSM8K_EVAL_SCRIPT="$GSM8K_EVAL_SCRIPT" GSM8K_CONCURRENCY="$GSM8K_CONCURRENCY" \
-   GSM8K_THINKING="$GSM8K_THINKING" bash "$COMBINED_AB_SCRIPT"
+   GSM8K_THINKING="$GSM8K_THINKING" \
+   OBSERVED_WORKLOAD_JSON="${OBSERVED_WORKLOAD_JSON:-$EVAL_DIR/fusion_capture/sampling/fusion_observed_workload.json}" \
+   bash "$COMBINED_AB_SCRIPT"
    ```
-   It runs one base server and one stacked server (each a `fusion_serving_session.sh` server:
+   On AgentX (the observed workload exists) the script's gate is the STEP TIME, not one leg per
+   side: it measures per-step device time at every prefill and decode sampling point on a base
+   and a stacked server (`combined_ab/step_gate.json`), then runs interleaved base/cand/base2/cand2
+   AgentX legs only as a direction check (~5 h in all). One AgentX leg cannot judge a fusion:
+   five identical no-overlay legs on DeepSeek-V4 spanned 512-602 tok/s. Report the decision's
+   `step_gain_pct` as the measured gain (`e2e_throughput_tok_s` stays the cand legs' median).
+   Without the observed workload it runs one base server and one stacked server (each a `fusion_serving_session.sh` server:
    warm-up round, `AB_REPEATS` timed rounds -- or, with `AB_REPEAT_MODE=replay_once` on AgentX,
    ONE replay leg whose client warms itself -- then gsm8k on the same server) and writes
    `combined_ab/combined_decision.json`. Do not re-run it to chase a different answer. Both sides

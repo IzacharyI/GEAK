@@ -83,11 +83,35 @@ class CombinedAbSessionTest(unittest.TestCase):
         self._run_ab("replay_once", None, banners="fuse1", extra={"PREFLIGHT_ONLY": "1"},
                      check=no_leg)
 
+    def test_step_gate_decides_and_interleaved_legs_check_direction(self):
+        stub = (
+            "import argparse, json\n"
+            "ap = argparse.ArgumentParser(); ap.add_argument('cmd')\n"
+            "for a in ('--root','--observed-workload','--base-overlay','--cand-overlay',"
+            "'--gsm8k-concurrency','--out'): ap.add_argument(a)\n"
+            "a = ap.parse_args()\n"
+            "json.dump({'ok': True, 'predicted_e2e_gpu_time_gain_pct': 2.5, 'points': []},"
+            " open(a.out, 'w'))\n")
+
+        def accepted(proc, out):
+            with open(os.path.join(out, "combined_decision.json")) as fh:
+                d = json.load(fh)
+            self.assertEqual(d["gate"], "step_time")
+            self.assertEqual(d["step_gain_pct"], 2.5)
+            self.assertEqual(d["decision"], "accept", d)
+            for side in ("base", "cand", "base2", "cand2"):
+                self.assertTrue(os.path.isfile(os.path.join(out, side, "bench_summary.json")))
+            order = [l.split(":")[1].split()[0] for l in proc.stdout.splitlines()
+                     if l.startswith(">>> combined A/B:") and "(overlay=" in l]
+            self.assertEqual(order, ["base", "cand", "base2", "cand2"])
+        self._run_ab("replay_once", None, check=accepted, stub_step=stub,
+                     extra={"OBSERVED_WORKLOAD_JSON": "/x/wl.json"})
+
     def test_a_completed_side_is_reused(self):
         self._run_ab("replay_once", "mode=legacy repeats=1 isolated=1", reuse_base=True)
 
     def _run_ab(self, mode, expect_line, banners="fuse1", expect_rc=0, reuse_base=False,
-                extra=None, check=None):
+                extra=None, check=None, stub_step=None):
         with tempfile.TemporaryDirectory(prefix="fusion ab ") as tmp:
             paths = {}
             for name, body in (("fake.sh", FAKE_ADAPTER), ("bench.sh", FAKE_BENCH),
@@ -102,6 +126,10 @@ class CombinedAbSessionTest(unittest.TestCase):
                        SERVING_GPU_LOCK=os.path.join(tmp, "gpu.lock"), AB_REPEATS="3",
                        EXPECT_BANNERS=banners, NOISE_BAND_PCT="0.5", STALL_WINDOW_SEC="60",
                        AB_REPEAT_MODE=mode, **(extra or {}))
+            if stub_step:
+                env["STEP_GATE_SCRIPT"] = os.path.join(tmp, "stepgate.py")
+                with open(env["STEP_GATE_SCRIPT"], "w") as fh:
+                    fh.write(stub_step)
             if reuse_base:
                 os.makedirs(os.path.join(out, "base"))
                 with open(os.path.join(out, "base", "bench_summary.json"), "w") as fh:

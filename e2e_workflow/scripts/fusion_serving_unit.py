@@ -290,13 +290,14 @@ def _from_workload(args):
     wl = _load(args.observed_workload)
     args.points = args.points or (wl.get("serving_weight_model") or {}).get("sampling_points") or \
         os.path.join(os.path.dirname(os.path.abspath(args.observed_workload)), "sampling_points.json")
+    regimes = [r.strip() for r in str(getattr(args, "phases", "") or "decode").split(",") if r.strip()]
     if not args.point_ids:
-        cases = sorted((c for c in wl.get("cases") or [] if c.get("regime") == "decode"),
+        cases = sorted((c for c in wl.get("cases") or [] if c.get("regime") in regimes),
                        key=lambda c: -float(c.get("effective_calls") or 0))
         args.point_ids = ",".join(c["sig"] for c in cases)
     args.dp_size = args.dp_size or int(wl.get("dp_attention_size") or 1)
     if not args.point_ids:
-        raise SystemExit("the observed workload has no decode sampling point")
+        raise SystemExit("the observed workload has no %s sampling point" % "/".join(regimes))
 
 
 def batch(args):
@@ -329,17 +330,71 @@ def batch(args):
     return 0
 
 
+def step_gate(base, cand, workload_path, point_ids):
+    """Predicted e2e GPU-time gain of the cand stack over base from per-step device time.
+
+    Each sampling point stands for `effective_calls` forwards of the measured window, so
+    sum(calls x step time) is that window's GPU time. The fusions never touch the EP MoE
+    (fusion_screen rejects crosses_ep_moe), whose time EPLB moves between sessions, so the
+    saving counts only kernels outside it while the denominator is the whole step:
+        gain = sum_p calls_p (base_nonEP_p - cand_nonEP_p) / sum_p calls_p (base_nonEP_p + base_EP_p)
+    """
+    calls = {c["sig"]: float(c.get("effective_calls") or 0)
+             for c in (_load(workload_path).get("cases") or [])}
+    rows, saved, total, problems = [], 0.0, 0.0, []
+    for pid in point_ids.split(","):
+        b, c = base["points"].get(pid) or {}, cand["points"].get(pid) or {}
+        if not (b.get("ok") and c.get("ok")):
+            problems.append("%s not measured on %s" % (pid, "base" if not b.get("ok") else "cand"))
+            continue
+        n = calls.get(pid, 0.0)
+        delta = b["non_ep_us"] - c["non_ep_us"]
+        saved += n * delta
+        total += n * (b["non_ep_us"] + b["ep_us"])
+        rows.append({"sig": pid, "calls": n, "base_non_ep_us": round(b["non_ep_us"], 1),
+                     "cand_non_ep_us": round(c["non_ep_us"], 1), "base_ep_us": round(b["ep_us"], 1),
+                     "step_saving_pct": round(100.0 * delta / (b["non_ep_us"] + b["ep_us"]), 3)})
+    gain = 100.0 * saved / total if total > 0 and not problems else None
+    return {"ok": gain is not None, "predicted_e2e_gpu_time_gain_pct": None if gain is None else round(gain, 3),
+            "points": rows, "problems": problems,
+            "basis": "per-step device time at every sampling point (non-EP-MoE saving / whole step), "
+                     "weighted by the observed workload's effective_calls",
+            "gsm8k": {"base": base.get("gsm8k"), "cand": cand.get("gsm8k")}}
+
+
+def stepgate(args):
+    args.phases = args.phases or "prefill,decode"
+    _from_workload(args)
+    base = measure_side(os.path.join(args.root, "base"), args.base_overlay, args)
+    cand = measure_side(os.path.join(args.root, "cand"), args.cand_overlay, args)
+    out = step_gate(base, cand, args.observed_workload, args.point_ids)
+    out.update(base_ok=bool(base.get("ok")), cand_ok=bool(cand.get("ok")), point_ids=args.point_ids)
+    _dump(args.out, out)
+    print(json.dumps(out, separators=(",", ":")))
+    return 0 if out["ok"] else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("batch", "session-body"):
+    for name in ("batch", "session-body", "stepgate"):
         p = sub.add_parser(name)
         p.add_argument("--points", default="", help="sampling_points.json")
         p.add_argument("--point-ids", default="")
         p.add_argument("--dp-size", type=int, default=0)
         p.add_argument("--gsm8k-limit", type=int, default=200)
         p.add_argument("--gsm8k-concurrency", type=int, default=64)
-        if name == "batch":
+        if name in ("batch", "stepgate"):
+            p.add_argument("--phases", default="",
+                           help="regimes whose sampling points are measured (batch: decode; "
+                                "stepgate: prefill,decode)")
+        if name == "stepgate":
+            p.add_argument("--root", required=True)
+            p.add_argument("--observed-workload", required=True)
+            p.add_argument("--base-overlay", default="")
+            p.add_argument("--cand-overlay", required=True)
+            p.add_argument("--out", required=True)
+        elif name == "batch":
             p.add_argument("--root", required=True, help="measurement root (base/ is cached)")
             p.add_argument("--observed-workload", default="")
             p.add_argument("--verdict-dir", required=True)
@@ -352,6 +407,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.cmd == "session-body":
         return session_body(args)
+    if args.cmd == "stepgate":
+        return stepgate(args)
     return batch(args)
 
 

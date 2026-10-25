@@ -1735,6 +1735,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
               NOISE_BAND_PCT: NOISE_BAND, FUSION_BUDGET,
               FUSION_OVERLAYS_DIR: `${EVAL_DIR}/fusion/fusion_overlays`,
               COMBINED_AB_SCRIPT: `${WORKFLOW_DIR}/scripts/fusion_combined_ab.sh`,
+              ...(fusionObservedWorkload ? { OBSERVED_WORKLOAD_JSON: fusionObservedWorkload } : {}),
               AB_REPEATS: FUSION_COMBINED_AB_REPEATS, AB_REPEAT_MODE: FUSION_AB_REPEAT_MODE,
               GSM8K_EVAL_SCRIPT: `${WORKFLOW_DIR}/scripts/fusion_gsm8k_eval.py`,
               GSM8K_CONCURRENCY: fusionGsm8kConcurrency(curFlags), GSM8K_THINKING: FUSION_GSM8K_THINKING,

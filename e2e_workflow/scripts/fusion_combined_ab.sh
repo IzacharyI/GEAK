@@ -15,6 +15,11 @@
 #   [BASE_OVERLAY=<current accepted overlay>] [EXPECT_BANNERS="tag1 tag2 ..."] \
 #   bash fusion_combined_ab.sh
 #
+# With OBSERVED_WORKLOAD_JSON (AgentX) the gate is AB_GATE=step: per-step device time at every
+# sampling point on a base and a cand server (fusion_serving_unit.py stepgate), then
+# E2E_CONFIRM_ROUNDS (default 2) interleaved base/cand legs as a direction check
+# (STEP_MIN_GAIN_PCT=0.5, E2E_TOLERANCE_PCT=5). AB_GATE=legs keeps the one-leg-per-side rule.
+#
 # Everything else bench_e2e.sh reads (BACKEND, TP, GPU, MODEL, ISL, OSL, CONC, EXTRA_SERVER_ARGS,
 # EXTRA_ENV, BENCH_CLIENT and the AgentX/bench protocol exports, SERVING_GPU_LOCK, ...) is passed
 # through from the caller's environment unchanged, so both sides use the run's serving config.
@@ -117,21 +122,46 @@ fi
 # before deciding which overlays go into the A/B).
 [ "${PREFLIGHT_ONLY:-0}" = 1 ] && exit 0
 
-run_side base "${BASE_OVERLAY:-}"
-run_side cand "$CAND_OVERLAY"
+# Step-time gate (AB_GATE=step, the default when OBSERVED_WORKLOAD_JSON is set): one AgentX leg
+# per side cannot judge a fusion (DeepSeek-V4: five identical no-overlay legs spanned 512-602
+# tok/s; an A/A pair "accepted" +7.3%). The judge is the per-step device time at every sampling
+# point (fusion_serving_unit.py stepgate, base and cand server, gsm8k on both), weighted by the
+# observed workload; E2E_CONFIRM_ROUNDS interleaved base/cand AgentX legs then only check that
+# the e2e direction is not reversed.
+AB_GATE="${AB_GATE:-$([ -n "${OBSERVED_WORKLOAD_JSON:-}" ] && echo step || echo legs)}"
+_legs_base=(base); _legs_cand=(cand)
+if [ "$AB_GATE" = step ]; then
+  echo ">>> combined A/B: step-time gate (prefill+decode sampling points) $(date -Is)"
+  python3 "${STEP_GATE_SCRIPT:-$HERE/fusion_serving_unit.py}" stepgate --root "$OUT_DIR/step" \
+    --observed-workload "$OBSERVED_WORKLOAD_JSON" --base-overlay "${BASE_OVERLAY:-}" \
+    --cand-overlay "$CAND_OVERLAY" --gsm8k-concurrency "$GSM8K_CONCURRENCY" \
+    --out "$OUT_DIR/step_gate.json" > "$OUT_DIR/step_gate.log" 2>&1
+  echo ">>> combined A/B: step gate rc=$? $(tail -c 300 "$OUT_DIR/step_gate.json" 2>/dev/null | tr '\n' ' ') $(date -Is)"
+  for r in $(seq 2 "${E2E_CONFIRM_ROUNDS:-2}"); do _legs_base+=("base$r"); _legs_cand+=("cand$r"); done
+fi
 
-for side in base cand; do
+for i in "${!_legs_base[@]}"; do
+  run_side "${_legs_base[$i]}" "${BASE_OVERLAY:-}"
+  run_side "${_legs_cand[$i]}" "$CAND_OVERLAY"
+done
+
+for side in "${_legs_base[@]}" "${_legs_cand[@]}"; do
   if [ ! -s "$OUT_DIR/$side/bench_summary.json" ]; then
     echo "!!! combined A/B: $side produced no bench_summary.json (see $OUT_DIR/$side.log, $OUT_DIR/$side/bench.log)" >&2
     exit 2
   fi
 done
+_sum=()
+for side in "${_legs_base[@]}"; do _sum+=(--base-summary "$OUT_DIR/$side/bench_summary.json"); done
+for side in "${_legs_cand[@]}"; do _sum+=(--cand-summary "$OUT_DIR/$side/bench_summary.json"); done
+_step=()
+[ "$AB_GATE" = step ] && _step=(--step-gate "$OUT_DIR/step_gate.json"
+  --step-min-gain-pct "${STEP_MIN_GAIN_PCT:-0.5}" --e2e-tolerance-pct "${E2E_TOLERANCE_PCT:-5}")
 
 _banners=()
 for tag in ${EXPECT_BANNERS:-}; do _banners+=(--expect-banner "$tag"); done
 python3 "$DECIDE" \
-  --base-summary "$OUT_DIR/base/bench_summary.json" \
-  --cand-summary "$OUT_DIR/cand/bench_summary.json" \
+  "${_sum[@]}" "${_step[@]}" \
   --base-gsm8k "$OUT_DIR/base/gsm8k.json" \
   --cand-gsm8k "$OUT_DIR/cand/gsm8k.json" \
   --cand-server-log "$OUT_DIR/cand/server.log" \
