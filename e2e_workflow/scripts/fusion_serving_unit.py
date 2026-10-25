@@ -140,25 +140,46 @@ def point_cost(journal):
 
 
 # ---- one side: a session whose command probes every point, then runs gsm8k ----------------
+def _healthy(base_url, timeout=20):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(base_url + "/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:  # noqa: BLE001 - any failure means unhealthy
+        return False
+
+
 def session_body(args):
     """Runs INSIDE fusion_serving_session.sh (BASE_URL/OUT_DIR exported)."""
     base_url = os.environ["BASE_URL"]
     out_dir = os.environ["OUT_DIR"]
     probe = os.path.join(HERE, "fusion_serving_probe.py")
+    # A probe that outlives POINT_TIMEOUT_S is killed, and a server that no longer answers
+    # /health ends the session: DeepSeek-V4 run 13 hung on rank 0 while re-arming the profiler
+    # for its second point (rank 0 idle, ranks 1-7 spinning), and the probe's own timeouts plus
+    # a retry let one side sit for ~2 h on a dead server.
     for pid in args.point_ids.split(","):
         journal = os.path.join(out_dir, "points", pid + ".journal.json")
         for attempt in range(2):
             cmd = [sys.executable, probe, "--points", args.points, "--point-id", pid,
                    "--base-url", base_url, "--trace-dir", os.path.join(out_dir, "points", pid),
-                   "--dp-size", str(args.dp_size), "--steady-timeout", "900",
-                   "--arm-timeout", "600", "--out", journal]
+                   "--dp-size", str(args.dp_size), "--steady-timeout", "300",
+                   "--arm-timeout", "300", "--window-timeout", "300",
+                   "--request-timeout", "600", "--out", journal]
             print(">>> " + " ".join(shlex.quote(c) for c in cmd), flush=True)
-            subprocess.call(cmd)
+            try:
+                subprocess.call(cmd, timeout=args.point_timeout_s)
+            except subprocess.TimeoutExpired:
+                print("!!! %s: probe exceeded %ss; killed" % (pid, args.point_timeout_s), flush=True)
             try:
                 if _load(journal).get("status") == "ok":
                     break
             except (OSError, ValueError):
                 pass
+            if not _healthy(base_url):
+                print("!!! server no longer answers /health after %s; ending this side" % pid,
+                      flush=True)
+                return 3
     served = args.model_name
     try:
         import urllib.request
@@ -171,7 +192,10 @@ def session_body(args):
            "--max-tokens", "4096", "--seed", "0", "--concurrency", str(args.gsm8k_concurrency),
            "--no-thinking", "--out", os.path.join(out_dir, "gsm8k.json")]
     print(">>> " + " ".join(shlex.quote(c) for c in cmd), flush=True)
-    subprocess.call(cmd)
+    try:
+        subprocess.call(cmd, timeout=args.point_timeout_s)
+    except subprocess.TimeoutExpired:
+        print("!!! gsm8k exceeded %ss; killed" % args.point_timeout_s, flush=True)
     return 0
 
 
@@ -187,6 +211,7 @@ def measure_side(side_dir, overlay, args):
         sys.executable, os.path.abspath(__file__), "session-body", "--points", args.points,
         "--point-ids", args.point_ids, "--dp-size", str(args.dp_size),
         "--gsm8k-limit", str(args.gsm8k_limit), "--gsm8k-concurrency", str(args.gsm8k_concurrency),
+        "--point-timeout-s", str(args.point_timeout_s),
         "--model-name", os.environ.get("MODEL", "")])
     env = dict(os.environ, OUT_DIR=side_dir, OVERLAY_PYTHONPATH=overlay or "", SESSION_CMD=body)
     started = time.time()
@@ -365,8 +390,17 @@ def step_gate(base, cand, workload_path, point_ids):
 def stepgate(args):
     args.phases = args.phases or "prefill,decode"
     _from_workload(args)
-    base = measure_side(os.path.join(args.root, "base"), args.base_overlay, args)
-    cand = measure_side(os.path.join(args.root, "cand"), args.cand_overlay, args)
+    def side(name, overlay):
+        # A side whose server hung or died is measured once more on a fresh server: a
+        # measurement failure must not read as "the fusion has no gain".
+        path = os.path.join(args.root, name)
+        doc = measure_side(path, overlay, args)
+        if not doc.get("ok") and os.path.isdir(path):
+            os.replace(path, path + ".failed1")
+            doc = measure_side(path, overlay, args)
+        return doc
+    base = side("base", args.base_overlay)
+    cand = side("cand", args.cand_overlay)
     out = step_gate(base, cand, args.observed_workload, args.point_ids)
     out.update(base_ok=bool(base.get("ok")), cand_ok=bool(cand.get("ok")), point_ids=args.point_ids)
     _dump(args.out, out)
@@ -384,6 +418,8 @@ def main(argv=None):
         p.add_argument("--dp-size", type=int, default=0)
         p.add_argument("--gsm8k-limit", type=int, default=200)
         p.add_argument("--gsm8k-concurrency", type=int, default=64)
+        p.add_argument("--point-timeout-s", type=int, default=900,
+                       help="kill a probe (or gsm8k) that runs longer than this")
         if name in ("batch", "stepgate"):
             p.add_argument("--phases", default="",
                            help="regimes whose sampling points are measured (batch: decode; "
