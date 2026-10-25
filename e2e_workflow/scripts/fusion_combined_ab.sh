@@ -85,11 +85,23 @@ if [ -n "${EXPECT_BANNERS:-}" ] && [ "${PREFLIGHT_ENGAGEMENT:-1}" = 1 ] \
 python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\" --limit ${PREFLIGHT_PROMPTS:-16} \
 --max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-16} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1"
   OUT_DIR="$_pf" OVERLAY_PYTHONPATH="$CAND_OVERLAY" SESSION_CMD="$_pf_cmd" bash "$SESSION" > "$_pf.log" 2>&1
-  _missing=""
-  for tag in $EXPECT_BANNERS; do
-    _n=$(grep -c "\[overlay-$tag\] ENGAGED" "$_pf/server.log" 2>/dev/null)
-    [ "${_n:-0}" -ge "${TP:-1}" ] || _missing="$_missing $tag(${_n:-0}/${TP:-1})"
-  done
+  # engagement.json: {server_ok, tp, engaged: {tag: ENGAGED lines}, missing: [tags], server_log}
+  _missing=$(python3 - "$_pf" "${TP:-1}" $EXPECT_BANNERS <<'PY'
+import json, os, re, sys
+pf, tp, tags = sys.argv[1], int(sys.argv[2]), sys.argv[3:]
+log = os.path.join(pf, "server.log")
+text = open(log, errors="replace").read() if os.path.isfile(log) else ""
+engaged = {t: len(re.findall(r"\[overlay-%s\] ENGAGED" % re.escape(t), text)) for t in tags}
+try:
+    ok = json.load(open(os.path.join(pf, "server_start.json"))).get("status") == "ok"
+except (OSError, ValueError):
+    ok = False
+missing = [t for t in tags if engaged[t] < tp]
+json.dump({"server_ok": ok, "tp": tp, "engaged": engaged, "missing": missing, "server_log": log},
+          open(os.path.join(pf, "engagement.json"), "w"), indent=1)
+print(" ".join("%s(%d/%d)" % (t, engaged[t], tp) for t in missing))
+PY
+)
   if ! grep -q '"status": *"ok"' "$_pf/server_start.json" 2>/dev/null; then
     echo "!!! combined A/B preflight: the cand server did not start ($_pf/server_start.json, $_pf/server.log)" >&2
     exit 5
@@ -101,6 +113,9 @@ python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\"
   fi
   echo ">>> combined A/B: preflight ok, every overlay engaged on ${TP:-1} rank(s) $(date -Is)"
 fi
+# PREFLIGHT_ONLY=1: the engagement check is the whole job (the apply-back repair loop runs it
+# before deciding which overlays go into the A/B).
+[ "${PREFLIGHT_ONLY:-0}" = 1 ] && exit 0
 
 run_side base "${BASE_OVERLAY:-}"
 run_side cand "$CAND_OVERLAY"

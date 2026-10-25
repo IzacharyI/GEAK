@@ -354,6 +354,42 @@ Inputs: `TARGET_EXEC_ID`, `TARGET_EXECUTION`, `GPU_ID`, `FUSION_TOPK_JSON`,
    parity}` (`candidate_ids` = the candidate the overlay wires), or `{exec_id, status: "blocked", reason}` stating what was attempted (missing
    kernel, no seam, parity failure with the measured error).
 
+### Repairing a seam that never engaged (author_one with `PREFLIGHT_EVIDENCE`)
+Your overlay loaded on the stacked server and printed no ENGAGED banner on any rank: the function
+it patches is not on the served call path. `PREFLIGHT_EVIDENCE.server_log` has the run's overlay
+lines (what got patched / armed); `PRIOR_AUTHOR_RESULT` is your previous return. Find the call that
+really runs, from the code the model class uses at runtime, and re-target there. The misses seen
+on DeepSeek-V4 (run 10), each of which is a check to make:
+- **Method resolution**: patch the method on the class the live module IS (`type(layer.self_attn)`
+  and its MRO), not on a base class whose method a subclass overrides (`MqaAttentionBase.
+  _project_wo_b` vs `MQALayer._project_wo_b`).
+- **Name binding at the call site**: a function the caller imported with `from x import f` is
+  looked up in the CALLER's module; patch that module's global (`sglang.srt.models.deepseek_v4.
+  fused_rms_fp8_group_quant`), and match the arguments of THAT call site, not another model's.
+- **Branches the serving config takes**: read the flags/env in `CURRENT_FLAGS` / `CURRENT_ENV`
+  (`SGLANG_OPT_*`, `--attention-backend`, hip/gfx950 gates) and follow the branch they select; a
+  window whose norm runs inside a fused mHC kernel has no separate norm call to patch -- patch the
+  call that launches the kernel you are replacing.
+- **Call ordering**: a fusion that coalesces two calls must find them adjacent on the live path;
+  if they are not, patch their common caller instead.
+- **CUDA graphs**: decode/verify run as graph replays, so the patched Python runs at capture time
+  (server start) and at eager prefill; a banner that does not print during capture means the
+  captured path does not call your seam.
+Keep the same kernel and window (APPLY_CANDIDATE_ID); only the seam changes. If no live seam
+exists for that window under this serving config, return `blocked` with the evidence.
+
+## PHASE=preflight — which overlays engage on the stacked server
+Inputs: `AUTHORED`, `CURRENT_*`, `COMBINED_AB_SCRIPT`, `FUSION_OVERLAYS_DIR`, plus the serving
+lease block. Build the combined loader over every `AUTHORED` row with `status: "authored"` exactly
+as PHASE=combined_ab step 1 does, then run, with the run's serving env,
+```bash
+OUT_DIR="$EVAL_DIR/fusion/combined_ab" CAND_OVERLAY="<combined dir>" \
+EXPECT_BANNERS="<every authored banner tag>" PREFLIGHT_ONLY=1 bash "$COMBINED_AB_SCRIPT"
+```
+(~10 min: one server boot plus a few prompts; exit 5 just means some overlay did not engage).
+Return `combined_ab/preflight/engagement.json` unchanged: `{server_ok, tp, engaged, missing,
+server_log}`. Do not fix anything here; the workflow sends the dark overlays back to their authors.
+
 ## PHASE=combined_ab — one A/B for every authored overlay (combined mode)
 Inputs add `AUTHORED` (the author_one results), `PRIOR_APPLY_RESULT`, `COMBINED_AB_SCRIPT`,
 `AB_REPEATS`, `AB_REPEAT_MODE`, `GSM8K_*`, `CURRENT_*`, `NOISE_BAND_PCT`, `FUSION_BUDGET`.

@@ -148,6 +148,8 @@ const FUSION_UNIT_RETRY_BELOW = parseFloat(
 // authored on one card, then timed on the live stack at every decode sampling point against a base
 // server, with gsm8k on both. One window per Top-K entry with no passing rung, best expected gain
 // first, at most FUSION_SERVING_UNIT_MAX of them (each costs one ~15 min server session).
+// Engagement preflight + one repair round in apply-back, before the combined A/B.
+const FUSION_PREFLIGHT_REPAIR = String(A.fusion_preflight_repair != null ? A.fusion_preflight_repair : 'true') === 'true';
 const FUSION_SERVING_UNIT = String(A.fusion_serving_unit != null ? A.fusion_serving_unit : 'true') === 'true';
 const FUSION_SERVING_UNIT_MAX = Math.max(0, parseInt(
   A.fusion_serving_unit_max != null ? A.fusion_serving_unit_max : 5, 10) || 0);
@@ -297,6 +299,11 @@ const FUSION_SERVING_MEASURE_SCHEMA = obj({
   ok: { type: 'boolean' }, base_ok: { type: 'boolean' },
   verdicts: { type: 'object', additionalProperties: true }, reason: { type: 'string' },
 }, ['ok']);
+const FUSION_PREFLIGHT_SCHEMA = obj({
+  server_ok: { type: 'boolean' }, tp: { type: 'number' },
+  engaged: { type: 'object', additionalProperties: true }, missing: arrStr,
+  server_log: { type: 'string' }, reason: { type: 'string' },
+}, ['server_ok']);
 const FUSION_LADDERS_SCHEMA = obj({
   ok: { type: 'boolean' }, ladders: { type: 'object', additionalProperties: true },
   reason: { type: 'string' },
@@ -1615,10 +1622,12 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
       log(`KernelFusion apply-back (combined): authoring ${toAuthor.length} overlay(s), ` +
           `${authorWidth} at a time; budget ${FUSION_BUDGET}.`);
       const authored = [];
-      for (let i = 0; i < toAuthor.length; i += authorWidth) {
-        const chunk = toAuthor.slice(i, i + authorWidth);
-        const rs = await Promise.all(chunk.map((entry, slot) => safeAgent(
+      const authorOne = (entry, slot, repair) => safeAgent(
           roleAgent('fusion_integrator', 'author_one',
+            (repair ? 'REPAIR: your overlay for TARGET_EXEC_ID loaded on the stacked server but its ENGAGED banner ' +
+              'never printed (PREFLIGHT_EVIDENCE): the function it patches is not on the served call path. Follow ' +
+              '"Repairing a seam that never engaged" in your role, re-target the overlay at the call site that ' +
+              'actually runs, and write it to the same overlay dir. ' : '') +
             'Author the overlay for exactly TARGET_EXEC_ID and check its parity on GPU_ID only. ' +
             'Do not launch a serving server; other entries are being authored on the other cards. ' +
             (fusionApplyCandidate(entry)
@@ -1638,16 +1647,71 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
               FUSION_UNITSIDE_JSON: FUSION_INPUTS.FUSION_UNITSIDE_JSON,
               CURRENT_OVERLAY: curOverlay, CURRENT_FLAGS: curFlags, CURRENT_ENV: curEnv,
               FUSION_OVERLAYS_DIR: `${EVAL_DIR}/fusion/fusion_overlays`,
+              ...(repair ? { PREFLIGHT_EVIDENCE: repair, PRIOR_AUTHOR_RESULT: repair.prior } : {}),
               ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
             }),
-          { phase: 'KernelFusion', label: `fusion_integrator:author_one:${entry.exec_id}`,
-            schema: FUSION_AUTHOR_SCHEMA }, 1)));
+          { phase: 'KernelFusion',
+            label: `fusion_integrator:author_one:${entry.exec_id}${repair ? ':repair' : ''}`,
+            schema: FUSION_AUTHOR_SCHEMA }, 1);
+      for (let i = 0; i < toAuthor.length; i += authorWidth) {
+        const chunk = toAuthor.slice(i, i + authorWidth);
+        const rs = await Promise.all(chunk.map((entry, slot) => authorOne(entry, slot, null)));
         chunk.forEach((entry, k) => {
           const r = rs[k] || { exec_id: entry.exec_id, status: 'blocked',
             reason: 'author_one returned no result' };
           authored.push(r);
           if (r.status === 'authored' && r.overlay_dir) authoredByExec.set(String(entry.exec_id), r);
         });
+      }
+      // ---- engagement preflight + one repair round (before the hours-long A/B) ----
+      // An overlay can load cleanly and still patch a function the served path never calls
+      // (DeepSeek-V4 run 10: 4 of 7 -- a base-class method its subclass overrides, a name the
+      // caller imported into its own module, a branch the serving flags never take). Boot the
+      // stacked server once, collect which banners never printed, and send only those overlays
+      // back to their authors with that evidence; the A/B's own preflight then drops what is
+      // still dark.
+      if (FUSION_PREFLIGHT_REPAIR && authoredByExec.size && stageFits('applyback')) {
+        fusionFailureStage = 'apply_back:preflight';
+        const leased = await withFusionServingLease('preflight', (leaseIn) => safeAgent(
+          roleAgent('fusion_integrator', 'preflight',
+            'Run the engagement preflight over every AUTHORED overlay (PHASE=preflight in your role): build the ' +
+            'combined loader, run COMBINED_AB_SCRIPT with PREFLIGHT_ONLY=1, and return its ' +
+            'combined_ab/preflight/engagement.json as FUSION_PREFLIGHT_SCHEMA.' +
+            fusionLeaseRules('preflight', true), {
+              EVAL_DIR, MODEL_PATH, SERVING_GPU, TP: SERVING_TP, AUTHORED: authored,
+              CURRENT_OVERLAY: curOverlay, CURRENT_FLAGS: curFlags, CURRENT_ENV: curEnv,
+              FUSION_OVERLAYS_DIR: `${EVAL_DIR}/fusion/fusion_overlays`,
+              COMBINED_AB_SCRIPT: `${WORKFLOW_DIR}/scripts/fusion_combined_ab.sh`,
+              GSM8K_EVAL_SCRIPT: `${WORKFLOW_DIR}/scripts/fusion_gsm8k_eval.py`,
+              ...leaseIn, ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
+            }),
+          { phase: 'KernelFusion', label: 'fusion_integrator:preflight', schema: FUSION_PREFLIGHT_SCHEMA }, 1));
+        const pf = leased.value || null;
+        const dark = (pf && pf.server_ok && Array.isArray(pf.missing)) ? pf.missing.map(String) : [];
+        const darkEntries = toAuthor.filter((e) => {
+          const r = authoredByExec.get(String(e.exec_id));
+          return r && dark.includes(String(r.banner_tag));
+        });
+        log(`KernelFusion apply-back preflight: ` + (pf
+          ? `server ${pf.server_ok ? 'up' : 'DID NOT START'}; engaged ${JSON.stringify(pf.engaged || {})}; ` +
+            `repairing ${darkEntries.length} overlay(s) that never engaged (${dark.join(', ') || '-'})`
+          : `not run (${leased.leaseBusy ? `serving lease busy: ${leased.reason}` : 'preflight agent failed'})`));
+        if (darkEntries.length) {
+          const fixed = await Promise.all(darkEntries.map((entry, slot) => {
+            const prior = authoredByExec.get(String(entry.exec_id));
+            return authorOne(entry, slot, { banner_tag: prior.banner_tag, engaged_lines: 0,
+              engagement_json: `${EVAL_DIR}/fusion/combined_ab/preflight/engagement.json`,
+              server_log: pf.server_log || `${EVAL_DIR}/fusion/combined_ab/preflight/server.log`,
+              prior });
+          }));
+          darkEntries.forEach((entry, k) => {
+            const r = fixed[k];
+            if (!r || r.status !== 'authored' || !r.overlay_dir) return;  // keep the prior row
+            const idx = authored.findIndex((a) => String(a.exec_id) === String(entry.exec_id));
+            if (idx >= 0) authored[idx] = r;
+            authoredByExec.set(String(entry.exec_id), r);
+          });
+        }
       }
       if (authoredByExec.size) {
         fusionFailureStage = 'apply_back:combined_ab';

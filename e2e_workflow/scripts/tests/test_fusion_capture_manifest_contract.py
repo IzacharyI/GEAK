@@ -270,6 +270,25 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         self.assertIn("- APPLY_VERDICT: /e/verdict/c1__self.json", author)
         self.assertIn("Apply EXACTLY APPLY_CANDIDATE_ID", author)
 
+    def test_overlays_that_never_engage_are_sent_back_once_before_the_ab(self):
+        out = self.run_stage("repair")
+        labels = out["labels"]
+        self.assertLess(labels.index("fusion_integrator:author_one:e1"),
+                        labels.index("fusion_integrator:preflight"))
+        self.assertLess(labels.index("fusion_integrator:preflight"),
+                        labels.index("fusion_integrator:author_one:e1:repair"))
+        self.assertLess(labels.index("fusion_integrator:author_one:e1:repair"),
+                        labels.index("fusion_integrator:combined_ab"))
+        repair = out["prompts"]["fusion_integrator:author_one:e1:repair"]
+        self.assertIn("REPAIR:", repair)
+        self.assertIn("/e/fusion/combined_ab/preflight/server.log", repair)
+        self.assertIn("PREFLIGHT_ONLY=1", out["prompts"]["fusion_integrator:preflight"])
+        self.assertTrue(any("repairing 1 overlay(s)" in line for line in out["logs"]))
+        # an engaged stack goes straight on to the A/B
+        ok = self.run_stage("accept")
+        self.assertIn("fusion_integrator:preflight", ok["labels"])
+        self.assertNotIn("fusion_integrator:author_one:e1:repair", ok["labels"])
+
     def test_unsupported_backend_is_skipped_with_a_reason(self):
         out = self.run_stage("vllm")
         self.assertEqual(out["ret"]["status"], "skipped_backend")
