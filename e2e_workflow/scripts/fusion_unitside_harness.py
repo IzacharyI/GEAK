@@ -166,14 +166,24 @@ WEIGHTED_CASES_FIELD = "weighted_cases"
 _REGIME_OF_PHASE_CLASS = {"graph": "decode", "prefill": "prefill"}
 
 
-def observed_weighted_speedup(verdict, phase, workload):
-    """Return (weighted_speedup, detail, error) for one verdict under an observed workload."""
+def observed_weighted_speedup(verdict, phase, workload, phases=None):
+    """Return (weighted_speedup, detail, error) for one verdict under an observed workload.
+
+    A candidate whose window runs in several phases (`phases`, e.g. prefill+verify: the same
+    seam is in both forward kinds) is weighted over the sampling points of ALL of them; the
+    single-regime rule rejected its decode points as "not a prefill point" and vice versa."""
     import harness_lib
-    regime = _REGIME_OF_PHASE_CLASS.get(sse.phase_class(phase))
-    if regime is None:
+    wanted = [p for p in (phases or []) if p] or [phase]
+    regimes = []
+    for p in wanted:
+        r = _REGIME_OF_PHASE_CLASS.get(sse.phase_class(p))
+        if r and r not in regimes:
+            regimes.append(r)
+    if not regimes:
         return None, None, ("candidate phase %r maps to no observed-workload regime "
                             "(prefill/decode)" % (phase,))
-    cases = [c for c in workload.get("cases") or [] if c.get("regime") == regime]
+    regime = "+".join(regimes)
+    cases = [c for c in workload.get("cases") or [] if c.get("regime") in regimes]
     if not any(float(c.get("effective_calls") or 0) > 0 for c in cases):
         return None, None, "observed workload carries no %s call mass" % regime
     timed = verdict.get(WEIGHTED_CASES_FIELD)
@@ -189,9 +199,9 @@ def observed_weighted_speedup(verdict, phase, workload):
         if sig not in by_sig:
             return None, None, ("%s sig %r is not a %s sampling point of the observed "
                                 "workload" % (WEIGHTED_CASES_FIELD, sig, regime))
-        per_case.append({"sig": sig, "regime": regime, "m": by_sig[sig].get("m"),
+        per_case.append({"sig": sig, "regime": by_sig[sig].get("regime"), "m": by_sig[sig].get("m"),
                          "baseline_ms": row.get("ref_ms"), "optimized_ms": row.get("cand_ms")})
-    meta = {"served_regimes": [regime], "workload": {
+    meta = {"served_regimes": regimes, "workload": {
         "kind": workload.get("kind"), "weighting": workload.get("weighting"),
         "serving_weight_model": workload.get("serving_weight_model"), "cases": cases}}
     try:
@@ -237,7 +247,7 @@ def _serving_step_row(cid, candidate, verdict, vp, observed_workload, errors):
     if parity == "pass" and engaged:
         if observed_workload:
             speedup, detail, err = observed_weighted_speedup(
-                verdict, candidate.get("phase"), observed_workload)
+                verdict, candidate.get("phase"), observed_workload, candidate.get("phases"))
             if err:
                 errors.append("%s %s" % (vp, err))
                 return None
@@ -468,6 +478,7 @@ def synthesize_extra_candidates(topk, rows_by_id):
                 continue
             c = {"candidate_id": alt_rung_candidate_id(exec_id, item),
                  "phase": item.get("phase") or entry.get("phase"),
+                 "phases": item.get("phases") or entry.get("phases"),
                  "op_tags": item.get("op_tags") or entry.get("op_tags") or [],
                  "self_author": True, "alt_of": exec_id, "alt_rung": item.get("rung")}
             for key in ("row_ids", "partner_row_ids", "kernel_names",
@@ -1004,7 +1015,7 @@ def validate(candidates_path, verdicts_path, min_speedup=1.0,
         analysis_speedup, weighted_detail = speedup, None
         if observed_workload and str(verdict.get("parity")).lower() == "pass":
             weighted, weighted_detail, weighted_error = observed_weighted_speedup(
-                verdict, candidate.get("phase"), observed_workload)
+                verdict, candidate.get("phase"), observed_workload, candidate.get("phases"))
             if weighted_error:
                 errors.append("%s %s" % (vp, weighted_error))
                 continue

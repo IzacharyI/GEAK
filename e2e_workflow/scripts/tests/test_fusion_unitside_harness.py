@@ -1046,6 +1046,19 @@ class ObservedWorkloadWeightingTest(_UnitsideFixture, unittest.TestCase):
             observed_workload=self._workload())
         self.assertTrue(any("pr_2048" in e for e in res["errors"]))
 
+    def test_a_multi_phase_candidate_is_weighted_over_every_phase(self):
+        wl = self._workload()
+        verdict = {"weighted_cases": [{"sig": "de_4", "ref_ms": 0.10, "cand_ms": 0.08},
+                                      {"sig": "de_32", "ref_ms": 0.20, "cand_ms": 0.16},
+                                      {"sig": "pr_2048", "ref_ms": 1.0, "cand_ms": 0.8}]}
+        w, detail, err = uh.observed_weighted_speedup(verdict, "prefill", wl, ["prefill", "verify"])
+        self.assertIsNone(err)
+        self.assertEqual(sorted(c["sig"] for c in detail["cases"]), ["de_32", "de_4", "pr_2048"])
+        self.assertGreater(w, 1.0)
+        # one phase only: the other phase's point is still an error
+        _, _, err = uh.observed_weighted_speedup(verdict, "prefill", wl)
+        self.assertIn("de_4", err)
+
     def test_without_an_observed_workload_nothing_changes(self):
         res = self._run(self._candidates(), [self._verdict()])
         row = next(r for r in res["results"] if r["candidate_id"] == "dc_ar")
