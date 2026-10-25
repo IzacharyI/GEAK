@@ -1691,10 +1691,13 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             }),
           { phase: 'KernelFusion', label: 'fusion_integrator:preflight', schema: FUSION_PREFLIGHT_SCHEMA }, 1));
         const pf = leased.value || null;
-        const dark = (pf && pf.server_ok && Array.isArray(pf.missing)) ? pf.missing.map(String) : [];
+        // Authors return the tag with or without the banner's "overlay-" prefix (run 14: e01 came
+        // back as "overlay-e01_..." while the preflight reports "e01_..." and was never repaired).
+        const bareTag = (t) => String(t || '').replace(/^\[?overlay-/, '').replace(/\]$/, '');
+        const dark = (pf && pf.server_ok && Array.isArray(pf.missing)) ? pf.missing.map(bareTag) : [];
         const darkEntries = toAuthor.filter((e) => {
           const r = authoredByExec.get(String(e.exec_id));
-          return r && dark.includes(String(r.banner_tag));
+          return r && dark.includes(bareTag(r.banner_tag));
         });
         log(`KernelFusion apply-back preflight: ` + (pf
           ? `server ${pf.server_ok ? 'up' : 'DID NOT START'}; engaged ${JSON.stringify(pf.engaged || {})}; ` +

@@ -44,7 +44,7 @@ const respond = (prompt, opts) => {
   if (l.startsWith('fusion_unit_validator:aggregate')) return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['c1'], unit_status_by_candidate: { c1: 'pass', c2: 'unit_fail' } };
   if (l.startsWith('fusion_unit_validator:')) return { candidate_id: l.split(':').pop(), verdict_path: '/e/v.json', parity: 'pass', isolated_speedup: 1.1 };
   if (l.startsWith('fusion-lease:')) return { ok: true, alive_count: 0 };
-  if (l.startsWith('fusion_integrator:author_one')) return { exec_id: l.split(':').pop(), status: 'authored', overlay_dir: '/e/ovl/' + l.split(':').pop(), banner_tag: 'x' };
+  if (l.startsWith('fusion_integrator:author_one')) return { exec_id: l.split(':')[2], status: 'authored', overlay_dir: '/e/ovl/' + l.split(':')[2], banner_tag: scenario === 'repair' ? 'overlay-x' : 'x' };
   if (l === 'fusion_integrator:combined_ab') return scenario === 'reject'
     ? { accepted_fusions: [], combined_decision: 'reject', combined_ab: { reason: 'no gain' }, rejected: [], deferred: [] }
     : { accepted_fusions: [{ exec_id: 'e1' }], final_overlay: '/e/stack', e2e_throughput_tok_s: 1050, combined_decision: 'accept', rejected: [], deferred: [{ exec_id: 'e2', reason: 'unit_fail' }], accepted_flags: '--x', accepted_env: 'A=1', learned_cards: [] };
