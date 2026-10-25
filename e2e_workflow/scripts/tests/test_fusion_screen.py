@@ -68,6 +68,13 @@ class SpeculativePhaseWeightTest(unittest.TestCase):
         self.assertEqual(screen.phase_weights(self._rows("decode"), workload)["decode"],
                          math.ceil(1023 / 3.51) / 4)
 
+    def test_an_observed_workload_weights_phases_by_measured_forwards(self):
+        rows = [_row("p", "gemm", 100, phase="prefill", step_input_tokens=8192),
+                _row("v", "gemm", 10, phase="verify", step_batch_size=5)]
+        w = screen.phase_weights(rows, {"isl": 1024, "osl": 1024,
+                                        "phase_forwards": {"prefill": 1634.0, "decode": 27920.0}})
+        self.assertEqual(w, {"prefill": 1634.0, "decode": 27920.0, "verify": 27920.0})
+
     def test_without_speculation_weights_are_unchanged(self):
         weights = screen.phase_weights(self._rows("decode"), {"isl": 8192, "osl": 1024})
         self.assertEqual(weights, {"prefill": 1.0, "decode": 1023 / 4})

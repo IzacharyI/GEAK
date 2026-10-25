@@ -51,7 +51,7 @@ class KernelFusionStageContractTest(unittest.TestCase):
                     "BASELINE_LOG: baseline.server_log", "SYNTHETIC_SHAPE: `${ISL},${OSL},${CONC}`",
                     "TRACE_MANIFEST_JSON: expectedFusionManifest"):
             self.assertIn(key, capture)
-        self.assertIn("A.fusion_analysis_phases || 'decode'", source)
+        self.assertIn("A.fusion_analysis_phases || (IS_AGENTX ? 'prefill,decode' : 'decode')", source)
         role = _role("fusion_trace_collector.md")
         for text in ("fusion_serving_session.sh", "fusion_agentx_sampling.py run",
                      "--analysis-phases", "gpu_time_ranking", "TOP-1 point by that mass",
@@ -135,7 +135,7 @@ class KernelFusionStageBehaviourTest(unittest.TestCase):
         self.assertEqual(ret["applied_count"], 1)
         self.assertEqual(ret["analysis_points"], {"decode": "de_16"})
         capture = out["prompts"]["fusion-trace-collector:capture"]
-        self.assertIn("- ANALYSIS_PHASES: decode", capture)
+        self.assertIn("- ANALYSIS_PHASES: prefill,decode", capture)
         self.assertIn("- BASELINE_LOG: /e/baseline/server.log", capture)
         ab = out["prompts"]["fusion_integrator:combined_ab"]
         self.assertIn("- AB_REPEAT_MODE: replay_once", ab)

@@ -67,6 +67,7 @@ python3 "$SKILL_DIR/scripts/fusion_screen.py" \
   --passes "${PASSES:-2}" \
   --isl "${WORKLOAD_ISL:-}" --osl "${WORKLOAD_OSL:-}" --conc "${WORKLOAD_CONC:-}" \
   --spec-accept-length "${SPEC_ACCEPT_LENGTH:-}" \
+  ${OBSERVED_WORKLOAD_JSON:+--observed-workload "$OBSERVED_WORKLOAD_JSON"} \
   --model "${MODEL_NAME:-}" \
   --noise-band-pct "${NOISE_BAND_PCT:-1.0}" \
   --md "$EVAL_DIR/03_FUSION_TOPK.md"

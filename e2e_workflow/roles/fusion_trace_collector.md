@@ -94,6 +94,22 @@ Extra inputs: `REUSE_EVAL_DIR`, `ANALYSIS_PHASES`. Nothing runs on the GPUs.
    `$REUSE_EVAL_DIR/fusion_capture/profile_trace_manifest.json`. Reuse only when the manifest
    `status` is `pass`, its `agentx_sampling.analysis_phases` equals `ANALYSIS_PHASES`, and every
    trace file the manifest names exists.
+   When everything matches except `analysis_phases` (e.g. the earlier round analysed `decode` and
+   this one asks for `prefill,decode`), the sampled traces are still valid -- only the choice of
+   analysis trace changed. Re-assemble into THIS run instead of re-sampling (CPU only, the earlier
+   eval dir stays untouched):
+   ```bash
+   mkdir -p $EVAL_DIR/fusion_capture/sampling
+   cp $REUSE_EVAL_DIR/fusion_capture/sampling/*.json $EVAL_DIR/fusion_capture/sampling/
+   python3 $SKILL_DIR/scripts/fusion_agentx_sampling.py assemble \
+     --plan-dir $EVAL_DIR/fusion_capture/sampling \
+     --points-root $REUSE_EVAL_DIR/fusion_capture/sampling/points \
+     --capture-dir $EVAL_DIR/fusion_capture \
+     --manifest $EVAL_DIR/fusion_capture/profile_trace_manifest.json \
+     --server-log $REUSE_EVAL_DIR/baseline/server.log --analysis-phases $ANALYSIS_PHASES
+   ```
+   and return the paths under `$EVAL_DIR/fusion_capture` (status from its
+   `sampling/fusion_sampling_summary.json`; a phase with no verified point fails as usual).
 2. Return the PHASE=capture JSON with those paths as they are (`trace_manifest_json`,
    `observed_workload_json` = `.../sampling/fusion_observed_workload.json`, `sampling_summary_json`,
    `analysis_points` from the summary, `trace_dir`, `trace_files`, `analysis_rank_trace` from the

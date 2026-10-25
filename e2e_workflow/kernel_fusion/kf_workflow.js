@@ -165,7 +165,9 @@ const FUSION_APPLY_TIMEOUT_MS = parseInt(A.fusion_apply_timeout_ms != null ? A.f
 // phase listed here: decode only by default, so the fusion analysis reads the single decode batch
 // size that carries the most device time; every sampling point still weights the unit tests.
 const FUSION_SAMPLING_POINTS = Math.max(2, parseInt(A.fusion_sampling_points != null ? A.fusion_sampling_points : 6, 10) || 6);
-const FUSION_ANALYSIS_PHASES = String(A.fusion_analysis_phases || 'decode').split(',')
+// AgentX defaults to prefill AND decode: on DeepSeek-V4 the trace replay spends ~61% of its GPU
+// time in prefill (80k-token inputs, ~800-token outputs), which a decode-only analysis never saw.
+const FUSION_ANALYSIS_PHASES = String(A.fusion_analysis_phases || (IS_AGENTX ? 'prefill,decode' : 'decode')).split(',')
   .map((s) => s.trim().toLowerCase()).filter((s) => s === 'prefill' || s === 'decode').join(',') || 'decode';
 const FUSION_NOISE_BAND_PCT = parseFloat(A.fusion_noise_band_pct != null ? A.fusion_noise_band_pct
   : (IS_AGENTX ? 1.0 : 0.5));
@@ -1048,10 +1050,12 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         roleAgent('kernel_fusion_analyst', 'screen',
           'Run scripts/fusion_screen.py and return its JSON unchanged. Do not invent or rerank candidates. ' +
           'Pass --fusion-budget-s FUSION_BUDGET_S and --item-minutes ITEM_MINUTES (they size the adaptive K). ' +
+          'When OBSERVED_WORKLOAD_JSON is set, pass --observed-workload OBSERVED_WORKLOAD_JSON (phase weights = measured forwards). ' +
           'If EXEC_PREFIX is set, use it as the literal command prefix.', {
             EVAL_DIR, MODEL_NAME, MODEL_PATH, ROUND: fusionRound,
             SEMANTIC_TABLE_JSON: semantics.semantic_table_json,
             WORKLOAD_ISL: ISL, WORKLOAD_OSL: OSL, WORKLOAD_CONC: CONC,
+            ...(fusionObservedWorkload ? { OBSERVED_WORKLOAD_JSON: fusionObservedWorkload } : {}),
             TOP_K: FUSION_TOP_K,
             FUSION_BUDGET_S: Math.round(FUSION_BUDGET_MS / 1000),
             ITEM_MINUTES: FUSION_ITEM_MINUTES,

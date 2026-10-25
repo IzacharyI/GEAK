@@ -335,6 +335,17 @@ def phase_weights(rows, workload):
     Without step metadata this is the legacy 1 prefill + OSL-1 decode forwards.
     """
     workload = workload or {}
+    # An observed workload (AgentX trace replay) states how many forwards of each phase the
+    # served load ran; weighting by those makes w_p x step_us the phase's measured GPU time.
+    # ISL/OSL on such a handoff are placeholders (1024/1024 against a measured ~80k/800), and
+    # weighting by them made decode look like most of the request (DeepSeek-V4 run 10: decode
+    # weight 382 vs prefill 1, where the measured split is ~61% prefill).
+    forwards = workload.get("phase_forwards") or {}
+    if forwards:
+        weights = {phase: float(n) for phase, n in forwards.items() if n}
+        if "decode" in weights:
+            weights.setdefault("verify", weights["decode"])
+        return weights
     isl, osl = workload.get("isl"), workload.get("osl")
     if not isl or not osl:
         return {}
@@ -358,6 +369,20 @@ def phase_weights(rows, workload):
         elif phase in ("decode", "verify") and row.get("step_batch_size"):
             weights[phase] = generation_forwards / float(row["step_batch_size"])
     return weights
+
+
+def observed_phase_forwards(path):
+    """{prefill: forwards, decode: forwards} from a fusion_observed_workload.json: the sum of
+    the sampling points' effective_calls per regime (each point stands for that many forwards
+    of the measured window)."""
+    with open(path) as handle:
+        doc = json.load(handle)
+    out = {}
+    for case in doc.get("cases") or []:
+        regime = case.get("regime")
+        if regime in ("prefill", "decode"):
+            out[regime] = out.get(regime, 0.0) + float(case.get("effective_calls") or 0)
+    return out
 
 
 def _accept_length(workload):
@@ -3280,6 +3305,9 @@ def main(argv=None):
                         help="mean tokens per TARGET_VERIFY forward (speculative decoding); "
                              "empty keeps the OSL-1 upper bound")
     parser.add_argument("--osl", default="")
+    parser.add_argument("--observed-workload", default="",
+                        help="fusion_observed_workload.json of an AgentX trace replay: phase weights "
+                             "become the measured forwards per phase (overrides --isl/--osl)")
     parser.add_argument("--conc", default="")
     parser.add_argument("--md", default="")
     parser.add_argument("--model", default="",
@@ -3303,6 +3331,8 @@ def main(argv=None):
     workload = {"isl": _int_or_none(args.isl), "osl": _int_or_none(args.osl),
                 "conc": _int_or_none(args.conc),
                 "spec_accept_length": args.spec_accept_length or None}
+    if args.observed_workload:
+        workload["phase_forwards"] = observed_phase_forwards(args.observed_workload)
     k_effective = adaptive_k(args.fusion_budget_s, args.item_minutes, args.top_k)
     hw = hardware(args.gfx, args.hbm_tbps, args.peak_tflops_bf16, args.peak_tflops_fp8)
     priors = load_all_priors(args.measured_priors, args.priors_index)
