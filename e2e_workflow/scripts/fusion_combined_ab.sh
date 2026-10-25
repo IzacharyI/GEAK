@@ -81,14 +81,16 @@ run_side() {
 # "[overlay-<tag>] ENGAGED" on all TP ranks before the two full legs are spent. DeepSeek-V4 run 9
 # spent ~2h of A/B on a stack whose loader crashed the server, then on one where three of five
 # overlays never engaged. Exit 5 names what failed; the base leg has not run yet.
+# 64 prompts by default: under DP attention each rank must receive a prefill, or a
+# prefill-only seam reads 7/8 (DeepSeek-V4 run 14 with 16 prompts).
 if [ -n "${EXPECT_BANNERS:-}" ] && [ "${PREFLIGHT_ENGAGEMENT:-1}" = 1 ] \
     && ! { [ "${REUSE_COMPLETED_SIDES:-0}" = 1 ] && [ -s "$OUT_DIR/cand/bench_summary.json" ]; }; then
   _pf="$OUT_DIR/preflight"
   mkdir -p "$_pf"
-  echo ">>> combined A/B: engagement preflight (cand overlay, ${PREFLIGHT_PROMPTS:-16} gsm8k prompts) $(date -Is)"
+  echo ">>> combined A/B: engagement preflight (cand overlay, ${PREFLIGHT_PROMPTS:-64} gsm8k prompts) $(date -Is)"
   _pf_cmd="_served=\$(curl -sf \"\$BASE_URL/v1/models\" | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"data\"][0][\"id\"])' 2>/dev/null || echo \"\$MODEL\"); \
-python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\" --limit ${PREFLIGHT_PROMPTS:-16} \
---max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-16} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1"
+python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\" --limit ${PREFLIGHT_PROMPTS:-64} \
+--max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-64} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1"
   OUT_DIR="$_pf" OVERLAY_PYTHONPATH="$CAND_OVERLAY" SESSION_CMD="$_pf_cmd" bash "$SESSION" > "$_pf.log" 2>&1
   # engagement.json: {server_ok, tp, engaged: {tag: ENGAGED lines}, missing: [tags], server_log}
   _missing=$(python3 - "$_pf" "${TP:-1}" $EXPECT_BANNERS <<'PY'
