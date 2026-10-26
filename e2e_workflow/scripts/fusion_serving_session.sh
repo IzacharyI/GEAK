@@ -20,7 +20,8 @@
 # bench_e2e.sh holds it around its own server.
 #
 # Writes $OUT_DIR/server.log, $OUT_DIR/server_start.json and $OUT_DIR/session_cmd.rc. Exit code:
-# SESSION_CMD's, or 2 when the server never became healthy (SESSION_CMD then does not run).
+# SESSION_CMD's, 2 when the server never became healthy (SESSION_CMD then does not run), or 6
+# when the server died / hung while SESSION_CMD ran ($OUT_DIR/server_dead.json says why).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,8 +135,41 @@ echo ">>> session: server up after ~${_waited}s at $BASE_URL; running SESSION_CM
 # SERVER_PID is NOT handed down: a bench_e2e.sh inside the command sources the same teardown
 # library, whose EXIT trap would otherwise stop this session's server.
 _session_pid="$SERVER_PID"
-SERVER_PID= SESSION_SERVER_PID="$_session_pid" REUSE_SERVER=1 bash -c "$SESSION_CMD"
-_rc=$?
+# Liveness watchdog. A server that dies or hangs mid-session used to leave the client waiting on
+# its own long timeouts for hours (DeepSeek-V4: a cand server aborted on an NCCL collective
+# timeout ~8 min into an AgentX leg, and gsm8k then ran 6 h against the dead port; a rank stuck
+# re-arming the profiler hung a probe ~2 h). SESSION_CMD runs in its own process group; every
+# SESSION_WATCH_SEC the session checks that the server process lives, that its log carries no
+# fatal marker written since SESSION_CMD started, and that the log still grows (it does under any
+# load; SERVER_PROGRESS_STALL_SEC of silence = hung). On failure it stops SESSION_CMD, writes
+# $OUT_DIR/server_dead.json and exits 6; the EXIT trap tears the server down.
+_log_base=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+SERVER_PID= SESSION_SERVER_PID="$_session_pid" REUSE_SERVER=1 setsid bash -c "$SESSION_CMD" &
+_cmd_pid=$!
+_dead=""; _last_size=$_log_base; _last_change=$SECONDS
+while kill -0 "$_cmd_pid" 2>/dev/null; do
+  # Sleep in 1 s steps so a finished SESSION_CMD ends the session at once.
+  for _ in $(seq "${SESSION_WATCH_SEC:-30}"); do kill -0 "$_cmd_pid" 2>/dev/null || break; sleep 1; done
+  kill -0 "$_cmd_pid" 2>/dev/null || break
+  if ! kill -0 "$_session_pid" 2>/dev/null; then _dead="server_process_exited"
+  elif tail -c +"$((_log_base + 1))" "$LOG" 2>/dev/null | grep -Eq \
+      'Watchdog caught collective operation timeout|DistBackendError|Fatal Python error|terminate called after throwing|(CUDA|HIP) out of memory'; then
+    _dead="fatal_marker_in_server_log"
+  else
+    _size=$(stat -c %s "$LOG" 2>/dev/null || echo 0)
+    if [ "$_size" != "$_last_size" ]; then _last_size=$_size; _last_change=$SECONDS
+    elif [ $((SECONDS - _last_change)) -ge "${SERVER_PROGRESS_STALL_SEC:-900}" ]; then _dead="server_log_silent_${SERVER_PROGRESS_STALL_SEC:-900}s"
+    fi
+  fi
+  if [ -n "$_dead" ]; then
+    echo "!!! session: server unhealthy ($_dead); stopping SESSION_CMD (pgid $_cmd_pid)" >&2
+    printf '{"reason":"%s","at":"%s","log":"%s"}\n' "$_dead" "$(date -Is)" "$LOG" > "$OUT_DIR/server_dead.json"
+    kill -TERM -- "-$_cmd_pid" 2>/dev/null; sleep 10; kill -KILL -- "-$_cmd_pid" 2>/dev/null
+    break
+  fi
+done
+wait "$_cmd_pid"; _rc=$?
+[ -n "$_dead" ] && _rc=6
 echo "$_rc" > "$OUT_DIR/session_cmd.rc"
-echo ">>> session: SESSION_CMD rc=$_rc; tearing the server down"
+echo ">>> session: SESSION_CMD rc=$_rc${_dead:+ (server unhealthy: $_dead)}; tearing the server down"
 exit "$_rc"

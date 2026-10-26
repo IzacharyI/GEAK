@@ -73,6 +73,33 @@ class FusionServingSessionTest(unittest.TestCase):
         proc, out = self.run_session("exit 7")
         self.assertEqual(proc.returncode, 7)
 
+    def test_a_server_that_dies_mid_command_ends_the_session_fast(self):
+        # The command would wait forever on a dead server; the watchdog must stop it.
+        t0 = time.time()
+        proc, out = self.run_session(
+            'kill -9 "$SESSION_SERVER_PID"; sleep 300; touch "$OUT_DIR/finished"',
+            SESSION_WATCH_SEC="1")
+        self.assertEqual(proc.returncode, 6, proc.stdout + proc.stderr)
+        self.assertLess(time.time() - t0, 60)
+        self.assertFalse(os.path.exists(os.path.join(out, "finished")))
+        with open(os.path.join(out, "server_dead.json")) as fh:
+            self.assertEqual(json.load(fh)["reason"], "server_process_exited")
+
+    def test_a_fatal_marker_in_the_server_log_ends_the_session(self):
+        proc, out = self.run_session(
+            'echo "[rank0]: Watchdog caught collective operation timeout: WorkNCCL" >> "$LOG"; sleep 300',
+            SESSION_WATCH_SEC="1")
+        self.assertEqual(proc.returncode, 6, proc.stdout + proc.stderr)
+        with open(os.path.join(out, "server_dead.json")) as fh:
+            self.assertEqual(json.load(fh)["reason"], "fatal_marker_in_server_log")
+
+    def test_a_silent_server_log_ends_the_session(self):
+        proc, out = self.run_session('sleep 300', SESSION_WATCH_SEC="1",
+                                     SERVER_PROGRESS_STALL_SEC="3")
+        self.assertEqual(proc.returncode, 6, proc.stdout + proc.stderr)
+        with open(os.path.join(out, "server_dead.json")) as fh:
+            self.assertIn("server_log_silent", json.load(fh)["reason"])
+
     def test_a_server_that_never_comes_up_skips_the_command(self):
         with open(self.adapter, "a") as fh:
             fh.write('\nadapter_launch() { ${SERVER_LAUNCH_PREFIX:-} sh -c "exit 1" > "$LOG" 2>&1 & SERVER_PID=$!; }\n')

@@ -25,7 +25,8 @@
 # through from the caller's environment unchanged, so both sides use the run's serving config.
 # Writes $OUT_DIR/{base,cand}/ and $OUT_DIR/combined_decision.json; exits 0 once a decision
 # is written, 2 when a side produced no throughput summary, 5 when the engagement preflight
-# failed (cand server did not start, or an EXPECT_BANNERS overlay never engaged).
+# failed (cand server did not start, or an EXPECT_BANNERS overlay never engaged), 7 when a side's
+# server died or hung under load (combined_decision.json is then a reject naming why).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -73,7 +74,18 @@ run_side() {
   echo ">>> combined A/B: $side (overlay='${overlay:-<none>}') $(date -Is)"
   OUT_DIR="$OUT_DIR/$side" OVERLAY_PYTHONPATH="$overlay" SESSION_CMD="$SIDE_CMD" \
     bash "$SESSION" > "$OUT_DIR/$side.log" 2>&1
-  echo ">>> combined A/B: $side rc=$? $(grep -m1 '^E2E_SUMMARY' "$OUT_DIR/$side/bench.log" 2>/dev/null) $(date -Is)"
+  local rc=$?
+  echo ">>> combined A/B: $side rc=$rc $(grep -m1 '^E2E_SUMMARY' "$OUT_DIR/$side/bench.log" 2>/dev/null) $(date -Is)"
+  # rc 6 = the session watchdog found the server dead or hung (server_dead.json says why). A cand
+  # server that dies under the AgentX load is itself the verdict on the stack: stop here.
+  if [ "$rc" = 6 ]; then
+    echo "!!! combined A/B: the $side server died or hung under load: $(cat "$OUT_DIR/$side/server_dead.json" 2>/dev/null)" >&2
+    printf '{"decision":"reject","reason":"%s server unhealthy under load: %s","server_dead":%s}\n' \
+      "$side" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason",""))' "$OUT_DIR/$side/server_dead.json" 2>/dev/null)" \
+      "$(cat "$OUT_DIR/$side/server_dead.json" 2>/dev/null || echo null)" > "$OUT_DIR/combined_decision.json"
+    echo "COMBINED_DECISION=reject"
+    exit 7
+  fi
 }
 
 # Engagement preflight (PREFLIGHT_ENGAGEMENT=1, the default when EXPECT_BANNERS is set): boot the
@@ -88,9 +100,14 @@ if [ -n "${EXPECT_BANNERS:-}" ] && [ "${PREFLIGHT_ENGAGEMENT:-1}" = 1 ] \
   _pf="$OUT_DIR/preflight"
   mkdir -p "$_pf"
   echo ">>> combined A/B: engagement preflight (cand overlay, ${PREFLIGHT_PROMPTS:-64} gsm8k prompts) $(date -Is)"
+  # Short gsm8k prompts AND long-context requests at once (PREFLIGHT_LONG_PROMPTS x
+  # PREFLIGHT_LONG_TOKENS): ranks then run very different batches, the condition under which a
+  # fused path gated on the local token count can desynchronise the ranks' collectives.
   _pf_cmd="_served=\$(curl -sf \"\$BASE_URL/v1/models\" | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"data\"][0][\"id\"])' 2>/dev/null || echo \"\$MODEL\"); \
+python3 $(printf %q "$HERE/fusion_preflight_load.py") --base-url \"\$BASE_URL\" --model \"\$_served\" \
+--n ${PREFLIGHT_LONG_PROMPTS:-16} --tokens ${PREFLIGHT_LONG_TOKENS:-32768} > \"\$OUT_DIR/long_load.json\" 2>&1 & \
 python3 $(printf %q "$GSM8K") --base-url \"\$BASE_URL/v1\" --model \"\$_served\" --limit ${PREFLIGHT_PROMPTS:-64} \
---max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-64} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1"
+--max-tokens 512 --seed 0 --concurrency ${PREFLIGHT_PROMPTS:-64} --no-thinking --out \"\$OUT_DIR/gsm8k.json\" > \"\$OUT_DIR/gsm8k.log\" 2>&1; wait"
   OUT_DIR="$_pf" OVERLAY_PYTHONPATH="$CAND_OVERLAY" SESSION_CMD="$_pf_cmd" bash "$SESSION" > "$_pf.log" 2>&1
   # engagement.json: {server_ok, tp, engaged: {tag: ENGAGED lines}, missing: [tags], server_log}
   _missing=$(python3 - "$_pf" "${TP:-1}" $EXPECT_BANNERS <<'PY'
@@ -111,6 +128,10 @@ PY
 )
   if ! grep -q '"status": *"ok"' "$_pf/server_start.json" 2>/dev/null; then
     echo "!!! combined A/B preflight: the cand server did not start ($_pf/server_start.json, $_pf/server.log)" >&2
+    exit 5
+  fi
+  if [ -s "$_pf/server_dead.json" ]; then
+    echo "!!! combined A/B preflight: the cand server died or hung under the mixed preflight load: $(cat "$_pf/server_dead.json")" >&2
     exit 5
   fi
   if [ -n "$_missing" ]; then

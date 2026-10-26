@@ -347,6 +347,14 @@ Inputs: `TARGET_EXEC_ID`, `TARGET_EXECUTION`, `GPU_ID`, `FUSION_TOPK_JSON`,
 3. Check parity on `GPU_ID` only (`HIP_VISIBLE_DEVICES=$GPU_ID`): call the patched seam and
    the split path on the candidate's captured member shape and compare. Do NOT launch a
    serving server and do NOT touch the other GPUs.
+   **Rank-uniform collectives (DP attention / EP).** Each rank runs its own batch, so a dispatch
+   condition on the local token count (`m <= N`, "large-M prefill only", ...) takes different
+   branches on different ranks in the same step. The fused path and the original must therefore
+   issue exactly the same collectives (all-gather / all-reduce / all-to-all, same count and
+   order); never fold, skip or add one inside the fused branch. DeepSeek-V4 run 14's stack
+   aborted on an NCCL collective timeout with ranks at sequence numbers 605 vs 607 eight minutes
+   into the AgentX leg. If the window spans a collective, keep it outside the fused kernel or
+   gate on a condition every rank shares (the global batch metadata), not the local `m`.
    The `[overlay-<tag>] ENGAGED` banner prints from inside the patched call path the first time it
    runs (not when the patch is installed), so a seam the serving code never calls shows up as not
    engaged in the A/B preflight instead of passing silently.

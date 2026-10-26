@@ -111,3 +111,4 @@ interface/run_kf_e2e.py
 interface/test_run_kf_e2e.py
 e2e_workflow/scripts/fusion_serving_unit.py
 e2e_workflow/scripts/tests/test_fusion_serving_unit.py
+e2e_workflow/scripts/fusion_preflight_load.py
