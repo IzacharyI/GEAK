@@ -25,12 +25,18 @@ Each lease gets its own `MASTER_PORT`; never hard-code `--master_port`.
 
 ## PHASE=prepare
 
+`OPERATOR_HINT`, when given, is what the caller already knows (any of `kernel_path`,
+`benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args`): use it and only verify it
+(the call site is on the served path, the UT meets the contract and passes on the frozen tree);
+discover only what it leaves out. A prompt that starts with RETRY follows a blocked attempt: read
+what that attempt left under `L3_DIR` and fix its cause before trying again.
+
 1. **Find the operator.** From `L3_STAGE.modules` / `kernel_names` and the installed serving code,
    find the Python call that launches this stage on the served path under `SERVING_FLAGS` /
    `SERVING_ENV` (follow the branch those flags select, e.g. the model's MoE forward into its EP MoE
    op). Record the call site (`module:function`), the package that owns the kernels, its source
    tree (the editable checkout or installed package directory) and the EP size (from the serving
-   flags; default `SERVING_TP`). A package installed without sources cannot be searched: return
+   flags; default `EP_DEFAULT`). A package installed without sources cannot be searched: return
    `blocked`.
 2. **Freeze the baseline tree.** Copy the owning source tree (or `git worktree add` it at its
    current commit) to `L3_DIR/baseline_tree`. This is mega's `kernel_path`; nothing edits it after

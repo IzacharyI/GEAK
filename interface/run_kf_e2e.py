@@ -45,6 +45,8 @@ import run_e2e as R  # noqa: E402  (the e2e runner; imported, never modified)
 KF_SCRIPT = R.E2E_DIR / "kernel_fusion" / "kf_workflow.js"
 KF_SCHEMA = "geak.kernel_fusion_stage/1"
 DEFAULT_KF_BUDGET_S = 12 * 3600
+# With L3 stage fusion on, the stage also runs an hours-long GEAK mode=mega search.
+DEFAULT_KF_L3_BUDGET_S = 24 * 3600
 # Handoff keys forwarded verbatim into the KernelFusion args (all optional, all fusion_*).
 KF_ARG_PREFIXES = ("fusion_", "semantics_", "kf_")
 
@@ -84,11 +86,16 @@ def total_timeout_s(opts: dict[str, Any]) -> int:
     return R.DEFAULT_E2E_TIMEOUT_S
 
 
+def l3_enabled(h: dict) -> bool:
+    nested = h.get("kernel_fusion") if isinstance(h.get("kernel_fusion"), dict) else {}
+    return str(h.get("fusion_l3_mega", nested.get("fusion_l3_mega", ""))).lower() == "true"
+
+
 def kf_budget_s(h: dict, opts: dict[str, Any], total_s: int) -> int:
-    """KernelFusion's share: --kf-budget-s, else handoff.kf_budget_s, else 12h; never more than
-    the run leaves the e2e workflow less than a third of the total."""
+    """KernelFusion's share: --kf-budget-s, else handoff.kf_budget_s, else 12h (24h with L3 stage
+    fusion); never more than the run leaves the e2e workflow less than a third of the total."""
     raw = opts.get("kf_budget_s") or h.get("kf_budget_s") or os.environ.get("GEAK_KF_BUDGET_S")
-    budget = int(raw) if raw else DEFAULT_KF_BUDGET_S
+    budget = int(raw) if raw else (DEFAULT_KF_L3_BUDGET_S if l3_enabled(h) else DEFAULT_KF_BUDGET_S)
     return max(1800, min(budget, int(total_s * 2 / 3)))
 
 

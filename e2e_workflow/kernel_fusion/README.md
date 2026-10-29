@@ -60,12 +60,20 @@ run them. With `fusion_l3_mega=true`:
    - *package* (PHASE=package): a delivered candidate becomes one overlay (candidate code + its
      activation, `[overlay-<stage_id>] ENGAGED` from the stage's call site), checked with the UT.
 3. **ApplyBack** stacks the L3 overlay with the L1/L2 overlays in the one combined A/B; once the L3
-   overlay engages, the L1/L2 entries it subsumes leave the stack. `fusion_applyback_harness.py`
-   credits it to the board's `l3_stages`.
+   overlay engages, the L1/L2 entries it subsumes leave the stack. If that A/B rejects a stack
+   holding an L3 overlay, the L1/L2 stack (subsumed entries restored) is gated once more without
+   it, so a losing L3 overlay never costs the L1/L2 wins. `fusion_applyback_harness.py` credits the
+   L3 row to the board's `l3_stages`.
+
+A prepare that comes back blocked is retried once with its reason. `fusion_l3_operator` hands
+prepare what is already known about the operator (it then verifies instead of discovering), and
+`fusion_l3_ep_kernel_regex` adds EP kernel names the built-in pattern misses.
 
 Mega is unchanged and runs as its own worker; KernelFusion only schedules it. Every outcome
 (`packaged`, `mega_no_deliverable`, `mega_error`, `prepare_blocked`, `out_of_time`, ...) is in
-`kf_return.json` under `l3`. An L3 search takes hours: raise `kf_budget_s` accordingly.
+`kf_return.json` under `l3`. An L3 search takes hours: with `fusion_l3_mega` the default
+`kf_budget_s` is 24 h (still capped at 2/3 of the run), and the stage warns at start when its
+budget cannot fit StageFusion.
 
 ## Scope and separation
 
@@ -86,7 +94,7 @@ is forwarded to the stage. The useful ones:
 
 | key | default | meaning |
 |---|---|---|
-| `kf_budget_s` | 43200 | stage wall-clock budget (also `--kf-budget-s`, `GEAK_KF_BUDGET_S`) |
+| `kf_budget_s` | 43200 (86400 with `fusion_l3_mega`) | stage wall-clock budget (also `--kf-budget-s`, `GEAK_KF_BUDGET_S`) |
 | `fusion_analysis_phases` | `decode` | phases whose top-1 GPU-time point is analysed (`prefill,decode` adds the heaviest prefill point) |
 | `fusion_sampling_points` | 6 | sampling points planned from the log |
 | `fusion_ab_repeat_mode` | `replay_once` (AgentX) / `warm_server` | A/B lifecycle per side |
@@ -99,6 +107,8 @@ is forwarded to the stage. The useful ones:
 | `fusion_l3_max_stages`, `fusion_l3_min_share_pct` | 1, 2 | how many EP MoE stages, and the smallest request share worth a search |
 | `fusion_l3_budget_s`, `fusion_l3_rounds`, `kf_min_l3_min` | 43200, 12, 240 | mega time cap, candidate rounds, and the least time worth starting it |
 | `fusion_l3_mega_args` | `{}` | merged last into the mega args (e.g. `{"use_expert_skills": "true"}`) |
+| `fusion_l3_operator` | - | known operator facts for prepare: `kernel_path`, `benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args` |
+| `fusion_l3_ep_kernel_regex` | - | extra EP MoE kernel-name regex (screen boundary + L3 stages) |
 | `fusion_l3_reuse_dir` | - | an earlier KernelFusion eval dir: package its `fusion/l3/<stage_id>/mega_result.json` instead of searching again |
 | `fusion_l3_geak_dir` | `<repo>/kernel_workflow` | where `kernel_mega.js` lives |
 

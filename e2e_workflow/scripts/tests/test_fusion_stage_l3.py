@@ -98,7 +98,7 @@ class StageFusionBehaviourTest(unittest.TestCase):
         ret = out["ret"]
         self.assertEqual(ret["status"], "applied")
         stages = {s["stage_id"]: s for s in ret["l3"]["stages"]}
-        self.assertEqual(stages["l3_01"]["status"], "packaged")
+        self.assertEqual(stages["l3_01"]["status"], "applied")
         self.assertEqual(stages["l3_01"]["mega"]["selected"]["final_tree"], "/m/f3")
         self.assertEqual(stages["l3_02"]["status"], "not_picked")
 
@@ -131,7 +131,42 @@ class StageFusionBehaviourTest(unittest.TestCase):
         self.assertNotIn("fusion_stage_l3:prepare:l3_01", out["labels"])
         pkg = _inputs(out["prompts"]["fusion_stage_l3:package:l3_01"])
         self.assertEqual(pkg["MEGA_RESULT_JSON"], "/old/fusion/l3/l3_01/mega_result.json")
-        self.assertEqual(out["ret"]["l3"]["stages"][0]["status"], "packaged")
+        self.assertEqual(out["ret"]["l3"]["stages"][0]["status"], "applied")
+
+    def test_an_l3_overlay_that_loses_end_to_end_does_not_cost_the_l1_l2_stack(self):
+        out = self.run_stage("l3_abreject")
+        labels = out["labels"]
+        self.assertLess(labels.index("fusion_integrator:combined_ab"),
+                        labels.index("fusion_integrator:combined_ab:without_l3"))
+        retry = out["prompts"]["fusion_integrator:combined_ab:without_l3"]
+        self.assertIn("RETRY WITHOUT L3", retry)
+        ab = _inputs(retry)
+        # the L3 row leaves; the L1/L2 entry it had subsumed comes back
+        self.assertEqual([r["exec_id"] for r in json.loads(ab["AUTHORED"])], ["e1", "e2"])
+        self.assertEqual([r["exec_id"] for r in json.loads(ab["L3_REJECTED"])], ["l3_01"])
+        self.assertNotIn("L3_SUBSUMED", ab)
+        ret = out["ret"]
+        self.assertEqual((ret["status"], ret["final_overlay"]), ("applied", "/e/stack2"))
+        stage = ret["l3"]["stages"][0]
+        self.assertEqual(stage["status"], "ab_rejected")
+        self.assertIn("gsm8k dropped", stage["reason"])
+
+    def test_an_accepted_l3_overlay_is_marked_applied(self):
+        self.assertEqual(self.run_stage("l3")["ret"]["l3"]["stages"][0]["status"], "applied")
+
+    def test_a_blocked_prepare_is_retried_once_with_its_reason(self):
+        out = self.run_stage("l3_prepretry")
+        retry = out["prompts"]["fusion_stage_l3:prepare:l3_01:retry"]
+        self.assertIn("RETRY: the previous prepare", retry)
+        self.assertIn("UT failed: wrong call site", retry)
+        (call,) = out["workflowCalls"]
+        self.assertEqual(call["args"]["gpus_per_job"], 4)   # the run's ep when prepare names none
+
+    def test_operator_hint_and_extra_ep_regex_reach_their_agents(self):
+        out = self.run_stage("l3")
+        self.assertEqual(_inputs(out["prompts"]["fusion-screen"])["EP_KERNEL_REGEX"], "uccl_")
+        hint = json.loads(_inputs(out["prompts"]["fusion_stage_l3:prepare:l3_01"])["OPERATOR_HINT"])
+        self.assertEqual(hint["call_site"], "aiter.megamoe:mega_moe")
 
 
 if __name__ == "__main__":

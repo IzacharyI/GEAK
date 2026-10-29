@@ -1098,6 +1098,21 @@ class L3StageTest(unittest.TestCase):
             {"exec_id": "e01", "elim_row_ids": ["q"]}, {"exec_id": "e02", "elim_row_ids": ["n", "a"]}])
         self.assertEqual(stages[0]["subsumes"], ["e01"])
 
+    def test_extra_ep_kernel_regex_widens_the_boundary(self):
+        rows = screen.load_rows({"tables": [_stable([
+            _srow("q", "dynamic_per_group_scaled_quant_kernel", 40, 0, stage="quant", module="mlp"),
+            _srow("d", "uccl_dispatch_tokens", 80, 1, module="mlp.experts"),
+            _srow("g", "grouped_gemm_kernel", 160, 2, module="mlp.experts"),
+            _srow("c", "uccl_gather_tokens", 40, 3, module="mlp.experts"),
+        ], layers=40)]})
+        try:
+            self.assertEqual(screen.screen(rows, stage_l3=True)["l3_stages"], [])
+            screen.set_ep_kernel_regex(r"uccl_")
+            stage = screen.screen(rows, stage_l3=True)["l3_stages"][0]
+            self.assertEqual(stage["row_ids"], ["q", "d", "g", "c"])
+        finally:
+            screen.set_ep_kernel_regex("")
+
     def test_cli_writes_l3_stages(self):
         import tempfile
         rows = [dict(r) for r in self._rows()]

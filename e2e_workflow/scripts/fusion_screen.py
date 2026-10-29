@@ -273,8 +273,15 @@ _LAYER_PREFIX = re.compile(r"^model\.layers\.\d+\.?")
 # unit-tested or authored on a single card (DeepSeek-V4 megamoe runs 5-8: every such window
 # came back "not isolable"). Windows stop at this boundary; the narrower windows on either
 # side of it are what gets screened.
-_EP_MOE_KERNEL = re.compile(r"megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_",
-                            re.IGNORECASE)
+_EP_MOE_BASE = r"megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_"
+_EP_MOE_KERNEL = re.compile(_EP_MOE_BASE, re.IGNORECASE)
+
+
+def set_ep_kernel_regex(extra=""):
+    """Add EP MoE kernel names the built-in pattern misses (another EP library)."""
+    global _EP_MOE_KERNEL
+    pattern = "(?:%s)|(?:%s)" % (_EP_MOE_BASE, extra) if extra else _EP_MOE_BASE
+    _EP_MOE_KERNEL = re.compile(pattern, re.IGNORECASE)
 
 
 # ---------------------------------------------------------------- table rows
@@ -3401,7 +3408,10 @@ def main(argv=None):
     parser.add_argument("--peak-tflops-fp8", default="", help="measured fp8 peak (TFLOPS)")
     parser.add_argument("--stage-l3", action="store_true",
                         help="also list expert-parallel MoE stages (l3_stages) for GEAK mode=mega")
+    parser.add_argument("--ep-kernel-regex", default="",
+                        help="extra EP MoE kernel-name regex (windows stop there; L3 stages start there)")
     args = parser.parse_args(argv)
+    set_ep_kernel_regex(args.ep_kernel_regex)
     with open(args.semantic_table) as handle:
         table = json.load(handle)
     catalog = None

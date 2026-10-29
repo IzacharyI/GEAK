@@ -43,8 +43,12 @@ const respond = (prompt, opts) => {
   if (l === 'fusion-screen' && scenario === 'l3_only') return { status: 'no_candidate', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [], candidate_pool: [], l3_stages: L3_STAGES };
   if (l === 'fusion-screen' && L3) return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], expected_gain_pct: 2 }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [], l3_stages: L3_STAGES };
   if (l.startsWith('fusion_unit_validator:aggregate') && L3) return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['c1', 'c2'], unit_status_by_candidate: { c1: 'pass', c2: 'pass' } };
+  if (scenario === 'l3_prepretry' && l === 'fusion_stage_l3:prepare:l3_01') return { status: 'blocked', stage_id: 'l3_01', reason: 'UT failed: wrong call site' };
+  if (scenario === 'l3_prepretry' && l === 'fusion_stage_l3:prepare:l3_01:retry') return { status: 'ready', stage_id: 'l3_01', kernel_path: '/e/fusion/l3/l3_01/baseline_tree', benchmark_harness: '/e/fusion/l3/l3_01/baseline_tree/moe_ut.py', package: 'aiter', mega_args: {} };
   if (l.startsWith('fusion_stage_l3:prepare:')) return { status: 'ready', stage_id: l.split(':').pop(), kernel_path: '/e/fusion/l3/l3_01/baseline_tree', benchmark_harness: '/e/fusion/l3/l3_01/baseline_tree/moe_ut.py', ep_size: 8, package: 'aiter', call_site: 'aiter.megamoe:mega_moe', mega_args: { target_guards: ['64_uniform'], task: 'fuse the stage', budget: 99 } };
   if (l.startsWith('fusion_stage_l3:package:')) { const id = l.split(':').pop(); return { exec_id: id, status: 'authored', overlay_dir: `/e/ovl/${id}`, banner_tag: id, parity: 'pass relL2=0.03' }; }
+  if (l === 'fusion_integrator:combined_ab' && scenario === 'l3_abreject') return { accepted_fusions: [], combined_decision: 'reject', combined_ab: { reason: 'gsm8k dropped 3 points' }, rejected: [], deferred: [] };
+  if (l === 'fusion_integrator:combined_ab:without_l3') return { accepted_fusions: [{ exec_id: 'e1' }, { exec_id: 'e2' }], final_overlay: '/e/stack2', e2e_throughput_tok_s: 1030, combined_decision: 'accept', rejected: [{ exec_id: 'l3_01', reason: 'L3 overlay: combined A/B rejected' }], deferred: [], learned_cards: [] };
   if (l === 'fusion_integrator:combined_ab' && L3) return { accepted_fusions: [{ exec_id: 'e1' }, { exec_id: 'l3_01', level: 'L3' }], final_overlay: '/e/stack', e2e_throughput_tok_s: 1100, combined_decision: 'accept', rejected: [{ exec_id: 'e2', reason: 'subsumed by L3 l3_01' }], deferred: [], learned_cards: [] };
   if (l === 'fusion-screen') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], expected_gain_pct: 2 }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [], k_effective: 8, noise_band_pct: 1 };
   if (l.startsWith('fusion_unit_validator:aggregate') && scenario === 'agg_drop') {
@@ -87,6 +91,8 @@ const args = {
   ...(scenario === 'reuse_unit' ? { fusion_reuse_unitside_dirs: ['/old1', '/old2/'] } : {}),
   initial_extra_server_args: '--tp 8', initial_extra_env: 'E=1', initial_overlay_pythonpath: '',
   ...(L3 ? { fusion_l3_mega: 'true', fusion_l3_mega_args: { use_expert_skills: 'true' } } : {}),
+  ...(scenario === 'l3' ? { fusion_l3_ep_kernel_regex: 'uccl_', fusion_l3_operator: { package: 'aiter', call_site: 'aiter.megamoe:mega_moe' } } : {}),
+  ...(scenario === 'l3_prepretry' ? { ep: 4 } : {}),
   ...(scenario === 'l3_reuse' ? { fusion_l3_reuse_dir: '/old/' } : {}),
 };
 const fn = new Function('args', 'agent', 'parallel', 'phase', 'log', 'workflow', 'return (async () => {\n' + src + '\n})();');

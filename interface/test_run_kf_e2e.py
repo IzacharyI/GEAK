@@ -86,6 +86,10 @@ class StageReturnTest(unittest.TestCase):
         self.assertEqual(K.kf_budget_s({}, {}, 129600), 12 * 3600)
         self.assertEqual(K.kf_budget_s({}, {"kf_budget_s": 99999}, 36000), 24000)
         self.assertEqual(K.kf_budget_s({"kf_budget_s": 7200}, {}, 129600), 7200)
+        # L3 stage fusion doubles the default, under the same 2/3 cap
+        self.assertEqual(K.kf_budget_s({"fusion_l3_mega": True}, {}, 259200), 24 * 3600)
+        self.assertEqual(K.kf_budget_s({"kernel_fusion": {"fusion_l3_mega": "true"}}, {}, 129600), 24 * 3600)
+        self.assertEqual(K.kf_budget_s({"fusion_l3_mega": True}, {}, 72000), 48000)
 
     def test_fusion_knobs_reach_the_stage(self):
         args = K.kf_args({"fusion_top_k": 4, "semantics_shape_capture": "false", "kf_budget_s": 1,
