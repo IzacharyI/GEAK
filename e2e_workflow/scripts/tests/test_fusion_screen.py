@@ -1066,5 +1066,55 @@ class EpMoeBoundaryAndCompactLadderTest(unittest.TestCase):
         self.assertEqual([r["entry_id"] for r in head["alt_ladder"]], ["s1", "s3", "s2"])
 
 
+class L3StageTest(unittest.TestCase):
+    def _rows(self):
+        return screen.load_rows({"tables": [_stable([
+            _srow("n", "rmsnorm_kernel", 30, 0, stage="norm", module="input_layernorm"),
+            _srow("a", "paged_attention_decode", 300, 1, module="self_attn"),
+            _srow("q", "dynamic_per_group_scaled_quant_kernel", 40, 2, stage="quant", module="mlp"),
+            _srow("p", "megamoe_prepare_compact_m32", 80, 3, module="mlp.experts"),
+            _srow("m", "megamoe_stage1_compact_t32x512", 160, 4, module="mlp.experts"),
+            _srow("c", "ep_combine_intranode_0", 40, 5, module="mlp.experts"),
+            _srow("r", "add_rmsnorm_kernel", 30, 6, stage="norm", module="post_attention_layernorm"),
+        ], layers=40)]})
+
+    def test_off_by_default(self):
+        self.assertNotIn("l3_stages", screen.screen(self._rows()))
+
+    def test_ep_moe_stage_spans_its_code_seam(self):
+        stages = screen.screen(self._rows(), stage_l3=True)["l3_stages"]
+        self.assertEqual(len(stages), 1)
+        stage = stages[0]
+        self.assertEqual(stage["stage_id"], "l3_01")
+        self.assertEqual((stage["level"], stage["handler"], stage["phase"]), ("L3", "geak_mega", "decode"))
+        # quant (mlp) joins the stage; the attention and the norms of other seams do not.
+        self.assertEqual(stage["row_ids"], ["q", "p", "m", "c"])
+        self.assertEqual(stage["layers"], 40)
+        self.assertAlmostEqual(stage["step_us"], 320 * 40)
+        self.assertGreater(stage["request_share_pct"], 0)
+
+    def test_subsumes_lists_entries_inside_the_stage(self):
+        stages = screen.l3_stages(self._rows(), {"decode": 1.0}, 1000.0, [
+            {"exec_id": "e01", "elim_row_ids": ["q"]}, {"exec_id": "e02", "elim_row_ids": ["n", "a"]}])
+        self.assertEqual(stages[0]["subsumes"], ["e01"])
+
+    def test_cli_writes_l3_stages(self):
+        import tempfile
+        rows = [dict(r) for r in self._rows()]
+        table = {"tables": [_stable(rows, layers=40)]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.json")
+            with open(path, "w") as fh:
+                json.dump(table, fh)
+            out = os.path.join(tmp, "out")
+            screen.main(["--semantic-table", path, "--out-dir", out, "--stage-l3",
+                         "--measured-priors", "", "--priors-index", ""])
+            with open(os.path.join(out, "fusion_topk.json")) as fh:
+                topk = json.load(fh)
+            self.assertEqual([s["stage_id"] for s in topk["l3_stages"]], ["l3_01"])
+            with open(os.path.join(tmp, "03_FUSION_TOPK.md")) as fh:
+                self.assertIn("## L3 stages", fh.read())
+
+
 if __name__ == "__main__":
     unittest.main()

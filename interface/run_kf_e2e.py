@@ -200,6 +200,8 @@ def kernel_fusion_section(kf: dict, main_result: dict, handoff_used: str) -> dic
         "main_handoff": handoff_used,
         "main_baseline_is_fused_stack": kf_accepted(kf),
     }
+    if kf.get("l3") is not None:  # StageFusion ran (fusion_l3_mega)
+        section["l3"] = kf["l3"]
     # The two stages measure under their own protocols, so the end-to-end gain is the product of
     # the two same-protocol ratios, not a ratio across protocols.
     try:

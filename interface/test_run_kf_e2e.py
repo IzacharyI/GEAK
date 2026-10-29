@@ -77,6 +77,11 @@ class StageReturnTest(unittest.TestCase):
         self.assertAlmostEqual(sec["combined_speedup_vs_original"], 1.1)
         self.assertEqual(sec["final_overlay"], "")
 
+    def test_the_l3_outcome_travels_only_when_stage_fusion_ran(self):
+        self.assertNotIn("l3", K.kernel_fusion_section(ACCEPTED, {}, "/h"))
+        l3 = {"stages": [{"stage_id": "l3_01", "status": "packaged"}]}
+        self.assertEqual(K.kernel_fusion_section(dict(ACCEPTED, l3=l3), {}, "/h")["l3"], l3)
+
     def test_budget_is_capped_to_leave_the_e2e_workflow_its_share(self):
         self.assertEqual(K.kf_budget_s({}, {}, 129600), 12 * 3600)
         self.assertEqual(K.kf_budget_s({}, {"kf_budget_s": 99999}, 36000), 24000)

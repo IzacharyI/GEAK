@@ -8,6 +8,7 @@ export const meta = {
     { title: 'Semantics', detail: 'Pattern/Phase/Layer/Kernel tables from the analysis trace, decode boundaries/shapes from the graph-construction replay' },
     { title: 'Screen', detail: 'fusion_screen.py: chains -> initial benefit rank -> two Score passes -> adaptive Top-K' },
     { title: 'UnitSide', detail: 'every Top-K entry, alternative rung and pool item unit-tested; the gate is the observed-workload weighted speedup over every sampling point' },
+    { title: 'StageFusion', detail: 'L3, opt-in (fusion_l3_mega): each expert-parallel MoE stage the screen listed goes to GEAK mode=mega as one multi-rank operator on the serving GPUs; a delivered candidate is packaged as one overlay for the combined A/B' },
     { title: 'ApplyBack', detail: 'author the unit-side passes as overlays, gate the stack with ONE combined A/B (base server vs stacked server, throughput + gsm8k)' },
     { title: 'Report', detail: 'publish 00_INDEX.md + kf_return.json for interface/run_kf_e2e.py' },
   ],
@@ -83,6 +84,7 @@ const STAGE_MIN = {
   unitside: parseInt(A.kf_min_unitside_min != null ? A.kf_min_unitside_min : 45, 10),
   applyback: parseInt(A.kf_min_applyback_min != null ? A.kf_min_applyback_min
     : (IS_AGENTX ? 150 : 60), 10),
+  l3: parseInt(A.kf_min_l3_min != null ? A.kf_min_l3_min : 240, 10),
 };
 function stageFits(stage) {
   if (TIME_HEAD_DEADLINE_MS == null) return true;
@@ -184,6 +186,25 @@ const REUSE_DIR = String(A.fusion_reuse_eval_dir || '').replace(/\/+$/, '');
 const REUSE_UNIT_DIRS = (Array.isArray(A.fusion_reuse_unitside_dirs)
   ? A.fusion_reuse_unitside_dirs : String(A.fusion_reuse_unitside_dirs || '').split(','))
   .map((d) => String(d).trim().replace(/\/+$/, '')).filter(Boolean);
+// L3 stage-wise fusion (opt-in). L1 elementwise and L2 op-wise fusions are the Screen windows,
+// which stop at expert-parallel MoE kernels. With fusion_l3_mega=true the screen also lists each
+// EP MoE stage, and StageFusion hands the largest ones to GEAK mode=mega (kernel_mega.js, one
+// workflow() level) on the serving GPUs; a delivered candidate joins the combined A/B as one
+// overlay. Off by default: no StageFusion phase and no --stage-l3 screen.
+const FUSION_L3_ON = String(A.fusion_l3_mega != null ? A.fusion_l3_mega : 'false') === 'true';
+const FUSION_L3_GEAK_DIR = String(A.fusion_l3_geak_dir ||
+  `${WORKFLOW_DIR.replace(/\/[^/]*$/, '')}/kernel_workflow`).replace(/\/+$/, '');
+const FUSION_L3_MAX_STAGES = Math.max(1, parseInt(A.fusion_l3_max_stages != null ? A.fusion_l3_max_stages : 1, 10) || 1);
+// A stage below this share of request kernel time is not worth an hours-long mega search.
+const FUSION_L3_MIN_SHARE_PCT = parseFloat(A.fusion_l3_min_share_pct != null ? A.fusion_l3_min_share_pct : 2);
+const FUSION_L3_BUDGET_S = parseInt(A.fusion_l3_budget_s != null ? A.fusion_l3_budget_s : 43200, 10);
+const FUSION_L3_ROUNDS = parseInt(A.fusion_l3_rounds != null ? A.fusion_l3_rounds : 12, 10);
+// Caller overrides merged last into the mega args (e.g. use_expert_skills, target_guards, task).
+const FUSION_L3_MEGA_ARGS = (A.fusion_l3_mega_args && typeof A.fusion_l3_mega_args === 'object')
+  ? A.fusion_l3_mega_args : {};
+// An earlier KernelFusion eval dir: each stage packages its fusion/l3/<stage_id>/mega_result.json
+// instead of running mega again.
+const FUSION_L3_REUSE_DIR = String(A.fusion_l3_reuse_dir || '').replace(/\/+$/, '');
 let FUSION_INPUTS = { FUSION_TOPK_JSON: '', FUSION_CANDIDATES_JSON: '', FUSION_VALIDATION_JSON: '', FUSION_UNITSIDE_JSON: '' };
 
 // ---- run state ----
@@ -209,6 +230,9 @@ let fusionBoardPhaseBlind = [];
 let fusionUnitStatus = null;
 let fusionUnitEligibleIds = null;
 let fusionSemanticsAttempted = false;
+let fusionL3Stages = [];
+let fusionL3 = null;           // StageFusion outcome, reported as kf_return.l3
+const fusionL3Authored = [];   // packaged L3 overlays, FUSION_AUTHOR_SCHEMA rows
 let baseline = null;
 const profile = null;
 const TRACELENS_INPUTS = {};
@@ -253,7 +277,7 @@ const FUSION_RANK_SCHEMA = obj({
   fusion_topk_json: { type: 'string' }, fusion_topk_md: { type: 'string' },
   execution_list: arrObj, config_levers: arrObj, notes: { type: 'string' },
   candidate_pool: arrObj, k_effective: { type: 'number' }, noise_band_pct: { type: 'number' },
-  phase_blind: arrStr,
+  phase_blind: arrStr, l3_stages: arrObj,
 }, ['fusion_topk_json', 'execution_list']);
 const FUSION_UNIT_SCHEMA = obj({
   candidate_id: { type: 'string' }, verdict_path: { type: 'string' },
@@ -310,6 +334,13 @@ const FUSION_LADDERS_SCHEMA = obj({
   ok: { type: 'boolean' }, ladders: { type: 'object', additionalProperties: true },
   reason: { type: 'string' },
 }, ['ok']);
+const FUSION_L3_PREP_SCHEMA = obj({
+  status: { type: 'string', enum: ['ready', 'blocked'] }, stage_id: { type: 'string' },
+  kernel_path: { type: 'string' }, benchmark_harness: { type: 'string' },
+  ep_size: { type: 'number' }, package: { type: 'string' }, call_site: { type: 'string' },
+  cases: arrObj, mega_args: { type: 'object', additionalProperties: true },
+  reason: { type: 'string' }, notes: { type: 'string' },
+}, ['status', 'stage_id']);
 const REPORT_SCHEMA = obj({
   kf_return_json: { type: 'string' }, report_md: { type: 'string' }, index_md: { type: 'string' },
   notes: { type: 'string' },
@@ -734,6 +765,29 @@ function fusionApplyBudgetEntries(list, eligibleIds, budget) {
   return out;
 }
 
+// The part of a kernel_mega.js return that packaging and the report need: the verdict and the
+// selected candidate's registry row (tree, patch, activation, per-case scores).
+function fusionMegaSummary(ret) {
+  if (!ret || typeof ret !== 'object') return null;
+  const sel = String(ret.mega_selected_candidate || '');
+  const reg = Array.isArray(ret.mega_candidate_registry) ? ret.mega_candidate_registry : [];
+  const row = reg.find((c) => c && String(c.id || '') === sel) || null;
+  const pick = (c) => (c ? {
+    id: c.id, source: c.source, tree: c.tree, head: c.head, final_tree: c.final_tree,
+    final_head: c.final_head, patch: c.patch, activation: c.activation,
+    absolute_score: c.absolute_score, correctness: c.correctness, per_case: c.per_case,
+  } : null);
+  return {
+    deliverable: ret.mega_deliverable === true, selected_candidate: sel,
+    selected_source: String(ret.mega_selected_source || ''), selected: pick(row),
+    final_speedup: ret.final_speedup != null && Number.isFinite(Number(ret.final_speedup))
+      ? Number(ret.final_speedup) : null,
+    validation_status: String(ret.validation_status || ''), stop_reason: String(ret.stop_reason || ''),
+    eval_dir: String(ret.eval_dir || ''), report_path: String(ret.report_path || ''),
+    final_patch: String(ret.final_patch || ''), note: String(ret.mega_note || ''),
+  };
+}
+
 // Phase coverage of a semantics_mapper result, from the mapper's own phase_coverage verdict
 // (`phases_in_tables` / `missing_required_phases`, copied from quality_json). A failed or absent
 // table covers nothing; a result that does not report coverage is `null` (unknown), never covered.
@@ -1051,6 +1105,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           'Run scripts/fusion_screen.py and return its JSON unchanged. Do not invent or rerank candidates. ' +
           'Pass --fusion-budget-s FUSION_BUDGET_S and --item-minutes ITEM_MINUTES (they size the adaptive K). ' +
           'When OBSERVED_WORKLOAD_JSON is set, pass --observed-workload OBSERVED_WORKLOAD_JSON (phase weights = measured forwards). ' +
+          (FUSION_L3_ON ? 'STAGE_L3 is true: also pass --stage-l3 and copy its l3_stages into your return. ' : '') +
           'If EXEC_PREFIX is set, use it as the literal command prefix.', {
             EVAL_DIR, MODEL_NAME, MODEL_PATH, ROUND: fusionRound,
             SEMANTIC_TABLE_JSON: semantics.semantic_table_json,
@@ -1061,6 +1116,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
             ITEM_MINUTES: FUSION_ITEM_MINUTES,
             PASSES: FUSION_SCREEN_PASSES,
             GFX: FUSION_GFX,
+            ...(FUSION_L3_ON ? { STAGE_L3: true } : {}),
             SKILL_DIR: WORKFLOW_DIR,
             ...FUSION_RUNTIME_INPUTS,
           }),
@@ -1075,6 +1131,12 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         fusionBoardK = Number.isFinite(Number(screened.k_effective)) ? Number(screened.k_effective) : null;
         fusionBoardNoiseBand = Number(screened.noise_band_pct) > 0 ? Number(screened.noise_band_pct) : null;
         fusionBoardPhaseBlind = Array.isArray(screened.phase_blind) ? screened.phase_blind.map(String) : [];
+        if (FUSION_L3_ON) {
+          fusionL3Stages = (Array.isArray(screened.l3_stages) ? screened.l3_stages : [])
+            .filter((st) => st && st.stage_id);
+          log(`KernelFusion screen: ${fusionL3Stages.length} L3 stage(s) (expert-parallel MoE): ` +
+              (fusionL3Stages.map((st) => `${st.stage_id} ${st.phase} ${st.request_share_pct}%`).join(', ') || '-'));
+        }
         log(`KernelFusion screen: ${fusionExecutionList.length} final candidate(s)` +
             (fusionBoardK != null ? ` (K=${fusionBoardK})` : '') +
             `, ${fusionCandidatePool.length} in the candidate pool; applying every final candidate.`);
@@ -1509,6 +1571,142 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
     }
   }
 
+  // ---- StageFusion (L3): one EP MoE stage -> GEAK mode=mega -> one overlay ----
+  // Serial on the serving GPUs, every step under the serving lease so no KernelFusion server shares
+  // them with mega's own group leases: prepare (the served operator, its frozen source tree, a
+  // multi-rank UT checked on the serving GPUs) -> kernel_mega.js -> package the delivered candidate
+  // as an overlay that joins the combined A/B.
+  if (FUSION_L3_ON && fusionL3Stages.length) {
+    phase('StageFusion');
+    fusionFailureStage = 'stage_fusion';
+    const picked = fusionL3Stages
+      .filter((st) => !(Number(st.request_share_pct) < FUSION_L3_MIN_SHARE_PCT))
+      .slice(0, FUSION_L3_MAX_STAGES);
+    fusionL3 = { stages: fusionL3Stages.map((st) => ({
+      stage_id: st.stage_id, phase: st.phase || '', request_share_pct: st.request_share_pct,
+      subsumes: st.subsumes || [],
+      status: picked.includes(st) ? 'pending' : 'not_picked',
+      reason: picked.includes(st) ? '' : `below fusion_l3_min_share_pct ${FUSION_L3_MIN_SHARE_PCT}% ` +
+        `or past fusion_l3_max_stages ${FUSION_L3_MAX_STAGES}` })) };
+    const l3Row = (id) => fusionL3.stages.find((r) => r.stage_id === id);
+    const skipAll = (status, why) => {
+      for (const r of fusionL3.stages) if (r.status === 'pending') { r.status = status; r.reason = why; }
+      log(`KernelFusion StageFusion: ${why}`);
+    };
+    if (FUSION_APPLYBACK_MODE !== 'combined') {
+      skipAll('skipped', 'L3 overlays join only the combined A/B (fusion_applyback_mode=combined); not run.');
+    } else if (!FUSION_L3_REUSE_DIR && typeof workflow !== 'function') {
+      skipAll('skipped', 'this runtime has no workflow() to call GEAK mode=mega; not run.');
+    }
+    for (const stage of picked) {
+      const row = l3Row(stage.stage_id);
+      if (row.status !== 'pending') continue;
+      const id = String(stage.stage_id);
+      const l3Dir = `${EVAL_DIR}/fusion/l3/${id}`;
+      const reuseDir = FUSION_L3_REUSE_DIR ? `${FUSION_L3_REUSE_DIR}/fusion/l3/${id}` : '';
+      let prep = null;
+      let mega = null;
+      if (!reuseDir) {
+        const leftS = TIME_HEAD_DEADLINE_MS == null ? Infinity
+          : Math.floor((TIME_HEAD_DEADLINE_MS - ELAPSED_MS) / 1000) - 60 * STAGE_MIN.applyback;
+        const budgetS = Math.min(FUSION_L3_BUDGET_S, leftS);
+        if (!(budgetS >= 60 * STAGE_MIN.l3)) {
+          row.status = 'out_of_time';
+          row.reason = `needs >= ${STAGE_MIN.l3}min before apply-back, ${Math.max(0, Math.round(leftS / 60))}min left`;
+          log(`KernelFusion StageFusion ${id}: ${row.reason}; not starting it.`);
+          continue;
+        }
+        const prepLease = `l3_prepare_${id}`;
+        const prepared = await withFusionServingLease(prepLease, (leaseIn) => safeAgent(
+          roleAgent('fusion_stage_l3', 'prepare',
+            'Prepare L3_STAGE for GEAK mode=mega (PHASE=prepare in your role): find the operator the served ' +
+            'model runs for this stage, freeze its source tree under L3_DIR, write the multi-rank UT, check it on ' +
+            'SERVING_GPU under a GEAK group lease, write L3_DIR/prepared.json and return FUSION_L3_PREP_SCHEMA.' +
+            fusionLeaseRules(prepLease, true), {
+              EVAL_DIR, MODEL_PATH, MODEL_NAME, L3_STAGE: stage, L3_DIR: l3Dir,
+              SEMANTIC_TABLE_JSON: (semantics && semantics.semantic_table_json) || '',
+              ...(fusionObservedWorkload ? { OBSERVED_WORKLOAD_JSON: fusionObservedWorkload } : {}),
+              SERVING_FLAGS: curFlags || '', SERVING_ENV: curEnv || '', CURRENT_OVERLAY: curOverlay || '',
+              GEAK_KERNEL_WORKFLOW_DIR: FUSION_L3_GEAK_DIR,
+              ...leaseIn, ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
+            }),
+          { phase: 'KernelFusion', label: `fusion_stage_l3:prepare:${id}`, schema: FUSION_L3_PREP_SCHEMA }, 1));
+        prep = prepared.value || null;
+        if (!(prep && prep.status === 'ready' && prep.kernel_path && prep.benchmark_harness)) {
+          row.status = prepared.leaseBusy ? 'gpu_busy' : 'prepare_blocked';
+          row.reason = prepared.leaseBusy ? prepared.reason : ((prep && prep.reason) || 'prepare returned no result');
+          log(`KernelFusion StageFusion ${id}: not prepared (${row.reason}).`);
+          continue;
+        }
+        const ep = Math.min(GPU_LIST.length || SERVING_TP,
+          Number(prep.ep_size) > 0 ? Number(prep.ep_size) : SERVING_TP);
+        const megaArgs = {
+          ...(prep.mega_args && typeof prep.mega_args === 'object' ? prep.mega_args : {}),
+          mode: 'mega', workflow_dir: FUSION_L3_GEAK_DIR,
+          kernel_path: prep.kernel_path, benchmark_harness: prep.benchmark_harness,
+          gpu_ids: SERVING_GPU, gpus_per_job: ep,
+          exp_root: `${l3Dir}/mega_runs`, state_dir: `${l3Dir}/mega_state`,
+          budget: FUSION_L3_ROUNDS, mega_time_budget_s: Number.isFinite(budgetS) ? budgetS : FUSION_L3_BUDGET_S,
+          ...FUSION_L3_MEGA_ARGS,
+        };
+        row.mega_args = { kernel_path: megaArgs.kernel_path, benchmark_harness: megaArgs.benchmark_harness,
+          gpu_ids: megaArgs.gpu_ids, gpus_per_job: megaArgs.gpus_per_job, budget: megaArgs.budget,
+          mega_time_budget_s: megaArgs.mega_time_budget_s, state_dir: megaArgs.state_dir };
+        log(`KernelFusion StageFusion ${id}: GEAK mode=mega on GPU ${megaArgs.gpu_ids} (gpus_per_job ` +
+            `${megaArgs.gpus_per_job}), ${megaArgs.budget} rounds, ${Math.round(megaArgs.mega_time_budget_s / 60)}min; ` +
+            `operator ${prep.call_site || prep.package || '?'}.`);
+        const ran = await withFusionServingLease(`l3_mega_${id}`, async () => {
+          try {
+            return { ret: await workflow({ scriptPath: `${FUSION_L3_GEAK_DIR}/kernel_mega.js` }, megaArgs) };
+          } catch (e) {
+            return { error: (e && e.message) ? e.message : String(e) };
+          }
+        });
+        const out = ran.value || {};
+        mega = fusionMegaSummary(out.ret);
+        row.mega = mega;
+        if (ran.leaseBusy || out.error || !(mega && mega.deliverable)) {
+          row.status = ran.leaseBusy ? 'gpu_busy' : (out.error ? 'mega_error' : 'mega_no_deliverable');
+          row.reason = ran.leaseBusy ? ran.reason
+            : (out.error || (mega && mega.note) || 'mega returned no result');
+          log(`KernelFusion StageFusion ${id}: ${row.status} (${row.reason}).`);
+          continue;
+        }
+        log(`KernelFusion StageFusion ${id}: mega delivered ${mega.selected_candidate} at ` +
+            `${mega.final_speedup}x vs its frozen baseline.`);
+      }
+      const pkgLease = `l3_package_${id}`;
+      const packaged = await withFusionServingLease(pkgLease, (leaseIn) => safeAgent(
+        roleAgent('fusion_stage_l3', 'package',
+          'Package the delivered mega candidate of L3_STAGE as one KernelFusion overlay (PHASE=package in your ' +
+          'role): the serving process must import the candidate\'s code with its activation, and print the ' +
+          'BANNER_TAG banner from inside the stage\'s call site. Check it with the UT on SERVING_GPU, then return ' +
+          'FUSION_AUTHOR_SCHEMA. Do not start a serving server.' + fusionLeaseRules(pkgLease, true), {
+            EVAL_DIR, MODEL_PATH, MODEL_NAME, L3_STAGE: stage, L3_DIR: l3Dir, BANNER_TAG: id,
+            ...(reuseDir
+              ? { MEGA_RESULT_JSON: `${reuseDir}/mega_result.json`, PREPARED_JSON: `${reuseDir}/prepared.json` }
+              : { MEGA_RESULT: mega, PREPARED: prep }),
+            FUSION_OVERLAYS_DIR: `${EVAL_DIR}/fusion/fusion_overlays`,
+            CURRENT_OVERLAY: curOverlay || '', CURRENT_FLAGS: curFlags || '', CURRENT_ENV: curEnv || '',
+            GEAK_KERNEL_WORKFLOW_DIR: FUSION_L3_GEAK_DIR,
+            ...leaseIn, ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
+          }),
+        { phase: 'KernelFusion', label: `fusion_stage_l3:package:${id}`, schema: FUSION_AUTHOR_SCHEMA }, 1));
+      const pkg = packaged.value || null;
+      if (pkg && pkg.status === 'authored' && pkg.overlay_dir) {
+        fusionL3Authored.push({ ...pkg, exec_id: id, level: 'L3', banner_tag: pkg.banner_tag || id,
+          candidate_ids: [id], subsumes: stage.subsumes || [] });
+        row.status = 'packaged';
+        row.overlay_dir = pkg.overlay_dir;
+      } else {
+        row.status = packaged.leaseBusy ? 'gpu_busy' : 'package_blocked';
+        row.reason = packaged.leaseBusy ? packaged.reason : ((pkg && pkg.reason) || 'package returned no result');
+      }
+      log(`KernelFusion StageFusion ${id}: ${row.status}` + (row.reason ? ` (${row.reason})` : '') +
+          (reuseDir ? `; mega result reused from ${reuseDir}` : '') + '.');
+    }
+  }
+
   // Apply-back is best-effort. A discovery/validation failure leaves the inputs
   // empty and simply hands the pre-Fusion stack to the e2e workflow. Run one
   // execution-list entry (including its degrade ladder) per agent call so a later
@@ -1517,7 +1715,8 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
   let fusionApplyFailedExec = '';
   let fusionApplyUnprocessed = [];
   let combinedFailure = '';   // set when the combined A/B fails KernelFusion (no serial fallback)
-  if (FUSION_INPUTS.FUSION_TOPK_JSON && FUSION_INPUTS.FUSION_UNITSIDE_JSON && stageFits('applyback')) {
+  if (FUSION_INPUTS.FUSION_TOPK_JSON && (FUSION_INPUTS.FUSION_UNITSIDE_JSON || fusionL3Authored.length) &&
+      stageFits('applyback')) {
     phase('ApplyBack');
     const fusionApplyCandidate = (entry) =>
       fusionPickApplyCandidate(entry, fusionUnitEligibleIds, fusionUnitMeasured);
@@ -1618,7 +1817,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
     let combinedAccepted = false;
     if (FUSION_APPLYBACK_MODE === 'combined') {
       const eligible = new Set((fusionUnitEligibleIds || []).map(String));
-      const toAuthor = fusionApplyEntries.filter((e) => e && e.exec_id &&
+      const toAuthor = fusionApplyEntries.filter((e) => e && e.exec_id && FUSION_INPUTS.FUSION_UNITSIDE_JSON &&
         (!Array.isArray(fusionUnitEligibleIds) ||
          (e.candidate_ids || []).some((cid) => eligible.has(String(cid)))));
       const authorWidth = Math.max(1, Math.min(FUSION_UNIT_PARALLEL, GPU_LIST.length || 1));
@@ -1667,6 +1866,11 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           if (r.status === 'authored' && r.overlay_dir) authoredByExec.set(String(entry.exec_id), r);
         });
       }
+      for (const r of fusionL3Authored) {
+        authored.push(r);
+        authoredByExec.set(String(r.exec_id), r);
+      }
+      let preflightDark = null;   // banner tags the stacked server never printed (null = not checked)
       // ---- engagement preflight + one repair round (before the hours-long A/B) ----
       // An overlay can load cleanly and still patch a function the served path never calls
       // (DeepSeek-V4 run 10: 4 of 7 -- a base-class method its subclass overrides, a name the
@@ -1695,6 +1899,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
         // back as "overlay-e01_..." while the preflight reports "e01_..." and was never repaired).
         const bareTag = (t) => String(t || '').replace(/^\[?overlay-/, '').replace(/\]$/, '');
         const dark = (pf && pf.server_ok && Array.isArray(pf.missing)) ? pf.missing.map(bareTag) : [];
+        if (pf && pf.server_ok) preflightDark = dark;
         const darkEntries = toAuthor.filter((e) => {
           const r = authoredByExec.get(String(e.exec_id));
           return r && dark.includes(bareTag(r.banner_tag));
@@ -1720,6 +1925,25 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           });
         }
       }
+      // An L3 overlay that engaged replaces the stage's own L1/L2 overlays: they patch kernels the
+      // mega path no longer launches. The integrator records them as subsumed.
+      const l3Subsumed = {};
+      for (const r of fusionL3Authored) {
+        const tag = String(r.banner_tag || '').replace(/^\[?overlay-/, '').replace(/\]$/, '');
+        if (preflightDark && preflightDark.includes(tag)) continue;
+        for (const execId of r.subsumes || []) {
+          if (!l3Subsumed[execId] && authoredByExec.has(String(execId))) l3Subsumed[execId] = r.exec_id;
+        }
+      }
+      if (Object.keys(l3Subsumed).length) {
+        for (const execId of Object.keys(l3Subsumed)) {
+          authoredByExec.delete(String(execId));
+          const idx = authored.findIndex((a) => String(a.exec_id) === String(execId));
+          if (idx >= 0) authored.splice(idx, 1);
+        }
+        log(`KernelFusion apply-back: L3 overlay(s) subsume ${Object.entries(l3Subsumed)
+          .map(([e, st]) => `${e}->${st}`).join(', ')}; those overlays leave the stack.`);
+      }
       if (authoredByExec.size) {
         fusionFailureStage = 'apply_back:combined_ab';
         const accuracyKey = fusionStackKey();
@@ -1727,7 +1951,9 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
           roleAgent('fusion_integrator', 'combined_ab',
             'Stack every AUTHORED overlay that does not conflict with a better-ranked one, gate the stack with ' +
             'ONE run of COMBINED_AB_SCRIPT (one base server vs one stacked server), and return the full aggregate ' +
-            'FUSION_APPLY_SCHEMA with combined_decision. On reject, record no dispositions: KernelFusion fails with the decision reason.', {
+            'FUSION_APPLY_SCHEMA with combined_decision. On reject, record no dispositions: KernelFusion fails with the decision reason.' +
+            (fusionL3Authored.length ? ' AUTHORED includes L3 stage overlays (level L3, GEAK mode=mega): stack them like any ' +
+              'other row; record every L3_SUBSUMED entry in rejected with reason "subsumed by L3 <stage_id>".' : ''), {
               EVAL_DIR, MODEL_PATH, SERVING_GPU, TP: SERVING_TP, WORKLOAD,
               AUTHORED: authored, PRIOR_APPLY_RESULT: applyState,
               FUSION_TOPK_JSON: FUSION_INPUTS.FUSION_TOPK_JSON,
@@ -1743,6 +1969,7 @@ if (!FAST_MODE && FUSION_DISCOVERY_ON && FUSION_BACKENDS.has(BACKEND) && BASELIN
               GSM8K_EVAL_SCRIPT: `${WORKFLOW_DIR}/scripts/fusion_gsm8k_eval.py`,
               GSM8K_CONCURRENCY: fusionGsm8kConcurrency(curFlags), GSM8K_THINKING: FUSION_GSM8K_THINKING,
               ACCURACY_STACK_KEY: accuracyKey,
+              ...(fusionL3Authored.length ? { L3_SUBSUMED: l3Subsumed } : {}),
               ...ACCURACY_INPUTS, ...FUSION_RUNTIME_INPUTS, SKILL_DIR: WORKFLOW_DIR,
             }),
           { phase: 'KernelFusion', label: 'fusion_integrator:combined_ab',
@@ -2009,6 +2236,7 @@ const kfReturn = {
   fusion_topk_json: FUSION_INPUTS.FUSION_TOPK_JSON || '',
   fusion_unitside_json: FUSION_INPUTS.FUSION_UNITSIDE_JSON || '',
   fusion_disposition: fusionDisposition || {},
+  ...(FUSION_L3_ON ? { l3: fusionL3 || { stages: [], notes: 'the screen listed no L3 stage' } } : {}),
   elapsed_min: Math.round(ELAPSED_MS / 60000),
 };
 const reported = await safeAgent(
@@ -2019,7 +2247,7 @@ const reported = await safeAgent(
 2. Write ${EVAL_DIR}/KF_REPORT.md: a short human report of the stage from that JSON -- status, baseline
    and final throughput with the delta, the analysis trace (analysis_points: the top-1 GPU-time point)
    and the sampling summary it came from, the Top-K / unit-side / apply-back outcome with every applied,
-   blocked and deferred row and its reason, and the coverage gaps. Link the phase reports that exist
+   blocked and deferred row and its reason, ${FUSION_L3_ON ? 'the L3 stage fusions (l3: each stage, its GEAK mode=mega outcome and overlay), ' : ''}and the coverage gaps. Link the phase reports that exist
    under ${EVAL_DIR} (01_SEMANTIC.md, 02*/03*/04_FUSION_UNITSIDE.md, 05*).
 3. Run: python3 ${WORKFLOW_DIR}/scripts/report_index.py --eval-dir ${EVAL_DIR}
    (if its CLI differs, read --help and index ${EVAL_DIR}; a failure here is a note, not a stop).

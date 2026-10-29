@@ -18,6 +18,7 @@ e2e_workflow/knowledge/learned/fusion-router-topk-shared-sigmoid-qwen35-gfx942.m
 e2e_workflow/knowledge/learned/fusion-silumul-group-quant-qwen3-gfx942.md
 e2e_workflow/knowledge/learned/fusion-vabsorb-fp8-batched-gemm-gfx942.md
 e2e_workflow/roles/fusion_integrator.md
+e2e_workflow/roles/fusion_stage_l3.md
 e2e_workflow/roles/fusion_trace_collector.md
 e2e_workflow/roles/fusion_unit_validator.md
 e2e_workflow/roles/kernel_fusion_analyst.md
@@ -111,4 +112,5 @@ interface/run_kf_e2e.py
 interface/test_run_kf_e2e.py
 e2e_workflow/scripts/fusion_serving_unit.py
 e2e_workflow/scripts/tests/test_fusion_serving_unit.py
+e2e_workflow/scripts/tests/test_fusion_stage_l3.py
 e2e_workflow/scripts/fusion_preflight_load.py

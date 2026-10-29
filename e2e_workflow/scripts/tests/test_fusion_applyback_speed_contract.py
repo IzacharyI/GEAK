@@ -267,7 +267,7 @@ class CombinedFailureDispositionTest(unittest.TestCase):
         src = _source()
         # Declared where the disposition code can see it, not inside the apply-back block.
         self.assertLess(src.index("let combinedFailure = ''"),
-                        src.index("if (FUSION_INPUTS.FUSION_TOPK_JSON && FUSION_INPUTS.FUSION_UNITSIDE_JSON && stageFits('applyback')) {"))
+                        src.index("if (FUSION_INPUTS.FUSION_TOPK_JSON && (FUSION_INPUTS.FUSION_UNITSIDE_JSON || fusionL3Authored.length) &&"))
         block = src[src.index("  if (!fapply) {\n    log('KernelFusion apply-back failed"):]
         block = block[:block.index("\n  }\n")]
         self.assertIn("failed_stage: combinedFailure ? 'apply_back:combined_ab'", block)

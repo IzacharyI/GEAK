@@ -234,7 +234,7 @@ def validate(topk_path, apply_path, unitside_path=None, budget=None,
     warnings = []
 
     execution_list = topk.get("execution_list") or []
-    if not execution_list:
+    if not execution_list and not topk.get("l3_stages"):
         errors.append(
             "Top-K json carries no execution_list — this gate has no denominator to "
             "check against. Regenerate FUSION_TOPK with fusion_topk_harness.py "
@@ -257,6 +257,24 @@ def validate(topk_path, apply_path, unitside_path=None, budget=None,
         for i, _d, _r, _rec in hits:
             matched_records.add(i)
         rows.append({"entry": entry, "keys": keys, "hits": hits})
+
+    # L3 stages (GEAK mode=mega) are a second denominator: a record naming a stage_id is
+    # credited to that stage, and an applied stage excludes the entries it subsumes.
+    l3_board = {"exec:%s" % _norm(s.get("stage_id")): s for s in topk.get("l3_stages") or []
+                if s.get("stage_id")}
+    l3_hits = {}
+    for i in range(len(records)):
+        if i in matched_records:
+            continue
+        key = "exec:%s" % _norm(records[i][2].get("exec_id"))
+        if key in l3_board:
+            l3_hits.setdefault(key, []).append(records[i])
+            matched_records.add(i)
+    l3_subsumed = {}
+    for key, hits in l3_hits.items():
+        if any(d == "applied" for d, _r, _rec in hits):
+            for exec_id in l3_board[key].get("subsumes") or []:
+                l3_subsumed.setdefault(exec_id, l3_board[key]["stage_id"])
 
     unmatched = [i for i in range(len(records)) if i not in matched_records]
     for i in unmatched:
@@ -328,6 +346,10 @@ def validate(topk_path, apply_path, unitside_path=None, budget=None,
                           "ladder top" % "; ".join(
                               "%s: %s" % (u[0], u[1]) for u in unit_states[:2]))
                 source = "unitside_gap"
+            elif exec_id in l3_subsumed:
+                disposition = "blocked_by_exclusion"
+                reason = "subsumed by applied L3 stage %s" % l3_subsumed[exec_id]
+                source = "l3_stage"
             elif conflicts.get(exec_id, set()) & applied_ids:
                 disposition = "blocked_by_exclusion"
                 reason = ("conflicts with applied %s"
@@ -458,6 +480,16 @@ def validate(topk_path, apply_path, unitside_path=None, budget=None,
         },
         "accepted_fusions": apply_payload.get("accepted_fusions") or [],
     }
+    if l3_board:
+        order = {"applied": 0, "blocked": 1, "deferred_with_reason": 2}
+        result["l3_stages"] = []
+        for key, stage in l3_board.items():
+            hits = sorted(l3_hits.get(key, []), key=lambda h: order.get(h[0], 9))
+            result["l3_stages"].append({
+                "stage_id": stage["stage_id"], "phase": stage.get("phase"),
+                "subsumes": stage.get("subsumes") or [],
+                "disposition": hits[0][0] if hits else "not_applied",
+                "reason": hits[0][1] if hits else "no L3 overlay reached apply-back"})
     return result
 
 
@@ -592,6 +624,19 @@ def render_markdown(result):
                 _esc(f.get("tpot_delta_pct")), _esc(f.get("throughput_delta_pct")),
                 _esc(f.get("gsm8k_base")), _esc(f.get("gsm8k_cand")),
                 _esc(f.get("engaged"))))
+        lines.append("")
+
+    if result.get("l3_stages"):
+        lines.append("## L3 stage 融合（GEAK mode=mega）")
+        lines.append("")
+        lines.append("| stage | phase | 去向 | 覆盖的条目 | 原因 |")
+        lines.append("|---|---|---|---|---|")
+        for s in result["l3_stages"]:
+            lines.append("| `%s` | %s | **%s** | %s | %s |" % (
+                _esc(s["stage_id"]), _esc(s.get("phase")),
+                _DISP_LABEL.get(s["disposition"], s["disposition"]),
+                _esc("、".join("`%s`" % e for e in s.get("subsumes") or []) or "-"),
+                _esc(s.get("reason"))))
         lines.append("")
 
     if result.get("warnings"):

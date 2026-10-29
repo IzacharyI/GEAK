@@ -122,6 +122,11 @@ Coverage. Every fusible region, every code seam with >= 3 non-barrier kernels
 and every inefficient kernel is in a candidate or carries a per-item reason;
 an inefficient kernel no window contains is handed off
 (handoff:HeadKernel/TuningSkillset).
+
+L3 stages (--stage-l3). Windows stop at expert-parallel MoE kernels. With
+--stage-l3 the screen also lists each EP MoE stage (first to last EP kernel of a
+layer, widened over adjacent kernels of the same code seam) as `l3_stages`: one
+multi-rank operator for GEAK mode=mega, with the entries it subsumes.
 """
 import argparse
 import json
@@ -2927,7 +2932,7 @@ def _prior_seam_entry(item, rows, found):
 
 def screen(rows, gfx="gfx942", catalog=None, top_k=FINAL_K, passes=SCREEN_PASSES,
            extra_passes=None, workload=None, table=None, priors=None, model="",
-           noise_band_pct=NOISE_BAND_PCT, hw=None):
+           noise_band_pct=NOISE_BAND_PCT, hw=None, stage_l3=False):
     priors = priors if priors is not None else []
     found = screen_candidates(rows, gfx=gfx, catalog=catalog, workload=workload, table=table,
                               hw=hw, priors=priors, model=model, noise_band_pct=noise_band_pct)
@@ -3026,7 +3031,65 @@ def screen(rows, gfx="gfx942", catalog=None, top_k=FINAL_K, passes=SCREEN_PASSES
     found["prior_status"] = status
     found["noise_band_pct"] = noise_band_pct
     found["phase_blind"] = blind
+    if stage_l3:
+        found["l3_stages"] = l3_stages(rows, found["effective_phase_weights"], denominator,
+                                       final + pool)
     return found
+
+
+# ------------------------------------------------------------- L3 stages
+# Kernels an EP MoE stage never widens over: they belong to another stage of the layer.
+L3_STOP_CLASSES = ("attention", "linear_attn", "allreduce")
+
+
+def l3_stages(rows, weights, denominator, entries=()):
+    """Expert-parallel MoE stages, one per (phase, EP kernel set), largest request share first.
+
+    A stage is the span from the first to the last EP MoE kernel of a layer pattern, widened
+    over adjacent kernels of the EP kernels' own code seam. `subsumes` lists the entries whose
+    eliminated kernels fall inside the stage."""
+    merged = {}
+    for (phase, pattern, _stream), group in sorted(_ordered_groups(rows).items(),
+                                                   key=lambda kv: tuple(map(str, kv[0]))):
+        hits = [i for i, row in enumerate(group) if _EP_MOE_KERNEL.search(_name(row))]
+        if not hits:
+            continue
+        seams = {_seam_of(group[i]) for i in hits} - {None}
+
+        def joins(row):
+            return (_seam_of(row) in seams
+                    and classify_row(row)["cls"] not in L3_STOP_CLASSES)
+        lo, hi = hits[0], hits[-1]
+        while lo > 0 and joins(group[lo - 1]):
+            lo -= 1
+        while hi < len(group) - 1 and joins(group[hi + 1]):
+            hi += 1
+        members = group[lo:hi + 1]
+        ep = sorted({_short(_name(group[i])) for i in hits})
+        step_us = sum(_duration(m) for m in members) * _layers(members[0])
+        stage = merged.setdefault((phase, tuple(ep)), {
+            "level": "L3", "kind": "ep_moe_stage", "handler": "geak_mega", "phase": phase,
+            "pattern_ids": [], "row_ids": [], "kernel_names": [_name(m) for m in members],
+            "ep_kernels": ep, "modules": set(), "code_seam": sorted(seams)[0] if seams else None,
+            "layers": 0, "step_us": 0.0, "request_us": 0.0})
+        stage["pattern_ids"].append(pattern)
+        stage["row_ids"].extend(m["row_id"] for m in members)
+        stage["modules"].update(_module_rel(m) for m in members if _module_rel(m))
+        stage["layers"] += _layers(members[0])
+        stage["step_us"] += step_us
+        stage["request_us"] += step_us * weights.get(phase, 1.0)
+    stages = sorted(merged.values(), key=lambda s: (-s["request_us"], str(s["phase"])))
+    for index, stage in enumerate(stages, 1):
+        rows_in = set(stage["row_ids"])
+        stage["stage_id"] = "l3_%02d" % index
+        stage["modules"] = sorted(stage["modules"])
+        stage["step_us"] = round(stage["step_us"], 3)
+        stage["request_us"] = round(stage["request_us"], 3)
+        stage["request_share_pct"] = (round(100.0 * stage["request_us"] / denominator, 4)
+                                      if denominator else 0.0)
+        stage["subsumes"] = sorted({e["exec_id"] for e in entries if e.get("exec_id") and
+                                    set(e.get("elim_row_ids") or e.get("row_ids") or []) & rows_in})
+    return stages
 
 
 # ------------------------------------------------------------------ output
@@ -3244,6 +3307,15 @@ def _markdown(result):
         lines.append("Catalog hygiene: %d entries dropped (not kernels / no op tag), %d kept."
                      % (len(result["catalog_dropped"]), result.get("catalog_kernel_count", 0)))
         lines.append("")
+    if result.get("l3_stages"):
+        lines.extend(["## L3 stages (expert-parallel MoE, GEAK mode=mega)", "",
+                      "| stage | phase | EP kernels | members | layers | request share | subsumes |",
+                      "|---|---|---|---|---|---|---|"])
+        lines.extend("| %s | %s | %s | %d | %d | %.2f%% | %s |" % (
+            s["stage_id"], s["phase"], ", ".join("`%s`" % k for k in s["ep_kernels"]),
+            len(s["kernel_names"]), s["layers"], s["request_share_pct"],
+            ", ".join(s["subsumes"]) or "-") for s in result["l3_stages"])
+        lines.append("")
     if result.get("rejected"):
         lines.append("Rejected windows: " + ", ".join(
             "%s %d" % (reason, count) for reason, count in sorted(result["rejected"].items())))
@@ -3327,6 +3399,8 @@ def main(argv=None):
     parser.add_argument("--hbm-tbps", default="", help="measured HBM bandwidth (TB/s)")
     parser.add_argument("--peak-tflops-bf16", default="", help="measured bf16 peak (TFLOPS)")
     parser.add_argument("--peak-tflops-fp8", default="", help="measured fp8 peak (TFLOPS)")
+    parser.add_argument("--stage-l3", action="store_true",
+                        help="also list expert-parallel MoE stages (l3_stages) for GEAK mode=mega")
     args = parser.parse_args(argv)
     with open(args.semantic_table) as handle:
         table = json.load(handle)
@@ -3344,7 +3418,8 @@ def main(argv=None):
     priors = load_all_priors(args.measured_priors, args.priors_index)
     result = screen(load_rows(table), gfx=args.gfx, catalog=catalog, top_k=k_effective,
                     passes=args.passes, workload=workload, table=table, priors=priors,
-                    model=args.model, noise_band_pct=args.noise_band_pct, hw=hw)
+                    model=args.model, noise_band_pct=args.noise_band_pct, hw=hw,
+                    stage_l3=args.stage_l3)
     os.makedirs(args.out_dir, exist_ok=True)
     candidates_path = os.path.join(args.out_dir, "fusion_candidates.json")
     topk_path = os.path.join(args.out_dir, "fusion_topk.json")
@@ -3424,6 +3499,8 @@ def main(argv=None):
         "execution_list": [dict(_public(item), tier="B") for item in result["execution_list"]],
         "candidate_pool": pool,
     })
+    if args.stage_l3:
+        topk["l3_stages"] = result["l3_stages"]
     with open(candidates_path, "w") as handle:
         json.dump(candidates, handle, indent=2)
     with open(topk_path, "w") as handle:
@@ -3445,6 +3522,8 @@ def main(argv=None):
         "phase_blind": result["phase_blind"],
         "region_coverage_ok": coverage_check.get("ok", True),
     }
+    if args.stage_l3:
+        summary["l3_stages"] = result["l3_stages"]
     print(json.dumps(summary))
     return 0
 

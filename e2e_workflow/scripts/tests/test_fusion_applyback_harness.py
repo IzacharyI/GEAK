@@ -334,6 +334,41 @@ class FusionApplyBackTest(unittest.TestCase):
             self.assertIn("1234.5 tok/s", md)
             self.assertEqual(res["region_coverage"]["regions_total"], 3)
 
+    # ---- L3 stages (GEAK mode=mega) ------------------------------------------
+    def _l3_board(self, **over):
+        return self._topk(l3_stages=[{"stage_id": "l3_01", "phase": "decode",
+                                      "subsumes": ["e03"]}], **over)
+
+    def test_an_applied_l3_stage_is_credited_and_excludes_what_it_subsumes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._run(tmp, topk=self._l3_board(), apply=self._apply(
+                accepted_fusions=[{"exec_id": "e01"}, {"exec_id": "l3_01", "level": "L3"}],
+                deferred=[{"exec_id": "e04", "reason": "next round"}]))
+            self.assertEqual(res["status"], "pass", res["errors"])
+            disp = {r["exec_id"]: (r["disposition"], r["reason"]) for r in res["results"]}
+            self.assertEqual(disp["e03"], ("blocked_by_exclusion", "subsumed by applied L3 stage l3_01"))
+            self.assertEqual([(s["stage_id"], s["disposition"]) for s in res["l3_stages"]],
+                             [("l3_01", "applied")])
+            self.assertIn("L3 stage", open(os.path.join(tmp, "out.md")).read())
+
+    def test_an_l3_stage_without_a_record_is_reported_not_failed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._run(tmp, topk=self._l3_board(), apply=self._apply(
+                rejected=[{"exec_id": "e03", "reason": "not built"}],
+                deferred=[{"exec_id": "e04", "reason": "next round"}]))
+            self.assertEqual(res["status"], "pass", res["errors"])
+            self.assertEqual(res["l3_stages"][0]["disposition"], "not_applied")
+
+    def test_a_board_without_l3_stages_reports_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertNotIn("l3_stages", self._run(tmp))
+
+    def test_an_l3_only_board_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = self._run(tmp, topk=self._l3_board(execution_list=[]), apply=self._apply(
+                accepted_fusions=[{"exec_id": "l3_01", "level": "L3"}]))
+            self.assertEqual(res["status"], "pass", res["errors"])
+
 
 if __name__ == "__main__":
     unittest.main()

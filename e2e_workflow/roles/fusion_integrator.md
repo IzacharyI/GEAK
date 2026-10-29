@@ -407,6 +407,11 @@ Inputs add `AUTHORED` (the author_one results), `PRIOR_APPLY_RESULT`, `COMBINED_
    rank. Write ONE combined-loader dir `FUSION_OVERLAYS_DIR/<model>/combined/` whose
    `sitecustomize.py` runs `CURRENT_OVERLAY`'s overlays (if any) and then every kept
    overlay (see **Stacking**).
+   A row with `level: "L3"` is a stage overlay from StageFusion (an EP MoE stage delivered by GEAK
+   mode=mega; its evidence is that run's verified multi-rank A/B, not `FUSION_UNITSIDE_JSON`).
+   Stack it like any other row. The L1/L2 entries it replaces are already out of `AUTHORED` and
+   listed in `L3_SUBSUMED` (exec_id -> stage_id): record each in `rejected` with reason
+   `subsumed by L3 <stage_id>`. The harness credits the L3 row to the board's `l3_stages`.
 2. Run the A/B once, with the run's serving env (`BACKEND TP GPU MODEL ISL OSL CONC
    EXTRA_SERVER_ARGS=CURRENT_FLAGS EXTRA_ENV=CURRENT_ENV EVAL_DIR`, bench protocol):
    ```bash

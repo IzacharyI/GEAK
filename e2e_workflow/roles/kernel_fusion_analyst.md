@@ -70,6 +70,7 @@ python3 "$SKILL_DIR/scripts/fusion_screen.py" \
   ${OBSERVED_WORKLOAD_JSON:+--observed-workload "$OBSERVED_WORKLOAD_JSON"} \
   --model "${MODEL_NAME:-}" \
   --noise-band-pct "${NOISE_BAND_PCT:-1.0}" \
+  ${STAGE_L3:+--stage-l3} \
   --md "$EVAL_DIR/03_FUSION_TOPK.md"
 ```
 
@@ -83,7 +84,9 @@ speculate; the screen then keeps OSL-1 as an explicit upper bound.
 
 `--model` is optional (the model family is otherwise read from the table's structural context). The measured priors default to the repository copies (`knowledge/fusion/measured_priors.json`, `knowledge/learned/INDEX.md`); `--measured-priors ''` / `--priors-index ''` disable them. `--fusion-budget-s` (KernelFusion budget in seconds) turns on the adaptive K = clamp(floor(budget x 0.7 / item), 8, 16) with `--item-minutes` per apply-back item (default 45); without it K is `--top-k` (default 8). Measured bandwidth / peaks, when known, go in `--hbm-tbps` / `--peak-tflops-bf16` / `--peak-tflops-fp8` (or `GEAK_HBM_TBPS` / `GEAK_PEAK_TFLOPS_BF16` / `GEAK_PEAK_TFLOPS_FP8`); otherwise datasheet values per gfx are used.
 
-Return the script's JSON as StructuredOutput: `status`, `fusion_candidates_json`, `fusion_topk_json`, `fusion_topk_md`, `execution_list`, `candidate_count` (plus `candidate_pool_count`, `k_effective`, `phase_blind`, `region_coverage_ok`). Copy `execution_list` from the printed JSON. Do not rerank it.
+Return the script's JSON as StructuredOutput: `status`, `fusion_candidates_json`, `fusion_topk_json`, `fusion_topk_md`, `execution_list`, `candidate_count` (plus `candidate_pool_count`, `k_effective`, `phase_blind`, `region_coverage_ok`, and `l3_stages` when `STAGE_L3` is set). Copy `execution_list` from the printed JSON. Do not rerank it.
+
+`--stage-l3` (input `STAGE_L3`) also lists each expert-parallel MoE stage as `l3_stages` (L3, stage-wise fusion): the span from the first to the last EP MoE kernel of a layer, widened over adjacent kernels of the same code seam, with its request share and the entries it `subsumes`. Windows never cross these kernels; KernelFusion's StageFusion phase hands a stage to GEAK mode=mega.
 
 `fusion_topk.json` is the final board: `execution_list` (K ranked alt groups plus up to 4 positive measured priors forced in beside them, `forced_by_prior`), `candidate_pool` (entries between 0.1% and the gate: stacking fill-ins, not Top-K), `k_effective`, `noise_band_pct`, `phase_blind`, `hardware`, `c0_us`. Every entry carries `expected_e2e_gain_pct`, `lower_bound` (launch-only estimate, no shapes), `alt_group` and `alt_ladder` (rung 0 is the entry itself; apply-back walks the ladder until one rung passes its gate), `negative_prior`, `prior_polarity`, the saving breakdown (`launch_saved_us`, `mem_saved_us`, `eff_saved_us`, `n_before`, `n_after`) and a `seam_descriptor` usable as a measured-prior seam. `fusion_candidates.json` adds the initial board (`candidates`, `pool_candidates`), `seam_entries`, `alt_groups`, `appendix`, `region_coverage`, `seam_coverage`, `inefficient_coverage`, `kernel_efficiency`, `dataflow`, `classification_conflicts`, `catalog_hygiene` and `priors`. Every entry in `execution_list` is optimized.
 

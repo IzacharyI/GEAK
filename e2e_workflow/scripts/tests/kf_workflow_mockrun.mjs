@@ -1,10 +1,17 @@
 // Mock Workflow runtime for kernel_fusion/kf_workflow.js (tests/test_fusion_capture_manifest_contract.py).
 // Stubs every agent by its label, records phases/prompts, prints one JSON summary line.
-// usage: node kf_workflow_mockrun.mjs <kf_workflow.js> <accept|reject|baseline_fail|tight|fixed_shape|vllm>
+// usage: node kf_workflow_mockrun.mjs <kf_workflow.js> <accept|reject|baseline_fail|tight|fixed_shape|vllm|l3|...>
+// l3* scenarios turn on StageFusion (fusion_l3_mega) and stub workflow() as kernel_mega.js.
 import fs from 'fs';
 const [,, script, scenario] = process.argv;
 let src = fs.readFileSync(script, 'utf8').replace('export const meta', 'const meta');
 const calls = [];
+const workflowCalls = [];
+const L3 = scenario.startsWith('l3');
+const L3_STAGES = [
+  { stage_id: 'l3_01', level: 'L3', phase: 'decode', request_share_pct: 12.5, subsumes: ['e2'], ep_kernels: ['megamoe_stage1'] },
+  { stage_id: 'l3_02', level: 'L3', phase: 'prefill', request_share_pct: 1.0, subsumes: [] },
+];
 let aggCalls = 0;
 const phases = [];
 const logs = [];
@@ -33,6 +40,12 @@ const respond = (prompt, opts) => {
   if (l === 'fusion-ladders') return { ok: true, ladders: { e1: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] } };
   if (l === 'fusion-screen' && scenario === 'descend_noladder') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1' }], candidate_pool: [] };
   if (l === 'fusion-screen' && scenario === 'descend') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], alt_group: 'g1', alt_ladder: [{ rung: 0 }, { rung: 1, kernel_names: ['a', 'b'] }, { rung: 2 }] }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [] };
+  if (l === 'fusion-screen' && scenario === 'l3_only') return { status: 'no_candidate', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [], candidate_pool: [], l3_stages: L3_STAGES };
+  if (l === 'fusion-screen' && L3) return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], expected_gain_pct: 2 }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [], l3_stages: L3_STAGES };
+  if (l.startsWith('fusion_unit_validator:aggregate') && L3) return { status: 'pass', fusion_unitside_json: '/e/u.json', applyback_eligible_ids: ['c1', 'c2'], unit_status_by_candidate: { c1: 'pass', c2: 'pass' } };
+  if (l.startsWith('fusion_stage_l3:prepare:')) return { status: 'ready', stage_id: l.split(':').pop(), kernel_path: '/e/fusion/l3/l3_01/baseline_tree', benchmark_harness: '/e/fusion/l3/l3_01/baseline_tree/moe_ut.py', ep_size: 8, package: 'aiter', call_site: 'aiter.megamoe:mega_moe', mega_args: { target_guards: ['64_uniform'], task: 'fuse the stage', budget: 99 } };
+  if (l.startsWith('fusion_stage_l3:package:')) { const id = l.split(':').pop(); return { exec_id: id, status: 'authored', overlay_dir: `/e/ovl/${id}`, banner_tag: id, parity: 'pass relL2=0.03' }; }
+  if (l === 'fusion_integrator:combined_ab' && L3) return { accepted_fusions: [{ exec_id: 'e1' }, { exec_id: 'l3_01', level: 'L3' }], final_overlay: '/e/stack', e2e_throughput_tok_s: 1100, combined_decision: 'accept', rejected: [{ exec_id: 'e2', reason: 'subsumed by L3 l3_01' }], deferred: [], learned_cards: [] };
   if (l === 'fusion-screen') return { status: 'pass', fusion_topk_json: '/e/topk.json', fusion_candidates_json: '/e/c.json', execution_list: [{ exec_id: 'e1', candidate_ids: ['c1'], expected_gain_pct: 2 }, { exec_id: 'e2', candidate_ids: ['c2'] }], candidate_pool: [], k_effective: 8, noise_band_pct: 1 };
   if (l.startsWith('fusion_unit_validator:aggregate') && scenario === 'agg_drop') {
     aggCalls += 1;
@@ -52,6 +65,15 @@ const respond = (prompt, opts) => {
   throw new Error('unexpected agent label ' + l);
 };
 const agent = async (prompt, opts) => respond(prompt, opts || {});
+const workflow = async (ref, wfArgs) => {
+  workflowCalls.push({ ref, args: wfArgs });
+  if (!L3) throw new Error('unexpected workflow() call');
+  if (scenario === 'l3_throw') throw new Error('Setup failed: director did not return an eval_dir');
+  if (scenario === 'l3_nodeliver') return { mode: 'mega', mega_deliverable: false, mega_selected_candidate: '', mega_candidate_registry: [], final_speedup: null, mega_note: 'mega: no fully verified finalist' };
+  return { mode: 'mega', mega_deliverable: true, mega_selected_candidate: 'm3', mega_selected_source: 'workflow',
+    mega_candidate_registry: [{ id: 'm1', tree: '/m/t1' }, { id: 'm3', tree: '/m/t3', final_tree: '/m/f3', patch: '/m/p3.diff', activation: { switch_name: 'X', switch_value: '1' }, absolute_score: 1.15, per_case: [] }],
+    final_speedup: 1.15, validation_status: 'accepted', eval_dir: '/m/eval', report_path: '/m/eval/tech_lead_report.md', final_patch: '/m/eval/final_patch.diff', mega_note: 'mega: selected m3' };
+};
 const parallel = async (thunks) => Promise.all(thunks.map((t) => t()));
 const phase = (p) => phases.push(p);
 const log = (m) => logs.push(m);
@@ -64,10 +86,12 @@ const args = {
   ...(scenario === 'reuse' ? { fusion_reuse_eval_dir: '/old/' } : {}),
   ...(scenario === 'reuse_unit' ? { fusion_reuse_unitside_dirs: ['/old1', '/old2/'] } : {}),
   initial_extra_server_args: '--tp 8', initial_extra_env: 'E=1', initial_overlay_pythonpath: '',
+  ...(L3 ? { fusion_l3_mega: 'true', fusion_l3_mega_args: { use_expert_skills: 'true' } } : {}),
+  ...(scenario === 'l3_reuse' ? { fusion_l3_reuse_dir: '/old/' } : {}),
 };
-const fn = new Function('args', 'agent', 'parallel', 'phase', 'log', 'return (async () => {\n' + src + '\n})();');
-const ret = await fn(args, agent, parallel, phase, log);
+const fn = new Function('args', 'agent', 'parallel', 'phase', 'log', 'workflow', 'return (async () => {\n' + src + '\n})();');
+const ret = await fn(args, agent, parallel, phase, log, workflow);
 const bad = calls.filter((c) => /undefined|\[object Object\]|NaN/.test(c.prompt.replace(/JSON\.stringify|undefined_/g, '')));
 const prompts = {};
 for (const c of calls) prompts[c.label] = c.prompt;
-console.log(JSON.stringify({ phases, labels: calls.map((c) => c.label), ret, bad: bad.map((b) => b.label), prompts, logs }));
+console.log(JSON.stringify({ phases, labels: calls.map((c) => c.label), ret, bad: bad.map((b) => b.label), prompts, logs, workflowCalls }));
