@@ -258,3 +258,22 @@ def test_the_fusion_strategy_is_read_first_and_can_be_replaced_or_dropped(tmp_pa
     own.write_text("x")
     assert kf_stage.build_args({"strategy": str(own), "prompt": str(deploy)}, ps_args(tmp_path), 60)["kf_prompt"] == f"{own},{deploy}"
     assert kf_stage.build_args({"strategy": False, "prompt": str(deploy)}, ps_args(tmp_path), 60)["kf_prompt"] == str(deploy)
+
+
+def test_l3_knobs_budget_and_reuse(tmp_path, monkeypatch):
+    ps = {"eval_dir": str(tmp_path / "e2e_x")}
+    a = kf_stage.build_args({"l3_mega": True, "l3_mega_args": {"use_expert_skills": "true"}, "l3_max": 2}, ps, 100)
+    assert a["kf_l3_mega"] is True and a["kf_l3_max"] == 2 and a["kf_l3_mega_args"] == {"use_expert_skills": "true"}
+    monkeypatch.setenv("GEAK_KF_L3_MEGA_RUN", "/old/mega_state")
+    assert kf_stage.config({})["l3_mega_run"] == "/old/mega_state"
+    # an L3 search adds its mega budget on top of the usual stage (capped at half the run); a finished run does not
+    assert kf_stage.stage_budget_s({"l3_mega": True}, 200000) == 12 * 3600 + 8 * 3600
+    assert kf_stage.stage_budget_s({"l3_mega": True}, 60000) == 30000
+    assert kf_stage.stage_budget_s({"l3_mega": True, "l3_mega_run": "/x"}, 200000) == 12 * 3600
+    assert kf_stage.stage_budget_s({}, 200000) == 12 * 3600
+    # L3 prepare / package results come back through a reuse journal
+    prep = kf_stage.slim_result({"status": "ready", "kernel_path": "/t", "benchmark_harness": "/t/ut.py",
+                                 "mega_args": {"target_guards": ["64"]}, "log": "z" * 9000})
+    assert prep["benchmark_harness"] == "/t/ut.py" and "log" not in prep
+    assert "kf:l3 package c4".startswith(kf_stage.REUSABLE)
+    assert "implementable_by" in kf_stage.CAND_KEYS

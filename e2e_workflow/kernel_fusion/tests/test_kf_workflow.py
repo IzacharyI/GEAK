@@ -275,3 +275,70 @@ def test_apply_steps_outlast_the_default_agent_timeout():
     for label in ("label, schema: SCREEN_SCHEMA", "label, schema: INTEGRATE_SCHEMA"):
         assert re.search(re.escape(label) + r", timeoutMs: APPLY_TIMEOUT_MS", src), label
     assert re.search(r"APPLY_TIMEOUT_MS = .*6 \* 3600 \* 1000", src)
+
+
+# ---- L3 stage fusion through GEAK mode=mega (kf_l3_mega) ---------------------------------------------
+def test_l3_is_off_by_default():
+    out = run("accept")
+    assert out["megaCalls"] == [] and "l3" not in out["result"]
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "mode=mega" not in by["kf:analyst"] and "mode=mega" not in by["kf:triage"]
+
+
+def test_an_l3_stage_is_searched_by_mega_and_goes_into_the_one_ab():
+    out = run("l3")
+    r = out["result"]
+    labels_ = labels(out)
+    # mega runs after every author agent (it needs all serving GPUs), before select
+    assert labels_.index("kf:l3 prepare c4") < labels_.index("kf:l3 package c4") < labels_.index("kf:select")
+    assert not any(l.startswith(("kf:author c4", "kf:extract c4", "kf:kernel-extract prepare c4")) for l in labels_)
+    every = labels(out, True)
+    assert all(every.index(f"kf:author {x}") < every.index("kf:l3 prepare c4") for x in ("c1", "c2"))
+    (call,) = out["megaCalls"]
+    assert call["ref"]["scriptPath"].endswith("/kernel_workflow/kernel_mega.js")
+    a = call["args"]
+    assert (a["mode"], a["gpu_ids"], a["gpus_per_job"], a["budget"]) == ("mega", "0,1", 2, 12)
+    assert a["kernel_path"] == f"{KF}/kernels/c4/baseline_tree" and a["state_dir"] == f"{KF}/kernels/c4/mega_state"
+    assert a["target_guards"] == ["64_uniform"] and a["use_expert_skills"] == "true"
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "implementable_by \"mega\"" in by["kf:analyst"] and "GEAK mode=mega" in by["kf:triage"]
+    assert "l3_mega.md" in by["kf:l3 prepare c4"] and "BANNER: [kf-c4] ENGAGED" in by["kf:l3 package c4"]
+    sel = json.loads(by["kf:select"].split("## UT results\n")[1].split("\n")[0])
+    assert next(u for u in sel if u["id"] == "c4")["authored_by"].startswith("GEAK mode=mega")
+    stack = json.loads(re.search(r"- KERNEL_RESULTS: (.*)", by["kf:integrate kf_stack"]).group(1))
+    assert [k["short_name"] for k in stack] == ["c4", "c2"] and stack[0]["overlay_dir"] == f"{KF}/kernels/c4/overlay"
+    assert r["status"] == "accepted" and [x["id"] for x in r["accepted"]] == ["c4", "c2"]
+    assert r["l3"][0]["status"] == "applied" and r["l3"][0]["mega"]["selected"]["final_tree"] == "/m/f3"
+
+
+def test_an_l3_kernel_that_loses_end_to_end_does_not_cost_the_l1_l2_kernels():
+    out = run("l3_abreject")
+    r = out["result"]
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    again = json.loads(re.search(r"- KERNEL_RESULTS: (.*)", by["kf:integrate kf_stack (without L3)"]).group(1))
+    assert [k["short_name"] for k in again] == ["c2", "c1"]       # c1, excluded only by the L3 stage, comes back
+    assert [x["id"] for x in r["accepted"]] == ["c2", "c1"] and r["final_overlay"].endswith("cand_kf_stack_nol3")
+    assert ("c4", "apply") in rejected(r) and ("c1", "select") not in rejected(r)
+    assert r["l3"][0]["status"] == "ab_rejected" and "slower" in r["l3"][0]["reason"]
+
+
+def test_l3_failures_are_recorded_and_the_rest_goes_on():
+    for scenario, status in (("l3_nodeliver", "mega_no_deliverable"), ("l3_throw", "mega_error")):
+        r = run(scenario)["result"]
+        assert r["l3"][0]["status"] == status and ("c4", "l3") in rejected(r)
+        assert r["status"] == "accepted" and [x["id"] for x in r["accepted"]] == ["c2"]
+
+
+def test_a_blocked_l3_prepare_is_retried_once_and_ep_defaults_to_the_run():
+    out = run("l3_prepretry")
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "RETRY" in by["kf:l3 prepare c4 (retry)"] and "wrong call site" in by["kf:l3 prepare c4 (retry)"]
+    assert out["megaCalls"][0]["args"]["gpus_per_job"] == 2
+
+
+def test_a_finished_mega_run_is_packaged_without_searching():
+    out = run("l3_run")
+    assert out["megaCalls"] == [] and "kf:l3 prepare c4" not in labels(out)
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "MEGA_RUN: /old/mega_state" in by["kf:l3 package c4"]
+    assert out["result"]["l3"][0]["status"] == "applied"

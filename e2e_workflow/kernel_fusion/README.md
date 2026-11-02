@@ -21,6 +21,25 @@ profiler)  strategy skill;     A/B, compounding
 | `author` | a triage agent reads the whole Top-K and picks, by its own judgement, the patterns worth a kernel (no cap, no gain floor; the one hard line is a Python seam); each: region UT, then a fused kernel | AgentX: kernel-extract skill `PHASE=prepare` (one joint-boundary task per region); else `roles/kernel_extractor.md`. The fused kernel itself: one agent per pattern, given the region and the UT, no GEAK kernel layer |
 | `apply` | once, after every kernel is written: a select agent reads the UT results and picks which kernels go on (no speedup floor; one kernel per seam / overlapping region); they go in together as ONE combined overlay on ONE A/B vs the reference (gsm8k on the whole stack first, then validation-length legs). Only if the stack fails accuracy or engagement is each kernel checked alone (correctness only) and the A/B re-run without the failing ones; only a measured e2e win is handed to the main workflow | `roles/e2e_integrator.md` PHASE=integrate |
 
+## L3 stage fusion (GEAK mode=mega, opt-in)
+
+`fusion_strategy.md` defines four levels (L1 element-wise, L2 operator-wise, L3 stage-wise, L4
+layer-wise); by default only L1/L2 are implemented. With `l3_mega` on, an **expert-parallel MoE stage**
+(dispatch → expert GEMMs → combine over the whole EP group) is implementable too:
+
+| step | L1 / L2 | L3 EP MoE stage |
+|---|---|---|
+| `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it |
+| triage | agent's pick | same agent; at most `l3_max` stages |
+| `author` | region UT + one author agent, in parallel on single GPUs | after those: `l3_mega.md` PHASE=prepare (operator, frozen source tree, multi-rank UT) → `kernel_workflow/kernel_mega.js` on the serving GPUs (`gpus_per_job` = EP) → PHASE=package (overlay `[kf-<id>] ENGAGED`, checked with the UT) |
+| select / gsm8k / A/B | one stack, one A/B; accuracy failure → per-kernel screen | the L3 kernel is one more kernel of that stack; if the stack holding it does not win, the L1/L2 kernels (with the ones only it had excluded) get one A/B without it |
+
+Timing. The stage's usual path is ~7 h (baseline 1 h, trace 0.8 h, topk 0.5 h, kernels + UTs 1.5 h,
+gsm8k 0.2 h, A/B 2 h). A finished mode=mega run (`l3_mega_run`) only adds packaging. A fresh search
+adds mode=mega's own budget (`l3_budget_s`, 8 h); with it the stage budget defaults to 12 h + that,
+capped at half the run. `result.json["kernel_fusion"]["l3"]` records each stage: `applied`,
+`ab_rejected`, `not_selected`, `mega_no_deliverable`, `mega_error`, `prepare_blocked`, `package_blocked`.
+
 ## Switch
 
 Precedence: CLI > env > handoff.
@@ -49,6 +68,13 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `validation_mode` / `validation_replicas` | `GEAK_KF_VALIDATION_MODE` / `_REPLICAS` | `isolated_server` / 1 | measurement mode / replicas of the combined A/B (one A/B) |
 | `task` | `GEAK_KF_TASK` | — | operator constraints appended to every agent prompt (e.g. directories it must not read) |
 | `budget_s` | `GEAK_KF_BUDGET_S` | min(12 h, ⅓ of the run) | stage wall clock; the main workflow gets the rest |
+| `l3_mega` | `GEAK_KF_L3_MEGA` | false | L3 stage fusion through GEAK mode=mega (above) |
+| `l3_mega_run` | `GEAK_KF_L3_MEGA_RUN` | — | a finished mode=mega run of the stage (state_dir / eval dir / mega_result.json): package it, no search |
+| `l3_max` | `GEAK_KF_L3_MAX` | 1 | L3 stages handed to mode=mega |
+| `l3_budget_s` / `l3_rounds` | `GEAK_KF_L3_BUDGET_S` / `_ROUNDS` | 28800 / 12 | mode=mega time budget and candidate rounds of a search |
+| `l3_mega_args` | `GEAK_KF_L3_MEGA_ARGS` (JSON) | — | merged last into the mode=mega args, e.g. `{"use_expert_skills": "true"}` |
+| `l3_operator` | `GEAK_KF_L3_OPERATOR` (JSON) | — | what is known about the stage's operator (`kernel_path`, `benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args`): prepare verifies it instead of discovering it |
+| `l3_ep_kernel_regex` | `GEAK_KF_L3_EP_KERNEL_REGEX` | — | extra EP MoE kernel names to recognize |
 | `kf_dir` | `GEAK_KF_DIR` | `<exp_root>/kf_<main eval dir suffix>` | stage output dir |
 
 Synthetic speculative acceptance (`SGLANG_SIMULATE_ACC_*`, `TILERT_SIMULATE_ACC_*`,
