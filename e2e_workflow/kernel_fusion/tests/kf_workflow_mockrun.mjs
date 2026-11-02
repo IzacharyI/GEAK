@@ -25,6 +25,10 @@ const CANDS = [
 if (L3) CANDS.push({ id: 'c4', rank: 0, level: 'L3', implementable_by: 'mega', region: 'EP MoE dispatch..combine',
   kernels: ['megamoe_dispatch', 'megamoe_gemm', 'ep_combine'], difficulty: 5, exclusive_with: ['c1'],
   seam: { target_callable: 'pkg.moe:MoE.forward_ep' }, region_pct_device_time: 20, est_gain_pct_expected: 6 });
+// l3_ar: the stage is a collective with its compute, and the analyst did not tag it: its kernels say multi-rank
+if (scenario === 'l3_ar') Object.assign(CANDS[CANDS.length - 1], { implementable_by: undefined,
+  region: 'o_proj GEMM + all-reduce + rmsnorm', kernels: ['gemm_a8w8', 'cross_device_reduce_1stage', 'rmsnorm'],
+  seam: { target_callable: 'pkg.attn:Attention.o_proj_and_norm' } });
 const ISO = { c1: scenario === 'fallback' ? 0.97 : 1.4, c2: (scenario === 'accept' || scenario === 'stack_fail' || scenario === 'reuse') ? 1.2 : 0.95, c1s: 1.6 };
 // the select agent's picks (it sees every UT result; the script enforces only the exclusivity line)
 // default: every UT result that beats stock, in the order given

@@ -57,7 +57,7 @@ _KNOBS = {
     "l3_rounds": ("GEAK_KF_L3_ROUNDS", "kf_l3_rounds"),
     "l3_mega_args": ("GEAK_KF_L3_MEGA_ARGS", "kf_l3_mega_args"),
     "l3_operator": ("GEAK_KF_L3_OPERATOR", "kf_l3_operator"),
-    "l3_ep_kernel_regex": ("GEAK_KF_L3_EP_KERNEL_REGEX", "kf_l3_ep_kernel_regex"),
+    "l3_kernel_regex": ("GEAK_KF_L3_KERNEL_REGEX", "kf_l3_kernel_regex"),
 }
 # Main-workflow-only args that mean nothing (or something wrong) to the stage.
 _MAIN_ONLY = ("eval_dir", "phases", "state", "tracelens", "time_budget_s", "final_reserve_s",

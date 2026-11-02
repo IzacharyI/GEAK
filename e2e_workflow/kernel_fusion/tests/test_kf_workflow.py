@@ -342,3 +342,12 @@ def test_a_finished_mega_run_is_packaged_without_searching():
     by = {c["label"]: c["prompt"] for c in out["calls"]}
     assert "MEGA_RUN: /old/mega_state" in by["kf:l3 package c4"]
     assert out["result"]["l3"][0]["status"] == "applied"
+
+
+def test_a_collective_stage_goes_to_mega_too():
+    out = run("l3_ar")
+    (call,) = out["megaCalls"]
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "cross_device_reduce_1stage" in by["kf:l3 prepare c4"] and "multi-rank stage" in by["kf:l3 prepare c4"]
+    assert "MULTI-RANK stage" in by["kf:analyst"] and "all-reduce" in by["kf:analyst"]
+    assert out["result"]["l3"][0]["status"] == "applied"

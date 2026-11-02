@@ -24,14 +24,17 @@ profiler)  strategy skill;     A/B, compounding
 ## L3 stage fusion (GEAK mode=mega, opt-in)
 
 `fusion_strategy.md` defines four levels (L1 element-wise, L2 operator-wise, L3 stage-wise, L4
-layer-wise); by default only L1/L2 are implemented. With `l3_mega` on, an **expert-parallel MoE stage**
-(dispatch → expert GEMMs → combine over the whole EP group) is implementable too:
+layer-wise); by default only L1/L2 are implemented. With `l3_mega` on, a **multi-rank stage** is
+implementable too: the kernels of one functional stage that include cross-GPU communication, e.g. an
+expert-parallel MoE (dispatch → expert GEMMs → combine over the EP group) or a collective with its
+compute (GEMM + all-reduce, all-reduce + norm + quant, all-gather + GEMM). Mega itself is
+operator-neutral; the EP MoE case is the one measured so far.
 
-| step | L1 / L2 | L3 EP MoE stage |
+| step | L1 / L2 | L3 multi-rank stage |
 |---|---|---|
-| `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it |
+| `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it (an L3 candidate whose kernels include EP or collective kernels is taken as such too) |
 | triage | agent's pick | same agent; at most `l3_max` stages |
-| `author` | region UT + one author agent, in parallel on single GPUs | after those: `l3_mega.md` PHASE=prepare (operator, frozen source tree, multi-rank UT) → `kernel_workflow/kernel_mega.js` on the serving GPUs (`gpus_per_job` = EP) → PHASE=package (overlay `[kf-<id>] ENGAGED`, checked with the UT) |
+| `author` | region UT + one author agent, in parallel on single GPUs | after those: `l3_mega.md` PHASE=prepare (operator, frozen source tree, multi-rank UT) → `kernel_workflow/kernel_mega.js` on the serving GPUs (`gpus_per_job` = the stage's rank group) → PHASE=package (overlay `[kf-<id>] ENGAGED`, checked with the UT) |
 | select / gsm8k / A/B | one stack, one A/B; accuracy failure → per-kernel screen | the L3 kernel is one more kernel of that stack; if the stack holding it does not win, the L1/L2 kernels (with the ones only it had excluded) get one A/B without it |
 
 Timing. The stage's usual path is ~7 h (baseline 1 h, trace 0.8 h, topk 0.5 h, kernels + UTs 1.5 h,
@@ -74,7 +77,7 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `l3_budget_s` / `l3_rounds` | `GEAK_KF_L3_BUDGET_S` / `_ROUNDS` | 28800 / 12 | mode=mega time budget and candidate rounds of a search |
 | `l3_mega_args` | `GEAK_KF_L3_MEGA_ARGS` (JSON) | — | merged last into the mode=mega args, e.g. `{"use_expert_skills": "true"}` |
 | `l3_operator` | `GEAK_KF_L3_OPERATOR` (JSON) | — | what is known about the stage's operator (`kernel_path`, `benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args`): prepare verifies it instead of discovering it |
-| `l3_ep_kernel_regex` | `GEAK_KF_L3_EP_KERNEL_REGEX` | — | extra EP MoE kernel names to recognize |
+| `l3_kernel_regex` | `GEAK_KF_L3_KERNEL_REGEX` | — | extra cross-GPU kernel names to recognize (another EP / collective library) |
 | `kf_dir` | `GEAK_KF_DIR` | `<exp_root>/kf_<main eval dir suffix>` | stage output dir |
 
 Synthetic speculative acceptance (`SGLANG_SIMULATE_ACC_*`, `TILERT_SIMULATE_ACC_*`,

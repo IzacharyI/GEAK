@@ -6,7 +6,7 @@ export const meta = {
     { title: 'Setup', detail: 'e2e Director builds the KF eval dir + baseline throughput, one fresh server and one timed round, no warmup round (roles/director.md PHASE=setup)' },
     { title: 'Trace', detail: 'AgentX: kernel-extract skill sampling capture (points from the baseline log, one probe each); else roles/profiler.md; or kf_trace_dir' },
     { title: 'TopK', detail: 'fusion analyst: kf_trace_digest.py + the user prompt -> ranked Top-K fusion candidates (topk.json)' },
-    { title: 'Author', detail: 'a triage agent picks the Top-K patterns worth authoring (no cap, no gain floor); each: region UT (AgentX: kernel-extract skill prepare; else roles/kernel_extractor.md), then one author agent writes the fused kernel against that UT; with kf_l3_mega an EP MoE stage (L3) goes to GEAK mode=mega instead' },
+    { title: 'Author', detail: 'a triage agent picks the Top-K patterns worth authoring (no cap, no gain floor); each: region UT (AgentX: kernel-extract skill prepare; else roles/kernel_extractor.md), then one author agent writes the fused kernel against that UT; with kf_l3_mega a multi-rank stage (L3: EP MoE, collective + compute) goes to GEAK mode=mega instead' },
     { title: 'ApplyBack', detail: 'a select agent picks from the UT results which kernels go on; they go in as one combined overlay on one e2e_integrator A/B (gsm8k on the whole stack first); only if the stack fails accuracy is each kernel checked alone and the A/B re-run without the failing ones' },
   ],
 };
@@ -99,8 +99,9 @@ const CAPTURE_STORAGE_ENV = `CAPTURE_BYTE_BUDGET=${A.capture_byte_budget || '8Gi
 const AUTHOR_K = parseInt(A.kf_author_k != null ? A.kf_author_k : 0, 10);   // 0 = no cap: the triage agent decides
 const AGENT_TIMEOUT_MS = parseInt(A.agent_timeout_ms != null ? A.agent_timeout_ms : 7200000, 10);
 
-// L3 stage fusion (opt-in). An expert-parallel MoE stage (dispatch -> expert GEMMs -> combine, run over the
-// whole EP group) cannot be authored on one card. With kf_l3_mega on, the analyst may rank it as an
+// L3 stage fusion (opt-in). A multi-rank stage -- the kernels of one functional stage that include cross-GPU
+// communication (EP MoE dispatch -> expert GEMMs -> combine; an all-reduce / all-gather / reduce-scatter with
+// the compute around it) -- cannot be authored on one card. With kf_l3_mega on, the analyst may rank it as an
 // implementable L3 candidate, and Author hands it to GEAK mode=mega (kernel_workflow/kernel_mega.js, one
 // nested workflow) on the serving GPUs instead of an author agent. Off: nothing below changes a prompt.
 const jsonArg = (v) => { if (v && typeof v === 'object') return v;
@@ -116,11 +117,13 @@ const L3_OPERATOR = jsonArg(A.kf_l3_operator);             // known operator fac
 // instead of a new search. Without it the stage searches, which takes hours beyond the stage's usual ~7 h.
 const L3_MEGA_RUN = String(A.kf_l3_mega_run || '').replace(/\/+$/, '');
 const L3_EP_DEFAULT = parseInt(A.ep != null ? A.ep : SERVING_TP, 10) || SERVING_TP;
-const EP_KERNEL_RE = new RegExp('megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_' +
-  (A.kf_l3_ep_kernel_regex ? `|${A.kf_l3_ep_kernel_regex}` : ''), 'i');
-// An L3 candidate mega can take: the analyst says so, or its kernels are an EP MoE stage.
+// Cross-GPU kernels: EP MoE dispatch/combine and collectives (+ kf_l3_kernel_regex for other libraries).
+const MULTI_RANK_RE = new RegExp('megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_|' +
+  'all_?reduce|cross_device_reduce|custom_ar|quickreduce|all_?gather|reduce_?scatter|rccl|nccl' +
+  (A.kf_l3_kernel_regex ? `|${A.kf_l3_kernel_regex}` : ''), 'i');
+// An L3 candidate mega can take: the analyst says so, or its kernels include cross-GPU communication.
 const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' &&
-  (c.implementable_by === 'mega' || (c.kernels || []).some((k) => EP_KERNEL_RE.test(String(k))));
+  (c.implementable_by === 'mega' || (c.kernels || []).some((k) => MULTI_RANK_RE.test(String(k))));
 
 // Stop STARTING author/apply work once 85% of the stage budget is gone; in-flight work finishes and the
 // stage returns whatever was accepted. Inert without time_budget_s.
@@ -489,13 +492,16 @@ Write ${OUT}/topk.json: {"candidates": [...], "recommended": [ids in the order t
 cannot be reached through one Python seam can still be ranked, but must not be recommended.
 ${L3_ON ? `
 ## L3 stage fusion through GEAK mode=mega (on in this run)
-An expert-parallel MoE stage (dispatch -> expert GEMMs -> combine, run over the whole EP group) IS implementable
-in this run: GEAK mode=mega searches a fused multi-rank kernel for it on the serving GPUs. For such a stage only,
-this replaces the strategy's rule that L3/L4 are not implemented: rank it as a candidate with level "L3",
-implementable_by "mega", kernels = the stage's device kernels in order, seam.target_callable = the ONE Python
-callable that runs the whole stage on the served path (the MoE layer's forward, or the EP MoE op it calls),
+A MULTI-RANK stage IS implementable in this run: the kernels of one functional stage that include cross-GPU
+communication, e.g. an expert-parallel MoE (dispatch -> expert GEMMs -> combine over the EP group), or an
+all-reduce / all-gather / reduce-scatter together with the compute it feeds or follows (GEMM + reduce, reduce +
+norm + quant, attention output + all-reduce). GEAK mode=mega searches a fused multi-rank kernel for it on the
+serving GPUs. For such a stage only, this replaces the strategy's rule that L3/L4 are not implemented: rank it as a
+candidate with level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication
+kernels included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,
 exclusive_with = every L1/L2 candidate whose region lies inside it, and the same gain fields as the others. It may
-be recommended together with the L1/L2 candidates it does not conflict with. Every other L3/L4 stays not implemented.
+be recommended together with the L1/L2 candidates it does not conflict with. A stage without cross-GPU
+communication, and every L4, stays not implemented (an author agent covers single-GPU regions).
 ` : ''}
 ## Inputs
 ${cfg({ EVAL_DIR, TRACE_DIR, WORKLOAD_SUMMARY: workloadJson || '(none)', PROFILE_TOPN: profileTopN || '(none)',
@@ -537,7 +543,7 @@ pick what you judge worth the effort and say why, and say why for each one you l
 The one hard line: a candidate is authored by rebinding ONE Python callable that covers its whole region
 (seam.target_callable); one without such a seam cannot be authored. Mutually exclusive candidates (exclusive_with)
 may both be picked: which of them goes into the server is decided after their unit tests.${L3_ON ? `
-An L3 candidate with implementable_by "mega" (an expert-parallel MoE stage) is not written by an author agent:
+An L3 candidate with implementable_by "mega" (a multi-rank stage) is not written by an author agent:
 GEAK mode=mega searches it on all serving GPUs, which takes hours, and at most ${L3_MAX} such stage(s) run. Pick
 it when its weighted gain is worth that; its exclusive L1/L2 candidates may be picked too.` : ''}
 Read ${topk.topk_json || '(the candidates below)'}${topk.report_md ? ' and the report below' : ''}; read anything else you need.
@@ -721,7 +727,7 @@ whether or not it beats stock -- the next step judges it) or "" if you have no c
   const iso = kl ? (kl.final_weighted != null ? kl.final_weighted : kl.final_geomean) : 0;
   return { c, ext, kl, lang, iso };
 }
-// ---- L3: one EP MoE stage through GEAK mode=mega ----------------------------------------------------
+// ---- L3: one multi-rank stage through GEAK mode=mega ----------------------------------------------------
 // prepare (the served operator, its frozen source tree, a multi-rank UT) -> kernel_mega.js on the serving
 // GPUs -> package the delivered candidate as an overlay of the same shape an author agent returns, so select,
 // the stack A/B and the correctness screen treat it like any other fused kernel. With kf_l3_mega_run only
@@ -758,7 +764,7 @@ async function megaOne(c) {
   const pkgLabel = `kf:l3 package ${short}`;
   let prep = null, mega = null;
   if (!L3_MEGA_RUN && !REUSED[pkgLabel]) {
-    const prepare = (prior) => safeAgent(`You prepare one expert-parallel MoE stage for GEAK mode=mega.
+    const prepare = (prior) => safeAgent(`You prepare one multi-rank stage for GEAK mode=mega.
 Read ${L3_DOC} and follow PHASE=prepare.${prior ? ` RETRY: the previous prepare returned blocked (${prior}); read what it left
 under L3_DIR, fix that cause and try once more.` : ''}
 

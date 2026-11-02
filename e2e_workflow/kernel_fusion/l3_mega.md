@@ -1,9 +1,14 @@
 # L3 stage fusion through GEAK mode=mega
 
 KernelFusion levels (`fusion_strategy.md`): L1 element-wise, L2 operator-wise, L3 stage-wise, L4
-layer-wise. An author agent writes L1/L2 kernels against a single-card region UT. An
-expert-parallel MoE stage (dispatch → expert GEMMs → combine) runs over the whole EP group, so no
-single-card UT can hold it. With `kf_l3_mega` on, such an L3 candidate goes to GEAK mode=mega
+layer-wise. An author agent writes L1/L2 kernels against a single-card region UT. A multi-rank
+stage runs over several GPUs at once, so no single-card UT can hold it. It is the kernels of one
+functional stage that include cross-GPU communication, for example:
+- an expert-parallel MoE: dispatch → expert GEMMs → combine over the EP group;
+- a collective with the compute around it: GEMM + all-reduce / reduce-scatter, all-reduce + norm +
+  quant, all-gather + GEMM.
+
+With `kf_l3_mega` on, such an L3 candidate goes to GEAK mode=mega
 (`GEAK_KERNEL_WORKFLOW_DIR/kernel_mega.js`; see the "Mega mode" section of
 `GEAK_KERNEL_WORKFLOW_DIR/README.md`), which searches a fused multi-rank kernel for it.
 
@@ -12,7 +17,7 @@ server of this stage is running. Never start a serving server. Run GPU work thro
 lease, which checks the GPUs are idle and reaps its own job on timeout:
 ```bash
 GEAK_GPU_RUN_TIMEOUT=1800 bash "$GEAK_KERNEL_WORKFLOW_DIR/scripts/gpu_lock.sh" group:$SERVING_GPU \
-  torchrun --standalone --nproc_per_node=$EP <ut> correctness --replays 16
+  torchrun --standalone --nproc_per_node=$RANKS <ut> correctness --replays 16
 ```
 Each lease gets its own `MASTER_PORT`; never hard-code `--master_port`. Write only under `L3_DIR`.
 
@@ -32,7 +37,9 @@ tree. Discover only what it leaves out.
    - the call site (`module:function`);
    - the package that owns the kernels and its source tree (the editable checkout or the
      installed package directory);
-   - the EP size, from the serving flags (default `EP_DEFAULT`).
+   - the rank count: the group the stage's communication runs over (the EP group of an MoE, the
+     TP group of an all-reduce), from the serving flags (default `EP_DEFAULT`). It is mega's
+     `gpus_per_job`; return it as `ep_size`.
 
    If the package is installed without sources, return `blocked`.
 2. **Freeze the baseline tree.** Copy the owning source tree to `L3_DIR/baseline_tree`, or
@@ -41,8 +48,10 @@ tree. Discover only what it leaves out.
 3. **Write the UT** inside the frozen tree; mega copies the tree, and the UT goes with it. Run one
    process per rank under `torchrun`, with modes `correctness` and `performance` and a repeatable
    `--case` flag.
-   - **Operator:** build it exactly as the served model does (shapes, dtype, quantization, EP
-     partition, the call from step 1). Import the package from the tree under test (working
+   - **Operator:** build it exactly as the served model does (shapes, dtype, quantization, how
+     weights and tokens are split over the ranks, the communication backend, the call from
+     step 1). The UT runs the whole stage, communication included, from its input on each rank
+     to its output on each rank. Import the package from the tree under test (working
      directory / `PYTHONPATH`), so that a candidate tree is what runs. Weights may be random,
      seeded the same on every rank.
    - **Path marker:** print `[op] path=<NAME> rank=<r>` on every rank.
@@ -71,14 +80,15 @@ tree. Discover only what it leaves out.
      - `accuracy_threshold` = 0.1 unless the model needs tighter;
      - `required_replays` = 256;
      - `require_graph_capture` = `"true"`.
-   - **Fusion target:** `launch_target` = 2 for a dispatch+compute+combine stage;
+   - **Fusion target:** `launch_target` = the launches a fused stage should need (2 for an MoE
+     dispatch+compute+combine, usually 1 for a collective fused with its compute);
      `allow_partial_fusion` = `"true"`.
    - **Environment:**
      - `candidate_import_modules` = `[<package>]`;
-     - `device_description` = `"EP<n>, <n>x <gpu>/<gfx>"`.
+     - `device_description` = `"<EP|TP><n>, <n>x <gpu>/<gfx>"`.
    - **`positive_control`:** a calibrated device-side delay on the measured operator stream,
      giving -4% to -9% on the main target guard, built in an isolated copy.
-   - **`task`:** one paragraph covering the model, the operator and its call site, dtype, EP, the
+   - **`task`:** one paragraph covering the model, the operator and its call site, dtype, the rank group, the
      exact UT commands, the fact that the baseline at `kernel_path` is frozen, and the PASS
      criteria. Do not include paths of other runs or earlier state.
 
@@ -99,7 +109,7 @@ You receive one of:
    - With `MEGA_RUN`, read it: the candidate registry in `state_dir`, or the eval dir's
      `tech_lead_report.md` and `final_patch.diff`. It must be a delivered result
      (`mega_deliverable` true, or a selected candidate whose final validation passed). It must
-     also be for this stage: the same EP kernels, and the same call site as
+     also be for this stage: the same communication kernels, and the same call site as
      `L3_STAGE.seam` / `OPERATOR_HINT`. Otherwise return `correctness: "fail"` with the reason.
      Recover its UT and frozen tree from the run.
    - Write `L3_DIR/mega_result.json` with what you used.
@@ -118,7 +128,7 @@ You receive one of:
      the mega path. Never print it at patch time.
    - **Rank-uniform path:** the mega path must be chosen the same way on every rank, because
      mega's activation is a static capacity decision. Add no per-rank token-count gate: it would
-     desynchronize the EP collectives.
+     desynchronize the stage's collectives.
 3. **Check.**
    - On CPU: `PYTHONPATH=OVERLAY_DIR python3 -c "import <package>, <backend>"`.
    - On GPU: run the UT in correctness mode for the target case on `SERVING_GPU`, under a group
