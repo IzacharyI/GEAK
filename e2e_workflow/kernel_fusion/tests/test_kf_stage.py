@@ -346,3 +346,17 @@ def test_the_driver_prints_a_pointer_and_the_return_is_read_from_disk(tmp_path):
     assert "never print it" in seen["prompt"] and '"workflow_return_json"' in seen["prompt"]
     assert kf["status"] == "accepted" and kf["throughput_speedup"] == 1.03 and "error" not in kf
     assert kf["accepted"] == [{"id": "c1"}] and pa["initial_overlay_pythonpath"] == "/kf/overlay/cand"
+
+
+def test_l3_search_defaults_are_passed_in(tmp_path):
+    ps = {"eval_dir": str(tmp_path / "e2e_x")}
+    a = kf_stage.build_args({"l3_mega": True}, ps, 100)
+    d = a["kf_l3_defaults"]
+    assert d["common"]["mega_profile"] == "production" and d["ep_moe"]["analysis_skill"] == "moe_bottleneck"
+    assert "_comment" not in d and d["collective"]["launch_target"] == 1
+    assert "kf_l3_defaults" not in kf_stage.build_args({}, ps, 100)                     # L3 off: nothing
+    assert "kf_l3_defaults" not in kf_stage.build_args({"l3_mega": True, "l3_defaults": False}, ps, 100)
+    own = tmp_path / "d.json"
+    own.write_text(json.dumps({"common": {"required_pairs": 3}}))
+    assert kf_stage.build_args({"l3_mega": True, "l3_defaults": str(own)}, ps, 100)["kf_l3_defaults"] == {
+        "common": {"required_pairs": 3}}

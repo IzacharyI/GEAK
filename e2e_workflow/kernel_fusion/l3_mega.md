@@ -68,29 +68,29 @@ tree. Discover only what it leaves out.
    contract.
 4. **Check it** on `SERVING_GPU` under a group lease, on the frozen tree. Correctness must pass
    for every case, and performance must print `Perf` for every case.
-5. **Mega args.** Return the case-level args only. The stage sets `mode`, `workflow_dir`,
-   `kernel_path`, `benchmark_harness`, `gpu_ids`, `gpus_per_job`, `exp_root`, `state_dir`,
-   `budget` and `mega_time_budget_s`.
+5. **Mega args.** Return only what is specific to this stage. The stage sets the rest:
+   - paths, GPUs and budget: `mode`, `workflow_dir`, `kernel_path`, `benchmark_harness`,
+     `gpu_ids`, `gpus_per_job`, `exp_root`, `state_dir`, `budget`, `mega_time_budget_s`;
+   - search policy from `kernel_fusion/l3_mega_defaults.json`: accuracy metric and threshold,
+     replays, graph capture, pairs, timeouts, and `launch_target` per stage kind (2 for an EP MoE,
+     1 for a collective with its compute).
+
+   Write:
    - **Guards:** `target_guards` is the case or cases carrying the most weight.
      `regression_guards` is the other cases (veto only), each with
      `regression_floor_by_guard` 0.98.
-   - **Accuracy:**
-     - `required_accuracy_cases` = every case's token count;
-     - `accuracy_metric` = `"relL2"`;
-     - `accuracy_threshold` = 0.1 unless the model needs tighter;
-     - `required_replays` = 256;
-     - `require_graph_capture` = `"true"`.
-   - **Fusion target:** `launch_target` = the launches a fused stage should need (2 for an MoE
-     dispatch+compute+combine, usually 1 for a collective fused with its compute);
-     `allow_partial_fusion` = `"true"`.
+   - **Accuracy cases:** `required_accuracy_cases` = every case's token count. Set
+     `accuracy_threshold` only when the model needs tighter than the default 0.1.
+   - **Fusion target:** set `launch_target` only when this stage needs a different count from
+     its kind's default.
    - **Environment:**
      - `candidate_import_modules` = `[<package>]`;
      - `device_description` = `"<EP|TP><n>, <n>x <gpu>/<gfx>"`.
    - **`positive_control`:** a calibrated device-side delay on the measured operator stream,
      giving -4% to -9% on the main target guard, built in an isolated copy.
-   - **`task`:** one paragraph covering the model, the operator and its call site, dtype, the rank group, the
-     exact UT commands, the fact that the baseline at `kernel_path` is frozen, and the PASS
-     criteria. Do not include paths of other runs or earlier state.
+   - **`task`:** one paragraph covering the model, the operator and its call site, dtype, the rank
+     group, the exact UT commands, the fact that the baseline at `kernel_path` is frozen, and the
+     PASS criteria. Do not include paths of other runs or earlier state.
 
    Write your return to `L3_DIR/prepared.json`.
 6. **Return** one of:

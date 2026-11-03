@@ -37,6 +37,15 @@ operator-neutral; the EP MoE case is the one measured so far.
 | `author` | region UT + one author agent, in parallel on single GPUs | after those: `l3_mega.md` PHASE=prepare (operator, frozen source tree, multi-rank UT) → `kernel_workflow/kernel_mega.js` on the serving GPUs (`gpus_per_job` = the stage's rank group) → PHASE=package (overlay `[kf-<id>] ENGAGED`, checked with the UT) |
 | select / gsm8k / A/B | one stack, one A/B; accuracy failure → per-kernel screen | the L3 kernel is one more kernel of that stack; if the stack holding it does not win, the L1/L2 kernels (with the ones only it had excluded) get one A/B without it |
 
+Mode=mega args are layered, so a run needs nothing beyond `l3_mega: true`:
+
+| layer | keys | set by |
+|---|---|---|
+| search policy | profile, pairs, replays, timeouts, accuracy metric/threshold, `launch_target` / `analysis_skill` per stage kind | `l3_mega_defaults.json` (`common`, then `ep_moe` or `collective`) |
+| this stage | cases, guards, accuracy cases, positive control, task, import modules | prepare (from the trace and the serving config), or `l3_operator` |
+| where / how long | `workflow_dir`, `kernel_path`, `benchmark_harness`, GPUs, `exp_root`, `state_dir`, `budget`, `mega_time_budget_s` | the stage (`l3_operator`, `l3_rounds`, `l3_budget_s`); `l3_mega_args` cannot change them |
+| caller | any policy or stage key | `l3_mega_args`, applied last |
+
 Timing. The stage's usual path is ~7 h (baseline 1 h, trace 0.8 h, topk 0.5 h, kernels + UTs 1.5 h,
 gsm8k 0.2 h, A/B 2 h). A finished mode=mega run (`l3_mega_run`) only adds packaging. A fresh search
 adds mode=mega's own budget (`l3_budget_s`, 8 h); with it the stage budget defaults to 12 h + that,
@@ -77,7 +86,8 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `l3_mega_run` | `GEAK_KF_L3_MEGA_RUN` | — | a finished mode=mega run of the stage (state_dir / eval dir / mega_result.json): package it, no search |
 | `l3_max` | `GEAK_KF_L3_MAX` | 1 | L3 stages handed to mode=mega |
 | `l3_budget_s` / `l3_rounds` | `GEAK_KF_L3_BUDGET_S` / `_ROUNDS` | 28800 / 12 | mode=mega time budget and candidate rounds of a search |
-| `l3_mega_args` | `GEAK_KF_L3_MEGA_ARGS` (JSON) | — | merged last into the mode=mega args, e.g. `{"use_expert_skills": "true"}` |
+| `l3_mega_args` | `GEAK_KF_L3_MEGA_ARGS` (JSON) | — | merged last into the mode=mega args, e.g. `{"use_expert_skills": "true"}`; paths / GPUs / budget keys are ignored |
+| `l3_defaults` | `GEAK_KF_L3_DEFAULTS` | `l3_mega_defaults.json` | search-policy defaults file; `false` leaves them to mode=mega |
 | `l3_operator` | `GEAK_KF_L3_OPERATOR` (JSON) | — | what is known about the stage's operator (`kernel_path`, `benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args`): prepare verifies it instead of discovering it |
 | `l3_kernel_regex` | `GEAK_KF_L3_KERNEL_REGEX` | — | extra cross-GPU kernel names to recognize (another EP / collective library) |
 | `kf_dir` | `GEAK_KF_DIR` | `<exp_root>/kf_<main eval dir suffix>` | stage output dir |

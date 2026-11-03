@@ -352,6 +352,21 @@ def test_a_collective_stage_goes_to_mega_too():
     assert "cross_device_reduce_1stage" in by["kf:l3 prepare c4"] and "multi-rank stage" in by["kf:l3 prepare c4"]
     assert "MULTI-RANK stage" in by["kf:analyst"] and "all-reduce" in by["kf:analyst"]
     assert out["result"]["l3"][0]["status"] == "applied"
+    # a collective stage gets the collective defaults, not the MoE ones
+    assert call["args"]["launch_target"] == 1 and "analysis_skill" not in call["args"]
+    assert out["result"]["l3"][0]["stage_kind"] == "collective"
+
+
+def test_mega_args_layer_defaults_prepare_workflow_and_caller():
+    out = run("l3")
+    a = out["megaCalls"][0]["args"]
+    assert (a["mega_profile"], a["analysis_skill"], a["launch_target"]) == ("production", "moe_bottleneck", 2)
+    assert a["target_guards"] == ["64_uniform"]                      # prepare's case-level args
+    assert a["required_pairs"] == 8 and a["use_expert_skills"] == "true"   # caller overrides policy
+    # the caller cannot move what the workflow owns
+    assert a["workflow_dir"].endswith("/kernel_workflow") and not a["workflow_dir"].startswith("/other")
+    assert out["megaCalls"][0]["ref"]["scriptPath"] == f"{a['workflow_dir']}/kernel_mega.js"
+    assert out["result"]["l3"][0]["ignored_mega_args"] == ["workflow_dir"]
 
 
 def test_a_seam_given_as_a_string_still_reaches_extraction_and_authoring():

@@ -138,7 +138,10 @@ const args = { workflow_dir: WF_DIR, kf_dir: KF, model_path: '/models/M', gpu_id
   kf_prompt: '/prompts/p.txt,/prompts/deploy.txt', agent_timeout_ms: 0, kf_task: 'Do not read /answers.',
   initial_extra_env: 'SGLANG_USE_AITER=1 SGLANG_SIMULATE_ACC_LEN=4.05 SGLANG_SIMULATE_ACC_METHOD=match-expected HF_HUB_OFFLINE=1',
   correctness_unset_env: 'SGLANG_SIMULATE_ACC_LEN,SGLANG_SIMULATE_ACC_METHOD' };
-if (L3) Object.assign(args, { kf_l3_mega: 'true', kf_l3_mega_args: { use_expert_skills: 'true' } });
+if (L3) Object.assign(args, { kf_l3_mega: 'true',
+  kf_l3_mega_args: { use_expert_skills: 'true', required_pairs: 8, workflow_dir: '/other/GEAK/kernel_workflow' },
+  kf_l3_defaults: { common: { mega_profile: 'production', required_pairs: 5 },
+    ep_moe: { analysis_skill: 'moe_bottleneck', launch_target: 2 }, collective: { launch_target: 1 } } });
 if (scenario === 'l3_prepretry') args.ep = 2;
 if (scenario === 'l3_run') args.kf_l3_mega_run = '/old/mega_state';
 if (scenario === 'analysis_only') Object.assign(args, { kf_steps: 'topk', kf_trace_dir: '/traces/x' });

@@ -25,6 +25,7 @@ KF_HOME = Path(__file__).resolve().parent
 KF_SCRIPT = KF_HOME / "kf_workflow.js"
 DEFAULT_BUDGET_S = 12 * 3600
 L3_SEARCH_S = 8 * 3600          # default mode=mega time budget of one L3 search
+L3_DEFAULTS = KF_HOME / "l3_mega_defaults.json"   # mode=mega search-policy defaults per stage kind
 SCHEMA = "geak.kernel_fusion/1"
 
 # handoff key / env var -> kf_workflow.js arg
@@ -60,6 +61,7 @@ _KNOBS = {
     "l3_mega_args": ("GEAK_KF_L3_MEGA_ARGS", "kf_l3_mega_args"),
     "l3_operator": ("GEAK_KF_L3_OPERATOR", "kf_l3_operator"),
     "l3_kernel_regex": ("GEAK_KF_L3_KERNEL_REGEX", "kf_l3_kernel_regex"),
+    "l3_defaults": ("GEAK_KF_L3_DEFAULTS", None),
 }
 # Main-workflow-only args that mean nothing (or something wrong) to the stage.
 _MAIN_ONLY = ("eval_dir", "phases", "state", "tracelens", "time_budget_s", "final_reserve_s",
@@ -141,6 +143,12 @@ def build_args(cfg: dict, ps_args: dict, budget_s: int) -> dict:
             if j.strip():
                 reuse.update(reused_results(j.strip()))
         a["kf_reuse"] = {k: slim_result(v) for k, v in reuse.items()}
+    if _truthy(cfg.get("l3_mega")):
+        # the workflow script cannot read files: the L3 search-policy defaults travel in its args
+        src = cfg.get("l3_defaults", True)
+        if src not in (False, "", "0", "false", "off"):
+            d = _read_json(L3_DEFAULTS if src in (True, None, "1", "true", "on") else Path(src)) or {}
+            a["kf_l3_defaults"] = {k: v for k, v in d.items() if not k.startswith("_")}
     a["kf_dir"] = str(kf_dir_for(cfg, ps_args))
     a["time_budget_s"] = int(budget_s)
     return a

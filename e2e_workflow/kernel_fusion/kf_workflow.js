@@ -123,12 +123,25 @@ const L3_OPERATOR = jsonArg(A.kf_l3_operator);             // known operator fac
 const L3_MEGA_RUN = String(A.kf_l3_mega_run || '').replace(/\/+$/, '');
 const L3_EP_DEFAULT = parseInt(A.ep != null ? A.ep : SERVING_TP, 10) || SERVING_TP;
 // Cross-GPU kernels: EP MoE dispatch/combine and collectives (+ kf_l3_kernel_regex for other libraries).
-const MULTI_RANK_RE = new RegExp('megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_|' +
+const EP_MOE_RE = /megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_/i;
+const MULTI_RANK_RE = new RegExp(`${EP_MOE_RE.source}|` +
   'all_?reduce|cross_device_reduce|custom_ar|quickreduce|all_?gather|reduce_?scatter|rccl|nccl' +
   (A.kf_l3_kernel_regex ? `|${A.kf_l3_kernel_regex}` : ''), 'i');
 // An L3 candidate mega can take: the analyst says so, or its kernels include cross-GPU communication.
 const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' &&
   (c.implementable_by === 'mega' || (c.kernels || []).some((k) => MULTI_RANK_RE.test(String(k))));
+// Search-policy defaults per stage kind (kernel_fusion/l3_mega_defaults.json, passed in by kf_stage.py).
+const L3_DEFAULTS = jsonArg(A.kf_l3_defaults) || {};
+const stageKind = (c) => ((c.kernels || []).some((k) => EP_MOE_RE.test(String(k))) ? 'ep_moe' : 'collective');
+// The workflow owns where mega runs, on which GPUs and for how long; l3_mega_args cannot move them
+// (l3_operator / l3_rounds / l3_budget_s are the knobs for those).
+const L3_OWNED_KEYS = ['mode', 'workflow_dir', 'kernel_path', 'benchmark_harness', 'gpu_ids', 'gpus_per_job',
+  'job_gpu_ids', 'exp_root', 'state_dir', 'budget', 'mega_time_budget_s'];
+const L3_OVERRIDES = Object.fromEntries(Object.entries(L3_MEGA_ARGS).filter(([k]) => !L3_OWNED_KEYS.includes(k)));
+const L3_IGNORED = Object.keys(L3_MEGA_ARGS).filter((k) => L3_OWNED_KEYS.includes(k));
+if (L3_ON && L3_IGNORED.length) {
+  log(`[kf] L3: l3_mega_args keys the workflow owns are ignored: ${L3_IGNORED.join(', ')}`);
+}
 
 // Stop STARTING author/apply work once 85% of the stage budget is gone; in-flight work finishes and the
 // stage returns whatever was accepted. Inert without time_budget_s.
@@ -828,17 +841,21 @@ Return JSON {status: "ready"|"blocked", kernel_path, benchmark_harness, ep_size,
     prep = await prepare('');
     if (!ok(prep) && !DEADLINE_HIT) prep = await prepare(String((prep && prep.reason) || 'no result').slice(0, 800));
     if (!ok(prep)) return stop('prepare_blocked', (prep && prep.reason) || 'no result');
+    // policy defaults -> stage-kind defaults -> prepare's case-level args -> workflow-owned -> caller overrides
+    const kind = stageKind(c);
     const megaArgs = {
+      ...(L3_DEFAULTS.common || {}), ...(L3_DEFAULTS[kind] || {}),
       ...(prep.mega_args && typeof prep.mega_args === 'object' ? prep.mega_args : {}),
       mode: 'mega', workflow_dir: L3_GEAK_DIR, kernel_path: prep.kernel_path, benchmark_harness: prep.benchmark_harness,
       gpu_ids: SERVING_GPU, gpus_per_job: Math.min(SERVING_GPU.split(',').length,
         Number(prep.ep_size) > 0 ? Number(prep.ep_size) : L3_EP_DEFAULT),
       exp_root: `${work}/mega_runs`, state_dir: `${work}/mega_state`,
-      budget: L3_ROUNDS, mega_time_budget_s: L3_BUDGET_S, ...L3_MEGA_ARGS,
+      budget: L3_ROUNDS, mega_time_budget_s: L3_BUDGET_S, ...L3_OVERRIDES,
     };
-    Object.assign(row, { mega_args: { kernel_path: megaArgs.kernel_path, benchmark_harness: megaArgs.benchmark_harness,
-      gpus_per_job: megaArgs.gpus_per_job, budget: megaArgs.budget, mega_time_budget_s: megaArgs.mega_time_budget_s,
-      state_dir: megaArgs.state_dir } });
+    Object.assign(row, { stage_kind: kind, mega_args: { kernel_path: megaArgs.kernel_path,
+      benchmark_harness: megaArgs.benchmark_harness, gpus_per_job: megaArgs.gpus_per_job, budget: megaArgs.budget,
+      mega_time_budget_s: megaArgs.mega_time_budget_s, state_dir: megaArgs.state_dir },
+      ...(L3_IGNORED.length ? { ignored_mega_args: L3_IGNORED } : {}) });
     log(`[kf] L3 ${c.id}: GEAK mode=mega on GPU ${megaArgs.gpu_ids} (gpus_per_job ${megaArgs.gpus_per_job}), ` +
         `${megaArgs.budget} rounds, ${Math.round(megaArgs.mega_time_budget_s / 60)} min`);
     try {
