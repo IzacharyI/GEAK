@@ -26,8 +26,11 @@ profiler)  strategy skill;     A/B, compounding
 The fusion-analysis skill (`knowledge/kernel_fusion_skills/fusion-analysis`) defines four levels (L1
 element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise); by default only L1/L2 are implemented
 (`implementable_levels`). With `l3_mega` on, an **expert-parallel MoE stage** is implementable too:
-dispatch → expert GEMMs → combine over the EP group (the MegaMoE pattern), recognized from the stage's
-own kernels. This is the pattern mode=mega has been validated on:
+the MegaMoE pattern over the EP group. The region spans the whole MoE layer as the live path runs
+it: routing (gate, top-k, sorting), quant, dispatch, expert GEMM1 + activation + GEMM2, combine, and
+the shared expert(s) when computed there. It is recognized from the stage's own kernels: EP library
+kernels (megamoe, DeepEP, mori, all-to-all), or MoE kernels on an EP deployment (`ep` > 1), which
+covers a from-scratch path whose dispatch/combine carry no library name. This is the pattern mode=mega has been validated on:
 - DeepSeek-V4-Pro EP8 on MI355X;
 - Qwen3-235B EP8 on MI300X, over both an AITER/Mori path and a Triton-from-scratch path.
 

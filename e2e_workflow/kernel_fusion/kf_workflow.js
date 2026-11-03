@@ -129,9 +129,14 @@ const L3_KINDS = new Set(String(A.kf_l3_stage_kinds || 'ep_moe').split(',').map(
 const EP_MOE_RE = new RegExp('megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_' +
   (A.kf_l3_kernel_regex ? `|${A.kf_l3_kernel_regex}` : ''), 'i');
 const COLLECTIVE_RE = /all_?reduce|cross_device_reduce|custom_ar|quickreduce|all_?gather|reduce_?scatter|rccl|nccl/i;
+// MoE expert compute (expert GEMMs, not routing alone): on an expert-parallel deployment (args.ep > 1) a stage of these
+// is an EP MoE stage even when its dispatch/combine kernels carry no library name (a from-scratch Triton path).
+const MOE_KERNEL_RE = /fused_moe|moe_gemm|ck_moe|fmoe|moe_stage|moe_mlp|grouped_gemm|experts?_(gemm|mlp|ffn)/i;
+const EP_DEPLOYED = (parseInt(A.ep, 10) || 1) > 1;
 const hasKernel = (c, re) => (c.kernels || []).some((k) => re.test(String(k)));
 // The kind is read from the stage's own kernels, so a candidate is never taken on its label alone.
-const stageKind = (c) => (hasKernel(c, EP_MOE_RE) ? 'ep_moe' : (hasKernel(c, COLLECTIVE_RE) ? 'collective' : ''));
+const stageKind = (c) => ((hasKernel(c, EP_MOE_RE) || (EP_DEPLOYED && hasKernel(c, MOE_KERNEL_RE))) ? 'ep_moe'
+  : (hasKernel(c, COLLECTIVE_RE) ? 'collective' : ''));
 const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' && L3_KINDS.has(stageKind(c));
 const L3_COLLECTIVE = L3_KINDS.has('collective');
 // Search-policy defaults per stage kind (kernel_fusion/l3_mega_defaults.json, passed in by kf_stage.py).
@@ -547,9 +552,13 @@ ${L3_COLLECTIVE
 communication, e.g. an expert-parallel MoE (dispatch -> expert GEMMs -> combine over the EP group), or an
 all-reduce / all-gather / reduce-scatter together with the compute it feeds or follows (GEMM + reduce, reduce +
 norm + quant, attention output + all-reduce).`
-    : `An EXPERT-PARALLEL MoE stage IS implementable in this run: dispatch -> expert GEMMs -> combine over the EP group
-(the MegaMoE pattern), as one stage. Other multi-rank stages (a TP collective with its compute, attention) stay
-not implemented.`} GEAK mode=mega searches a fused multi-rank kernel for it on the
+    : `An EXPERT-PARALLEL MoE stage IS implementable in this run: the MegaMoE pattern, one stage over the EP group.
+Its region is everything the live path launches between the MoE layer's input and its output: routing (gate GEMM,
+top-k, sorting / routing metadata), the activation quant before dispatch, dispatch, expert GEMM1 + activation +
+GEMM2 (with their quant), combine and the weighted reduction, and the shared expert(s) when the layer computes them
+there (fused into the routed experts, or alongside them). List every one of these kernels the trace shows as ONE
+candidate: mode=mega decides how much of it to fuse (it may keep some launches), so do not split it into smaller
+L3 candidates. Other multi-rank stages (a TP collective with its compute, attention) stay not implemented.`} GEAK mode=mega searches a fused multi-rank kernel for it on the
 serving GPUs. IMPLEMENTABLE_LEVELS therefore includes L3 for such a stage only: rank it as a candidate with
 level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication kernels
 included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,

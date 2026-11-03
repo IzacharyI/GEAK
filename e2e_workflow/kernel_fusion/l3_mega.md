@@ -52,7 +52,17 @@ tree. Discover only what it leaves out.
    - **Operator:** build it exactly as the served model does (shapes, dtype, quantization, how
      weights and tokens are split over the ranks, the communication backend, the call from
      step 1). The UT runs the whole stage, communication included, from its input on each rank
-     to its output on each rank. Import the package from the tree under test (working
+     to its output on each rank. For an EP MoE stage that is everything in `L3_STAGE.kernels`:
+     - routing: gate GEMM, top-k, sorting / routing metadata;
+     - the activation quant before dispatch;
+     - dispatch, expert GEMM1 + activation + GEMM2 (with their quant), combine and the weighted
+       reduction;
+     - the shared expert(s), when the live path runs them in this stage (fused into the routed
+       experts, or alongside them).
+
+     The input is the hidden states (plus the router weights when routing is inside the stage),
+     and the fp32 reference computes the same math. Leave a part out only when the live path
+     runs it outside the stage's call site, and say so. Import the package from the tree under test (working
      directory / `PYTHONPATH`), so that a candidate tree is what runs. Weights may be random,
      seeded the same on every rank.
    - **Path marker:** print `[op] path=<NAME> rank=<r>` on every rank.

@@ -435,3 +435,16 @@ def test_a_gain_inside_the_noise_band_is_not_handed_on():
     assert r["status"] == "no_gain" and r["final_overlay"] == "" and not r["accepted"]
     assert r["validation"]["noise_band_pct"] == 0.5 and "within the noise band 0.5%" in r["validation"]["reason"]
     assert run("accept")["result"]["status"] == "accepted"                          # +2.5% clears it
+
+
+@pytest.mark.parametrize("scenario, to_mega", [
+    ("l3", True),                 # EP library kernels (megamoe / ep_combine)
+    ("l3_kind_scratch", True),    # from-scratch Triton MoE on an EP deployment: no library names
+    ("l3_kind_tp_moe", False),    # TP-sharded MoE + all-reduce (ep=1): a collective stage, off by default
+    ("l3_kind_attn", False),      # attention + a routing gate + all-reduce: no expert GEMM
+    ("l3_kind_dense", False),     # dense GEMM + quant
+])
+def test_mode_mega_takes_only_ep_moe_stages(scenario, to_mega):
+    out = run(scenario)
+    assert bool(out["megaCalls"]) == to_mega, scenario
+    assert any(l == "kf:l3 prepare c4" for l in labels(out)) == to_mega
