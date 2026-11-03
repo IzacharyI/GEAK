@@ -925,7 +925,7 @@ Return JSON {status: "ready"|"blocked", kernel_path, benchmark_harness, ep_size,
 Read ${L3_DOC} and follow PHASE=package.
 
 ## Inputs
-${cfg({ EVAL_DIR, L3_STAGE: stage, L3_DIR: work, MODEL_PATH, BACKEND, SERVING_TP, SERVING_GPU,
+${cfg({ EVAL_DIR, L3_STAGE: stage, L3_DIR: work, MODEL_PATH, BACKEND, SERVING_TP, SERVING_GPU, EP_DEFAULT: L3_EP_DEFAULT,
     SERVER_FLAGS: INIT_FLAGS, SERVER_ENV: INIT_ENV, CURRENT_OVERLAY: INIT_OVERLAY || '(none)',
     OVERLAY_DIR: `${work}/overlay`, BANNER: `[kf-${short}] ENGAGED`, GEAK_KERNEL_WORKFLOW_DIR: L3_GEAK_DIR,
     ...(mega ? { MEGA_RESULT: mega, PREPARED: prep } : { MEGA_RUN: L3_MEGA_RUN }),

@@ -84,6 +84,8 @@ const answers = {
     : scenario === 'no_seam' ? { selected: [{ id: 'c3' }], skipped: [] }
     : { selected: [{ id: 'c1' }, { id: 'c1s' }, { id: 'c2' }, { id: 'c3' }, ...(L3 ? [{ id: 'c4' }] : [])], skipped: [] }),
   'kf:l3 prepare c4': () => (scenario === 'l3_prepretry' ? { status: 'blocked', reason: 'UT failed: wrong call site' }
+    : scenario === 'l3_ep4' ? { status: 'ready', kernel_path: `${KF}/kernels/c4/baseline_tree`,
+        benchmark_harness: `${KF}/kernels/c4/baseline_tree/moe_ut.py`, package: 'aiter' }
     : { status: 'ready', kernel_path: `${KF}/kernels/c4/baseline_tree`, benchmark_harness: `${KF}/kernels/c4/baseline_tree/moe_ut.py`,
         ep_size: 2, package: 'aiter', call_site: 'aiter.megamoe:mega_moe', mega_args: { target_guards: ['64_uniform'], budget: 99 } }),
   'kf:l3 prepare c4 (retry)': () => ({ status: 'ready', kernel_path: `${KF}/kernels/c4/baseline_tree`,
@@ -161,6 +163,7 @@ if (scenario === 'l3_ar_open') args.kf_l3_stage_kinds = 'ep_moe,collective';
 if (scenario === 'lang_flydsl') args.kf_kernel_language = 'flydsl';
 if (scenario === 'lang_auto_gfx942') Object.assign(args, { kf_kernel_language: 'auto', expected_gfx: 'gfx942' });
 if (scenario === 'l3_gfx950') args.expected_gfx = 'gfx950';
+if (scenario === 'l3_ep4') Object.assign(args, { gpu_ids: '0,1,2,3', tp: 4, ep: 4 });
 if (KIND) args.ep = KIND.ep;
 if (scenario === 'analysis_only') Object.assign(args, { kf_steps: 'topk', kf_trace_dir: '/traces/x' });
 if (scenario === 'reuse') args.kf_reuse = { 'kf:author c1': { final_patch: 'old c1', isolated_speedup: 1.3, correctness: 'pass',

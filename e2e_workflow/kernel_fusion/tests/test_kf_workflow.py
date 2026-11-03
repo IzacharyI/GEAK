@@ -505,3 +505,11 @@ def test_a_mega_search_on_gfx950_is_held_to_flydsl_by_default():
     # L1/L2 authors keep the analyst's language unless kf_kernel_language pins one
     assert all("ONE fused triton kernel" in p for l, p in by.items() if l.startswith("kf:author "))
     assert "KERNEL LANGUAGE" not in run("l3")["megaCalls"][0]["args"].get("task", "")
+
+
+def test_an_ep4_deployment_runs_mega_on_its_four_gpus():
+    out = run("l3_ep4")
+    a = out["megaCalls"][0]["args"]
+    assert (a["gpu_ids"], a["gpus_per_job"]) == ("0,1,2,3", 4)
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "EP_DEFAULT: 4" in by["kf:l3 prepare c4"] and "EP_DEFAULT: 4" in by["kf:l3 package c4"]

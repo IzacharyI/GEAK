@@ -44,6 +44,11 @@ agents. This is the pattern mode=mega has been validated on:
 - DeepSeek-V4-Pro EP8 on MI355X;
 - Qwen3-235B EP8 on MI300X, over both an AITER/Mori path and a Triton-from-scratch path.
 
+Any EP size works: mode=mega runs on the stage's own rank count (`gpus_per_job` = the EP group, e.g.
+EP4 on 4 serving GPUs). The measured results above are EP8. The MegaMoE expert skill
+(`use_expert_skills`) is written for EP8 / gfx950, so leave it off for other EP sizes. A finished run
+is reused only for the same rank count.
+
 Other multi-rank stages (a TP collective with its compute) are wired but stay off until mode=mega is
 measured on them. `l3_stage_kinds: "ep_moe,collective"` turns them on.
 

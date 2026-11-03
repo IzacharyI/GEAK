@@ -123,7 +123,8 @@ You receive one of:
    - With `MEGA_RUN`, read it: the candidate registry in `state_dir`, or the eval dir's
      `tech_lead_report.md` and `final_patch.diff`. It must be a delivered result
      (`mega_deliverable` true, or a selected candidate whose final validation passed). It must
-     also be for this stage: the same communication kernels, and the same call site as
+     also be for this stage: the same communication kernels, the same rank count (an EP8 result
+     does not serve an EP4 deployment: the experts are split differently), and the same call site as
      `L3_STAGE.seam` / `OPERATOR_HINT`. Otherwise return `correctness: "fail"` with the reason.
      Recover its UT and frozen tree from the run.
    - Write `L3_DIR/mega_result.json` with what you used.
