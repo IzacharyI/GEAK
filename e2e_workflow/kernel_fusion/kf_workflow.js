@@ -69,7 +69,10 @@ const AB_FINISH_RETRIES = parseInt(A.ab_finish_retries != null ? A.ab_finish_ret
 // KernelFusion knobs.
 const PROMPT = String(A.kf_prompt || `${WORKFLOW_DIR}/knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md`);
 // The fusion levels the author/apply steps implement; the analysis may recommend only these (the skill ranks all).
-const IMPLEMENTABLE_LEVELS = String(A.kf_implementable_levels || 'L1,L2');
+const IMPLEMENTABLE_LEVELS = String(A.kf_implementable_levels || 'L1,L2,L3');
+// Patterns inside those levels the author/apply steps do not implement yet; the analysis ranks them but does not
+// recommend them, and the triage does not author them.
+const UNSUPPORTED_PATTERNS = String(A.kf_unsupported_patterns || 'L3 MegaKernel (one persistent kernel that absorbs a heavy expert/GEMM or attention stage together with its dispatch, combine or communication, e.g. MegaMoE); L4 (whole-layer MonoKernel)');
 const PROMPTS = PROMPT.split(',').map((p) => p.trim()).filter(Boolean);   // several files drive one analysis
 const TRACE_DIR_IN = String(A.kf_trace_dir || '');          // existing traces: skip the capture
 const WORKLOAD_SUMMARY = String(A.kf_workload_summary || ''); // per-point weights, when the caller has them
@@ -89,6 +92,9 @@ const KF_ACCURACY_INPUTS = KF_ACCURACY_GATE !== 'none'
       ACCURACY_TOL: parseFloat(A.accuracy_tol != null ? A.accuracy_tol : 0.01),
       GSM8K_EVAL_SCRIPT: `${WORKFLOW_DIR}/scripts/gsm8k_eval.py` }
   : {};
+// A 200-question gsm8k draw moves by ~1 point run to run, as much as the tolerance. When the stack misses the gate on
+// the sampled subset, the full test set (1319 questions) decides before any per-kernel screen; the screen uses it too.
+const ACCURACY_CONFIRM_LIMIT = parseInt(A.kf_accuracy_confirm_limit != null ? A.kf_accuracy_confirm_limit : 1319, 10);
 const VALIDATION_MODE = String(A.kf_validation_mode || 'isolated_server');   // fresh servers: boot-to-boot noise
 const VALIDATION_REPLICAS = parseInt(A.kf_validation_replicas != null ? A.kf_validation_replicas : 1, 10);   // ONE A/B
 // The stage's own baseline: one fresh server, one timed round -- no discarded full warmup round.
@@ -137,8 +143,23 @@ const hasKernel = (c, re) => (c.kernels || []).some((k) => re.test(String(k)));
 // The kind is read from the stage's own kernels, so a candidate is never taken on its label alone.
 const stageKind = (c) => ((hasKernel(c, EP_MOE_RE) || (EP_DEPLOYED && hasKernel(c, MOE_KERNEL_RE))) ? 'ep_moe'
   : (hasKernel(c, COLLECTIVE_RE) ? 'collective' : ''));
-const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' && L3_KINDS.has(stageKind(c));
+// Mode=mega takes the MegaKernel form only (it rewrites the heavy expert/GEMM work). A light L3 stage fusion over
+// the same kernels (router + metadata + dispatch preparation) stays with the author agents.
+// Evidence is again the stage's own kernels: expert GEMMs for an EP MoE, a GEMM for a collective stage.
+const isMegaKernel = (c, kind) => (kind === 'ep_moe'
+  ? hasKernel(c, MOE_KERNEL_RE) || hasKernel(c, /megamoe_(stage|gemm)/i)
+  : hasKernel(c, /gemm|matmul/i));
+const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' && L3_KINDS.has(stageKind(c)) &&
+  isMegaKernel(c, stageKind(c));
 const L3_COLLECTIVE = L3_KINDS.has('collective');
+// The analysis scope with L3 on: L3 is implementable, and the MegaKernel mode=mega implements leaves the
+// unsupported patterns (a caller's own kf_unsupported_patterns is kept as given).
+const L3_LEVELS = L3_ON && !/\bL3\b/i.test(IMPLEMENTABLE_LEVELS) ? `${IMPLEMENTABLE_LEVELS},L3` : IMPLEMENTABLE_LEVELS;
+const L3_UNSUPPORTED = L3_ON && A.kf_unsupported_patterns == null
+  ? `L3 MegaKernel other than the ${L3_COLLECTIVE ? 'expert-parallel MoE (MegaMoE) and TP-collective stages, e.g. an attention ' +
+      'MegaKernel' : 'expert-parallel MoE (MegaMoE) pattern, e.g. a TP all-reduce overlapped with its GEMM or an attention ' +
+      'MegaKernel'}, which GEAK mode=mega does not implement here; L4 (whole-layer MonoKernel)`
+  : UNSUPPORTED_PATTERNS;
 // Search-policy defaults per stage kind (kernel_fusion/l3_mega_defaults.json, passed in by kf_stage.py).
 const L3_DEFAULTS = jsonArg(A.kf_l3_defaults) || {};
 // The workflow owns where mega runs, on which GPUs and for how long; l3_mega_args cannot move them
@@ -552,27 +573,25 @@ ${L3_COLLECTIVE
 communication, e.g. an expert-parallel MoE (dispatch -> expert GEMMs -> combine over the EP group), or an
 all-reduce / all-gather / reduce-scatter together with the compute it feeds or follows (GEMM + reduce, reduce +
 norm + quant, attention output + all-reduce).`
-    : `An EXPERT-PARALLEL MoE stage IS implementable in this run: the MegaMoE pattern, one stage over the EP group.
+    : `The expert-parallel MoE MegaKernel (the MegaMoE pattern) IS implementable in this run, one stage over the EP group.
 Its region is everything the live path launches between the MoE layer's input and its output: routing (gate GEMM,
 top-k, sorting / routing metadata), the activation quant before dispatch, dispatch, expert GEMM1 + activation +
 GEMM2 (with their quant), combine and the weighted reduction, and the shared expert(s) when the layer computes them
 there (fused into the routed experts, or alongside them). List every one of these kernels the trace shows as ONE
 candidate: mode=mega decides how much of it to fuse (it may keep some launches), so do not split it into smaller
-L3 candidates. Other multi-rank stages (a TP collective with its compute, attention) stay not implemented.`} GEAK mode=mega searches a fused multi-rank kernel for it on the
-serving GPUs. IMPLEMENTABLE_LEVELS therefore includes L3 for such a stage only: rank it as a candidate with
+L3 candidates. Other multi-rank stages (a TP collective with its compute, attention) stay not implemented as MegaKernels.`} GEAK mode=mega searches a fused multi-rank kernel for it on the
+serving GPUs, so UNSUPPORTED_PATTERNS no longer lists it: rank it as a candidate with
 level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication kernels
 included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,
 exclusive_with = every L1/L2 candidate whose region lies inside it, and the same gain fields as the others. It may
-be recommended together with the L1/L2 candidates it does not conflict with. Every other L3, and every L4, stays
-not implemented (an author agent covers single-GPU regions).
+be recommended together with the candidates it does not conflict with. Give implementable_by "mega" to this
+MegaKernel only: an L3 stage fusion that rewrites no expert GEMM (e.g. router + metadata + dispatch preparation)
+is authored on one GPU as usual.
 ` : ''}
 ## Inputs
 ${cfg({ EVAL_DIR, TRACE_DIR, WORKLOAD_SUMMARY: workloadJson || '(none)', PROFILE_TOPN: profileTopN || '(none)',
     MODEL_PATH, BACKEND, SERVING_TP, SERVER_FLAGS: INIT_FLAGS, SERVER_ENV: INIT_ENV, LAUNCH_SCRIPT: LAUNCH_SCRIPT || '(none)',
-    WORKLOAD, OVERLAY: INIT_OVERLAY || '(none)',
-    IMPLEMENTABLE_LEVELS: L3_ON && !/\bL3\b/i.test(IMPLEMENTABLE_LEVELS)
-      ? `${IMPLEMENTABLE_LEVELS},L3 (${L3_COLLECTIVE ? 'multi-rank' : 'expert-parallel MoE'} stages only, through GEAK mode=mega)`
-      : IMPLEMENTABLE_LEVELS })}
+    WORKLOAD, OVERLAY: INIT_OVERLAY || '(none)', IMPLEMENTABLE_LEVELS: L3_LEVELS, UNSUPPORTED_PATTERNS: L3_UNSUPPORTED })}
 
 ${KF_TASK ? `## Operator constraints\n${KF_TASK}\n\n` : ''}Return JSON: {"topk_json": "${OUT}/topk.json", "report_path": "${OUT}/REPORT.md", "report_md": "<full report>",
 "model_notes_md": "<model notes>", "digest_md": "${OUT}/digest/digest.md", "candidates": <topk.json candidates>,
@@ -612,11 +631,13 @@ report's reasoning, the trace digest, the source) -- there is no limit on how ma
 pick what you judge worth the effort and say why, and say why for each one you leave out.
 The one hard line: a candidate is authored by rebinding ONE Python callable that covers its whole region
 (seam.target_callable) and is the one the live server actually runs (check the trace's launch frames: a model can
-have several implementations of the same layer); one without such a seam cannot be authored. Mutually exclusive candidates (exclusive_with)
+have several implementations of the same layer); one without such a seam cannot be authored. Implementable scope:
+levels ${L3_LEVELS}, except ${L3_UNSUPPORTED}; a candidate outside it is not authored (a level alone
+is no reason to skip a candidate inside it). Mutually exclusive candidates (exclusive_with)
 may both be picked: which of them goes into the server is decided after their unit tests.${L3_ON ? `
-An L3 candidate with implementable_by "mega" (${L3_COLLECTIVE ? 'a multi-rank stage' : 'an expert-parallel MoE stage'}) is not written by an author agent:
-GEAK mode=mega searches it on all serving GPUs, which takes hours, and at most ${L3_MAX} such stage(s) run. Pick
-it when its weighted gain is worth that; its exclusive L1/L2 candidates may be picked too.` : ''}
+An L3 MegaKernel candidate with implementable_by "mega" (${L3_COLLECTIVE ? 'an EP MoE or TP-collective stage' : 'the expert-parallel MoE stage'}) is not written by an
+author agent: GEAK mode=mega searches it on all serving GPUs, which takes hours, and at most ${L3_MAX} such stage(s)
+run. Pick it when its weighted gain is worth that; its exclusive L1/L2/L3 candidates may be picked too.` : ''}
 Read ${topk.topk_json || '(the candidates below)'}${topk.report_md ? ' and the report below' : ''}; read anything else you need.
 
 ## Candidates
@@ -704,10 +725,13 @@ async function prepareOne(c, i, previous) {
   const p = (prep && prep.prepared) || {};
   const all = [...(p.head_candidates || []), ...(p.kernel_candidates || [])];
   for (const k of all) {
-    const r = k && k.prepared_ut && k.prepared_ut.result;
+    // The packer (agentx_kernel_preparation.mjs --emit-prepared) nests the UT under prepared_ut; a delivery
+    // assembled by hand when the packer cannot run puts the same result (and phase) on the entry itself.
+    const ut = (k && k.prepared_ut) || (k && k.result ? { phase: k.phase, result: k.result } : null);
+    const r = ut && ut.result;
     if (!r || typeof r.task_dir !== 'string' || !r.task_dir.trim()) continue;
     const ok = r.editable !== false && r.baseline_frozen === true &&
-      (k.prepared_ut.phase === 'extract' ? r.unittest_smoke : r.smoke) === 'pass';
+      (ut.phase === 'extract' ? r.unittest_smoke : r.smoke || r.unittest_smoke) === 'pass';
     if (ok || all.length === 1) return { ...r, ok };
   }
   const why = [...(p.failed_tasks || []), ...(p.deferred_tasks || [])].map((f) => f && (f.reason || f.notes || f.status))
@@ -989,6 +1013,8 @@ async function screen(list, label) {
     'Return {members: [{short_name, correctness: "pass"|"fail", engaged, reason}]}.',
     { EVAL_DIR, MODEL_PATH, GPU_ID: SERVING_GPU, WORKLOAD, SKILL_DIR: WORKFLOW_DIR, MEASUREMENT_PURPOSE: 'parity',
       ...KF_ACCURACY_INPUTS,
+      // the stack already missed on the sampled subset: each kernel is judged on the full test set
+      ...(KF_ACCURACY_GATE === 'gsm8k' ? { ACCURACY_LIMIT: ACCURACY_CONFIRM_LIMIT } : {}),
       KERNEL_RESULTS: list.map(kernelResult), CURRENT_OVERLAY: INIT_OVERLAY, CURRENT_FLAGS: INIT_FLAGS, CURRENT_ENV: INIT_ENV }),
     { phase: 'ApplyBack', label, schema: SCREEN_SCHEMA, timeoutMs: APPLY_TIMEOUT_MS });
   if (!sc) return null;
@@ -1030,9 +1056,15 @@ async function stackAB(members, suffix) {
     `${EVAL_DIR}/overlay/cand_${stackName} = CURRENT_OVERLAY plus every entry's files -- rename each ` +
     'sitecustomize.py and write one sitecustomize.py that imports all of them -- do not re-materialize kernels from ' +
     'patches. Run the correctness checks once on that stack and confirm EVERY entry\'s engaged_banner in the CAND ' +
-    'server log; if the stack fails either, skip the throughput legs and return gate "rejected" with a reason that ' +
-    'starts with "correctness:" (name the kernels that did not engage). Otherwise ONE reference-vs-CAND throughput ' +
-    'A/B. Return the gate for the whole set; accepted_overlay = the CAND overlay when it is accepted or stack.';
+    'server log.' + (KF_ACCURACY_GATE === 'gsm8k'
+      ? ` ACCURACY: score gsm8k with --limit ACCURACY_LIMIT on the reference and the CAND. If the CAND misses the gate ` +
+        `there, do not reject yet: on the same two correctness servers score BOTH again with --limit ` +
+        `${ACCURACY_CONFIRM_LIMIT} (the full test set), and decide the accuracy gate on that result alone; report all ` +
+        'scores.' : '') +
+    ' If the stack fails the accuracy gate or an engagement check, skip the throughput legs and return gate ' +
+    '"rejected" with a reason that starts with "correctness:" (name the kernels that did not engage). Otherwise ONE ' +
+    'reference-vs-CAND throughput A/B. Return the gate for the whole set; accepted_overlay = the CAND overlay when it ' +
+    'is accepted or stack.';
   const label = `kf:integrate ${stackName}${suffix}`;
   let integ = await safeAgent(roleAgent('e2e_integrator', 'integrate', intro, inputs),
     { phase: 'ApplyBack', label, schema: INTEGRATE_SCHEMA, timeoutMs: APPLY_TIMEOUT_MS });

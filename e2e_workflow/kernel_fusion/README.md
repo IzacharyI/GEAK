@@ -21,23 +21,33 @@ profiler)  strategy skill;     A/B, compounding
 | `author` | a triage agent reads the whole Top-K and picks, by its own judgement, the patterns worth a kernel (no cap, no gain floor; the one hard line is a Python seam); each: region UT, then a fused kernel | AgentX: kernel-extract skill `PHASE=prepare` (one joint-boundary task per region); else `roles/kernel_extractor.md`. The fused kernel itself: one agent per pattern, given the region and the UT, no GEAK kernel layer |
 | `apply` | once, after every kernel is written: a select agent reads the UT results and picks which kernels go on (no speedup floor; one kernel per seam / overlapping region); they go in together as ONE combined overlay on ONE A/B vs the reference (gsm8k on the whole stack first, then validation-length legs). Only if the stack fails accuracy or engagement is each kernel checked alone (correctness only) and the A/B re-run without the failing ones; only a measured e2e win is handed to the main workflow | `roles/e2e_integrator.md` PHASE=integrate |
 
-## L3 stage fusion (GEAK mode=mega, opt-in)
+## L3 MegaKernel through GEAK mode=mega (opt-in)
 
 The fusion-analysis skill (`knowledge/kernel_fusion_skills/fusion-analysis`) defines four levels (L1
-element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise); by default only L1/L2 are implemented
-(`implementable_levels`). With `l3_mega` on, an **expert-parallel MoE stage** is implementable too:
-the MegaMoE pattern over the EP group. The region spans the whole MoE layer as the live path runs
-it: routing (gate, top-k, sorting), quant, dispatch, expert GEMM1 + activation + GEMM2, combine, and
-the shared expert(s) when computed there. It is recognized from the stage's own kernels: EP library
-kernels (megamoe, DeepEP, mori, all-to-all), or MoE kernels on an EP deployment (`ep` > 1), which
-covers a from-scratch path whose dispatch/combine carry no library name. This is the pattern mode=mega has been validated on:
+element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise) and splits L3 into two forms:
+- **stage fusion**: authored by an agent like L1/L2;
+- **MegaKernel**: by default an unsupported pattern (`unsupported_patterns`).
+
+With `l3_mega` on, the **expert-parallel MoE MegaKernel** (the MegaMoE pattern) is implementable: it
+leaves the unsupported patterns, and GEAK mode=mega builds it.
+
+**Region.** The whole MoE layer as the live path runs it: routing (gate, top-k, sorting), quant,
+dispatch, expert GEMM1 + activation + GEMM2, combine, and the shared expert(s) when computed there.
+
+**Recognition.** From the stage's own kernels, which must include expert GEMMs plus either:
+- EP library kernels (megamoe, DeepEP, mori, all-to-all); or
+- an EP deployment (`ep` > 1). This covers a from-scratch path whose dispatch/combine carry no
+  library name.
+
+An L3 stage fusion without expert GEMMs (router + top-k + dispatch preparation) stays with the author
+agents. This is the pattern mode=mega has been validated on:
 - DeepSeek-V4-Pro EP8 on MI355X;
 - Qwen3-235B EP8 on MI300X, over both an AITER/Mori path and a Triton-from-scratch path.
 
 Other multi-rank stages (a TP collective with its compute) are wired but stay off until mode=mega is
 measured on them. `l3_stage_kinds: "ep_moe,collective"` turns them on.
 
-| step | L1 / L2 | L3 EP MoE stage |
+| step | L1 / L2 / L3 stage fusion | L3 EP MoE MegaKernel |
 |---|---|---|
 | `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it; it goes to mode=mega only if its kernels are an EP MoE stage |
 | triage | agent's pick | same agent; at most `l3_max` stages |
@@ -73,7 +83,7 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 
 | key (handoff) | env | default | meaning |
 |---|---|---|---|
-| `strategy` | `GEAK_KF_STRATEGY` | `knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md` | the analysis method (fusion levels L1–L4, requirements incl. the boundary ledger, procedure, estimation, report contents); another file replaces it, `false` drops it. Output formats are defined by `kf_workflow.js`, and the implementable levels are injected (`kf_implementable_levels`, default `L1,L2`) |
+| `strategy` | `GEAK_KF_STRATEGY` | `knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md` | the analysis method (fusion levels L1–L4, requirements incl. the boundary ledger, procedure, estimation, report contents); another file replaces it, `false` drops it. Output formats are defined by `kf_workflow.js`, and the implementable scope is injected (`kf_implementable_levels`, default `L1,L2,L3`; `kf_unsupported_patterns`, default L3 MegaKernel and L4) |
 | `prompt` | `GEAK_KF_PROMPT` | — | the run's own prompt(s), comma-separated, read after the strategy (e.g. the deployment / workload description `muse_agentx_con16.txt`) |
 | `trace_dir` | `GEAK_KF_TRACE_DIR` | — | existing traces (any depth; one dir per sampling point); skips the capture |
 | `workload_summary` | `GEAK_KF_WORKLOAD_SUMMARY` | — | per-point weights for the analysis |
@@ -84,7 +94,9 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `steps` | `GEAK_KF_STEPS` | `trace,topk,author,apply` | subset to run; `topk` alone with `trace_dir` needs no GPU |
 | `author_k` | `GEAK_KF_AUTHOR_K` | 0 (no cap) | optional cap on the patterns the triage agent sends to authoring |
 | `baseline_mode` | `GEAK_KF_BASELINE_MODE` | `isolated_server` | lifecycle of the stage's baseline: one fresh server, one timed round, no discarded warmup round |
-| `implementable_levels` | `GEAK_KF_IMPLEMENTABLE_LEVELS` | `L1,L2` | fusion levels the analysis may recommend (it still ranks all levels) |
+| `implementable_levels` | `GEAK_KF_IMPLEMENTABLE_LEVELS` | `L1,L2,L3` | fusion levels the analysis may recommend and the triage may author (all levels are still ranked) |
+| `unsupported_patterns` | `GEAK_KF_UNSUPPORTED_PATTERNS` | L3 MegaKernel (e.g. MegaMoE), L4 MonoKernel | patterns inside those levels that are ranked but not recommended or authored |
+| `accuracy_confirm_limit` | `GEAK_KF_ACCURACY_CONFIRM_LIMIT` | 1319 (full gsm8k test set) | when the fused stack misses the gsm8k gate on the 200-question sample, both sides are re-scored on this many questions and that result decides; the per-kernel screen (only if it still fails) uses it too |
 | `min_gain_pct` | `GEAK_KF_MIN_GAIN_PCT` | 0.5 | the combined A/B hands the overlay on only when its gain exceeds max(measured noise band, this) |
 | `validation_mode` / `validation_replicas` | `GEAK_KF_VALIDATION_MODE` / `_REPLICAS` | `isolated_server` / 1 | measurement mode / replicas of the combined A/B (one A/B) |
 | `task` | `GEAK_KF_TASK` | — | operator constraints appended to every agent prompt (e.g. directories it must not read) |

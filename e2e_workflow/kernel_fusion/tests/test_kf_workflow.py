@@ -349,8 +349,7 @@ def test_l3_takes_only_the_ep_moe_pattern_by_default():
     out = run("l3_ar")
     by = {c["label"]: c["prompt"] for c in out["calls"]}
     assert out["megaCalls"] == [] and not any(l.startswith("kf:l3 ") for l in labels(out))
-    assert "EXPERT-PARALLEL MoE stage IS implementable" in by["kf:analyst"]
-    assert "L3 (expert-parallel MoE stages only" in by["kf:analyst"]
+    assert "expert-parallel MoE MegaKernel (the MegaMoE pattern) IS implementable" in by["kf:analyst"]
     assert "MULTI-RANK stage" not in by["kf:analyst"]
 
 
@@ -417,7 +416,9 @@ def test_the_workflow_owns_the_output_format_and_the_schema_types_the_seam():
     skill = E2E_DIR / "knowledge" / "kernel_fusion_skills" / "fusion-analysis"
     text = "".join(p.read_text() for p in [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))])
     assert "out/" not in text and "fusion_candidates" not in text and "recommended=true" not in text
-    assert "IMPLEMENTABLE_LEVELS: L1,L2" in p                                     # capability injected, not prose
+    assert "IMPLEMENTABLE_LEVELS: L1,L2,L3" in p and "UNSUPPORTED_PATTERNS: L3 MegaKernel" in p   # injected, not prose
+    tri = next(c["prompt"] for c in out["calls"] if c["label"] == "kf:triage")
+    assert "levels L1,L2,L3, except L3 MegaKernel" in tri and "a level alone" in tri
     assert "knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md" in (E2E_DIR / "kernel_fusion" / "kf_workflow.js").read_text()
     assert "reference files a SKILL.md among them links" in p
 
@@ -443,8 +444,36 @@ def test_a_gain_inside_the_noise_band_is_not_handed_on():
     ("l3_kind_tp_moe", False),    # TP-sharded MoE + all-reduce (ep=1): a collective stage, off by default
     ("l3_kind_attn", False),      # attention + a routing gate + all-reduce: no expert GEMM
     ("l3_kind_dense", False),     # dense GEMM + quant
+    ("l3_kind_light", False),     # L3 stage fusion (router + top-k + dispatch prep): no expert GEMM, authored as usual
 ])
 def test_mode_mega_takes_only_ep_moe_stages(scenario, to_mega):
     out = run(scenario)
     assert bool(out["megaCalls"]) == to_mega, scenario
     assert any(l == "kf:l3 prepare c4" for l in labels(out)) == to_mega
+
+
+def test_a_hand_assembled_prepare_delivery_still_counts():
+    # c28 E10: node was not on PATH, the skill could not run its packer and put the passing UT on the entry itself
+    out = run("agentx_flat")
+    assert "kf:kernel-extract prepare c1 (retry)" not in labels(out)
+    assert f"{KF}/tasks/c1" in [w["kernel_path"] for w in out["workflows"]]
+
+
+def test_a_stack_that_misses_the_sampled_gsm8k_is_confirmed_on_the_full_set_before_any_screen():
+    out = run("stack_fail")
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    integ = by["kf:integrate kf_stack"]
+    assert "ACCURACY_LIMIT: 200" in integ and "--limit 1319 (the full test set)" in integ
+    assert "decide the accuracy gate on that result alone" in integ
+    # only a miss on the full set reaches the per-kernel screen, which is judged on the full set too
+    assert "ACCURACY_LIMIT: 1319" in by["kf:integrate screen"]
+
+
+def test_l3_on_moves_only_the_ep_moe_megakernel_out_of_the_unsupported_patterns():
+    by = {c["label"]: c["prompt"] for c in run("l3")["calls"]}
+    for label in ("kf:analyst", "kf:triage"):
+        assert "L3 MegaKernel other than the expert-parallel MoE (MegaMoE) pattern" in by[label], label
+        assert "L4 (whole-layer MonoKernel)" in by[label]
+    assert "IMPLEMENTABLE_LEVELS: L1,L2,L3" in by["kf:analyst"]
+    off = {c["label"]: c["prompt"] for c in run("accept")["calls"]}
+    assert "e.g. MegaMoE" in off["kf:analyst"] and "MegaMoE) pattern" not in off["kf:analyst"]

@@ -1,7 +1,8 @@
 # L3 stage fusion through GEAK mode=mega
 
 KernelFusion levels (`knowledge/kernel_fusion_skills/fusion-analysis/references/fusion-levels.md`):
-L1 element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise. An author agent writes L1/L2 kernels against a single-card region UT. A multi-rank
+L1 element-wise, L2 operator-wise, L3 stage-wise (stage fusion or MegaKernel), L4 layer-wise. You handle
+the L3 MegaKernel form. An author agent writes L1/L2 kernels against a single-card region UT. A multi-rank
 stage runs over several GPUs at once, so no single-card UT can hold it. It is the kernels of one
 functional stage that include cross-GPU communication, for example:
 - an expert-parallel MoE: dispatch → expert GEMMs → combine over the EP group;
