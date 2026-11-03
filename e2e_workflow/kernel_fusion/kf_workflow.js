@@ -61,10 +61,15 @@ const MEASUREMENT_MODE = String(A.measurement_mode || 'warm_server');
 const PARITY_REPLICAS = parseInt(A.parity_replicas != null ? A.parity_replicas : 1, 10);
 const SEARCH_REPLICAS = parseInt(A.search_replicas != null ? A.search_replicas : 1, 10);
 const NOISE_BAND_DEFAULT = parseFloat(A.noise_band_pct != null ? A.noise_band_pct : 0.5);
+// The combined A/B hands the fused overlay on only when its gain clears the noise band: the larger of the measured
+// band (setup) and this floor. With one replica per side a gain inside it is indistinguishable from noise.
+const KF_MIN_GAIN_PCT = parseFloat(A.kf_min_gain_pct != null ? A.kf_min_gain_pct : 0.5);
 const AB_FINISH_RETRIES = parseInt(A.ab_finish_retries != null ? A.ab_finish_retries : 2, 10);
 
 // KernelFusion knobs.
-const PROMPT = String(A.kf_prompt || `${KF_HOME}/fusion_strategy.md`);
+const PROMPT = String(A.kf_prompt || `${WORKFLOW_DIR}/knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md`);
+// The fusion levels the author/apply steps implement; the analysis may recommend only these (the skill ranks all).
+const IMPLEMENTABLE_LEVELS = String(A.kf_implementable_levels || 'L1,L2');
 const PROMPTS = PROMPT.split(',').map((p) => p.trim()).filter(Boolean);   // several files drive one analysis
 const TRACE_DIR_IN = String(A.kf_trace_dir || '');          // existing traces: skip the capture
 const WORKLOAD_SUMMARY = String(A.kf_workload_summary || ''); // per-point weights, when the caller has them
@@ -132,6 +137,17 @@ let DEADLINE_HIT = false;
 if (TIME_BUDGET_MS && typeof setTimeout === 'function') {
   setTimeout(() => { DEADLINE_HIT = true; log('[kf] 85% of the stage budget spent: no new author/apply work starts.'); },
     Math.floor(TIME_BUDGET_MS * 0.85));
+}
+// kf_stage stops the stage at 1.1 x budget + 900 s. A combined A/B (stack gsm8k, a reference leg and a candidate
+// leg) starts only while that hard limit still leaves AB_NEEDS_S; a re-run after a failed stack also needs the
+// per-kernel screen. An A/B cut off mid-leg measures nothing and leaves detached legs on the serving GPUs.
+const AB_NEEDS_S = parseInt(A.kf_ab_needs_s != null ? A.kf_ab_needs_s : 5400, 10);
+const SCREEN_NEEDS_S = parseInt(A.kf_screen_needs_s != null ? A.kf_screen_needs_s : 1800, 10);
+let AB_LATE = false, RERUN_LATE = false;
+if (TIME_BUDGET_MS && typeof setTimeout === 'function') {
+  const hardMs = TIME_BUDGET_MS * 1.1 + 900000;
+  setTimeout(() => { AB_LATE = true; }, Math.max(0, Math.floor(hardMs - AB_NEEDS_S * 1000)));
+  setTimeout(() => { RERUN_LATE = true; }, Math.max(0, Math.floor(hardMs - (AB_NEEDS_S + SCREEN_NEEDS_S) * 1000)));
 }
 
 // Same deployment requirement e2e_workflow.js injects into every kernel task (derived the same way).
@@ -272,9 +288,18 @@ const SKILL_TRACE_SCHEMA = obj({ trace_dir: { type: 'string' }, workload_json: {
 const AGENTX_PREPARATION_SCHEMA = obj({ delivery_path: { type: 'string' },
   prepared: obj({ head_candidates: arrObj, kernel_candidates: arrObj, failed_tasks: arrObj, deferred_tasks: arrObj },
     ['head_candidates', 'kernel_candidates']) }, ['delivery_path', 'prepared']);
+// Typed where downstream code reads a field: a seam given as prose or a bare string, or ids that are not
+// strings, are rejected here so the analyst rewrites them, instead of silently dropping every pick later.
+const CANDIDATE_SCHEMA = obj({
+  id: { type: 'string' },
+  seam: obj({ target_callable: { type: 'string' }, source_file: { type: 'string' } }),
+  exclusive_with: arrStr,
+  fallback: { type: ['string', 'null'] },
+  kernels: arrStr, phases: arrStr,
+}, ['id']);
 const TOPK_SCHEMA = obj({
   topk_json: { type: 'string' }, report_path: { type: 'string' }, digest_md: { type: 'string' },
-  candidates: arrObj, recommended: arrStr, notes: { type: 'string' },
+  candidates: { type: 'array', items: CANDIDATE_SCHEMA }, recommended: arrStr, notes: { type: 'string' },
   report_md: { type: 'string' }, model_notes_md: { type: 'string' },
 }, ['topk_json', 'candidates', 'recommended', 'report_md']);
 const EXTRACT_SCHEMA = obj({ short_name: { type: 'string' }, editable: { type: 'boolean' }, task_dir: { type: 'string' },
@@ -449,9 +474,12 @@ if (want('topk')) {
   : await safeAgent(`You are the GEAK KernelFusion analyst. You choose which kernel-fusion patterns to implement.
 
 ## Your method is the user's prompt
-Read every one of these files in full: ${PROMPTS.join(', ')}. Together they are the AUTHORITATIVE analysis
-method, ranking rules, deliverable list, deployment and workload description for this task: follow them step
-by step. A file may describe a whole run (launching servers, running GEAK, where outputs go): take from it the
+Read every one of these files in full, and the reference files a SKILL.md among them links: ${PROMPTS.join(', ')}.
+Together they are the AUTHORITATIVE analysis
+method, ranking rules, report content, deployment and workload description for this task: follow them step
+by step. They are NOT authoritative on output files or formats: where a file names output paths, an out/ layout
+or a machine-readable candidate format (field names, a per-candidate "recommended" flag, a seam written as
+prose), the sections "Machine-readable result" and "Return JSON" below replace it. A file may describe a whole run (launching servers, running GEAK, where outputs go): take from it the
 deployment, workload, metric and constraints, but your job is only the analysis below. They may also name a
 container, a working directory or a materials/ layout from the setting they were written in; those are NOT
 this environment. Map them onto the inputs below instead:
@@ -471,7 +499,10 @@ your recommended candidates with the GEAK kernel layer and A/B-tests them on the
 ${OUT}/digest/digest.md has, per trace and per step kind: steps, busy/span/idle per step, kernels/step, short-kernel
 share, the per-layer repeating block, the top kernels, and seq_*.tsv (the median step's full ordered kernel
 sequence with gaps and, for eager launches, the launching cpu_op + framework frame). Use these numbers; quote
-them in your report. Graph-replayed steps have no launch frames: map those kernels to source by name.
+them in your report. Its "Live model code" table lists the module classes this server actually runs and the file
+of each forward (from the eager steps' Python stacks). Graph-replayed steps have no launch frames but run those same
+classes: map their kernels to source by name WITHIN those files -- the framework may ship other implementations of the
+same layers that this server never loads, and a seam there is never called.
 
 This environment does not let you write .md report files: return the full report the prompt asks for as markdown
 in report_md, and the model / deployment notes in model_notes_md; the stage writes them to ${OUT}/REPORT.md and
@@ -481,14 +512,17 @@ ${OUT}/MODEL_NOTES.md.
 Write ${OUT}/topk.json: {"candidates": [...], "recommended": [ids in the order to implement]}, every candidate:
   id (short, [A-Za-z0-9_]), rank, level ("L1".."L4"), region (one line), kernels (device kernel names, in order),
   phases (step kinds it runs in), occurrences {per_layer, per_step, layers}, m_range,
-  seam {target_callable: "pkg.module:Class.method or pkg.module:function" -- ONE Python callable whose body
-        covers the whole region, so the region can be rebound to a fused implementation; source_file; lines},
+  seam (an OBJECT, never a bare string) {target_callable: "pkg.module:Class.method or pkg.module:function" -- ONE Python callable whose body
+        covers the whole region, so the region can be rebound to a fused implementation -- the one the LIVE server
+        runs: a model can have several implementations of the same layer (generic vs platform-specific modules),
+        so confirm the module from the trace's launch frames, not from a name match; source_file; lines},
   inputs_outputs (tensors that cross the region boundary, with shapes/dtypes), launches_before, launches_after,
   region_pct_device_time (weighted), est_gain_pct_upper, est_gain_pct_expected (weighted e2e %),
-  difficulty (1-5), bitwise_exact (bool), exclusive_with [ids], language ("triton" unless you have a reason),
+  difficulty (1-5), bitwise_exact (bool), exclusive_with [ids of conflicting candidates], language ("triton" unless you have a reason),
   fallback (id of the smaller-scope candidate to implement instead if this one fails, or null),
   fused_design (how the fused kernel works: tiling, what stays in registers/LDS, what it no longer writes to HBM).
-"recommended" = the non-conflicting set the prompt's ranking recommends, best first. A candidate whose region
+"recommended" = a list of candidate ids (not a per-candidate flag): the non-conflicting set the prompt's ranking
+recommends, best first. A candidate whose region
 cannot be reached through one Python seam can still be ranked, but must not be recommended.
 ${L3_ON ? `
 ## L3 stage fusion through GEAK mode=mega (on in this run)
@@ -496,9 +530,9 @@ A MULTI-RANK stage IS implementable in this run: the kernels of one functional s
 communication, e.g. an expert-parallel MoE (dispatch -> expert GEMMs -> combine over the EP group), or an
 all-reduce / all-gather / reduce-scatter together with the compute it feeds or follows (GEMM + reduce, reduce +
 norm + quant, attention output + all-reduce). GEAK mode=mega searches a fused multi-rank kernel for it on the
-serving GPUs. For such a stage only, this replaces the strategy's rule that L3/L4 are not implemented: rank it as a
-candidate with level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication
-kernels included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,
+serving GPUs. IMPLEMENTABLE_LEVELS therefore includes L3 for such a stage only: rank it as a candidate with
+level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication kernels
+included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,
 exclusive_with = every L1/L2 candidate whose region lies inside it, and the same gain fields as the others. It may
 be recommended together with the L1/L2 candidates it does not conflict with. A stage without cross-GPU
 communication, and every L4, stays not implemented (an author agent covers single-GPU regions).
@@ -506,7 +540,9 @@ communication, and every L4, stays not implemented (an author agent covers singl
 ## Inputs
 ${cfg({ EVAL_DIR, TRACE_DIR, WORKLOAD_SUMMARY: workloadJson || '(none)', PROFILE_TOPN: profileTopN || '(none)',
     MODEL_PATH, BACKEND, SERVING_TP, SERVER_FLAGS: INIT_FLAGS, SERVER_ENV: INIT_ENV, LAUNCH_SCRIPT: LAUNCH_SCRIPT || '(none)',
-    WORKLOAD, OVERLAY: INIT_OVERLAY || '(none)' })}
+    WORKLOAD, OVERLAY: INIT_OVERLAY || '(none)',
+    IMPLEMENTABLE_LEVELS: L3_ON && !/\bL3\b/i.test(IMPLEMENTABLE_LEVELS)
+      ? `${IMPLEMENTABLE_LEVELS},L3 (multi-rank stages only, through GEAK mode=mega)` : IMPLEMENTABLE_LEVELS })}
 
 ${KF_TASK ? `## Operator constraints\n${KF_TASK}\n\n` : ''}Return JSON: {"topk_json": "${OUT}/topk.json", "report_path": "${OUT}/REPORT.md", "report_md": "<full report>",
 "model_notes_md": "<model notes>", "digest_md": "${OUT}/digest/digest.md", "candidates": <topk.json candidates>,
@@ -534,14 +570,19 @@ if (!topk || !(want('author') || want('apply'))) {
 // unittest (GEAK kernel-extract skill / kernel_extractor) -> fused kernel (one author agent).
 // ---------------------------------------------------------------------------
 phase('Author');
-const byId = new Map((topk.candidates || []).map((c) => [String(c.id), c]));
+// The analyst's structured result may give a seam as the bare "pkg.mod:fn" (topk.json on disk keeps the object):
+// normalise it once here, or every pattern the triage picks is dropped for having no seam.
+topk.candidates = (topk.candidates || []).map((c) =>
+  (c && typeof c.seam === 'string' ? { ...c, seam: { target_callable: c.seam } } : c));
+const byId = new Map(topk.candidates.map((c) => [String(c.id), c]));
 const seamOf = (c) => (c && c.seam && c.seam.target_callable) || '';
 const triage = await safeAgent(`You decide which fusion patterns of a Top-K analysis go on to the next step: writing a
 fused kernel and a region unit test for each. Judge each candidate yourself from the analysis (its numbers, the
 report's reasoning, the trace digest, the source) -- there is no limit on how many you pick and no minimum gain;
 pick what you judge worth the effort and say why, and say why for each one you leave out.
 The one hard line: a candidate is authored by rebinding ONE Python callable that covers its whole region
-(seam.target_callable); one without such a seam cannot be authored. Mutually exclusive candidates (exclusive_with)
+(seam.target_callable) and is the one the live server actually runs (check the trace's launch frames: a model can
+have several implementations of the same layer); one without such a seam cannot be authored. Mutually exclusive candidates (exclusive_with)
 may both be picked: which of them goes into the server is decided after their unit tests.${L3_ON ? `
 An L3 candidate with implementable_by "mega" (a multi-rank stage) is not written by an author agent:
 GEAK mode=mega searches it on all serving GPUs, which takes hours, and at most ${L3_MAX} such stage(s) run. Pick
@@ -572,6 +613,13 @@ for (const x of (triage && triage.skipped) || []) {
 }
 log(`[kf] triage: authoring ${jobs.length} pattern(s): ${jobs.map((c) => c.id).join(', ')}` +
     (megaJobs.length ? `; L3 through mode=mega: ${megaJobs.map((c) => c.id).join(', ')}` : ''));
+// Picks that all vanish here are a broken hand-off, not a measured "no gain": say so.
+const picked = ((triage && triage.selected) || []).length;
+if (picked && !jobs.length && !megaJobs.length) {
+  result.status = 'error';
+  result.reason = `triage selected ${picked} pattern(s) but none has a usable seam.target_callable`;
+  return result;
+}
 
 const shortOf = (c) => String(c.id).replace(/[^A-Za-z0-9_]+/g, '_');
 
@@ -923,9 +971,10 @@ async function screen(list, label) {
   }
   return failed;
 }
-if (!want('apply') || !winners.length || DEADLINE_HIT) {
+if (!want('apply') || !winners.length || DEADLINE_HIT || AB_LATE) {
   for (const r of winners) result.rejected.push({ id: r.c.id, stage: 'apply', isolated_speedup: r.iso,
-    reason: !want('apply') ? 'apply step disabled' : 'stage deadline' });
+    reason: !want('apply') ? 'apply step disabled'
+      : AB_LATE && !DEADLINE_HIT ? `stage deadline: less than ${AB_NEEDS_S}s left for the combined A/B` : 'stage deadline' });
   result.status = 'no_gain';
   return result;
 }
@@ -965,7 +1014,7 @@ async function stackAB(members, suffix) {
 let integ = await stackAB(winners, '');
 const correctnessFail = (x) => x && x.gate === 'rejected' &&
   (CORRECTNESS_FAIL.test(String(x.reason || '')) || /fail/i.test(String(x.output_parity || '')));
-if (correctnessFail(integ) && winners.length > 1 && !DEADLINE_HIT) {
+if (correctnessFail(integ) && winners.length > 1 && !DEADLINE_HIT && !RERUN_LATE) {
   const failed = await screen(winners, 'kf:integrate screen');
   if (failed && failed.length && failed.length < winners.length) {
     winners = winners.filter((r) => !failed.includes(r));
@@ -973,8 +1022,10 @@ if (correctnessFail(integ) && winners.length > 1 && !DEADLINE_HIT) {
     integ = await stackAB(winners, ' (screened)');
   }
 }
-const wonOf = (x) => x && (x.gate === 'accepted' || x.gate === 'stack') && x.ab_complete !== false &&
-  x.accepted_overlay && x.ref_med > 0 && x.cand_med > x.ref_med;
+// A win is a complete A/B whose gain clears the noise band (and the stage's minimum gain).
+const gainPctOf = (x) => (x && x.ref_med > 0 && x.cand_med > 0 ? 100 * (x.cand_med / x.ref_med - 1) : null);
+const wonOf = (x) => !!(x && (x.gate === 'accepted' || x.gate === 'stack') && x.ab_complete !== false &&
+  x.accepted_overlay && gainPctOf(x) != null && gainPctOf(x) > Math.max(Number(noiseBand) || 0, KF_MIN_GAIN_PCT));
 // A stack holding an L3 kernel that did not win: gate the L1/L2 kernels alone once (with the ones only the L3
 // kernel had excluded), so an L3 kernel that loses end to end does not cost them their A/B.
 const l3Winners = winners.filter((r) => r.lang === 'mega');
@@ -1008,7 +1059,13 @@ const ab = { members: winners.map((r) => r.c.id), gate: integ ? integ.gate : 'in
   cand_med: integ ? integ.cand_med : null, parity: integ ? integ.output_parity : '',
   reason: integ ? integ.reason || '' : 'no integrator result' };
 result.validation = ab;
+const gainBand = Math.max(Number(noiseBand) || 0, KF_MIN_GAIN_PCT);
+const gainPct = gainPctOf(integ);
 const won = wonOf(integ);
+ab.noise_band_pct = gainBand;
+if (integ && !won && gainPct != null && gainPct > 0 && (integ.gate === 'accepted' || integ.gate === 'stack')) {
+  ab.reason = `gain ${gainPct.toFixed(2)}% is within the noise band ${gainBand}%; ${ab.reason}`;
+}
 for (const r of winners) {
   const rec = { id: r.c.id, level: r.c.level, isolated_speedup: r.iso, gate: ab.gate, e2e_delta_pct: ab.e2e_delta_pct };
   const l3row = r.lang === 'mega' && (result.l3 || []).find((x) => x.id === String(r.c.id));

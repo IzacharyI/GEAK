@@ -61,11 +61,15 @@ const answers = {
     : { profile_topN_json: `${KF}/profile/round_0/profile_topN.json`, top_kernels: [{ name: 'k' }] }),
   'kf:profiler (retry)': () => (scenario === 'no_trace' ? null
     : { profile_topN_json: `${KF}/profile/round_0/profile_topN.json`, top_kernels: [{ name: 'k' }] }),
+  // string_seam: the analyst's structured result gives seam as the bare "pkg.mod:fn" (topk.json on disk keeps the dict)
   'kf:analyst': () => ({ topk_json: `${KF}/analysis/topk.json`, report_path: `${KF}/analysis/report.md`,
-    candidates: CANDS, recommended: ['c1', 'c2'], report_md: '# report', model_notes_md: '# notes' }),
+    candidates: scenario.includes('string_seam')
+      ? CANDS.map((c) => (c.seam && c.seam.target_callable ? { ...c, seam: c.seam.target_callable } : c)) : CANDS,
+    recommended: ['c1', 'c2'], report_md: '# report', model_notes_md: '# notes' }),
   // which patterns get a kernel + UT: the agent's call (c3 has no seam, the script drops it)
-  'kf:triage': () => (scenario === 'triage_none' ? null : { selected: [{ id: 'c1' }, { id: 'c1s' }, { id: 'c2' }, { id: 'c3' },
-    ...(L3 ? [{ id: 'c4' }] : [])], skipped: [] }),
+  'kf:triage': () => (scenario === 'triage_none' ? null
+    : scenario === 'no_seam' ? { selected: [{ id: 'c3' }], skipped: [] }
+    : { selected: [{ id: 'c1' }, { id: 'c1s' }, { id: 'c2' }, { id: 'c3' }, ...(L3 ? [{ id: 'c4' }] : [])], skipped: [] }),
   'kf:l3 prepare c4': () => (scenario === 'l3_prepretry' ? { status: 'blocked', reason: 'UT failed: wrong call site' }
     : { status: 'ready', kernel_path: `${KF}/kernels/c4/baseline_tree`, benchmark_harness: `${KF}/kernels/c4/baseline_tree/moe_ut.py`,
         ep_size: 2, package: 'aiter', call_site: 'aiter.megamoe:mega_moe', mega_args: { target_guards: ['64_uniform'], budget: 99 } }),
@@ -90,6 +94,7 @@ const answers = {
     parity_reject: { gate: 'rejected', e2e_throughput_tok_s: 100, ref_med: 100, ab_complete: false, output_parity: 'fail', reason: 'parity' },
     stack_fail: { gate: 'rejected', e2e_throughput_tok_s: 0, ref_med: 100, ab_complete: false, reason: 'correctness: gsm8k 0.80 < 0.93' },
     stack: { ...won('stack', -0.1), accepted_overlay: `${KF}/overlay/cand_kf_stack` },
+    small_gain: { ...won('stack', 0.22), accepted_overlay: `${KF}/overlay/cand_kf_stack` },
     retry: { gate: 'incomplete', ab_complete: false, e2e_throughput_tok_s: 0, ref_med: 100 },
   }[scenario] || { ...won('accepted', 2.5), accepted_overlay: `${KF}/overlay/cand_kf_stack` }),
   'kf:integrate kf_stack (finish 1)': () => ({ ...won('accepted', 2), accepted_overlay: `${KF}/overlay/cand_kf_stack` }),
@@ -102,7 +107,7 @@ for (const id of Object.keys(ISO)) {
 
 async function agent(prompt, opts) {
   if ('timeoutMs' in opts) throw new Error('timeoutMs must not reach the agent() call');
-  calls.push({ label: opts.label, phase: opts.phase, prompt });
+  calls.push({ label: opts.label, phase: opts.phase, prompt, ...(opts.label === 'kf:analyst' ? { schema: opts.schema } : {}) });
   if (opts.label.startsWith('kf:author ')) {
     // the fused kernel is written by one author agent against the region UT
     const kernel_path = prompt.match(/TASK_DIR=(\S+)/)[1];

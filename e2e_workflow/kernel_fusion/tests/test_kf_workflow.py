@@ -17,7 +17,7 @@ KF = "/tmp/kf_mock/kf"
 
 def run(scenario):
     p = subprocess.run([NODE, str(HERE / "kf_workflow_mockrun.mjs"), scenario, str(E2E_DIR)],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, timeout=60, check=False)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout.strip().splitlines()[-1])
 
@@ -50,8 +50,9 @@ def test_all_winners_go_in_together_on_one_ab():
             m = re.search(r"Read (\S+/roles/(\w+)\.md)", c["prompt"])
             assert m and Path(m.group(1)).is_file(), c["label"]
     analyst = out["calls"][2]["prompt"]
-    assert "Read every one of these files in full: /prompts/p.txt, /prompts/deploy.txt" in analyst and "kf_trace_digest.py" in analyst and "fallback (id" in analyst
+    assert "links: /prompts/p.txt, /prompts/deploy.txt" in analyst and "kf_trace_digest.py" in analyst and "fallback (id" in analyst
     assert f"TRACE_DIR: {KF}/profile" in analyst
+    assert "Live model code" in analyst and "this server never loads" in analyst      # seams on the live implementation
     # the fused kernels are written by plain author agents, not the GEAK kernel layer
     assert len(out["workflows"]) == 3 and all("kernel_lane" not in w["task"] for w in out["workflows"])
     au = next(c["prompt"] for c in out["calls"] if c["label"] == "kf:author c1")
@@ -351,3 +352,62 @@ def test_a_collective_stage_goes_to_mega_too():
     assert "cross_device_reduce_1stage" in by["kf:l3 prepare c4"] and "multi-rank stage" in by["kf:l3 prepare c4"]
     assert "MULTI-RANK stage" in by["kf:analyst"] and "all-reduce" in by["kf:analyst"]
     assert out["result"]["l3"][0]["status"] == "applied"
+
+
+def test_a_seam_given_as_a_string_still_reaches_extraction_and_authoring():
+    # c32 2026-11-02: the analyst returned seam as "pkg.mod:fn"; seamOf() only read seam.target_callable, so every
+    # pattern the triage picked was dropped and the stage ended no_gain without writing a single kernel.
+    out = run("string_seam")
+    assert labels(out)[3:7] == ["kf:triage", "kf:extract c1", "kf:extract c1s", "kf:extract c2"]
+    ext = {c["label"]: c["prompt"] for c in out["calls"] if c["label"].startswith("kf:extract")}
+    assert "pkg.moe:MoE.forward" in ext["kf:extract c1"] and "pkg.linear:apply" in ext["kf:extract c2"]
+    assert sorted(l for l in labels(out, authors=True) if l.startswith("kf:author ")) == \
+        ["kf:author c1", "kf:author c1s", "kf:author c2"]
+    assert out["result"]["status"] == "accepted"
+
+
+def test_agentx_a_seam_given_as_a_string_still_reaches_the_ut_prepare():
+    out = run("agentx_string_seam")
+    preps = sorted(l for l in labels(out) if l.startswith("kf:kernel-extract prepare"))
+    assert preps[:3] == ["kf:kernel-extract prepare c1", "kf:kernel-extract prepare c1s", "kf:kernel-extract prepare c1s (retry)"]
+    assert any(l.startswith("kf:author ") for l in labels(out, authors=True))
+
+
+def test_triage_picks_without_a_usable_seam_end_the_stage_as_an_error_not_no_gain():
+    out = run("no_seam")
+    r = out["result"]
+    assert r["status"] == "error" and "seam" in r["reason"]
+    assert not [l for l in labels(out, authors=True) if l.startswith(("kf:extract", "kf:author ", "kf:integrate"))]
+
+
+def test_the_workflow_owns_the_output_format_and_the_schema_types_the_seam():
+    out = run("accept")
+    an = next(c for c in out["calls"] if c["label"] == "kf:analyst")
+    p = an["prompt"]
+    # the strategy is authoritative on method, not on output files / formats
+    assert "NOT authoritative on output files or formats" in p and "an OBJECT, never a bare string" in p
+    assert "a list of candidate ids (not a per-candidate flag)" in p
+    cand = an["schema"]["properties"]["candidates"]["items"]
+    assert cand["properties"]["seam"]["type"] == "object" and cand["properties"]["id"]["type"] == "string"
+    assert cand["required"] == ["id"] and "seam" not in cand["required"]          # L3/L4 may have no seam
+    skill = E2E_DIR / "knowledge" / "kernel_fusion_skills" / "fusion-analysis"
+    text = "".join(p.read_text() for p in [skill / "SKILL.md", *sorted((skill / "references").glob("*.md"))])
+    assert "out/" not in text and "fusion_candidates" not in text and "recommended=true" not in text
+    assert "IMPLEMENTABLE_LEVELS: L1,L2" in p                                     # capability injected, not prose
+    assert "knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md" in (E2E_DIR / "kernel_fusion" / "kf_workflow.js").read_text()
+    assert "reference files a SKILL.md among them links" in p
+
+
+def test_a_combined_ab_starts_only_while_the_hard_limit_leaves_room_for_it():
+    src = (E2E_DIR / "kernel_fusion" / "kf_workflow.js").read_text()
+    assert re.search(r"hardMs = TIME_BUDGET_MS \* 1\.1 \+ 900000", src)           # kf_stage's hard limit
+    assert "|| DEADLINE_HIT || AB_LATE)" in src and "!DEADLINE_HIT && !RERUN_LATE)" in src
+    assert "stage deadline: less than ${AB_NEEDS_S}s left for the combined A/B" in src
+
+
+def test_a_gain_inside_the_noise_band_is_not_handed_on():
+    # c24 r2: one replica per side, +0.22% P90 -- indistinguishable from noise
+    r = run("small_gain")["result"]
+    assert r["status"] == "no_gain" and r["final_overlay"] == "" and not r["accepted"]
+    assert r["validation"]["noise_band_pct"] == 0.5 and "within the noise band 0.5%" in r["validation"]["reason"]
+    assert run("accept")["result"]["status"] == "accepted"                          # +2.5% clears it

@@ -9,7 +9,7 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-import kf_stage  # noqa: E402
+import kf_stage
 
 GEAK_ROOT = HERE.parents[2]
 RUN_E2E = GEAK_ROOT / "interface" / "run_e2e.py"
@@ -161,7 +161,7 @@ def _dry_run(tmp_path, extra_handoff, flags=(), env=None):
     e = {k: v for k, v in os.environ.items() if not k.startswith(("GEAK_KF_", "GEAK_KERNEL_FUSION"))}
     e.update(env or {})
     p = subprocess.run([sys.executable, str(RUN_E2E), str(hp), str(tmp_path / "r.json"), "--dry-run", *flags],
-                       capture_output=True, text=True, env=e, timeout=120)
+                       capture_output=True, text=True, env=e, timeout=120, check=False)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
 
@@ -279,3 +279,70 @@ def test_l3_knobs_budget_and_reuse(tmp_path, monkeypatch):
     assert "implementable_by" in kf_stage.CAND_KEYS
     monkeypatch.setenv("GEAK_KF_L3_KERNEL_REGEX", "uccl_")
     assert kf_stage.build_args(kf_stage.config({}), ps, 100)["kf_l3_kernel_regex"] == "uccl_"
+
+
+def test_the_stage_stops_what_it_left_running_whatever_happened(tmp_path):
+    calls = {}
+
+    class FakeReaper:
+        TERM_GRACE_S, KILL_WAIT_S = 1.0, 1.0
+
+        @staticmethod
+        def eval_dir_roots(d):
+            calls["root"] = d
+            return (d,)
+
+        @staticmethod
+        def protected_pids():
+            return [os.getpid(), 1]
+
+        @staticmethod
+        def _stat(pid):
+            return (1, 12345, False)
+
+        @staticmethod
+        def snapshot(mark, roots, since):
+            calls.update(mark=mark, roots=roots, since=since)
+            return {"p": "leg"}
+
+        @staticmethod
+        def select(procs, mode, keep):
+            calls.update(mode=mode, keep=keep)
+            return [("leg", "run")]
+
+        @staticmethod
+        def stop(chosen, term_grace_s, kill_wait_s):
+            return [{"pid": 77, "name": "bench_e2e.sh", "why": "run"}], []
+
+    for i, exc in enumerate((None, RuntimeError("workflow timed out"))):   # own dir each: no resumed stage
+        R, _ = fake_R({"status": "no_gain", "eval_dir": "/kf"}, exc=exc)
+        R["_run_reaper"] = lambda: FakeReaper
+        kf = kf_stage.run_stage({"kernel_fusion": {"budget_s": 600}}, ps_args(tmp_path / str(i)), 36000, R)
+        assert kf["leftovers"]["stopped"][0]["pid"] == 77
+        # only the stage dir, no run marker (that would select the whole run), the runner's ancestors kept
+        assert calls["root"] == kf["kf_dir"] and calls["mark"] == "" and calls["since"] == 12345
+        assert calls["mode"] == "exit" and os.getpid() in calls["keep"]
+    R, _ = fake_R({"status": "no_gain", "eval_dir": "/kf"})
+    kf = kf_stage.run_stage({"kernel_fusion": {"budget_s": 600}}, ps_args(tmp_path / "b"), 36000, R)
+    assert "nothing stopped" in kf["leftovers"]["note"]
+
+
+def test_the_driver_prints_a_pointer_and_the_return_is_read_from_disk(tmp_path):
+    # the driver no longer echoes the (40 KB) return on stdout -- echoing it is what failed to parse
+    pa = ps_args(tmp_path)
+    kf_dir = Path(kf_stage.kf_dir_for({}, pa))
+    R, seen = fake_R({"eval_dir": str(kf_dir), "workflow_return_json": str(kf_dir / "workflow_return.json"),
+                      "status": "accepted"})
+    orig = R["invoke_workflow"]
+
+    def invoke(prompt, timeout_s, eval_dir, ps_args=None):
+        Path(eval_dir).mkdir(parents=True, exist_ok=True)
+        (Path(eval_dir) / "workflow_return.json").write_text(json.dumps({"summary": "x", "result": {
+            "status": "accepted", "eval_dir": eval_dir, "final_overlay": "/kf/overlay/cand", "throughput_speedup": 1.03,
+            "accepted": [{"id": "c1"}]}}))
+        return orig(prompt, timeout_s, eval_dir, ps_args)
+    R["invoke_workflow"] = invoke
+    kf = kf_stage.run_stage({"kernel_fusion": {"budget_s": 600}}, pa, 36000, R)
+    assert "never print it" in seen["prompt"] and '"workflow_return_json"' in seen["prompt"]
+    assert kf["status"] == "accepted" and kf["throughput_speedup"] == 1.03 and "error" not in kf
+    assert kf["accepted"] == [{"id": "c1"}] and pa["initial_overlay_pythonpath"] == "/kf/overlay/cand"

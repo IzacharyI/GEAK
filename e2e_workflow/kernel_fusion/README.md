@@ -17,15 +17,15 @@ profiler)  strategy skill;     A/B, compounding
 |---|---|---|
 | Setup | eval dir + baseline throughput (one fresh server, one timed round, no warmup round) | `roles/director.md` PHASE=setup, `bench_e2e.sh` |
 | `trace` | AgentX: the kernel-extract skill's workload measurement + sampling capture (points planned from the baseline log, one bounded probe each with Python stacks, `kernel_workload.json` weights); other workloads: one warm serving trace. Skipped when `trace_dir` is given | `knowledge/kernel_extraction_skills/kernel-extract` (stages 1-2), else `roles/profiler.md` |
-| `topk` | `kf_trace_digest.py` (deterministic), then the analyst agent follows **`fusion_strategy.md`** plus the run's prompt(s) → `analysis/topk.json` + the report the strategy asks for | `parse_profile.py` |
+| `topk` | `kf_trace_digest.py` (deterministic: per-step kernel sequences, plus the live model classes and files read from the eager Python stacks, where every seam must live), then the analyst agent follows the **`fusion-analysis` skill** (`knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md`) plus the run's prompt(s) → `analysis/topk.json` + the report the skill asks for | `parse_profile.py` |
 | `author` | a triage agent reads the whole Top-K and picks, by its own judgement, the patterns worth a kernel (no cap, no gain floor; the one hard line is a Python seam); each: region UT, then a fused kernel | AgentX: kernel-extract skill `PHASE=prepare` (one joint-boundary task per region); else `roles/kernel_extractor.md`. The fused kernel itself: one agent per pattern, given the region and the UT, no GEAK kernel layer |
 | `apply` | once, after every kernel is written: a select agent reads the UT results and picks which kernels go on (no speedup floor; one kernel per seam / overlapping region); they go in together as ONE combined overlay on ONE A/B vs the reference (gsm8k on the whole stack first, then validation-length legs). Only if the stack fails accuracy or engagement is each kernel checked alone (correctness only) and the A/B re-run without the failing ones; only a measured e2e win is handed to the main workflow | `roles/e2e_integrator.md` PHASE=integrate |
 
 ## L3 stage fusion (GEAK mode=mega, opt-in)
 
-`fusion_strategy.md` defines four levels (L1 element-wise, L2 operator-wise, L3 stage-wise, L4
-layer-wise); by default only L1/L2 are implemented. With `l3_mega` on, a **multi-rank stage** is
-implementable too: the kernels of one functional stage that include cross-GPU communication, e.g. an
+The fusion-analysis skill (`knowledge/kernel_fusion_skills/fusion-analysis`) defines four levels (L1
+element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise); by default only L1/L2 are implemented
+(`implementable_levels`). With `l3_mega` on, a **multi-rank stage** is implementable too: the kernels of one functional stage that include cross-GPU communication, e.g. an
 expert-parallel MoE (dispatch → expert GEMMs → combine over the EP group) or a collective with its
 compute (GEMM + all-reduce, all-reduce + norm + quant, all-gather + GEMM). Mega itself is
 operator-neutral; the EP MoE case is the one measured so far.
@@ -57,7 +57,7 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 
 | key (handoff) | env | default | meaning |
 |---|---|---|---|
-| `strategy` | `GEAK_KF_STRATEGY` | `fusion_strategy.md` | the fusion strategy the analysis follows (fusion levels L1–L4, selection principles, analysis steps, boundary ledger, output contract); another file replaces it, `false` drops it |
+| `strategy` | `GEAK_KF_STRATEGY` | `knowledge/kernel_fusion_skills/fusion-analysis/SKILL.md` | the analysis method (fusion levels L1–L4, requirements incl. the boundary ledger, procedure, estimation, report contents); another file replaces it, `false` drops it. Output formats are defined by `kf_workflow.js`, and the implementable levels are injected (`kf_implementable_levels`, default `L1,L2`) |
 | `prompt` | `GEAK_KF_PROMPT` | — | the run's own prompt(s), comma-separated, read after the strategy (e.g. the deployment / workload description `muse_agentx_con16.txt`) |
 | `trace_dir` | `GEAK_KF_TRACE_DIR` | — | existing traces (any depth; one dir per sampling point); skips the capture |
 | `workload_summary` | `GEAK_KF_WORKLOAD_SUMMARY` | — | per-point weights for the analysis |
@@ -68,6 +68,8 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `steps` | `GEAK_KF_STEPS` | `trace,topk,author,apply` | subset to run; `topk` alone with `trace_dir` needs no GPU |
 | `author_k` | `GEAK_KF_AUTHOR_K` | 0 (no cap) | optional cap on the patterns the triage agent sends to authoring |
 | `baseline_mode` | `GEAK_KF_BASELINE_MODE` | `isolated_server` | lifecycle of the stage's baseline: one fresh server, one timed round, no discarded warmup round |
+| `implementable_levels` | `GEAK_KF_IMPLEMENTABLE_LEVELS` | `L1,L2` | fusion levels the analysis may recommend (it still ranks all levels) |
+| `min_gain_pct` | `GEAK_KF_MIN_GAIN_PCT` | 0.5 | the combined A/B hands the overlay on only when its gain exceeds max(measured noise band, this) |
 | `validation_mode` / `validation_replicas` | `GEAK_KF_VALIDATION_MODE` / `_REPLICAS` | `isolated_server` / 1 | measurement mode / replicas of the combined A/B (one A/B) |
 | `task` | `GEAK_KF_TASK` | — | operator constraints appended to every agent prompt (e.g. directories it must not read) |
 | `budget_s` | `GEAK_KF_BUDGET_S` | min(12 h, ⅓ of the run) | stage wall clock; the main workflow gets the rest |

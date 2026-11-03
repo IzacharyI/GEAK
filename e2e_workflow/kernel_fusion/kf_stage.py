@@ -28,9 +28,9 @@ L3_SEARCH_S = 8 * 3600          # default mode=mega time budget of one L3 search
 SCHEMA = "geak.kernel_fusion/1"
 
 # handoff key / env var -> kf_workflow.js arg
-# The fusion strategy every analysis follows (fusion levels, selection principles, analysis steps, output
-# contract). Run-specific prompts (deployment, workload, extra constraints) are read alongside it.
-FUSION_STRATEGY = KF_HOME / "fusion_strategy.md"
+# The fusion-analysis skill every analysis follows (fusion levels, requirements, procedure, estimation, report
+# contents). Run-specific prompts (deployment, workload, extra constraints) are read alongside it.
+FUSION_STRATEGY = KF_HOME.parent / "knowledge" / "kernel_fusion_skills" / "fusion-analysis" / "SKILL.md"
 
 _KNOBS = {
     "strategy": ("GEAK_KF_STRATEGY", None),
@@ -46,6 +46,8 @@ _KNOBS = {
     "validation_mode": ("GEAK_KF_VALIDATION_MODE", "kf_validation_mode"),
     "validation_replicas": ("GEAK_KF_VALIDATION_REPLICAS", "kf_validation_replicas"),
     "baseline_mode": ("GEAK_KF_BASELINE_MODE", "kf_baseline_mode"),
+    "implementable_levels": ("GEAK_KF_IMPLEMENTABLE_LEVELS", "kf_implementable_levels"),
+    "min_gain_pct": ("GEAK_KF_MIN_GAIN_PCT", "kf_min_gain_pct"),
     "task": ("GEAK_KF_TASK", "kf_task"),
     "budget_s": ("GEAK_KF_BUDGET_S", None),
     "kf_dir": ("GEAK_KF_DIR", "kf_dir"),
@@ -246,9 +248,10 @@ def build_prompt(G: dict, args: dict) -> str:
         "CRITICAL: pass `args` as a real JSON OBJECT (a mapping), NOT as a JSON-encoded string, and copy it EXACTLY: "
         "every key and every element, nothing shortened or omitted (kf_topk / kf_reuse are data the stage consumes).\n"
         "This is the GEAK KernelFusion stage (Setup -> Trace -> TopK -> Author -> ApplyBack). When the tool "
-        f'returns, write its full return value to "{ret}" with the Write tool if that file does not exist, '
-        "then print EXACTLY ONE final line of compact JSON that is the Workflow tool's full return value. "
-        "Print nothing after the JSON line. If the Workflow tool fails, do NOT edit any file, fix the script or "
+        f'returns, write its full return value to "{ret}" with the Write tool (it is large: never print it), '
+        "then print EXACTLY ONE final line of compact JSON, this pointer and nothing else: "
+        + json.dumps({"eval_dir": args["kf_dir"], "workflow_return_json": ret, "status": "<the return's status>"})
+        + "\nPrint nothing after that line. If the Workflow tool fails, do NOT edit any file, fix the script or "
         "launch it again: print the error and stop (the caller records it and continues)."
     )
 
@@ -261,6 +264,34 @@ def _invoke(G: dict, args: dict, budget_s: int) -> dict:
         return G["invoke_workflow"](build_prompt(G, args), int(budget_s * 1.1) + 900, args["kf_dir"], ps_args=args)
     finally:
         G["E2E_SCRIPT"] = saved
+
+
+def stop_leftovers(G: dict, kf_dir: Path) -> dict:
+    """Stop what the stage left running, however it ended: a leg launched with ``setsid nohup`` outlives the
+    workflow and every agent in it, and would hold the serving GPUs (and their lock) through the main run.
+
+    Uses GEAK's own run reaper (scripts/run_reaper.py, read-only) with the stage dir as the only root: a
+    process is the stage's when it started after this runner did and its command line or working directory
+    is inside ``kf_dir`` -- plus everything under it. The runner and its ancestors are never signalled.
+    """
+    loader = G.get("_run_reaper")
+    if not callable(loader):
+        return {"note": "no run reaper in this runner; nothing stopped"}
+    try:
+        R = loader()
+        roots = R.eval_dir_roots(str(kf_dir))
+        if not roots:
+            return {"note": f"{kf_dir} is too shallow to match on; nothing stopped"}
+        chain = R.protected_pids()
+        st = R._stat(os.getpid())
+        procs = R.snapshot("", roots, st[1] if st else None)
+        chosen = R.select(procs, "exit", set(chain))
+        if not chosen:
+            return {"stopped": [], "survivors": []}
+        stopped, survivors = R.stop(chosen, term_grace_s=R.TERM_GRACE_S, kill_wait_s=R.KILL_WAIT_S)
+        return {"stopped": stopped, "survivors": survivors}
+    except Exception as e:  # noqa: BLE001 -- a cleanup fault must not take the main run down
+        return {"error": f"{type(e).__name__}: {e}"[:500]}
 
 
 def _read_json(p: Path) -> dict | None:
@@ -312,13 +343,19 @@ def run_stage(h: dict, ps_args: dict, timeout_s: int, G: dict, flags=frozenset()
         kf_dir.mkdir(parents=True, exist_ok=True)
         try:
             wf = _invoke(G, args, budget)
-        except BaseException as e:  # noqa: BLE001 -- the stage must never take the main run down
+            if not isinstance(wf, dict) or "workflow_return_json" in wf or "status" not in wf:
+                # The driver prints a pointer line; the return itself lives in the file it wrote. (Echoing a
+                # 40 KB return as one stdout line was the step that failed: WorkflowParseError.)
+                wf = _unwrap(_read_json(kf_dir / "workflow_return.json")) or wf
+        except BaseException as e:  # the stage must never take the main run down
             if isinstance(e, TimeoutError) and str(e).startswith("signal "):
                 raise               # run_e2e's SIGTERM handler: flush and exit, do not start the main run
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
                 raise
             summary["error"] = f"{type(e).__name__}: {e}"[:2000]
             wf = _unwrap(_read_json(kf_dir / "workflow_return.json"))
+        finally:
+            summary["leftovers"] = stop_leftovers(G, kf_dir)
     elapsed = int(time.time() - t0)
     if wf:
         # The analyst cannot write .md reports from inside the workflow; it returns them and they land here.
