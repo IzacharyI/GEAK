@@ -100,6 +100,8 @@ tree. Discover only what it leaves out.
      - `device_description` = `"<EP|TP><n>, <n>x <gpu>/<gfx>"`.
    - **`positive_control`:** a calibrated device-side delay on the measured operator stream,
      giving -4% to -9% on the main target guard, built in an isolated copy.
+   - **Language:** when `KERNEL_LANGUAGE` is given, the candidates are written in it (the stage
+     also states it in the task); otherwise they follow the source they start from.
    - **`task`:** one paragraph covering the model, the operator and its call site, dtype, the rank
      group, the exact UT commands, the fact that the baseline at `kernel_path` is frozen, and the
      PASS criteria. Do not include paths of other runs or earlier state.

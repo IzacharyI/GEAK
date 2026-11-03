@@ -101,6 +101,7 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `validation_mode` / `validation_replicas` | `GEAK_KF_VALIDATION_MODE` / `_REPLICAS` | `isolated_server` / 1 | measurement mode / replicas of the combined A/B (one A/B) |
 | `task` | `GEAK_KF_TASK` | — | operator constraints appended to every agent prompt (e.g. directories it must not read) |
 | `budget_s` | `GEAK_KF_BUDGET_S` | min(12 h, ⅓ of the run) | stage wall clock; the main workflow gets the rest |
+| `kernel_language` | `GEAK_KF_KERNEL_LANGUAGE` | — | language every fused kernel is written in (e.g. `flydsl`), or `auto` for the GPU's default (gfx950: FlyDSL). Unset: L1/L2/L3 stage fusion keep the analyst's choice (Triton by default), and an L3 mode=mega search follows the GPU's default, else its source's language |
 | `l3_mega` | `GEAK_KF_L3_MEGA` | false | L3 stage fusion through GEAK mode=mega (above) |
 | `l3_mega_run` | `GEAK_KF_L3_MEGA_RUN` | — | a finished mode=mega run of the stage (state_dir / eval dir / mega_result.json): package it, no search |
 | `l3_max` | `GEAK_KF_L3_MAX` | 1 | L3 stages handed to mode=mega |

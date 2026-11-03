@@ -477,3 +477,31 @@ def test_l3_on_moves_only_the_ep_moe_megakernel_out_of_the_unsupported_patterns(
     assert "IMPLEMENTABLE_LEVELS: L1,L2,L3" in by["kf:analyst"]
     off = {c["label"]: c["prompt"] for c in run("accept")["calls"]}
     assert "e.g. MegaMoE" in off["kf:analyst"] and "MegaMoE) pattern" not in off["kf:analyst"]
+
+
+def test_a_pinned_kernel_language_reaches_the_analyst_and_every_author():
+    out = run("lang_flydsl")
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert 'language ("flydsl": this run\'s kernels are written in it)' in by["kf:analyst"]
+    authors = [p for l, p in by.items() if l.startswith("kf:author ")]
+    assert authors and all("ONE fused flydsl kernel" in p for p in authors)
+    # unset: the analyst's choice, triton by default
+    plain = {c["label"]: c["prompt"] for c in run("accept")["calls"]}
+    assert all("ONE fused triton kernel" in p for l, p in plain.items() if l.startswith("kf:author "))
+
+
+def test_auto_language_follows_the_gpu():
+    out = run("lang_auto_gfx942")      # no default for gfx942: unchanged
+    assert all("ONE fused triton kernel" in c["prompt"] for c in out["calls"] if c["label"].startswith("kf:author "))
+
+
+def test_a_mega_search_on_gfx950_is_held_to_flydsl_by_default():
+    out = run("l3_gfx950")
+    a = out["megaCalls"][0]["args"]
+    assert "KERNEL LANGUAGE: write every candidate's fused kernel in flydsl" in a["task"]
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert "KERNEL_LANGUAGE: flydsl" in by["kf:l3 prepare c4"]
+    assert out["result"]["l3"][0]["kernel_language"] == "flydsl"
+    # L1/L2 authors keep the analyst's language unless kf_kernel_language pins one
+    assert all("ONE fused triton kernel" in p for l, p in by.items() if l.startswith("kf:author "))
+    assert "KERNEL LANGUAGE" not in run("l3")["megaCalls"][0]["args"].get("task", "")

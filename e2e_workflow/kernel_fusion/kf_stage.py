@@ -55,6 +55,7 @@ _KNOBS = {
     "budget_s": ("GEAK_KF_BUDGET_S", None),
     "kf_dir": ("GEAK_KF_DIR", "kf_dir"),
     # L3 stage fusion through GEAK mode=mega (l3_mega.md); off by default
+    "kernel_language": ("GEAK_KF_KERNEL_LANGUAGE", "kf_kernel_language"),
     "l3_mega": ("GEAK_KF_L3_MEGA", "kf_l3_mega"),
     "l3_mega_run": ("GEAK_KF_L3_MEGA_RUN", "kf_l3_mega_run"),
     "l3_max": ("GEAK_KF_L3_MAX", "kf_l3_max"),

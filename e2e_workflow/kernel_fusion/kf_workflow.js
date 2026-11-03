@@ -118,6 +118,15 @@ const AGENT_TIMEOUT_MS = parseInt(A.agent_timeout_ms != null ? A.agent_timeout_m
 const jsonArg = (v) => { if (v && typeof v === 'object') return v;
   try { const o = JSON.parse(String(v || '')); return o && typeof o === 'object' ? o : null; } catch (e) { return null; } };
 const L3_ON = String(A.kf_l3_mega != null ? A.kf_l3_mega : 'false').trim().toLowerCase() === 'true';
+// Kernel language. Languages differ in speed on the same GPU, and nothing here races them, so the language can be
+// pinned: kf_kernel_language = a language (e.g. flydsl), or "auto" for the GPU's default below. Unset, L1/L2/L3
+// stage-fusion kernels keep the analyst's choice (triton unless it has a reason) and a mode=mega search follows
+// its GPU's default, else the language of the source it starts from.
+const LANGUAGE_BY_GFX = { gfx950: 'flydsl' };
+const KF_GFX = String(A.expected_gfx || A.gfx || '').trim().toLowerCase();
+const LANG_ARG = String(A.kf_kernel_language || '').trim().toLowerCase();
+const KERNEL_LANGUAGE = LANG_ARG === 'auto' ? (LANGUAGE_BY_GFX[KF_GFX] || '') : LANG_ARG;
+const L3_LANGUAGE = KERNEL_LANGUAGE || LANGUAGE_BY_GFX[KF_GFX] || '';
 const L3_GEAK_DIR = String(A.kf_l3_geak_dir || `${WORKFLOW_DIR.replace(/\/[^/]*$/, '')}/kernel_workflow`).replace(/\/+$/, '');
 const L3_MAX = Math.max(1, parseInt(A.kf_l3_max != null ? A.kf_l3_max : 1, 10) || 1);
 const L3_BUDGET_S = parseInt(A.kf_l3_budget_s != null ? A.kf_l3_budget_s : 8 * 3600, 10);
@@ -560,7 +569,7 @@ Write ${OUT}/topk.json: {"candidates": [...], "recommended": [ids in the order t
         so confirm the module from the trace's launch frames, not from a name match; source_file; lines},
   inputs_outputs (tensors that cross the region boundary, with shapes/dtypes), launches_before, launches_after,
   region_pct_device_time (weighted), est_gain_pct_upper, est_gain_pct_expected (weighted e2e %),
-  difficulty (1-5), bitwise_exact (bool), exclusive_with [ids of conflicting candidates], language ("triton" unless you have a reason),
+  difficulty (1-5), bitwise_exact (bool), exclusive_with [ids of conflicting candidates], language (${KERNEL_LANGUAGE ? `"${KERNEL_LANGUAGE}": this run's kernels are written in it` : '"triton" unless you have a reason'}),
   fallback (id of the smaller-scope candidate to implement instead if this one fails, or null),
   fused_design (how the fused kernel works: tiling, what stays in registers/LDS, what it no longer writes to HBM).
 "recommended" = a list of candidate ids (not a per-candidate flag): the non-conflicting set the prompt's ranking
@@ -764,7 +773,7 @@ async function authorOne(c, i) {
         device_kernel: (c.kernels || [])[0] || '', device_kernels: c.kernels || [],
         target_callable: seamOf(c), source_hint: (c.seam || {}).source_file || '',
         seam_candidates: [seamOf(c)].filter(Boolean), inputs_outputs: c.inputs_outputs || '',
-        phases: c.phases || [], m_range: c.m_range || '', candidate_backends: [c.language || 'triton'] },
+        phases: c.phases || [], m_range: c.m_range || '', candidate_backends: [KERNEL_LANGUAGE || c.language || 'triton'] },
       CURRENT_OVERLAY: INIT_OVERLAY, CURRENT_FLAGS: INIT_FLAGS, CURRENT_ENV: INIT_ENV,
     }), { phase: 'Author', label: `kf:extract ${short}`, schema: EXTRACT_SCHEMA });
   // Same guard as e2e extractWithBaseline: without a frozen live baseline the unittest would time the
@@ -774,7 +783,7 @@ async function authorOne(c, i) {
   if (!extOk) {
     return { c, skip: `extraction failed (${ext ? ext.notes || ext.unittest_smoke : 'none'})` };
   }
-  const lang = c.language || 'triton';
+  const lang = KERNEL_LANGUAGE || c.language || 'triton';
   // The fused kernel is written by one agent from a plain instruction (not the GEAK kernel layer): the region,
   // the UT it must pass and the goal. It works on a copy of the task dir and hands back a diff for apply back.
   const work = `${EVAL_DIR}/kernels/${short}`;
@@ -872,6 +881,7 @@ under L3_DIR, fix that cause and try once more.` : ''}
 
 ## Inputs
 ${cfg({ EVAL_DIR, L3_STAGE: stage, L3_DIR: work, MODEL_PATH, BACKEND, SERVING_TP, SERVING_GPU, EP_DEFAULT: L3_EP_DEFAULT,
+    ...(L3_LANGUAGE ? { KERNEL_LANGUAGE: L3_LANGUAGE } : {}),
     SERVER_FLAGS: INIT_FLAGS, SERVER_ENV: INIT_ENV, CURRENT_OVERLAY: INIT_OVERLAY || '(none)', TRACE_DIR,
     WORKLOAD_SUMMARY: workloadJson || '(none)', GEAK_KERNEL_WORKFLOW_DIR: L3_GEAK_DIR,
     ...(L3_OPERATOR ? { OPERATOR_HINT: L3_OPERATOR } : {}) })}
@@ -893,7 +903,11 @@ Return JSON {status: "ready"|"blocked", kernel_path, benchmark_harness, ep_size,
       exp_root: `${work}/mega_runs`, state_dir: `${work}/mega_state`,
       budget: L3_ROUNDS, mega_time_budget_s: L3_BUDGET_S, ...L3_OVERRIDES,
     };
-    Object.assign(row, { stage_kind: kind, mega_args: { kernel_path: megaArgs.kernel_path,
+    if (L3_LANGUAGE) {
+      megaArgs.task = `${megaArgs.task || ''}${megaArgs.task ? ' ' : ''}KERNEL LANGUAGE: write every candidate's fused ` +
+        `kernel in ${L3_LANGUAGE}; a candidate in another language does not count.`;
+    }
+    Object.assign(row, { stage_kind: kind, ...(L3_LANGUAGE ? { kernel_language: L3_LANGUAGE } : {}), mega_args: { kernel_path: megaArgs.kernel_path,
       benchmark_harness: megaArgs.benchmark_harness, gpus_per_job: megaArgs.gpus_per_job, budget: megaArgs.budget,
       mega_time_budget_s: megaArgs.mega_time_budget_s, state_dir: megaArgs.state_dir },
       ...(L3_IGNORED.length ? { ignored_mega_args: L3_IGNORED } : {}) });

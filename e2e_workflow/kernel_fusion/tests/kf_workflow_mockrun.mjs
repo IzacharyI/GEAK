@@ -158,6 +158,9 @@ if (L3) Object.assign(args, { kf_l3_mega: 'true',
 if (scenario === 'l3_prepretry') args.ep = 2;
 if (scenario === 'l3_run') args.kf_l3_mega_run = '/old/mega_state';
 if (scenario === 'l3_ar_open') args.kf_l3_stage_kinds = 'ep_moe,collective';
+if (scenario === 'lang_flydsl') args.kf_kernel_language = 'flydsl';
+if (scenario === 'lang_auto_gfx942') Object.assign(args, { kf_kernel_language: 'auto', expected_gfx: 'gfx942' });
+if (scenario === 'l3_gfx950') args.expected_gfx = 'gfx950';
 if (KIND) args.ep = KIND.ep;
 if (scenario === 'analysis_only') Object.assign(args, { kf_steps: 'topk', kf_trace_dir: '/traces/x' });
 if (scenario === 'reuse') args.kf_reuse = { 'kf:author c1': { final_patch: 'old c1', isolated_speedup: 1.3, correctness: 'pass',
