@@ -277,6 +277,8 @@ def test_l3_knobs_budget_and_reuse(tmp_path, monkeypatch):
     assert prep["benchmark_harness"] == "/t/ut.py" and "log" not in prep
     assert "kf:l3 package c4".startswith(kf_stage.REUSABLE)
     assert "implementable_by" in kf_stage.CAND_KEYS
+    monkeypatch.setenv("GEAK_KF_L3_STAGE_KINDS", "ep_moe,collective")
+    assert kf_stage.build_args(kf_stage.config({}), ps, 100)["kf_l3_stage_kinds"] == "ep_moe,collective"
     monkeypatch.setenv("GEAK_KF_L3_KERNEL_REGEX", "uccl_")
     assert kf_stage.build_args(kf_stage.config({}), ps, 100)["kf_l3_kernel_regex"] == "uccl_"
 

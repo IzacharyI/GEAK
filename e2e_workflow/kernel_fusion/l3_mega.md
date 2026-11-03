@@ -8,7 +8,8 @@ functional stage that include cross-GPU communication, for example:
 - a collective with the compute around it: GEMM + all-reduce / reduce-scatter, all-reduce + norm +
   quant, all-gather + GEMM.
 
-With `kf_l3_mega` on, such an L3 candidate goes to GEAK mode=mega
+By default only the expert-parallel MoE kind runs (`kf_l3_stage_kinds`, default `ep_moe`); the
+collective kind is opt-in. With `kf_l3_mega` on, such an L3 candidate goes to GEAK mode=mega
 (`GEAK_KERNEL_WORKFLOW_DIR/kernel_mega.js`; see the "Mega mode" section of
 `GEAK_KERNEL_WORKFLOW_DIR/README.md`), which searches a fused multi-rank kernel for it.
 

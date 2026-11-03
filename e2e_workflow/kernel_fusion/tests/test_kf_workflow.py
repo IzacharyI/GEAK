@@ -345,8 +345,17 @@ def test_a_finished_mega_run_is_packaged_without_searching():
     assert out["result"]["l3"][0]["status"] == "applied"
 
 
-def test_a_collective_stage_goes_to_mega_too():
+def test_l3_takes_only_the_ep_moe_pattern_by_default():
     out = run("l3_ar")
+    by = {c["label"]: c["prompt"] for c in out["calls"]}
+    assert out["megaCalls"] == [] and not any(l.startswith("kf:l3 ") for l in labels(out))
+    assert "EXPERT-PARALLEL MoE stage IS implementable" in by["kf:analyst"]
+    assert "L3 (expert-parallel MoE stages only" in by["kf:analyst"]
+    assert "MULTI-RANK stage" not in by["kf:analyst"]
+
+
+def test_a_collective_stage_goes_to_mega_once_its_kind_is_opened():
+    out = run("l3_ar_open")
     (call,) = out["megaCalls"]
     by = {c["label"]: c["prompt"] for c in out["calls"]}
     assert "cross_device_reduce_1stage" in by["kf:l3 prepare c4"] and "multi-rank stage" in by["kf:l3 prepare c4"]

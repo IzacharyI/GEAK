@@ -25,8 +25,8 @@ const CANDS = [
 if (L3) CANDS.push({ id: 'c4', rank: 0, level: 'L3', implementable_by: 'mega', region: 'EP MoE dispatch..combine',
   kernels: ['megamoe_dispatch', 'megamoe_gemm', 'ep_combine'], difficulty: 5, exclusive_with: ['c1'],
   seam: { target_callable: 'pkg.moe:MoE.forward_ep' }, region_pct_device_time: 20, est_gain_pct_expected: 6 });
-// l3_ar: the stage is a collective with its compute, and the analyst did not tag it: its kernels say multi-rank
-if (scenario === 'l3_ar') Object.assign(CANDS[CANDS.length - 1], { implementable_by: undefined,
+// l3_ar*: the stage is a TP collective with its compute (l3_ar_open also opens the collective kind)
+if (scenario.startsWith('l3_ar')) Object.assign(CANDS[CANDS.length - 1], { implementable_by: undefined,
   region: 'o_proj GEMM + all-reduce + rmsnorm', kernels: ['gemm_a8w8', 'cross_device_reduce_1stage', 'rmsnorm'],
   seam: { target_callable: 'pkg.attn:Attention.o_proj_and_norm' } });
 const ISO = { c1: scenario === 'fallback' ? 0.97 : 1.4, c2: (scenario === 'accept' || scenario === 'stack_fail' || scenario === 'reuse') ? 1.2 : 0.95, c1s: 1.6 };
@@ -144,6 +144,7 @@ if (L3) Object.assign(args, { kf_l3_mega: 'true',
     ep_moe: { analysis_skill: 'moe_bottleneck', launch_target: 2 }, collective: { launch_target: 1 } } });
 if (scenario === 'l3_prepretry') args.ep = 2;
 if (scenario === 'l3_run') args.kf_l3_mega_run = '/old/mega_state';
+if (scenario === 'l3_ar_open') args.kf_l3_stage_kinds = 'ep_moe,collective';
 if (scenario === 'analysis_only') Object.assign(args, { kf_steps: 'topk', kf_trace_dir: '/traces/x' });
 if (scenario === 'reuse') args.kf_reuse = { 'kf:author c1': { final_patch: 'old c1', isolated_speedup: 1.3, correctness: 'pass',
   overlay_dir: '/old/c1/overlay', banner: '[kf-c1] ENGAGED' } };

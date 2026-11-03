@@ -122,17 +122,20 @@ const L3_OPERATOR = jsonArg(A.kf_l3_operator);             // known operator fac
 // instead of a new search. Without it the stage searches, which takes hours beyond the stage's usual ~7 h.
 const L3_MEGA_RUN = String(A.kf_l3_mega_run || '').replace(/\/+$/, '');
 const L3_EP_DEFAULT = parseInt(A.ep != null ? A.ep : SERVING_TP, 10) || SERVING_TP;
-// Cross-GPU kernels: EP MoE dispatch/combine and collectives (+ kf_l3_kernel_regex for other libraries).
-const EP_MOE_RE = /megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_/i;
-const MULTI_RANK_RE = new RegExp(`${EP_MOE_RE.source}|` +
-  'all_?reduce|cross_device_reduce|custom_ar|quickreduce|all_?gather|reduce_?scatter|rccl|nccl' +
+// Stage kinds L3 hands to mode=mega. ep_moe (dispatch -> expert GEMMs -> combine) is the validated one and the
+// default; collective (a TP all-reduce / all-gather / reduce-scatter with its compute) is wired but opt-in
+// (kf_l3_stage_kinds) until mode=mega has been measured on it.
+const L3_KINDS = new Set(String(A.kf_l3_stage_kinds || 'ep_moe').split(',').map((s) => s.trim()).filter(Boolean));
+const EP_MOE_RE = new RegExp('megamoe|ep_combine|ep_dispatch|deepep|mori_|all_?to_?all|a2a_' +
   (A.kf_l3_kernel_regex ? `|${A.kf_l3_kernel_regex}` : ''), 'i');
-// An L3 candidate mega can take: the analyst says so, or its kernels include cross-GPU communication.
-const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' &&
-  (c.implementable_by === 'mega' || (c.kernels || []).some((k) => MULTI_RANK_RE.test(String(k))));
+const COLLECTIVE_RE = /all_?reduce|cross_device_reduce|custom_ar|quickreduce|all_?gather|reduce_?scatter|rccl|nccl/i;
+const hasKernel = (c, re) => (c.kernels || []).some((k) => re.test(String(k)));
+// The kind is read from the stage's own kernels, so a candidate is never taken on its label alone.
+const stageKind = (c) => (hasKernel(c, EP_MOE_RE) ? 'ep_moe' : (hasKernel(c, COLLECTIVE_RE) ? 'collective' : ''));
+const isMegaStage = (c) => L3_ON && !!c && String(c.level || '').toUpperCase() === 'L3' && L3_KINDS.has(stageKind(c));
+const L3_COLLECTIVE = L3_KINDS.has('collective');
 // Search-policy defaults per stage kind (kernel_fusion/l3_mega_defaults.json, passed in by kf_stage.py).
 const L3_DEFAULTS = jsonArg(A.kf_l3_defaults) || {};
-const stageKind = (c) => ((c.kernels || []).some((k) => EP_MOE_RE.test(String(k))) ? 'ep_moe' : 'collective');
 // The workflow owns where mega runs, on which GPUs and for how long; l3_mega_args cannot move them
 // (l3_operator / l3_rounds / l3_budget_s are the knobs for those).
 const L3_OWNED_KEYS = ['mode', 'workflow_dir', 'kernel_path', 'benchmark_harness', 'gpu_ids', 'gpus_per_job',
@@ -539,23 +542,28 @@ recommends, best first. A candidate whose region
 cannot be reached through one Python seam can still be ranked, but must not be recommended.
 ${L3_ON ? `
 ## L3 stage fusion through GEAK mode=mega (on in this run)
-A MULTI-RANK stage IS implementable in this run: the kernels of one functional stage that include cross-GPU
+${L3_COLLECTIVE
+    ? `A MULTI-RANK stage IS implementable in this run: the kernels of one functional stage that include cross-GPU
 communication, e.g. an expert-parallel MoE (dispatch -> expert GEMMs -> combine over the EP group), or an
 all-reduce / all-gather / reduce-scatter together with the compute it feeds or follows (GEMM + reduce, reduce +
-norm + quant, attention output + all-reduce). GEAK mode=mega searches a fused multi-rank kernel for it on the
+norm + quant, attention output + all-reduce).`
+    : `An EXPERT-PARALLEL MoE stage IS implementable in this run: dispatch -> expert GEMMs -> combine over the EP group
+(the MegaMoE pattern), as one stage. Other multi-rank stages (a TP collective with its compute, attention) stay
+not implemented.`} GEAK mode=mega searches a fused multi-rank kernel for it on the
 serving GPUs. IMPLEMENTABLE_LEVELS therefore includes L3 for such a stage only: rank it as a candidate with
 level "L3", implementable_by "mega", kernels = the stage's device kernels in order (communication kernels
 included), seam.target_callable = the ONE Python callable that runs the whole stage on the served path,
 exclusive_with = every L1/L2 candidate whose region lies inside it, and the same gain fields as the others. It may
-be recommended together with the L1/L2 candidates it does not conflict with. A stage without cross-GPU
-communication, and every L4, stays not implemented (an author agent covers single-GPU regions).
+be recommended together with the L1/L2 candidates it does not conflict with. Every other L3, and every L4, stays
+not implemented (an author agent covers single-GPU regions).
 ` : ''}
 ## Inputs
 ${cfg({ EVAL_DIR, TRACE_DIR, WORKLOAD_SUMMARY: workloadJson || '(none)', PROFILE_TOPN: profileTopN || '(none)',
     MODEL_PATH, BACKEND, SERVING_TP, SERVER_FLAGS: INIT_FLAGS, SERVER_ENV: INIT_ENV, LAUNCH_SCRIPT: LAUNCH_SCRIPT || '(none)',
     WORKLOAD, OVERLAY: INIT_OVERLAY || '(none)',
     IMPLEMENTABLE_LEVELS: L3_ON && !/\bL3\b/i.test(IMPLEMENTABLE_LEVELS)
-      ? `${IMPLEMENTABLE_LEVELS},L3 (multi-rank stages only, through GEAK mode=mega)` : IMPLEMENTABLE_LEVELS })}
+      ? `${IMPLEMENTABLE_LEVELS},L3 (${L3_COLLECTIVE ? 'multi-rank' : 'expert-parallel MoE'} stages only, through GEAK mode=mega)`
+      : IMPLEMENTABLE_LEVELS })}
 
 ${KF_TASK ? `## Operator constraints\n${KF_TASK}\n\n` : ''}Return JSON: {"topk_json": "${OUT}/topk.json", "report_path": "${OUT}/REPORT.md", "report_md": "<full report>",
 "model_notes_md": "<model notes>", "digest_md": "${OUT}/digest/digest.md", "candidates": <topk.json candidates>,
@@ -597,7 +605,7 @@ The one hard line: a candidate is authored by rebinding ONE Python callable that
 (seam.target_callable) and is the one the live server actually runs (check the trace's launch frames: a model can
 have several implementations of the same layer); one without such a seam cannot be authored. Mutually exclusive candidates (exclusive_with)
 may both be picked: which of them goes into the server is decided after their unit tests.${L3_ON ? `
-An L3 candidate with implementable_by "mega" (a multi-rank stage) is not written by an author agent:
+An L3 candidate with implementable_by "mega" (${L3_COLLECTIVE ? 'a multi-rank stage' : 'an expert-parallel MoE stage'}) is not written by an author agent:
 GEAK mode=mega searches it on all serving GPUs, which takes hours, and at most ${L3_MAX} such stage(s) run. Pick
 it when its weighted gain is worth that; its exclusive L1/L2 candidates may be picked too.` : ''}
 Read ${topk.topk_json || '(the candidates below)'}${topk.report_md ? ' and the report below' : ''}; read anything else you need.

@@ -61,6 +61,7 @@ _KNOBS = {
     "l3_mega_args": ("GEAK_KF_L3_MEGA_ARGS", "kf_l3_mega_args"),
     "l3_operator": ("GEAK_KF_L3_OPERATOR", "kf_l3_operator"),
     "l3_kernel_regex": ("GEAK_KF_L3_KERNEL_REGEX", "kf_l3_kernel_regex"),
+    "l3_stage_kinds": ("GEAK_KF_L3_STAGE_KINDS", "kf_l3_stage_kinds"),
     "l3_defaults": ("GEAK_KF_L3_DEFAULTS", None),
 }
 # Main-workflow-only args that mean nothing (or something wrong) to the stage.

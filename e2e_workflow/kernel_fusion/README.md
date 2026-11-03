@@ -25,14 +25,18 @@ profiler)  strategy skill;     A/B, compounding
 
 The fusion-analysis skill (`knowledge/kernel_fusion_skills/fusion-analysis`) defines four levels (L1
 element-wise, L2 operator-wise, L3 stage-wise, L4 layer-wise); by default only L1/L2 are implemented
-(`implementable_levels`). With `l3_mega` on, a **multi-rank stage** is implementable too: the kernels of one functional stage that include cross-GPU communication, e.g. an
-expert-parallel MoE (dispatch → expert GEMMs → combine over the EP group) or a collective with its
-compute (GEMM + all-reduce, all-reduce + norm + quant, all-gather + GEMM). Mega itself is
-operator-neutral; the EP MoE case is the one measured so far.
+(`implementable_levels`). With `l3_mega` on, an **expert-parallel MoE stage** is implementable too:
+dispatch → expert GEMMs → combine over the EP group (the MegaMoE pattern), recognized from the stage's
+own kernels. This is the pattern mode=mega has been validated on:
+- DeepSeek-V4-Pro EP8 on MI355X;
+- Qwen3-235B EP8 on MI300X, over both an AITER/Mori path and a Triton-from-scratch path.
 
-| step | L1 / L2 | L3 multi-rank stage |
+Other multi-rank stages (a TP collective with its compute) are wired but stay off until mode=mega is
+measured on them. `l3_stage_kinds: "ep_moe,collective"` turns them on.
+
+| step | L1 / L2 | L3 EP MoE stage |
 |---|---|---|
-| `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it (an L3 candidate whose kernels include EP or collective kernels is taken as such too) |
+| `topk` | ranked as before | ranked with `level: "L3"`, `implementable_by: "mega"`, `exclusive_with` the L1/L2 candidates inside it; it goes to mode=mega only if its kernels are an EP MoE stage |
 | triage | agent's pick | same agent; at most `l3_max` stages |
 | `author` | region UT + one author agent, in parallel on single GPUs | after those: `l3_mega.md` PHASE=prepare (operator, frozen source tree, multi-rank UT) → `kernel_workflow/kernel_mega.js` on the serving GPUs (`gpus_per_job` = the stage's rank group) → PHASE=package (overlay `[kf-<id>] ENGAGED`, checked with the UT) |
 | select / gsm8k / A/B | one stack, one A/B; accuracy failure → per-kernel screen | the L3 kernel is one more kernel of that stack; if the stack holding it does not win, the L1/L2 kernels (with the ones only it had excluded) get one A/B without it |
@@ -89,7 +93,8 @@ GEAK_KERNEL_FUSION=0|1                                     # env
 | `l3_mega_args` | `GEAK_KF_L3_MEGA_ARGS` (JSON) | — | merged last into the mode=mega args, e.g. `{"use_expert_skills": "true"}`; paths / GPUs / budget keys are ignored |
 | `l3_defaults` | `GEAK_KF_L3_DEFAULTS` | `l3_mega_defaults.json` | search-policy defaults file; `false` leaves them to mode=mega |
 | `l3_operator` | `GEAK_KF_L3_OPERATOR` (JSON) | — | what is known about the stage's operator (`kernel_path`, `benchmark_harness`, `call_site`, `package`, `ep_size`, `mega_args`): prepare verifies it instead of discovering it |
-| `l3_kernel_regex` | `GEAK_KF_L3_KERNEL_REGEX` | — | extra cross-GPU kernel names to recognize (another EP / collective library) |
+| `l3_kernel_regex` | `GEAK_KF_L3_KERNEL_REGEX` | — | extra EP MoE kernel names to recognize (another EP library) |
+| `l3_stage_kinds` | `GEAK_KF_L3_STAGE_KINDS` | `ep_moe` | stage kinds handed to mode=mega; `ep_moe,collective` adds TP collective stages (not yet measured) |
 | `kf_dir` | `GEAK_KF_DIR` | `<exp_root>/kf_<main eval dir suffix>` | stage output dir |
 
 Synthetic speculative acceptance (`SGLANG_SIMULATE_ACC_*`, `TILERT_SIMULATE_ACC_*`,
