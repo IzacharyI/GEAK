@@ -17,7 +17,7 @@ Read the section for your role:
 | `profile_engineer`, PHASE=`mega_baseline` | §1 |
 | mega engineer (`optimize`) | §2 |
 | `verify_engineer` (`verify`) | §2 + §2.3 |
-| `analysis_engineer` (label `mega:analyze`) | §3 |
+| `profile_engineer` `PHASE=analyze_profile` (label `mega:analyze`) | §3 |
 | `benchmark_engineer`, PHASE=`setup` | §4.1 |
 | `verify_engineer` (`verify`), `director` (`select_mega`) | §4.2 |
 | mega engineer (`optimize`), optional self-check | §4.3 |
@@ -166,7 +166,7 @@ them:
 
 ---
 
-## §3 Analysis (analysis_engineer, label `mega:analyze`)
+## §3 Analysis (profile_engineer `PHASE=analyze_profile`, label `mega:analyze`)
 
 In the route-report pre-step, add the measured inputs to the builder call. Only add the ones that
 exist:
@@ -181,7 +181,7 @@ candidate's in-kernel wait appears as its own `fused_wait` category. Confidence 
 only when stage2 and combine were split on both sides and every candidate row is `timestamp`.
 Report the confidence the builder stamps; do not raise it.
 
-For the baseline call (`analysis_engineer:baseline`, round 0) there is no candidate yet. Summarize
+For the baseline call (`analyze_profile:baseline`, round 0) there is no candidate yet. Summarize
 the measured baseline stage shares from `PROFILE_SUMMARY` and stop there.
 
 ---

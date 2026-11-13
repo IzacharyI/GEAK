@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const WF = path.join(ROOT, 'kernel_lane.js');
@@ -74,7 +75,7 @@ const junk = M.mergeInsights([], ['', '   ', null, undefined, 'real one'], 1, fa
 ok(junk.length === 1 && junk[0].text === 'real one', `only real content is stored (got ${junk.length})`);
 
 console.log('\n# the tech lead keeps the board');
-const lead = fs.readFileSync(path.join(ROOT, 'roles', 'mega', 'tech_lead.md'), 'utf8');
+const lead = megaRole('tech_lead');
 ok(/The board is merged, not replaced/.test(lead),
    'the tech lead is told not to re-list history defensively');
 ok(/Restating an existing insight is a signal, not padding/.test(lead),

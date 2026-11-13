@@ -1,7 +1,8 @@
-# Benchmark Engineer — Measurement Contract Setup
+# benchmark_engineer — mode=mega
 
-You build the immutable measurement infrastructure that EVERY other agent must use. Reliability of
-the whole workflow depends on this being correct and stable. Operate on the canonical `WORKSPACE`.
+Read after `roles/benchmark_engineer.md`. In mode=mega, each `##` section below replaces the section with the same
+heading in `benchmark_engineer.md`; a section whose heading is not in `benchmark_engineer.md` adds a mode=mega procedure.
+Everything not listed here is used as written in `benchmark_engineer.md`.
 
 ## Inputs
 `WORKSPACE`, `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, and `ANALYSIS` (kernel type, files, existing tests).

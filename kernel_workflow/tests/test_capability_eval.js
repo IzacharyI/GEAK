@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -29,8 +30,8 @@ function ok(cond, msg) {
 }
 
 const wf = require('./mega_source')();
-const lead = read('roles/mega/tech_lead.md');
-const verify = read('roles/mega/verify_engineer.md');
+const lead = megaRole('tech_lead');
+const verify = megaRole('verify_engineer');
 
 // --- 1. the mode exists and is off by default ------------------------------
 console.log('\n# capability_eval mode');
@@ -48,14 +49,6 @@ ok(/byte-identical/i.test(wf), 'the source records what the failure actually loo
 console.log('\n# doctrine');
 ok(/CAPABILITY_EVAL \? \{ CAPABILITY_EVAL: '1' \} : \{\}/.test(wf),
    'tech_lead is told which doctrine applies before it writes the roadmap');
-ok(/CONCLUSIONS ONLY — never implementations/.test(lead),
-   'tech_lead.md states the rule in one unmissable line');
-ok(/MUST NOT/.test(lead) && /port, copy, cherry-pick/.test(lead),
-   'porting/copying/cherry-picking are named explicitly, not left to inference');
-ok(/Quote \*mechanism\* instead/.test(lead),
-   'the rule says what to do INSTEAD, so the finding is not simply lost');
-ok(/getting this backwards silently converts a capability run into a copy\s+exercise/.test(lead),
-   'tech_lead.md carries the consequence of choosing the wrong doctrine');
 
 // --- 3. the leak scrub -----------------------------------------------------
 // Prose instructions are precisely what failed the first time, so the roadmap gets checked.

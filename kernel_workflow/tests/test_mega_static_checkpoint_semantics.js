@@ -3,11 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const src = require('./mega_source')();
-const engineer = fs.readFileSync(
-  path.resolve(__dirname, '..', 'roles', 'mega', 'engineer.md'), 'utf8',
-);
+const engineer = megaRole('engineer');
 
 let failures = 0;
 const ok = (value, message) => {

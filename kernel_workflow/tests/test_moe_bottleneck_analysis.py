@@ -259,13 +259,13 @@ class TestMoEBottleneckAnalysis(unittest.TestCase):
         self.assertIn("async function runProfileAnalysis", source)
         # the baseline profile and each verified candidate's evidence
         self.assertEqual(source.count("await runProfileAnalysis("), 2)
-        self.assertIn("'analysis_engineer'", source)
+        self.assertIn("'profile_engineer',\n      'analyze_profile'", source)
         self.assertIn("ANALYSIS_RESULT_SCHEMA", source)
         self.assertIn("analysis_status=awaiting_measurement", source)
         self.assertIn("status=ready", source)
         self.assertNotIn("moe_analysis_json", source)
         self.assertTrue(
-            os.path.exists(os.path.join(ROOT, "roles", "mega", "analysis_engineer.md"))
+            "## PHASE=analyze_profile" in open(os.path.join(ROOT, "roles", "_fragments", "profile_engineer_mega.md")).read()
         )
 
     def test_full_builder_runner_analyzer_validator_chain(self):

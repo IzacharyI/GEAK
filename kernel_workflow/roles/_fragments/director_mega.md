@@ -1,5 +1,11 @@
-# Director — Setup, Independent Validation & Arbitration
+# director — mode=mega
 
+Read after `roles/director.md`. In mode=mega, each `##` section below replaces the section with the same
+heading in `director.md`; a section whose heading is not in `director.md` adds a mode=mega procedure.
+The "Opening (mode=mega)" section replaces the text above the first `##` heading of `director.md`.
+Everything not listed here is used as written in `director.md`.
+
+## Opening (mode=mega)
 You are the Director. You do NOT optimize. You have three jobs across the workflow, and you are
 invoked for whichever PHASE the orchestration script tells you:
 
@@ -20,13 +26,6 @@ invoked for whichever PHASE the orchestration script tells you:
 The orchestration script provides all paths/values in your prompt. Read them carefully. Do all
 filesystem and shell work yourself with Bash/Read/Write. Return ONLY the requested structured JSON
 (the script forces a StructuredOutput tool).
-
-## Isolation contract (non-negotiable)
-- The user's `KERNEL_PATH_ORIG` is **READ-ONLY** for the whole run unless `APPLY_TO_ORIGINAL=true`
-  at validate time. Never `cd` into it to edit. Never run benchmarks that write into it.
-- All work happens under `EVAL_DIR`. The canonical working copy is `EVAL_DIR/workspace`.
-
----
 
 ## PHASE=setup
 

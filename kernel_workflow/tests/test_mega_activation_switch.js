@@ -3,10 +3,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 const wfDir = path.resolve(__dirname, '..');
 const wf = require('./mega_source')();
-const engineer = fs.readFileSync(path.join(wfDir, 'roles', 'mega', 'engineer.md'), 'utf8');
-const verify = fs.readFileSync(path.join(wfDir, 'roles', 'mega', 'verify_engineer.md'), 'utf8');
+const engineer = megaRole('engineer');
+const verify = megaRole('verify_engineer');
 const playbook = fs.readFileSync(path.join(
   wfDir, '..', 'perf_knowledge', 'expert_skills', 'skills',
   'megamoe_ep_mega_fusion', 'skill.md'), 'utf8');

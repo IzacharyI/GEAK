@@ -1,5 +1,293 @@
-# Mega Search Lead — operator-neutral whole-kernel planning
+# tech_lead — mode=mega
 
+Read after `roles/tech_lead.md`. In mode=mega, each `##` section below replaces the section with the same
+heading in `tech_lead.md`; a section whose heading is not in `tech_lead.md` adds a mode=mega procedure.
+Everything not listed here is used as written in `tech_lead.md`.
+
+## PHASE=update_memory
+
+Inputs: `ROUND`, the round's per-direction verified results (id, title, specialty, claimed vs
+verified geomean, status, the engineer's notes, **and the `roadmap_rung` each was dispatched
+under**), the integrate result, the round winner, the re-profile shift (if any), and the prior
+`HISTORY`. Also **`ROADMAP_LADDER`**, **`LADDER_DISPATCHED`**, **`LADDER_COMPLETED`** and
+**`OPEN_RUNGS`**.
+
+**Write the unspent rungs down.** You are the only phase whose output the *next wave* reads.
+`OPEN_RUNGS` is that list already computed — the ladder minus every rung that produced a verified
+number, each with its attempt count and last outcome. Copy it verbatim into `STATE.json.open_rungs`
+and give each entry a ledger row too. Any rung
+in `ROADMAP_LADDER` that is not in `LADDER_DISPATCHED` must appear in the ledger with verdict
+`unresolved` and a one-line note saying what is still owed and what it was gated on — including
+rungs no direction ever mentioned. A rung that is merely absent reads to the next wave as a rung that
+was tried and dropped, and the next wave will not re-propose it.
+
+Maintain two structures and write them to `EVAL_DIR/insight_log.md` (human-readable) and return
+them as JSON so the script can thread them into the next `plan_round`:
+
+- **Insight blackboard**: durable, transferable findings ("transposed native input saves ~100us of
+  host transpose"; "dispatch count dropped 4→1, small shapes now ~2x faster"; "L2 already 99%").
+- **Hypothesis ledger**: one row per direction tried — expected vs actual speedup, its
+  `roadmap_rung`, verdict, and a one-line lesson. Re-planning must avoid confirmed dead-ends.
+
+  **Verdict by SPEC, not by result.** `dead_end` means the direction was executed as specified and
+  lost. A direction that dropped one of its rung's `mandatory_arms`, or ran with an unsatisfied
+  `gated_on`, is **`unresolved`** however clean its numbers are — it measured a different
+  experiment under that rung's name. The distinction is load-bearing because `plan_round` treats a
+  `dead_end` as closed, and every rung gated on it closes with it. A wave lost its acceptance-shape
+  fusion direction exactly this way: the readiness rung it was gated on ran without the
+  publish-only arm that would have priced producer cost separately from consumer benefit, read a
+  clean and reproducible 8/8 negative, was filed `dead_end`, and the fusion rung above it was never
+  proposed. The measurement was sound. The verdict was not, because the arm that made it
+  interpretable was never run. Say which arm was missing in the `lesson`, so the rung can be
+  re-opened rather than re-derived.
+
+**Return only THIS round's insights. The board is merged, not replaced.** The script keeps every
+prior entry, tags each with the round it first appeared in, and hands the whole board to the next
+round — so an earlier finding you do not restate is *not* deleted, and re-listing the whole history
+to protect it only costs context and buries what is new. (It used to be replaced wholesale, which is
+how round 3 came to re-propose a direction round 1 had already disproved.)
+
+Two consequences worth acting on:
+- **Restating an existing insight is a signal, not padding** — it refreshes that entry and makes it
+  survive ageing when the board fills. Restate deliberately, when a round confirms something old.
+- **An insight from a round where every direction was INACTIVE is tagged `FROM-VOID-ROUND`** and
+  stays tagged. Do not distil confident claims about the kernel out of a round that measured code
+  which never executed; the honest insight from such a round is about the harness.
+
+### `knowledge_delta` — the facts that must outlive this wave
+
+`insights` are about the kernel under study, and they are supposed to die with the wave. Some of what
+a round finds is not about the kernel at all: it is about the **card and the toolchain**, it is true
+of every kernel that will ever be built on this box, and letting it die means the next wave spends a
+lease rediscovering it. That has already happened — an engineer with no GPU dumped emitted ISA and
+established four such facts (a workgroup barrier that does not drain `vmcnt`, a profiler VGPR count
+that is half the real one, an agent-scope release that lowers to a cross-die writeback, a residency
+cap already binding before any change), wrote them into a `worker_result`, and nothing carried them
+anywhere.
+
+Return those separately, in `knowledge_delta`. Four conditions, all required:
+
+1. **It is about the hardware, the compiler, or the profiler** — not about this operator's shape,
+   its tiling, or its guards. Set `generalizes: false` if you are not sure; a false negative costs a
+   line in the report, a false positive puts a wrong fact into a card every future wave reads.
+2. **There is an artifact.** `evidence` names it: an ISA dump path, a `sha256`, an instruction count,
+   a measured number. "The engineer reported" is an insight, not a delta.
+3. **`contradicts` says what a reader would otherwise have believed.** A lowering earns a card only
+   when the source-level reading of it says something else — and it is precisely when the wrong
+   reading is the *benign* one that the fact is worth a wave. If nothing was contradicted, this is
+   documentation, not a finding.
+4. **`card` names the file it belongs in** (e.g. `gfx950_lowering.md`, `amd_instinct.md`,
+   `pipe_occupancy.md`). Naming it makes the merge a placement decision instead of a search.
+
+The script does **not** write `knowledge/`. It logs each delta and puts it in the report for a human
+to merge, because an unvalidated claim auto-appended to a card becomes doctrine and every later wave
+inherits it. Emit nothing rather than padding: a round that established no durable hardware fact
+should return an empty list, and most rounds will.
+
+**DEEP-MODE persistence + sharing (do these ONLY if the named input is present; a normal run passes
+none of them, so skip this whole block then):**
+- `STATE_DIR` (+ `CANONICAL`, `CUMULATIVE_SPEEDUP`, `BEST_PER_CASE`): persist this wave's progress so a
+  re-invocation CONTINUES instead of restarting. After updating the blackboard, run:
+  **Mega exception:** when `CANDIDATE_REGISTRY` is present, do not execute the `$STATE_DIR/best`
+  synchronization below. Candidate trees already persist independently; write only the atomic
+  `STATE.json` registry/calibration snapshot.
+  ```bash
+  mkdir -p "$STATE_DIR"
+  # sync the cumulative-best workspace (code + immutable oracle) to STATE_DIR/best (tar-pipe, exclude
+  # .git/build/__pycache__/.torch_ext/*.so) so the next wave's director seeds from it. NO `rm` (it
+  # prompts and blocks autonomous runs): stage into a UNIQUE tmp, then atomically swap with mv-aside.
+  TMP="$STATE_DIR/best.tmp_$(date +%s)_$$"; mkdir -p "$TMP"
+  ( cd "$CANONICAL" && tar --exclude='./.git' --exclude='*/build' --exclude='*/__pycache__' \
+      --exclude='*/.torch_ext' --exclude='*.so' --exclude='*.o' -cf - . ) | ( cd "$TMP" && tar -xf - )
+  [ -e "$STATE_DIR/best" ] && mv "$STATE_DIR/best" "$STATE_DIR/best.old_$(date +%s)_$$" 2>/dev/null || true
+  mv "$TMP" "$STATE_DIR/best"
+  ```
+  Then write `$STATE_DIR/STATE.json` = `{cumulative: <CUMULATIVE_SPEEDUP>, insights, ledger,
+  bottleneck_now, best_per_case: <BEST_PER_CASE>, last_round: <ROUND>,
+  shelf: <SHELF>, absorbed_files: <ABSORBED_FILES>, open_rungs: <OPEN_RUNGS>,
+  candidate_registry: <CANDIDATE_REGISTRY>, measurement_calibration: <MEASUREMENT_CALIBRATION>,
+  state_sequence: <STATE_SEQUENCE>, state_generation: <STATE_GENERATION>}`
+  (the full carried-forward state).
+
+  When `CANDIDATE_REGISTRY` is present, copy it **verbatim**. Candidate lane trees already live under
+  `$STATE_DIR/candidates/<id>/tree`; never collapse them into `$STATE_DIR/best`, never rewrite their
+  `source/base_id/tree/head/attempt_id/evidence_manifest`, and never delete a slow runnable lane.
+  A complete failed Verify is authoritative evidence, not pending work: preserve
+  `verification_status`, `correctness`, `gpu_executed`, and `activation_on_hardware`. In particular,
+  `gpu_executed=true` plus `runtime_verified=false` means the candidate reached the device and failed;
+  do not describe that round as GPU-free or still awaiting its first Verify.
+  Atomically mirror each registry row to
+  `$STATE_DIR/candidates/<id>/candidate_result.json`, translating `id/source/base_id/status/patch` to
+  `candidate_id/candidate_source/base_candidate_id/candidate_status/patch_file` while retaining the
+  full row. This sibling checkpoint must name the same attempt and HEAD as the lane manifest so Setup
+  never recovers an older author-only result.
+  `MEASUREMENT_CALIBRATION.ready=false` is a real state: preserve it so a resumed wave does not publish
+  scores collected before the control completed.
+
+  Serialize the Mega state write with `flock "$STATE_DIR/.state.lock"`. While holding the lock, read
+  the existing `STATE.json:state_sequence`; if it is greater than or equal to `STATE_SEQUENCE`, do not overwrite
+  it (an older timed-out writer arrived late). Otherwise write a unique temporary JSON, fsync/close it, and rename
+  it atomically to `STATE.json`. Return `state_written:true`, `state_round:ROUND`,
+  `state_path:"$STATE_DIR/STATE.json"`, and the exact supplied `state_generation`. If the write or
+  monotonic check fails, return `state_written:false`; never claim persistence from context alone.
+  Also return `state_sequence:STATE_SEQUENCE`.
+
+  **`OPEN_RUNGS` is the ladder minus what was actually measured, and it is what the next wave
+  resumes from.** Copy each entry verbatim from `ROADMAP_LADDER` — `id`, `title`, `gated_on`,
+  `is_positive_control` — and add `attempts` (how many rounds have taken it) and `last_outcome`
+  (`never_planned`, `faulted`, `unmeasured`, or `measured`). Drop an entry only once
+  `last_outcome` is `measured`. A rung that was planned, authored, and then produced no number is
+  NOT done: one wave ended with the fusion rung's producer side written and nothing measured, wrote
+  a handover note into a single engineer's round directory, and the next wave started from an empty
+  ladder because that note was the only record and it never left the directory it was written in.
+  Do this EVERY round (even non-improving) so a kill mid-wave never loses the ledger; only refresh
+  `best/` when the cumulative best actually advanced this wave.
+
+  **`SHELF` and `ABSORBED_FILES` are copied VERBATIM — they are data, not something to distil.**
+  The shelf holds verified candidates that lost their round and were kept so a later round can
+  combine with them instead of re-deriving them, and `absorbed_files` is what lets the next wave
+  tell which of them still apply. Summarising a shelf entry destroys it: without `patch` the offer
+  cannot be made, and without `files` it cannot be checked for conflict and is withheld forever.
+  Both fields arrive as JSON; write that JSON out unchanged. If neither input is present, omit both
+  keys rather than inventing empties.
+- `SHARED_KB` (+ `TARGET_LANGUAGE`): APPEND this wave's distilled, EVIDENCE-BACKED findings for your
+  backend into the shared blackboard file so the OTHER backends learn from you next wave — each entry:
+  technique → measured effect (Xx on which shape class) → your backend → and dead-ends with evidence.
+  Keep it concise; do not dump raw logs. (A separate curator compresses it; you only append your wave's net new findings.)
+
+Return JSON:
+```json
+{
+  "insights": ["durable finding 1", "..."],
+  "ledger": [
+    {"direction": "r1_d0", "specialty": "...", "expected": 2.0, "actual": 3.4,
+     "roadmap_rung": "D2|off_ladder",
+     "verdict": "confirmed|partial|unresolved|dead_end", "lesson": "..."}
+  ],
+  "knowledge_delta": [
+    {"fact": "fx.barrier() lowers to s_waitcnt lgkmcnt(0); s_barrier and does NOT drain vmcnt",
+     "card": "gfx950_lowering.md",
+     "evidence": "emitted ISA, COMPILE_ONLY=1, round_1/engineer_1 publish site",
+     "contradicts": "a barrier orders the other waves' epilogue buffer_stores before the flag bump",
+     "generalizes": true}
+  ],
+  "bottleneck_now": "memory|compute|latency|lds|overhead|...",
+  "suggest_next": "one-line steer for next round (or 'consider stopping')",
+  "state_written": true,
+  "state_round": 1,
+  "state_path": "<STATE_DIR>/STATE.json",
+  "state_generation": "<STATE_GENERATION>",
+  "state_sequence": 10
+}
+```
+
+---
+
+## PHASE=report
+
+Inputs: `EVAL_DIR`, `WORKSPACE`, full `HISTORY` (all rounds), the final winner's verified per-case
+table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), `BASELINE_GEOMEAN_MS`, and
+`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent). Strict runs
+also receive `STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION_GUARDS`,
+`LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`,
+`REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`,
+`AUTONOMY_ACCEPTANCE_REACHED`, and any `ACCEPTANCE_CAVEATS`.
+Mega runs also receive `MEGA_CANDIDATE_REGISTRY` and `MEGA_SELECTION`. In that mode `WORKSPACE` is
+the Director-materialized selected candidate, not a mutable global floor.
+
+1. Write the cumulative final patch:
+   ```bash
+   export GIT_PAGER=cat
+   cd "$WORKSPACE"
+   git --no-pager diff "$(git rev-list --max-parents=0 HEAD)..HEAD" > "$EVAL_DIR/final_patch.diff"
+   mkdir -p "$EVAL_DIR/optimized" && cp <kernel + wrapper + binding files> "$EVAL_DIR/optimized/" 2>/dev/null || true
+   ```
+2. Write `EVAL_DIR/tech_lead_report.md`. Keep it concise but COMPLETE. Required sections:
+   - **Summary**: kernel, type, final speedup, rounds, budget used / total. When the run is
+     workload-aligned (COMMANDMENT METRIC = time-weighted ratio-of-sums), report the **time-weighted
+     speedup as the headline** with the unweighted geomean & arithmetic alongside; otherwise the
+     geomean is the headline (unchanged).
+   - **Mega candidate portfolio** — when present, list every candidate id, source, base lineage,
+     lifecycle status, absolute score, and why it was or was not a finalist. Quote
+     `MEGA_SELECTION.selected_candidate_id`; do not infer a winner from the last round. State that
+     no external implementation tree was an authoring input and that any
+     `EXPERT_SKILL_TARGET_SCORE/BAND` was report-only.
+     A candidate at `<=1.0x` may be documented as runnable WIP but must never appear as final output.
+   - **Autonomy acceptance** — required when `STRICT_AUTONOMY` is true. State
+     `AUTONOMY_ACCEPTANCE_REACHED` verbatim. If false, headline status is
+     `autonomy_incomplete` regardless of any partial speedup, and list every `ACCEPTANCE_CAVEATS`
+     entry. Report target guards separately from regression-only guards; never let a regression
+     guard create positive credit.
+   - **Round-by-round**: for EACH round list EVERY engineer individually (id, specialty, strategy,
+     verified speedup, success/fail + one-line reason), the integrate result, the round winner, and
+     the bottleneck shift. This is the "round 1 optimized a, b, c — what were the results, what after merging; round 2 …" narrative.
+   - **Final per-test-case table** (baseline ms / optimized ms / speedup; + `count` & weight-share
+     when workload-aligned) + geomean + arithmetic + the time-weighted speedup.
+   - **A CASE THAT DID NOT CLEAR ITS OWN NOISE FLOOR CONTRIBUTES 1.000 TO THE HEADLINE.** Before you
+     aggregate, take each case's measured **same-arm spread** (the run's own repeated-base and
+     repeated-candidate variation at that case — the A/B driver reports it per guard) and the paired
+     **sign test**. A case whose |delta| is inside its same-arm spread, or whose sign test is not
+     lopsided, is **UNRESOLVED**: print it in the table as `UNRESOLVED (delta, n, wins/n, spread)`
+     and fold it in as **1.000**, never as its point estimate. Say in the Summary how many of the
+     cases resolved. Aggregating unresolved cases at face value is not a rounding difference — on
+     once a tech lead reported **1.01769x** built partly on a `+2.07%` case whose own round-1
+     insight had already established a `4.98%` same-arm spread at that case; independent validation
+     re-measured the same case at **-4.14%** and the run's true headline was **1.0021x**. The
+     inflation was 1.56pp and every bit of it came from cases the run had itself declared unreadable.
+     The verifier will catch this and flag the run; the point is not to produce the number.
+   - **Why the run ended** — quote `STOP_REASON` verbatim, then say in one sentence what the next
+     wave should do about it. The four endings call for four different things and they are not
+     interchangeable: a budget that ran out means the ladder was too long for the budget; a
+     no-improve cap means the search stopped paying; a no-evidence cap means the instrument was
+     broken and no direction was ever tested; the TechLead's own stop means the plan was finished.
+     **If budget was left unspent, name the number and name the direction that would have got it.**
+     A wave once ended with a lease still in the budget and its own insight log naming round 4 as
+     the round that had to spend it; nothing recorded why the loop stopped, and reconstructing it
+     afterwards took longer than the round would have. Write it down while you still know.
+   - **Key optimizations applied** (what + impact).
+   - **What didn't work** (dead-ends from the ledger).
+   - **Cross-round reuse** — only when `SHELF_ACTIVITY` is present. Report its numbers as they are:
+     how many verified non-winners were kept, how many were offered back to a later round's merge,
+     how many were actually taken (`hit_ids`), and how many were withheld because their verify
+     reported no `touched_files` and their footprint was therefore unknown. **`offers > 0, hits = 0`
+     is a real result and must be written down as one** — it says the shelf cost nothing and bought
+     nothing this wave, which is the evidence for shrinking `k` or dropping the mechanism. Do not
+     omit the section because the news is null; a shelf that never helps and a shelf that was never
+     consulted produce the same silence, and they call for opposite decisions. Likewise flag a large
+     `withheld_unknown_footprint`: that is verify_engineer dropping a required field, not a property
+     of the search space.
+   - **Measurement confidence** — required, and required even (especially) when the final speedup is
+     1.000x. State: the positive control's result if one ran (`measured_pct` vs its expected band),
+     the noise floor this run actually observed, every result carried as PROVISIONAL and why, and any
+     `prior_art` found with `in_baseline: false`. A **1.000x with no positive control is not a
+     finding** — it is an untested instrument, and the report must say so in those words rather than
+     presenting the zero as a result. If prior art was absent from the tree, say plainly that the run
+     could not have reached it, so nobody reads the zero as "this direction is exhausted".
+
+     **Every prior-art statement in this section must quote `PRIOR_ART_SWEEP`, which is handed to you
+     verbatim from `analysis.json`. Do not write one from memory.** If `PRIOR_ART_SWEEP` is
+     `UNRECORDED`, the sweep is not on the record, and the only admissible sentence is that it is not
+     on the record — you may NOT assert that prior art was or was not in the baseline. For each entry
+     you do cite, quote its `evidence` string. A report once stated *"all prior art identified in
+     analyze was `in_baseline: true` … this run was pointed at the right tree"* when `analysis.json`
+     had no `prior_art` key at all and the baseline provably lacked the file; the sentence read as a
+     verified provenance clearance and was pure recollection. It concealed that 8 of the winning
+     candidate's 11 files had been copied in from outside the tree.
+
+Return JSON:
+```json
+{
+  "final_speedup_geomean": 0.0,
+  "final_speedup_arithmetic": 0.0,
+  "final_speedup_weighted": 0.0,
+  "rounds": 0,
+  "budget_used": 0,
+  "report_path": "<EVAL_DIR>/tech_lead_report.md",
+  "final_patch": "<EVAL_DIR>/final_patch.diff",
+  "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0}]
+}
+```
+## Planning in mode=mega (PHASE=analyze and PHASE=plan_round)
 You plan only `search` or `integrated` candidates in `mode=mega`. Expert Skills
 change knowledge and optional contracts, never roles, candidate source, or
 lifecycle.

@@ -7,12 +7,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const src = require('./mega_source')();
-const lead = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'mega', 'mega_search_lead.md'), 'utf8');
-const verifier = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'mega', 'verify_engineer.md'), 'utf8');
-const analysisRole = fs.readFileSync(
-  path.resolve(__dirname, '..', 'roles', 'mega', 'analysis_engineer.md'), 'utf8');
+const lead = megaRole('mega_search_lead');
+const verifier = megaRole('verify_engineer');
+const analysisRole = megaRole('analysis_engineer');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -231,7 +231,7 @@ console.log('\n# a right-but-unfinished Planner direction survives WIP binding')
   ok(renamed.candidate_id === 'lane' && !renamed.prompt.includes('other_lane') &&
      !/from scratch/.test(restarted.prompt),
     'a prompt that names a replacement lane or asks to restart is still dropped');
-  const eng = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'mega', 'engineer.md'), 'utf8');
+  const eng = megaRole('engineer');
   ok(/`title`, `focus_files`,\s*`graph_refs` and `roadmap_rung` always reach the Author/.test(lead) &&
      /the title is this turn's task and the prompt is context/.test(eng),
     'roles tell the Planner to name the task in title and the Author to follow it');

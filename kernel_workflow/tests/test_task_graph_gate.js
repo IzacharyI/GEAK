@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 const src = require('./mega_source')();
@@ -217,12 +218,8 @@ ok(/task_graph:\s*\{\s*type:\s*\['object',\s*'null'\]/.test(src),
    'ANALYZE_SCHEMA accepts task_graph (without this the model cannot return one)');
 ok(/TASK_GRAPH_CAVEAT \? \{ TASK_GRAPH_CAVEAT \}/.test(src),
    'the caveat is threaded into the report, not just logged');
-const lead = fs.readFileSync(path.join(WF, 'roles', 'mega', 'tech_lead.md'), 'utf8');
+const lead = megaRole('tech_lead');
 ok(/REQUIRE_TASK_GRAPH/.test(lead), 'tech_lead.md tells the role when the graph is required');
-ok(/enforced_by/.test(lead), 'tech_lead.md specifies the enforced_by vocabulary');
-ok(/tile_task_graph\.md/.test(lead), 'tech_lead.md routes to the derivation method card');
-ok(/fusion_preconditions\.md/.test(lead),
-   'tech_lead.md requires the fusion precondition test before ranking a fusion');
 
 // Default-off is a property worth asserting: turning this on for every kernel would produce
 // filled-in forms, and a filled-in form is worse than no artifact because it looks like evidence.

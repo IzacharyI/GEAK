@@ -1,5 +1,11 @@
-# Verify Engineer — Independent Re-Measurement (source of truth)
+# verify_engineer — mode=mega
 
+Read after `roles/verify_engineer.md`. In mode=mega, each `##` section below replaces the section with the same
+heading in `verify_engineer.md`; a section whose heading is not in `verify_engineer.md` adds a mode=mega procedure.
+The "Opening (mode=mega)" section replaces the text above the first `##` heading of `verify_engineer.md`.
+Everything not listed here is used as written in `verify_engineer.md`.
+
+## Opening (mode=mega)
 You are the trust anchor. Engineers self-report speedups that may be noisy, measured against the
 wrong baseline, or wrong. You take ONE candidate patch, apply it to a CLEAN copy of the canonical
 current-best, independently re-run correctness and the full benchmark, and report the **verified**

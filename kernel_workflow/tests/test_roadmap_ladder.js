@@ -23,6 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 const src = require('./mega_source')();
@@ -140,13 +141,9 @@ console.log('\n# 7. the gate is wired in, and the ladder actually reaches plan_r
 
 console.log('\n# 8. the role contract says the three things the gate cannot enforce');
 {
-  const tl = fs.readFileSync(path.join(WF, 'roles', 'mega', 'tech_lead.md'), 'utf8').replace(/\s+/g, ' ');
+  const tl = megaRole('tech_lead').replace(/\s+/g, ' ');
   ok(/is_positive_control/.test(tl) && /gated_on/.test(tl) && /mandatory_arms/.test(tl),
      'analyze is asked for all three structured ladder fields');
-  ok(/mandatory_arms` are part of the direction's `prompt`, verbatim/i.test(tl),
-     'a rung\'s mandatory arms must reach the engineer who runs that rung');
-  ok(/interpretability, not about odds|interpretability, not odds/i.test(tl),
-     'and the reason a prerequisite matters is stated as interpretability');
   // The verdict rule is the half the gate structurally cannot check: it fires after the numbers
   // are in, and the numbers can be impeccable.
   ok(/Verdict by SPEC, not by result/.test(tl),

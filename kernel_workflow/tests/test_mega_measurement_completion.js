@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 const src = require('./mega_source')();
 
 let failures = 0;
@@ -32,7 +33,7 @@ ok(/if \(!batch\.length \|\| !megaMeasurementCalibration\.ready\) return null/.t
   'finalist selection cannot run on an uncalibrated harness');
 
 console.log('\n# verification is tiered');
-const verifyRole = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'mega', 'verify_engineer.md'), 'utf8');
+const verifyRole = megaRole('verify_engineer');
 ok(/`score`:[\s\S]*supplied target guard[\s\S]*short liveness/.test(verifyRole),
   'score tier is the cheap target-only admission measurement');
 ok(/`finalist`:[\s\S]*all target\/regression guards[\s\S]*overlap\/attribution/.test(verifyRole),

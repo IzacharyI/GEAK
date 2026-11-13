@@ -19,6 +19,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -204,7 +205,7 @@ ok(collide.length === 0,
 
 // --- 6. the control workspace, which is where the real leak came from -----
 console.log('\n# the positive control must not leave the answer in the tree');
-const bench = read('roles/mega/benchmark_engineer.md');
+const bench = megaRole('benchmark_engineer');
 ok(/outside the run tree/.test(bench), 'the control workspace is required to live outside the tree');
 ok(/5\.5 hours/.test(bench), 'the incident keeps its duration — it was not a brief window');
 ok(/11 of 12 files were\s*\n?byte-identical/.test(bench),

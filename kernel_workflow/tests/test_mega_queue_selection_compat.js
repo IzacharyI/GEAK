@@ -3,11 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const src = require('./mega_source')();
-const role = fs.readFileSync(
-  path.resolve(__dirname, '..', 'roles', 'mega', 'mega_search_lead.md'), 'utf8',
-);
+const role = megaRole('mega_search_lead');
 const replay = src.match(
   /\/\/ <<REPLAY:analyze_resume_fallback>>([\s\S]*?)\/\/ <<\/REPLAY:analyze_resume_fallback>>/,
 );
