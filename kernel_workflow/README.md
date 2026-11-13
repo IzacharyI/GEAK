@@ -174,10 +174,13 @@ keeps a portfolio of independent whole-kernel **candidates**:
 - **Validate** re-measures the finalists and delivers the fastest fully verified candidate (or none).
 
 Every job needs the operator's full rank count, so pass `gpus_per_job` (or `job_gpu_ids`) with
-`gpu_ids`; see "Multi-GPU jobs". `use_expert_skills=true` adds a matched Expert Skill (e.g.
-`perf_knowledge/expert_skills/skills/megamoe_ep_mega_fusion`) as knowledge for the same roles; with
-`false` the generic lifecycle runs unchanged. Optional `analysis_skill=moe_bottleneck` adds a
-route-attribution pass after Profile.
+`gpu_ids`; see "Multi-GPU jobs". Without a skill this runs the generic lifecycle. To use a MegaMoE
+skill, add `expert_skill_id` (e.g. `megamoe_small_mtpr_fusion`): the run reads the skill's status and
+digests once at start (`skill:pin`), refuses a skill that is not validated or experimental, and turns on
+the gates a skill validation needs (graph capture and direct graph accuracy, hardware activation,
+distinct artifacts, attribution, no partial fusion); args passed explicitly win. To pin an exact skill
+version, also pass the three digests from `validate_skill.py <skill id> --emit-bundle`. Optional
+`analysis_skill=moe_bottleneck` adds a route-attribution pass after Profile.
 
 ```
 Workflow({ scriptPath: "<WF_DIR>/kernel_workflow.js", args: {

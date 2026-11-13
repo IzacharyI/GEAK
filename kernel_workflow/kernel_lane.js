@@ -248,7 +248,8 @@ let KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
 // roles reproduce, then gate by the isolated A/B vs the oracle — it NEVER overrides measurement. Default
 // OFF (opt-in: pass use_expert_skills="true"). When OFF (the default) NOTHING is injected -> byte-identical
 // to a build without this feature. When invoked by the e2e layer the flag + dir are passed down.
-const USE_EXPERT_SKILLS_REQUESTED = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true';
+const USE_EXPERT_SKILLS_REQUESTED = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true' ||
+  (MEGA && A.use_expert_skills == null && !!A.expert_skill_id);   // a mega run that names a skill uses it
 let USE_EXPERT_SKILLS = USE_EXPERT_SKILLS_REQUESTED;
 const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
   (KERNEL_KNOWLEDGE_DIR ? KERNEL_KNOWLEDGE_DIR + '/expert_skills' : '')).replace(/\/+$/, '');
@@ -998,10 +999,11 @@ if (MEGA && EXPERT_SKILL_ID && !/^[a-z0-9][a-z0-9_-]*$/.test(EXPERT_SKILL_ID)) {
   throw new Error('expert_skill_id must be a safe slug');
 }
 const EXPERT_SKILL_REVISION = String(A.expert_skill_revision || '');
-const EXPERT_SKILL_BUNDLE_SHA256 = String(A.expert_skill_bundle_sha256 || '');
-const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 =
-  String(A.expert_skill_planner_extension_sha256 || '');
-const EXPERT_SKILL_CONTRACT_SHA256 = String(A.expert_skill_contract_sha256 || '');
+// A mega run that validates a named skill on-card gets that validation's gates unless args set them.
+const SKILL_GATES = MEGA && !!EXPERT_SKILL_ID && !MEGA_STRUCTURAL_ONLY &&
+  String(A.use_expert_skills != null ? A.use_expert_skills : 'true') === 'true' &&
+  String(A.expert_skill_usage || 'candidate_validation') === 'candidate_validation';
+const gateArg = (value) => String(value != null ? value : SKILL_GATES) === 'true';
 const optionalNumber = (value) => {
   const number = Number(value);
   return value == null || value === '' || !Number.isFinite(number) ? null : number;
@@ -1018,8 +1020,8 @@ const MEGA_TIE_NOISE_PCT = Math.max(0, Number(
 // Graph-captured targets require an isolated capture/replay smoke.
 const MEGA_REQUIRE_GRAPH_CAPTURE = A.require_graph_capture != null
   ? String(A.require_graph_capture) === 'true'
-  : !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
-const DIRECT_GRAPH_ACCURACY = String(A.direct_graph_accuracy || 'false') === 'true';
+  : SKILL_GATES || !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
+const DIRECT_GRAPH_ACCURACY = String(A.direct_graph_accuracy || SKILL_GATES) === 'true';
 const argList = (value) => (Array.isArray(value) ? value : String(value || '').split(','))
   .map((s) => String(s).trim()).filter(Boolean);
 // Guards that create credit are separate from guards that can only veto, so a win on a
@@ -1059,10 +1061,35 @@ const EXPERT_SKILL_VALIDATION_FILE = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILL_DIR}/validation.yaml` : String(A.expert_skill_validation || '');
 const EXPERT_SKILL_RUNTIME_FILE = PINNED_MEGA_SKILL
   ? `${EXPERT_SKILL_DIR}/runtime_validation.py` : String(A.expert_skill_runtime_file || '');
+// expert_skill_id alone pins a mega skill: a missing status or digest is read once from the skill files
+// here, before Setup, so the checks below fail as early as when the caller passes them.
+const SKILL_PIN_KEYS = ['validation_status', 'bundle_sha256', 'planner_extension_sha256', 'contract_sha256'];
+let SKILL_PIN = {};
+if (MEGA && PINNED_MEGA_SKILL && SKILL_PIN_KEYS.some((k) => !A[`expert_skill_${k}`])) {
+  phase('Setup');
+  SKILL_PIN = (await agent(
+    `Run exactly: python3 ${EXPERT_SKILL_BUNDLE_TOOL} ${EXPERT_SKILL_ID} --emit-bundle\n` +
+    `It prints one JSON object. Return its ${SKILL_PIN_KEYS.join(', ')} values verbatim. If the ` +
+    `command fails, return error with its last output lines. Do nothing else.`,
+    { phase: 'Setup', label: 'skill:pin', schema: { type: 'object', additionalProperties: true,
+      properties: Object.fromEntries([...SKILL_PIN_KEYS, 'error'].map((k) => [k, { type: 'string' }])),
+      required: [] } })) || {};
+  if (SKILL_PIN.error || !SKILL_PIN.bundle_sha256) {
+    throw new Error(`expert skill ${EXPERT_SKILL_ID}: --emit-bundle failed: ${SKILL_PIN.error || 'no output'}`);
+  }
+  log(`expert skill ${EXPERT_SKILL_ID}: ${SKILL_PIN.validation_status}, bundle ${String(SKILL_PIN.bundle_sha256).slice(0, 8)}`);
+}
+const EXPERT_SKILL_BUNDLE_SHA256 = String(A.expert_skill_bundle_sha256 || SKILL_PIN.bundle_sha256 || '');
+const EXPERT_SKILL_PLANNER_EXTENSION_SHA256 =
+  String(A.expert_skill_planner_extension_sha256 || SKILL_PIN.planner_extension_sha256 || '');
+const EXPERT_SKILL_CONTRACT_SHA256 =
+  String(A.expert_skill_contract_sha256 || SKILL_PIN.contract_sha256 || '');
 const EXPERT_SKILL_VALIDATION_STATUS = String(
-  A.expert_skill_validation_status || ''
+  A.expert_skill_validation_status || SKILL_PIN.validation_status || ''
 );
-const EXPERT_SKILL_USAGE = String(A.expert_skill_usage || '');
+// A pinned mega skill runs on-card unless the run is structural-only.
+const EXPERT_SKILL_USAGE = String(A.expert_skill_usage ||
+  (MEGA && PINNED_MEGA_SKILL ? (MEGA_STRUCTURAL_ONLY ? 'authoring' : 'candidate_validation') : ''));
 const REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY = USE_EXPERT_SKILLS &&
   (PINNED_MEGA_SKILL ||
    String(A.require_expert_skill_bundle_identity || 'false') === 'true');
@@ -1181,12 +1208,10 @@ const RF = Object(A.regression_floor_by_guard);
 const RFI = { ...(A.regression_floor_by_guard ? { REGRESSION_FLOORS: RF } : {}),
   ...(A.mega_min_speedup ? { MIN_TARGET_SPEEDUP: +A.mega_min_speedup } : {}) };
 const REQUIRE_OVERLAP = String(A.require_overlap != null ? A.require_overlap : 'false') === 'true';
-const REQUIRE_ATTRIBUTION = String(A.require_attribution != null ? A.require_attribution : 'false') === 'true';
-const REQUIRE_ARTIFACT_DISTINCT = String(
-  A.require_artifact_distinct != null ? A.require_artifact_distinct : 'false') === 'true';
+const REQUIRE_ATTRIBUTION = gateArg(A.require_attribution);
+const REQUIRE_ARTIFACT_DISTINCT = gateArg(A.require_artifact_distinct);
 // Require an activated switched path to have actually launched on hardware.
-const REQUIRE_HW_ACTIVATION = String(
-  A.require_hardware_activation != null ? A.require_hardware_activation : 'false') === 'true';
+const REQUIRE_HW_ACTIVATION = gateArg(A.require_hardware_activation);
 const ACCURACY_METRIC = String(A.accuracy_metric || 'relL2');
 const ACCURACY_THRESHOLD = Number(A.accuracy_threshold != null ? A.accuracy_threshold : 0.10);
 if (MEGA && (STRICT_AUTONOMY && (!(ACCURACY_THRESHOLD > 0) || !Number.isFinite(ACCURACY_THRESHOLD)))) {
@@ -1199,7 +1224,7 @@ if (MEGA && STRICT_AUTONOMY && !(Number.isSafeInteger(launchTargetArg) && launch
 const LAUNCH_TARGET = Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0
   ? launchTargetArg : 2;
 const ALLOW_PARTIAL_FUSION =
-  String(A.allow_partial_fusion != null ? A.allow_partial_fusion : 'true') === 'true';
+  String(A.allow_partial_fusion != null ? A.allow_partial_fusion : !SKILL_GATES) === 'true';
 if (MEGA && PINNED_MEGA_SKILL &&
     EXPERT_SKILL_USAGE === 'candidate_validation') {
   const missing = [
