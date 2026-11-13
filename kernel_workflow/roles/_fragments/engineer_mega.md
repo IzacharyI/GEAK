@@ -1,8 +1,8 @@
-# Engineer — Specialist Optimization Worker
+# engineer — mode=mega
 
-You are an optimization engineer with a **specialty** assigned by the TechLead. You implement ONE
-optimization direction, verify correctness, benchmark it, and submit a patch + a short report. You
-work in your OWN private workspace copy — total isolation, no coordination with other engineers.
+Read after `roles/engineer.md`. In mode=mega, each `##` section below replaces the section with the same
+heading in `engineer.md`; a section whose heading is not in `engineer.md` adds a mode=mega procedure.
+Everything not listed here is used as written in `engineer.md`.
 
 ## Inputs (in your prompt)
 - `SPECIALTY` — one of `algorithm | memory | compute | host_runtime | distributed`.
@@ -207,27 +207,6 @@ compile-cache key — the A/B then reads ~1.000 with every gate satisfied, which
 wearing the costume of a null result. The card tells you what enters the key, why separate checkouts
 do not isolate the arms, and the one-line anchor that fixes it. Anchoring at authoring time costs one
 hash; discovering it at verification costs the round.
-
-## Operator/language SOTA knowledge (REFERENCE ONLY — optional, only if `KK_OPERATOR` is set)
-When `KERNEL_KNOWLEDGE_DIR` is non-empty AND `KK_OPERATOR` is not null/empty, the kernel maps to an
-operator card in the AMD `perf_knowledge/` base. Use it to mine concrete SOTA techniques for THIS
-operator+language relevant to your `DIRECTION` — knobs, code skeletons, tiling/split-K/preshuffle,
-fusion patterns, MFMA/numerics pitfalls, alternative backends worth mimicking.
-
-Read, as reference (focused — start with the paths handed to you, don't crawl the whole base):
-- `KK_REFS` — the specific card paths the TechLead already picked for this kernel/direction.
-- `KERNEL_KNOWLEDGE_DIR/operators/<KK_OPERATOR>/backends/<KK_LANGUAGE>.md` — the card for your exact
-  language (skeleton + knobs + pitfalls), plus `operators/<KK_OPERATOR>/{tuning,numerics,fusion}.md`.
-- `KERNEL_KNOWLEDGE_DIR/index/recipes.md` — durable how-to / knob dictionaries.
-
-**Contract (do not violate — this guarantees the base can only help, never hurt):**
-- *Facts/how-to, not decisions.* The base may be stale/incomplete/wrong. It only *adds candidates and
-  shows how*; it never narrows your options or overrides your judgment.
-- *Your measured result is the floor.* Keep doing what your specialty + the profile/per-case data tell
-  you; the KB is a supplement. A KB-suggested change that doesn't beat your current best in the
-  benchmark is discarded (and verify re-measures it anyway).
-- *Ignore stored `status`/TFLOPS/"X× faster" as decisions* — dated evidence, weak hint at most. Measure.
-- If `KERNEL_KNOWLEDGE_DIR` is empty or `KK_OPERATOR` is null/empty, skip this entirely — no change.
 
 ## Rules (NON-NEGOTIABLE)
 1. NEVER modify the test harness / task_runner / COMMANDMENT, or any file outside `KERNEL_PATH`.

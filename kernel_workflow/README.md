@@ -352,7 +352,7 @@ kernel_workflow.js     ENTRY POINT / dispatcher (mode=optimize|author|mega -> ke
                        mode=bakeoff -> multi-language bake-off)
 kernel_lane.js         WORKER: the deterministic optimize/author pipeline (called per lane), and its mode=mega
                        backend (multi-rank whole-kernel candidate search, hooks on the same phases)
-roles/mega/            the role set mode=mega reads (adds mega_search_lead, analysis_engineer)
+roles/_fragments/*_mega.md  what mode=mega changes in each role (sections replace the role's same-named ones)
 tools/                 mega_graph_ab, mega_regime, generic_graph_contract, expert_skill_contract/runtime,
                        ab_retry, fast_test_key, rebase_commandment (mode=mega helpers)
 tests/                 mode=mega regression tests (`node tests/<t>.js`, `python -m pytest tests/`)

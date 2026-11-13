@@ -22,9 +22,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 const WF = path.resolve(__dirname, '..');
 const src = require('./mega_source')();
-const bench = fs.readFileSync(path.join(WF, 'roles', 'mega', 'benchmark_engineer.md'), 'utf8');
+const bench = megaRole('benchmark_engineer');
 
 let failures = 0;
 const ok = (cond, msg) => {

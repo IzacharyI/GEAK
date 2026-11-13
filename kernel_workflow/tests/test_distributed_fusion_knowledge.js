@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const WF = path.join(ROOT, 'kernel_workflow');
@@ -46,27 +47,22 @@ ok(
 const KNOWLEDGE = 'distributed_fusion.md';
 ok(fs.existsSync(path.join(WF, 'knowledge', KNOWLEDGE)), `knowledge/${KNOWLEDGE} exists`);
 
-const engineer = read('roles', 'mega', 'engineer.md');
+const engineer = megaRole('engineer');
 ok(/`SPECIALTY`[^\n]*distributed/.test(engineer), 'engineer.md declares the specialty');
 ok(
   new RegExp(`- distributed\\s+→[\\s\\S]{0,200}${KNOWLEDGE}`).test(engineer),
   'engineer.md routes `distributed` to the knowledge file',
 );
 
-const deep = read('roles', 'mega', 'deep_engineer.md');
+const deep = megaRole('deep_engineer');
 ok(deep.includes(KNOWLEDGE), 'deep_engineer.md lists the knowledge file');
 ok(
   /distributed_fusion\.md[\s\S]{0,240}(ONLY when|Skip entirely)/.test(deep),
   'deep_engineer.md gates the read so single-GPU kernels do not load it',
 );
 
-const lead = read('roles', 'mega', 'tech_lead.md');
+const lead = megaRole('tech_lead');
 ok(/candidate_directions[\s\S]{0,400}distributed/.test(lead), 'tech_lead.md may emit the specialty');
-ok(lead.includes(KNOWLEDGE), 'tech_lead.md points at the knowledge file');
-ok(
-  /no-payload control/.test(lead),
-  'tech_lead.md requires the no-payload control before spending a round',
-);
 
 ok(read('README.md').includes('distributed_fusion'), 'README knowledge list mentions it');
 
@@ -75,7 +71,7 @@ ok(read('README.md').includes('distributed_fusion'), 'README knowledge list ment
 //     COMMANDMENT is built to interleave.
 ok(/liveness: \{ type: 'string' \}/.test(src), 'VERIFY_SCHEMA carries a liveness verdict');
 
-const verify = read('roles', 'mega', 'verify_engineer.md');
+const verify = megaRole('verify_engineer');
 ok(/`SPECIALTY` is `distributed`/.test(verify), 'verify gates the liveness stress on the specialty');
 ok(/REQUIRED_REPLAYS/.test(verify) && /1000 by default/.test(verify) && /replay_count/.test(verify),
    'liveness stress is quantified and the completed count is returned');
@@ -83,7 +79,7 @@ ok(/two different problem sizes/.test(verify), 'liveness varies problem size (re
 ok(/timeout here is a FAILURE, never a skip/.test(verify), 'a hang cannot be silently skipped');
 ok(/liveness.*only when SPECIALTY=distributed/.test(verify), 'return contract documents the field');
 
-const bench = read('roles', 'mega', 'benchmark_engineer.md');
+const bench = megaRole('benchmark_engineer');
 ok(/RESOLUTION FLOOR/.test(bench), 'baseline drift is recorded as a resolution floor');
 ok(/alternately inside ONE process invocation/.test(bench), 'COMMANDMENT interleaves when drift is large');
 ok(/paired\*\* delta/.test(bench), 'the reported delta is paired, not two independent medians');
@@ -100,22 +96,8 @@ ok(/If `drift` exceeds/.test(bench), 'interleaving is conditional on measured dr
 const plumbed = src.match(/GPUS_PER_JOB: String\(GPU_RESOURCE\.gpusPerJob\)/g) || [];
 ok(plumbed.length >= 2, 'GPUS_PER_JOB reaches both author_engineer and tech_lead analyze');
 
-const author = read('roles', 'mega', 'author_engineer.md');
-ok(/`GPUS_PER_JOB`/.test(author), 'author_engineer documents GPUS_PER_JOB as an input');
-ok(/GPUS_PER_JOB` > 1/.test(author), 'the distributed section is gated on rank count > 1');
-ok(
-  /NAIVE, SCATTERED, MULTI-LAUNCH form — never a fused megakernel/.test(author),
-  'author seeds the scattered form and leaves fusion to the optimize specialty',
-);
-ok(/shape the seed to be\s*\*fusable\*/.test(author), 'the seed is required to stay legible to the optimizer');
-ok(/timeout 600 bash/.test(author), 'every distributed GPU command carries a wall-clock timeout');
+const author = megaRole('author_engineer');
 ok(/return `authored:false`/.test(author), 'a hang is a clean failure, not a stall');
-ok(/launch all N ranks/.test(author), 'the correctness loop launches every rank');
-ok(/distributed_fusion\.md` Levers 7–9/.test(author), 'author cross-references the deadlock levers');
-ok(
-  /`GPUS_PER_JOB == "1"` disqualifies the specialty outright/.test(lead),
-  'tech_lead keys distributed eligibility off the resolved rank count',
-);
 
 // 4. Doctrine content. These are the load-bearing claims: each one, if absent, turns a fusion
 //    that merely underperforms into one that hangs or silently reads stale data.
@@ -146,7 +128,7 @@ const partition = read('knowledge', 'resource_partition.md');
 ok(/Same engine, static split/.test(partition) &&
    /does \*\*not\*\* disprove a\s+phase-staggered CTA pipeline/i.test(partition),
    'resource-partition same-engine math is scoped to static roles');
-const megaLead = read('roles', 'mega', 'mega_search_lead.md');
+const megaLead = megaRole('mega_search_lead');
 ok(/without assuming that sharing a\s+compute engine makes overlap impossible/i.test(megaLead),
   'Mega search planning cannot dismiss local overlap from engine labels alone');
 

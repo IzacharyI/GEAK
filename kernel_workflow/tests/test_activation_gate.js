@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -28,8 +29,8 @@ function ok(cond, msg) {
 }
 
 const wf = require('./mega_source')();
-const eng = read('roles/mega/engineer.md');
-const verify = read('roles/mega/verify_engineer.md');
+const eng = megaRole('engineer');
+const verify = megaRole('verify_engineer');
 
 // --- 1. the engineer declares how its code turns on -------------------------
 console.log('\n# declared');

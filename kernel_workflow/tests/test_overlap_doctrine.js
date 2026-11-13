@@ -21,6 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 // Prose in these files is hard-wrapped, so a phrase spanning a line break would not match a
@@ -39,7 +40,7 @@ const fp = read('knowledge', 'fusion_preconditions.md');
 const tg = read('knowledge', 'tile_task_graph.md');
 const po = read('knowledge', 'pipe_occupancy.md');
 const amd = read('knowledge', 'amd_instinct.md');
-const bench = read('roles', 'mega', 'benchmark_engineer.md');
+const bench = flat(megaRole('benchmark_engineer'));
 
 console.log('\n# 1. per-stage timers are not summed once anything overlaps');
 {

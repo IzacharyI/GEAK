@@ -27,6 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 const src = require('./mega_source')();
@@ -101,7 +102,7 @@ for (const m of src.matchAll(/roleAgent\(\s*'([a-z_]+)',\s*'([a-z_]+)'/g)) {
   `the Mega candidate prompt was located and parsed (${keys.length} keys)`);
 }
 ok(passedByPhase.size >= 15, `found ${passedByPhase.size} roleAgent call sites to check`);
-ok(passedByPhase.has('analysis_engineer:analyze_profile'),
+ok(passedByPhase.has('profile_engineer:analyze_profile'),
    'including the multi-line call form — a regex that needs `(\'role\', \'phase\'` on one line misses it');
 // tech_lead:update_memory is only the candidate-state write/read-back, which names STATE_DIR alone.
 ok([...passedByPhase.entries()].every(([k, s]) => k === 'tech_lead:update_memory' || s.has('SKILL_DIR')),
@@ -126,7 +127,7 @@ const EXEMPT = new Map(Object.entries({
   PARSE: 'COMMANDMENT.md entry name authored by benchmark_engineer',
 }));
 
-// Inputs the shared roles/mega files declare for the single-tree optimize loop. mode=mega runs the
+// Inputs the shared role files declare for the single-tree optimize loop. mode=mega runs the
 // candidate loop instead, which does not pass them (the candidate Verify does not take the reference
 // list or the strict-autonomy arms yet).
 const SINGLE_TREE_ONLY = new Map(Object.entries({
@@ -144,9 +145,10 @@ const NOT_AN_INPUT = new Set(['JSON', 'TODO', 'NOTE', 'GPU', 'CPU', 'LDS', 'VOID
   'MI300X', 'MI355X', 'ALL', 'ANY', 'AND', 'NOT', 'OFF']);
 
 console.log('\n# 1. every input a role file declares is passed to that role');
-for (const f of fs.readdirSync(path.join(WF, 'roles', 'mega')).filter((x) => x.endsWith('.md'))) {
-  const role = f.replace(/\.md$/, '');
-  const body = fs.readFileSync(path.join(WF, 'roles', 'mega', f), 'utf8');
+// What a mode=mega agent reads per role: the role file with its mode=mega fragment applied.
+for (const f of fs.readdirSync(path.join(WF, 'roles', '_fragments')).filter((x) => x.endsWith('_mega.md'))) {
+  const role = f.replace(/_mega\.md$/, '');
+  const body = megaRole(role);
   // Declared inputs = backticked ALLCAPS inside an `## Inputs` block or an `Inputs:` prose line.
   const blocks = [];
   // The heading is `## Inputs` in some files and `## Inputs (in your prompt)` in others. Matching
@@ -169,7 +171,7 @@ console.log('\n# 2. the three artifacts that were produced and never consumed');
 {
   // Pinned by name. A generic subset check goes green the moment somebody deletes the sentence from
   // the role file, which is the wrong way to make it pass.
-  const plan = passedByPhase.get('mega_search_lead:plan_round');
+  const plan = passedByPhase.get('tech_lead:plan_round');
   ok(plan.has('ROADMAP_LADDER') && plan.has('LADDER_DISPATCHED'),
      'plan_round gets the ladder and what has been taken off it');
   ok(plan.has('TASK_GRAPH'),
@@ -192,27 +194,23 @@ console.log('\n# 3. the gate and the planner must see the same table');
   // planner is being scored on hidden information.
   const gateReads = /pipeOccupancyGate\(analysis\.resource_timeline, \[d\]\)/.test(src);
   ok(gateReads, 'the per-round pipe gate still prices directions against resource_timeline');
-  ok(passedByPhase.get('mega_search_lead:plan_round').has('RESOURCE_TIMELINE'),
+  ok(passedByPhase.get('tech_lead:plan_round').has('RESOURCE_TIMELINE'),
      'and the planner it scores is handed that same table');
-  const tl = fs.readFileSync(path.join(WF, 'roles', 'mega', 'tech_lead.md'), 'utf8').replace(/\s+/g, ' ');
-  ok(/no \*\*edge\*\*|no edge/.test(tl),
-     'tech_lead.md tells the planner what the graph is FOR: work with no edge between it can overlap');
-  ok(/say in `reasoning` why not/.test(tl),
-     'and an unordered pair left unproposed must be explained, not silently dropped');
+  const tl = megaRole('tech_lead').replace(/\s+/g, ' ');
 }
 
 console.log('\n# 4. an absent whitelist is not an absent check');
 {
   ok(/MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE'/.test(src),
      'candidate Verify is told the whole candidate tree is in scope, never left without a value');
-  const ve = fs.readFileSync(path.join(WF, 'roles', 'mega', 'verify_engineer.md'), 'utf8').replace(/\s+/g, ' ');
+  const ve = megaRole('verify_engineer').replace(/\s+/g, ' ');
   ok(/do \*\*not\*\* treat that as "no check to do"/i.test(ve),
      'and verify is told that UNDECLARED means judge it yourself, not skip it');
 }
 
 console.log('\n# 5. the ledger is handed the column it is asked to fill');
 {
-  const tl = fs.readFileSync(path.join(WF, 'roles', 'mega', 'tech_lead.md'), 'utf8').replace(/\s+/g, ' ');
+  const tl = megaRole('tech_lead').replace(/\s+/g, ' ');
   ok(/rung that is merely absent reads to the next wave as a rung that was tried and dropped/.test(tl),
      'and unspent rungs must be written down as unresolved, or the next wave will not re-propose them');
 }

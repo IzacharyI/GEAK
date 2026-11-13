@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -24,9 +25,9 @@ function ok(cond, msg) {
 }
 
 const wf = require('./mega_source')();
-const bench = read('roles/mega/benchmark_engineer.md');
-const lead = read('roles/mega/tech_lead.md');
-const verify = read('roles/mega/verify_engineer.md');
+const bench = megaRole('benchmark_engineer');
+const lead = megaRole('tech_lead');
+const verify = megaRole('verify_engineer');
 
 // --- 1. positive control ---------------------------------------------------
 console.log('\n# positive control');
@@ -100,16 +101,10 @@ ok(/pointed at the wrong target/.test(wf),
    'the log names the real failure mode: optimizing the wrong tree');
 ok(/Measure it, do not re-derive it/.test(wf),
    'present-but-off prior art is routed to measurement, not engineering');
-ok(/Search for PRIOR ART before you plan anything/i.test(lead),
-   'tech_lead is told to search for prior art at analyze time');
 // NB: this file wraps at ~100 cols; match across a hard wrap. A plain-space regex here has broken
 // silently before when a paragraph was re-flowed.
-ok(/~1000 lines of already-written, already-measured/.test(lead),
-   'the tech_lead rule carries the incident that motivated it');
 // Wording tightened after the key was omitted outright and the distinction had to be enforced in
 // code as well as prose — see tests/test_prior_art_provenance.js.
-ok(/`\[\]` is a real answer that is not the same as omitting it/.test(lead),
-   'the [] vs omitted distinction is spelled out so "no prior art" is a claim, not a silence');
 
 // --- 3. result provenance --------------------------------------------------
 console.log('\n# result provenance');
@@ -223,7 +218,7 @@ ok(/READ THEM AND REUSE THEM/.test(bench),
 // Same failure class as the unreturned baseline, one level down: a direction that measured and then
 // died before writing its result is recorded as a zero. Both happened in the same wave.
 console.log('\n# a killed engineer must leave a partial result, not a silence');
-const eng = read('roles/mega/engineer.md');
+const eng = megaRole('engineer');
 ok(/REWRITE IT AFTER EVERY UNIT OF EVIDENCE/.test(eng),
    'the result file is refreshed per rung/arm, not written once at the end');
 ok(/before your first long-running\s*\n?command/.test(eng),

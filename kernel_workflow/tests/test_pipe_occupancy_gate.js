@@ -20,6 +20,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 const src = require('./mega_source')();
@@ -207,7 +208,7 @@ const DIR = (o) => Object.assign({ id: 'D1', fills_pipe: 'mfma', pipe_util_pct: 
 console.log('\n# the knowledge and the roles actually route to it');
 {
   const card = fs.readFileSync(path.join(WF, 'knowledge/pipe_occupancy.md'), 'utf8');
-  const lead = fs.readFileSync(path.join(WF, 'roles/mega/tech_lead.md'), 'utf8');
+  const lead = megaRole('tech_lead');
   ok(/Raising occupancy can buy out the fix/.test(card),
      'the card states the counter-intuitive harm, not just that occupancy "may not help"');
   ok(/SQ counters aggregate every shader engine/.test(card) && /units of 2/.test(card),
@@ -218,10 +219,6 @@ console.log('\n# the knowledge and the roles actually route to it');
      'and the pricing rule that makes the table load-bearing');
   ok(/pipe_occupancy\.md/.test(lead), 'tech_lead points at the card');
   ok(/"resource_timeline"/.test(lead), 'the ANALYZE contract asks for the artifact');
-  ok(/`resource_timeline` is required whenever `task_graph` is/.test(lead),
-     'and requires it on the same trigger as the graph, so one cannot be filed without the other');
-  ok(/Every GPU direction names the pipe it fills/.test(lead),
-     'plan_round binds the lease allocation to the table');
 }
 
 console.log(

@@ -3,13 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 const src = require('./mega_source')();
-const searchLead = fs.readFileSync(
-  path.resolve(__dirname, '..', 'roles', 'mega', 'mega_search_lead.md'), 'utf8',
-);
-const engineer = fs.readFileSync(
-  path.resolve(__dirname, '..', 'roles', 'mega', 'engineer.md'), 'utf8',
-);
+const searchLead = megaRole('mega_search_lead');
+const engineer = megaRole('engineer');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -24,9 +21,8 @@ if (!fn) throw new Error('cannot lift megaExpertSkillsBlock');
 const functionText = fn[0].replace(/\n\nfunction analysisSkillBlock$/, '');
 const makeBlock = (enabled) => new Function(`
   const USE_EXPERT_SKILLS = ${enabled};
-  const MEGA_EXPERT_SKILL_ROLES = new Set([
-    'tech_lead','author_engineer','engineer','deep_engineer','mega_search_lead'
-  ]);
+  const MEGA_EXPERT_SKILL_ROLES = new Set(['tech_lead','author_engineer','engineer','deep_engineer']);
+  const megaPlanner = (role, phase) => role === 'tech_lead' && (phase === 'analyze' || phase === 'plan_round');
   const EXPERT_SKILLS_DIR = '/skills';
   const EXPERT_SKILL_ID = 'megamoe_ep_mega_fusion';
   const EXPERT_SKILL_DIR = '/skills/skills/megamoe_ep_mega_fusion';
@@ -56,19 +52,21 @@ const makeBlock = (enabled) => new Function(`
 
 console.log('\n# Expert Skills change knowledge, not Mega mode');
 const enabled = makeBlock(true);
-  ok(enabled('mega_search_lead', 'analyze').includes('planner_extension.yaml') &&
-   enabled('mega_search_lead', 'analyze').includes('canonical Planner Extension'),
+  ok(enabled('tech_lead', 'analyze').includes('planner_extension.yaml') &&
+   enabled('tech_lead', 'analyze').includes('canonical Planner Extension'),
   'Mega Analyze receives the canonical Skill extension');
-ok(enabled('mega_search_lead', 'plan_round').includes('planner_guide.md') &&
-   !enabled('mega_search_lead', 'plan_round').includes('skill.md once'),
+ok(enabled('tech_lead', 'plan_round').includes('planner_guide.md') &&
+   !enabled('tech_lead', 'plan_round').includes('skill.md once'),
   'round Planner receives only the compact routing guide');
+ok(enabled('tech_lead', 'update_memory') === '' && enabled('tech_lead', 'report') === '',
+  'only the planner phases of tech_lead receive the skill (update_memory/report did not before either)');
 ok(enabled('engineer', 'optimize').includes('author_guide.md') &&
    enabled('engineer', 'optimize').includes('independent Verify owns it'),
   'Author receives only the compact implementation guide');
 ok(/Candidate source remains search\/integrated/.test(enabled('engineer', 'optimize')),
   'skill injection cannot create a reproduction candidate source');
 const disabled = makeBlock(false);
-ok(disabled('mega_search_lead', 'plan_round') === '' && disabled('engineer', 'optimize') === '',
+ok(disabled('tech_lead', 'plan_round') === '' && disabled('engineer', 'optimize') === '',
   'with Expert Skills off the same roles receive no matched fusion knowledge');
 
 console.log('\n# no reproduction scheduler or reserved skill lane');
@@ -247,7 +245,7 @@ ok(/allowPartialFusion: ALLOW_PARTIAL_FUSION/.test(src) &&
    /launches >= 1 && launches <= targetLaunches/.test(src),
   'caller policy controls whether a measured partial launch reduction may score');
 ok(/\n  analysis = await agentT\(/.test(src) &&
-   /roleAgent\('mega_search_lead'/.test(src),
+   /roleAgent\('tech_lead',\s*'analyze'/.test(src),
   'Mega still performs its real Analyze phase');
 ok(/const MEGA_ANALYZE_SCHEMA = \{[\s\S]*'candidate_directions'[\s\S]*'task_graph'[\s\S]*'resource_timeline'/.test(src) &&
    /schema: MEGA_ANALYZE_SCHEMA,/.test(src),

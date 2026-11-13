@@ -14,7 +14,7 @@ Which sections to read:
 
 | role | sections |
 |---|---|
-| planner (`mega_search_lead`) | all |
+| planner (`tech_lead` analyze / plan_round) | all |
 | engineer | §1 – §5 |
 | verify / director | §1, §2, §5.4 – §5.6 |
 

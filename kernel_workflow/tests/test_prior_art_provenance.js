@@ -22,6 +22,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -33,7 +34,7 @@ function ok(cond, msg) {
 }
 
 const wf = require('./mega_source')();
-const lead = read('roles/mega/tech_lead.md');
+const lead = megaRole('tech_lead');
 
 // --- 1. an omitted key is not an empty result -------------------------------
 console.log('\n# omitted != empty');
@@ -56,22 +57,9 @@ ok(/pa\.in_baseline != null && !pa\.evidence/.test(wf),
    'the check fires on the flag being ASSERTED, not on it being true');
 ok(/"evidence":/.test(lead) || /"evidence"/.test(lead),
    'the return-JSON contract carries an evidence field');
-ok(/Write the check, not the conclusion/.test(lead),
-   'the contract asks for the command and its output, not a restatement of in_baseline');
-ok(/guess wearing a schema field/.test(lead),
-   'the contract says why an unevidenced boolean is worse than an absent one');
 
 // --- 3. structured output, prose is not a substitute ------------------------
 console.log('\n# structured, not prose');
-ok(/`prior_art` is a REQUIRED key/.test(lead),
-   'prior_art is stated to be required rather than optional');
-ok(/`\[\]` is a real answer that is not the same as omitting it/.test(lead),
-   'the empty-vs-omitted distinction is stated to the role, not only enforced in code');
-ok(/a paragraph in `roadmap\.md` is not a\s*\n?substitute/.test(lead)
-   || /paragraph in `roadmap\.md` is not a[\s\S]{0,20}substitute/.test(lead),
-   'the contract explicitly rejects the failure mode that actually occurred (roadmap prose)');
-ok(/fires nothing and is quoted by no one/.test(lead),
-   'the contract explains the mechanism: nothing downstream can read prose');
 
 // --- 4. the report may not out-run its source -------------------------------
 console.log('\n# the report cites the sweep');

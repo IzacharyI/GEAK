@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 let failures = 0;
@@ -28,7 +29,8 @@ console.log('\n# 1. every roleAgent() role name has a role file');
   for (const m of src.matchAll(/\broleAgent\(\s*['"]([a-z_]+)['"]/g)) roles.add(m[1]);
   ok(roles.size > 0, `found ${roles.size} distinct role name(s) passed to roleAgent()`);
   for (const r of [...roles].sort()) {
-    ok(fs.existsSync(path.join(WF, 'roles', 'mega', `${r}.md`)), `roles/${r}.md exists (used by roleAgent)`);
+    ok(fs.existsSync(path.join(WF, 'roles', `${r}.md`)), `roles/${r}.md exists (used by roleAgent)`);
+    ok(fs.existsSync(megaRole.fragment(r)), `roles/_fragments/${r}_mega.md exists (mode=mega reads it after the role)`);
   }
   ok(!roles.has('optimize_engineer'),
      'the never-existent `optimize_engineer` is not referenced (wave-13 regression)');
@@ -54,9 +56,8 @@ console.log('\n# 2. multi-phase roles document each phase they are called with')
   const multi = [...phasesOf].filter(([, ps]) => ps.size > 1).sort();
   ok(multi.length > 0, `${multi.length} role(s) are called with more than one phase`);
   for (const [r, ps] of multi) {
-    const f = path.join(WF, 'roles', 'mega', `${r}.md`);
-    if (!fs.existsSync(f)) continue;   // already failed above
-    const body = fs.readFileSync(f, 'utf8');
+    if (!fs.existsSync(path.join(WF, 'roles', `${r}.md`))) continue;   // already failed above
+    const body = megaRole(r);   // what a mode=mega agent reads: the role with its fragment applied
     for (const p of [...ps].sort()) {
       ok(new RegExp(`PHASE=${p}\\b`).test(body),
          `roles/${r}.md has an explicit PHASE=${p} section (role has ${ps.size} phases)`);
@@ -66,7 +67,7 @@ console.log('\n# 2. multi-phase roles document each phase they are called with')
 
 console.log('\n# 3. the recover contract still forbids what makes recovery meaningless');
 {
-  const eng = fs.readFileSync(path.join(WF, 'roles', 'mega', 'engineer.md'), 'utf8').replace(/\s+/g, ' ');
+  const eng = megaRole('engineer').replace(/\s+/g, ' ');
   ok(/PHASE=recover/.test(eng), 'engineer.md has an explicit PHASE=recover section');
   ok(/No GPU command\. No lease\. No re-measurement\./.test(eng),
      'recovery forbids GPU, lease and re-measurement in so many words');
@@ -78,7 +79,7 @@ console.log('\n# 3. the recover contract still forbids what makes recovery meani
   // The benchmark side of recovery has the same prohibitions and one extra: the positive control
   // already on disk is the control result. Re-running it is not a safer answer, it is a different
   // experiment silently substituted for the one the round is divided by.
-  const bench = fs.readFileSync(path.join(WF, 'roles', 'mega', 'benchmark_engineer.md'), 'utf8')
+  const bench = megaRole('benchmark_engineer')
     .replace(/\s+/g, ' ');
   ok(/Do not run any GPU command and do not take a lease/i.test(bench),
      'benchmark_engineer.md forbids GPU and lease in PHASE=recover');

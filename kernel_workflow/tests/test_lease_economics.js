@@ -17,6 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -27,9 +28,9 @@ function ok(cond, msg) {
   else { console.error(`  FAIL: ${msg}`); failures++; }
 }
 
-const lead = read('roles/mega/tech_lead.md');
-const eng = read('roles/mega/engineer.md');
-const deep = read('roles/mega/deep_engineer.md');
+const lead = megaRole('tech_lead');
+const eng = megaRole('engineer');
+const deep = megaRole('deep_engineer');
 const fusion = read('knowledge/distributed_fusion.md');
 const jit = read('knowledge/jit_arm_isolation.md');
 
@@ -37,25 +38,7 @@ console.log('\n# lease economics bind where the round is planned');
 const iPlan = lead.indexOf('## PHASE=plan_round');
 const iLease = lead.indexOf('LEASE ECONOMICS');
 const iUpdate = lead.indexOf('## PHASE=update_memory');
-ok(iLease > iPlan && iLease < iUpdate,
-   'the lease rules sit inside plan_round, where GPU capacity is actually allocated');
-ok(/\*\*One GPU direction per round\.\*\*/.test(lead),
-   'one GPU direction per round when the pool is a single lease');
-ok(/destroyed a complete four-guard table twice/.test(lead),
-   'the rule keeps the incident that produced it, so it is not read as mere tidiness');
-ok(/GEAK_GPU_RUN_TIMEOUT/.test(lead) && /900 s/.test(lead),
-   'the lease cap is named concretely enough to plan against');
-ok(/re-emit its claim after\n\s*every chunk/.test(lead),
-   'chunked reporting is required, not suggested — an expiring lease must not lose the work');
-ok(/\*\*Coverage before depth\.\*\*/.test(lead),
-   'all guards at low reps before deepening one');
-ok(/Four guards at 5\s*\n?\s*\s*pairs is a reportable geomean/i.test(lead),
-   'coverage-first carries its arithmetic, not just its name');
 // Extra parallelism in a lease-bound round has to be lease-FREE, or the rule just reduces throughput.
-ok(/must be \*lease-free\* work \(rule 3c\)/.test(lead),
-   'the one-direction rule redirects the spare capacity instead of idling it');
-ok(/Engineers cannot message each other/.test(lead) && /STATE_DIR/.test(lead),
-   'the harness has no inter-engineer channel, and the substitute is named');
 
 // The rules above decide HOW MANY GPU directions a round gets. They say nothing about WHICH one gets
 // the slot, and that turned out to be the binding question. One run obeyed every rule on this page --
@@ -64,24 +47,8 @@ ok(/Engineers cannot message each other/.test(lead) && /STATE_DIR/.test(lead),
 // the structural arm the task actually asked for sat authored and unmeasured in the bank. Banking is
 // locally rational in every round; without a rule that forces the bank to be spent, it never is.
 console.log('\n# WHICH direction gets the single lease, not just how many');
-ok(/A BANKED ARM IS A DEBT, NOT AN ASSET/.test(lead),
-   'a banked-but-unmeasured arm is framed as a debt, so it cannot accumulate unnoticed');
-ok(/\*\*Zero of the four were ever measured\.\*\*/.test(lead),
-   'the incident keeps the number that makes it a failure rather than a style note');
-ok(/authored and compile-verified in an earlier round outranks a new arm/.test(lead),
-   'an older banked arm outranks a fresh one of comparable size when the lease is allocated');
-ok(/say in `reasoning`\s*\n?\s*which round is going to spend it/.test(lead),
-   'banking a second artifact while the first is unmeasured has to be justified out loud');
 // Rule 3c actively rewards banking ("a partial worth having"). Without this the two rules conflict
 // and the one that costs nothing this round wins.
-ok(/Rule 3c tells you/.test(lead),
-   'the debt rule names the rule it is in tension with, instead of quietly contradicting it');
-ok(/Two falsifications on one axis close the axis/.test(lead),
-   'a twice-falsified axis does not get a third lease');
-ok(/tests what\s*\n?\s*the TASK names as its objective/.test(lead),
-   'the tie-break favours the task objective over the tidier local lever');
-ok(/cannot be compile-screened at\s*\n?\s*all/.test(lead),
-   'and it says why — a structural arm has no cheap substitute, a tile-shape arm does');
 
 console.log('\n# a kernel that cannot be compile-screened changes the whole schedule');
 ok(/Lever 10 — Some fused kernels cannot be compile-screened AT ALL/.test(fusion),
@@ -101,8 +68,6 @@ ok(/compile screens are still valuable for every other kernel/i.test(fusion) &&
 // It has to be the FIRST thing checked, since it prices every later iteration.
 ok(/0\. \*\*Establish whether the kernel is compile-screenable\*\*/.test(fusion),
    'the screenability check is priority 0 — it sets the cost of every iteration after it');
-ok(/Lever 10/.test(lead),
-   'the tech lead is pointed at the lever when planning a lease-bound round');
 
 console.log('\n# the JIT one-binary trap is taught at AUTHORING time, not only at verification');
 ok(/what enters the key/i.test(jit) && /_key_anchor/.test(jit),

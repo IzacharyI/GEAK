@@ -7,9 +7,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const src = require('./mega_source')();
-const role = fs.readFileSync(path.resolve(__dirname, '..', 'roles', 'mega', 'benchmark_engineer.md'), 'utf8');
+const role = megaRole('benchmark_engineer');
 
 let failures = 0;
 const ok = (value, message) => {
@@ -58,7 +59,7 @@ ok(/noPlan && !wipDir && !plan \? selectMegaSearchParent/.test(plan),
 // Resume: compacted rows that lost `source` must refuse the resume, not silently run fresh.
 ok(/megaRestoreRejected\.push\(/.test(src) && /MEGA RESUME REFUSED: setup returned invalid candidate_registry rows/.test(src),
   'a resume with rejected registry rows is refused');
-const director = fs.readFileSync(path.join(__dirname, '..', 'roles', 'mega', 'director.md'), 'utf8');
+const director = megaRole('director');
 ok(/every row MUST keep, copied exactly:[\s\S]{0,80}`id`, `source`, `base_id`, `tree`, `head`/.test(director),
   'director keeps lane identity fields when compacting registry rows');
 ok(/Analyze'[\s\S]{0,600}timeout_ms: 1800000/.test(src), 'Analyze guard is 30 min');

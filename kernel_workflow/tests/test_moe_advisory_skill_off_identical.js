@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const FILE = path.join(ROOT, 'kernel_workflow', 'kernel_lane.js');
@@ -76,7 +77,7 @@ if (blockSource) {
     ANALYSIS_SKILL_DIR: '/wf/knowledge/analysis_skills/moe_bottleneck',
   });
   ok(on('profile_engineer', 'baseline') === '', 'generic Profile remains analysis-free');
-  ok(on('analysis_engineer', 'analyze_profile').includes('checked-in'), 'ON injects deterministic analysis instructions');
+  ok(on('profile_engineer', 'analyze_profile').includes('checked-in'), 'ON injects deterministic analysis instructions');
   // The injected text is deliberately operator-agnostic (the skill system is generic, not MoE-
   // specific), so anchor on the contract it states — read analysis_result, gate on status/version —
   // not on any wording that names a particular workload.
@@ -97,7 +98,7 @@ ok(
   'dedicated analysis-result schema carries generic analysis_json',
 );
 ok(
-  /async function runProfileAnalysis[\s\S]*?analysis_engineer[\s\S]*?ANALYSIS_RESULT_SCHEMA/.test(src),
+  /async function runProfileAnalysis[\s\S]*?'profile_engineer',\s*'analyze_profile'[\s\S]*?ANALYSIS_RESULT_SCHEMA/.test(src),
   'workflow has a dedicated analysis-agent call and schema',
 );
 ok(
@@ -109,8 +110,11 @@ ok(
   'core workflow schema no longer hardcodes a MoE output field',
 );
 
+// What mode=mega reads for these roles, minus profile_engineer's PHASE=analyze_profile: that phase only
+// runs when the analysis skill is on (as in e2e's profiler.md).
 for (const roleFile of ['profile_engineer.md', 'tech_lead.md']) {
-  const text = fs.readFileSync(path.join(ROOT, 'kernel_workflow', 'roles', 'mega', roleFile), 'utf8');
+  const text = megaRole.sections(megaRole(roleFile))
+    .filter(([h]) => !/^## PHASE=analyze_profile\b/.test(h || '')).map(([, t]) => t).join('');
   ok(
     !text.includes('ANALYSIS_SKILL') && !text.includes('moe_analysis_json'),
     `${roleFile} stays free of always-on analysis-skill prompt text`,

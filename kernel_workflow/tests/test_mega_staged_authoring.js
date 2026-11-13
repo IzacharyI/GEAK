@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 const ROOT = path.resolve(__dirname, '..', '..');
 const wf = require('./mega_source')();
 const skill = fs.readFileSync(path.join(
@@ -17,15 +18,9 @@ const playbook = skill;
 const planner = fs.readFileSync(path.join(skillDir, 'planner_extension.yaml'), 'utf8');
 const contract = fs.readFileSync(path.join(skillDir, 'contract.yaml'), 'utf8');
 const validation = fs.readFileSync(path.join(skillDir, 'validation.yaml'), 'utf8');
-const engineer = fs.readFileSync(path.join(
-  ROOT, 'kernel_workflow', 'roles', 'mega', 'engineer.md',
-), 'utf8');
-const verifier = fs.readFileSync(path.join(
-  ROOT, 'kernel_workflow', 'roles', 'mega', 'verify_engineer.md',
-), 'utf8');
-const director = fs.readFileSync(path.join(
-  ROOT, 'kernel_workflow', 'roles', 'mega', 'director.md',
-), 'utf8');
+const engineer = megaRole('engineer');
+const verifier = megaRole('verify_engineer');
+const director = megaRole('director');
 
 let failures = 0;
 const ok = (value, message) => {

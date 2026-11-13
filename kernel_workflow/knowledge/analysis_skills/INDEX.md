@@ -1,6 +1,6 @@
 # Analysis skills — index (kernel_workflow)
 
-Pluggable **profile-analysis** skills for Kernel Workflow. A dedicated `analysis_engineer` runs at
+Pluggable **profile-analysis** skills for Kernel Workflow. profile_engineer `PHASE=analyze_profile` runs at
 most ONE of these after `profile_engineer` completes its own bottleneck classification
 (compute/memory/latency/lds/balanced/overhead), to
 enrich that classification with operator-specific structure the generic labels cannot express — e.g.

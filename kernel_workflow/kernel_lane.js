@@ -7,10 +7,10 @@ export const meta = {
     { title: 'Author', detail: 'author_engineer writes a fresh optimize-loop seed (only when mode=author); speedup denominator stays the frozen online kernel' },
     { title: 'Analyze', detail: 'tech_lead analyzes kernel + writes roadmap' },
     { title: 'Benchmark', detail: 'benchmark_engineer builds the COMMANDMENT + baseline' },
-    { title: 'Profile', detail: 'profile_engineer classifies the bottleneck; mode=mega: optional analysis_engineer validates the evidence' },
+    { title: 'Profile', detail: 'profile_engineer classifies the bottleneck; mode=mega: optional MoE analysis (PHASE=analyze_profile) validates the evidence' },
     { title: 'Research', detail: 'OPT-IN (args.dra_enabled): researcher fans research questions out in parallel via native WebSearch/WebFetch, writes a ranked-directions brief the planner seeds from' },
     { title: 'WarmStart', detail: 'search the experience KB by canonical id (geak:kernel:*) — the shared service when credentialed, else the on-disk store, brought level with kb_artifacts/ first — for the best curated patch per optimization direction for this (kernel,language,gfx), validate each through the verify gate, adopt the first that passes [warm_start!=off]' },
-    { title: 'Optimize', detail: 'budget loop: tech_lead plans, specialist OR deep_explore engineers optimize, reprofile; mode=mega: mega_search_lead picks one whole-kernel candidate per round, an engineer authors it in its own tree' },
+    { title: 'Optimize', detail: 'budget loop: tech_lead plans, specialist OR deep_explore engineers optimize, reprofile; mode=mega: tech_lead picks one whole-kernel candidate per round, an engineer authors it in its own tree' },
     { title: 'Verify', detail: 'each candidate patch independently re-benchmarked' },
     { title: 'Merge', detail: 'integrator combines the round winners' },
     { title: 'Report', detail: 'tech_lead writes the final report + patch' },
@@ -925,9 +925,14 @@ function multiGpuBlock(role) {
     `JIT build. Leases on the same GPUs serialize, so put the arms you compare into one run.`;
 }
 
+// mode=mega reads the shared role file, then its mode=mega fragment, whose sections replace the
+// same-named sections of the role file.
+const megaRoleFiles = (file) => `${WORKFLOW_DIR}/roles/${file}, then ` +
+  `${WORKFLOW_DIR}/roles/_fragments/${file.replace(/\.md$/, '')}_mega.md (mode=mega: each section of the ` +
+  `second file replaces the section with the same heading in the first)`;
 function roleAgent(role, phase, intro, inputs) {
   const base = `You are the ${role}. PHASE=${phase}.
-First Read ${WORKFLOW_DIR}/roles/${MEGA ? 'mega/' : ''}${role}.md and follow its instructions for PHASE=${phase}.
+First Read ${MEGA ? megaRoleFiles(`${role}.md`) : `${WORKFLOW_DIR}/roles/${role}.md`} and follow its instructions for PHASE=${phase}.
 Read any knowledge files it points you to under ${WORKFLOW_DIR}/knowledge/.
 Do all filesystem/shell work yourself (Bash/Read/Write). ${intro}
 
@@ -1175,9 +1180,9 @@ const REQUIRED_ACCURACY_CASES = Object.freeze(argList(A.required_accuracy_cases 
 const FORBIDDEN_CANDIDATE_TREE_DIGESTS = new Set(argList(
   A.forbidden_candidate_tree_digests || [],
 ).filter(validSha256));
-const MEGA_EXPERT_SKILL_ROLES = new Set([
-  'tech_lead', 'author_engineer', 'engineer', 'deep_engineer', 'mega_search_lead',
-]);
+const MEGA_EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
+// In mode=mega the planner is tech_lead's analyze / plan_round.
+const megaPlanner = (role, phase) => role === 'tech_lead' && (phase === 'analyze' || phase === 'plan_round');
 
 const CAPABILITY_EVAL = String(A.capability_eval ?? 'false') === 'true';
 const STRICT_AUTONOMY = String(A.strict_autonomy != null ? A.strict_autonomy : 'false') === 'true';
@@ -1320,7 +1325,7 @@ if (MEGA && CAPABILITY_EVAL) {
 }
 
 // Optional profile-analysis skill (see knowledge/analysis_skills/INDEX.md): after Profile, an
-// analysis_engineer adds operator-specific structure (e.g. MoE route imbalance, stage time-share).
+// profile_engineer PHASE=analyze_profile adds operator-specific structure (e.g. MoE route imbalance, stage time-share).
 // Analysis only, never directions. Default none: no inputs and no prompt text are added.
 const ANALYSIS_SKILL = String(A.analysis_skill != null ? A.analysis_skill : 'none').trim();
 const ANALYSIS_SKILL_ON = !!ANALYSIS_SKILL && ANALYSIS_SKILL !== 'none' && ANALYSIS_SKILL !== 'false';
@@ -2419,8 +2424,8 @@ function megaTopologyVerdict(direction, planIr, allowPartialFusion = true) {
 function megaExpertSkillsBlock(role, phase) {
   if (!USE_EXPERT_SKILLS || !MEGA_EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
   if (EXPERT_SKILL_DIR) {
-    if (!['mega_search_lead', 'engineer', 'deep_engineer'].includes(role)) return '';
-    const guide = role === 'mega_search_lead'
+    if (!megaPlanner(role, phase) && !['engineer', 'deep_engineer'].includes(role)) return '';
+    const guide = megaPlanner(role, phase)
       ? (phase === 'analyze' ? EXPERT_SKILL_PLANNER_EXTENSION_FILE
         : EXPERT_SKILL_PLANNER_GUIDE_FILE)
       : EXPERT_SKILL_AUTHOR_GUIDE_FILE;
@@ -2429,7 +2434,7 @@ function megaExpertSkillsBlock(role, phase) {
         ? 'EXPERIMENTAL TRANSFER, EXPLICIT PIN' : 'VALIDATED PRIOR'
     }\n` +
       `Read ${guide}. ${
-        role === 'mega_search_lead' && phase === 'analyze'
+        megaPlanner(role, phase) && phase === 'analyze'
           ? 'Use its canonical Planner Extension to derive MegaPlanIR.'
           : 'Do not read or restate the full Skill contract; independent Verify owns it.'
       } ` +
@@ -2439,7 +2444,7 @@ function megaExpertSkillsBlock(role, phase) {
       `validation_status=${
         EXPERT_SKILL_VALIDATION_STATUS || 'legacy_validated'}, usage=${
         EXPERT_SKILL_USAGE || 'legacy'}. Candidate source remains search/integrated.` +
-      (role === 'mega_search_lead' && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
+      (megaPlanner(role, phase) && REQUIRE_EXPERT_SKILL_BUNDLE_IDENTITY
         ? ` Before using the Skill, run python ${EXPERT_SKILL_BUNDLE_TOOL} ${EXPERT_SKILL_ID} ` +
           `--emit-bundle and require bundle_sha256=${EXPERT_SKILL_BUNDLE_SHA256}, ` +
           `planner_extension_sha256=${EXPERT_SKILL_PLANNER_EXTENSION_SHA256}, and ` +
@@ -2448,7 +2453,7 @@ function megaExpertSkillsBlock(role, phase) {
         : '');
   }
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
-    `Also Read ${WORKFLOW_DIR}/roles/mega/_fragments/expert_skills.md and follow it: query ` +
+    `Also Read ${WORKFLOW_DIR}/roles/_fragments/expert_skills.md and follow it: query ` +
     `${EXPERT_SKILLS_DIR}/index.yaml for skills whose \`match\` fits this op (operator/dtype/regime, and ` +
     `from_backend->to_backend for migration skills) and whose validation_status is \`validated\` and ` +
     `auto_apply is true, and ` +
@@ -2466,7 +2471,7 @@ function megaExpertSkillsBlock(role, phase) {
 
 function analysisSkillBlock(role, phase) {
   if (!ANALYSIS_SKILL_ON) return '';
-  if (role === 'analysis_engineer') {
+  if (role === 'profile_engineer' && phase === 'analyze_profile') {
     return `\n\n## Profile-analysis skill (ANALYSIS ONLY — explicitly enabled this run)\n` +
       `Read ${ANALYSIS_SKILL_INPUTS.ANALYSIS_SKILL_DIR}/SKILL.md, execute only its checked-in ` +
       `builder/runner/analyzer/validator chain, and return the validated artifact contract. ` +
@@ -2481,7 +2486,6 @@ function analysisSkillBlock(role, phase) {
       `high/medium-confidence evidence alongside generic profile/per-case data. A degraded or unavailable ` +
       `analysis contributes nothing; continue from the generic Profile result.`;
   }
-  if (role === 'mega_search_lead' && phase === 'plan_round') return analysisSkillBlock('tech_lead', 'plan_round');
   return '';
 }
 
@@ -2526,7 +2530,7 @@ async function runProfileAnalysis(profileSummary, round, label) {
   if (!ANALYSIS_SKILL_ON || !profileSummary) return null;
   const result = await agentT(
     roleAgent(
-      'analysis_engineer',
+      'profile_engineer',
       'analyze_profile',
       'Execute and validate the optional Step-2 analysis pipeline.',
       {
@@ -4522,7 +4526,7 @@ function bindMegaDirectionToWip(currentRound, direction) {
 async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
   const plan = await agentT(
-    roleAgent('mega_search_lead', 'plan_round',
+    roleAgent('tech_lead', 'plan_round',
       'Choose one whole-kernel candidate direction. Expert knowledge guides the common candidate lifecycle; it never creates a reserved lane.', {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
@@ -4909,7 +4913,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       `Before any long-running command, atomically write ${laneManifest} with candidate_id/source/` +
       `base_candidate_id/tree/attempt_id so a ` +
       `timed-out first attempt is discoverable on resume. ` +
-      `If it exists, continue from its HEAD; never recreate it. Read ${WORKFLOW_DIR}/roles/mega/${roleFile}. ` +
+      `If it exists, continue from its HEAD; never recreate it. Read ${megaRoleFiles(roleFile)}. ` +
       `Before every candidate Python or torchrun command, export ` +
       `PYTHONPATH="${tree}\${PYTHONPATH:+:\$PYTHONPATH}" and fail closed unless both ` +
       `every module in ${JSON.stringify(CANDIDATE_IMPORT_MODULES)} resolves under ${tree}. ` +
@@ -5575,7 +5579,7 @@ async function megaAfterSetup() {
 
 async function megaAnalyze() {
   analysis = await agentT(
-    roleAgent('mega_search_lead',
+    roleAgent('tech_lead',
       'analyze', 'Analyze the kernel and write the roadmap.', {
       WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
       KERNEL_KNOWLEDGE_DIR: '',
@@ -5631,7 +5635,7 @@ async function megaAnalyze() {
       log(d.reason);
       // Identical to the call above except that RESUME_INPUT is absent — that omission IS the fix.
       const full = await agentT(
-        roleAgent('mega_search_lead',
+        roleAgent('tech_lead',
           'analyze', 'Analyze the kernel and write the roadmap.', {
           WORKSPACE: CANONICAL, EVAL_DIR, TASK, SKILL_DIR: WORKFLOW_DIR,
           KERNEL_KNOWLEDGE_DIR: '',
@@ -6121,7 +6125,7 @@ async function megaProfile() {
     } };
   }
   const baselineAnalysisResult = await runProfileAnalysis(
-    profileSummary, 0, 'analysis_engineer:baseline');
+    profileSummary, 0, 'analyze_profile:baseline');
   if (profileSummary) {
     profileSummary = {
       ...profileSummary,

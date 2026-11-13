@@ -23,6 +23,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const megaRole = require('./mega_roles');
 
 const WF = path.resolve(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(WF, p), 'utf8');
@@ -33,22 +34,22 @@ const ok = (cond, msg) => {
   else { console.error('  FAIL:', msg); failures++; }
 };
 
+// mode=mega never merges, so integrator is not on the list.
 const SITES = [
-  ['roles/mega/integrator.md', 'integrator merge workspace'],
-  ['roles/mega/verify_engineer.md', 'verify workspace'],
-  ['roles/mega/director.md', 'director baseline/workspace + validation_workspace'],
+  ['verify_engineer', 'verify workspace'],
+  ['director', 'director baseline/workspace + validation_workspace'],
 ];
 
 console.log('\n# 1. .git is still excluded everywhere — the containment half must not regress');
 for (const [f, what] of SITES) {
-  const s = read(f);
+  const s = megaRole(f);
   ok(/--exclude=['"]?\.?\/?\.git['"]?/.test(s) && /--exclude='\*\/\.git'/.test(s),
      `${what}: the tar-copy still excludes .git (source history stays unreadable)`);
 }
 
 console.log('\n# 2. ...and every one of them re-creates a repo, so HEAD is the baseline');
 for (const [f, what] of SITES) {
-  const s = read(f);
+  const s = megaRole(f);
   ok(/git init -q/.test(s), `${what}: runs \`git init\` in the fresh copy`);
   ok(/git -c user\.email=\S+ -c user\.name=\S+ commit -q -m/.test(s),
      `${what}: and commits, with an explicit identity (the box may have no global git user)`);
@@ -64,12 +65,11 @@ console.log('\n# 3. patches are staged before diffing, or created files vanish f
   // untracked, so it is absent from the patch; the patch then applies cleanly and fails at import,
   // which reads as a flaky candidate rather than a broken patch.
   const producers = [
-    ['roles/mega/engineer.md', 'engineer step 5'],
-    ['roles/mega/deep_engineer.md', 'deep_engineer step 3'],
-    ['roles/mega/integrator.md', 'integrator output'],
+    ['engineer', 'engineer step 5'],
+    ['deep_engineer', 'deep_engineer step 3'],
   ];
   for (const [f, what] of producers) {
-    const s = read(f);
+    const s = megaRole(f);
     ok(/git add -A && git diff HEAD/.test(s), `${what}: stages then diffs against HEAD`);
     ok(!/(?<!add -A && )git diff >/.test(s),
        `${what}: no bare \`git diff >\` survives anywhere in the file`);
@@ -78,7 +78,7 @@ console.log('\n# 3. patches are staged before diffing, or created files vanish f
 
 console.log('\n# 4. the reason is written down where the agent reads it, not only here');
 {
-  const eng = read('roles/mega/engineer.md').replace(/\s+/g, ' ');
+  const eng = megaRole('engineer').replace(/\s+/g, ' ');
   ok(/fresh one-commit git repo/i.test(eng),
      'engineer.md tells the engineer its workspace HEAD is the baseline it started from');
   ok(/omits files you CREATED/i.test(eng),
