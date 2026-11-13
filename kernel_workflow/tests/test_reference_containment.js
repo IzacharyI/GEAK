@@ -45,7 +45,12 @@ console.log('\n# it fires before the run costs anything');
 // The startup check is in the mega args section, which runs before the lane's Setup phase.
 const lane = require('./mega_source').full();
 const iCheck = lane.indexOf('REFERENCE NOT CONTAINED');
-const iSetup = lane.indexOf("phase('Setup')");
+// The director's Setup; only skill:pin (a mega skill named without digests) may run an agent earlier.
+const iSetup = lane.indexOf("phase('Setup');\nconst setup = await agentT(");
+const megaBeforeCheck = wf.slice(0, wf.indexOf('REFERENCE NOT CONTAINED'));
+const earlyAgents = megaBeforeCheck.match(/await agent\(/g) || [];
+ok(earlyAgents.length === 1 && megaBeforeCheck.includes("label: 'skill:pin'"),
+   'before the check, the only agent is skill:pin', earlyAgents.length);
 const iLoop = lane.indexOf('while (!skipLoop && dispatched < BUDGET');
 ok(iCheck > 0 && iSetup > iCheck, 'containment is asserted before Setup');
 ok(iCheck > 0 && iLoop > iCheck, 'containment is asserted before the optimize loop');
