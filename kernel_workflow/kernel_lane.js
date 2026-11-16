@@ -1924,6 +1924,12 @@ Return ONLY the structured JSON the role file specifies (a StructuredOutput tool
 // end the run early return {exit: result}.
 // ===========================================================================
 
+// Schema shorthands for the mode=mega schemas below.
+const STR = { type: 'string' }, NUM = { type: 'number' }, BOOL = { type: 'boolean' };
+const STR_N = { type: ['string', 'null'] }, NUM_N = { type: ['number', 'null'] };
+const STRS = { type: 'array', items: STR }, ANYOBJ = { type: 'object', additionalProperties: true };
+const ANYOBJS = { type: 'array', items: ANYOBJ };
+
 // ---------------------------------------------------------------------------
 // mode=mega args (parsed for every mode; checked only under MEGA)
 // ---------------------------------------------------------------------------
@@ -2044,7 +2050,7 @@ if (MEGA && PINNED_MEGA_SKILL && SKILL_PIN_KEYS.some((k) => !A[`expert_skill_${k
     `It prints one JSON object. Return its ${SKILL_PIN_KEYS.join(', ')} values verbatim. If the ` +
     `command fails, return error with its last output lines. Do nothing else.`,
     { phase: 'Setup', label: 'skill:pin', schema: { type: 'object', additionalProperties: true,
-      properties: Object.fromEntries([...SKILL_PIN_KEYS, 'error'].map((k) => [k, { type: 'string' }])),
+      properties: Object.fromEntries([...SKILL_PIN_KEYS, 'error'].map((k) => [k, STR])),
       required: [] } })) || {};
   if (SKILL_PIN.error || !SKILL_PIN.bundle_sha256) {
     throw new Error(`expert skill ${EXPERT_SKILL_ID}: --emit-bundle failed: ${SKILL_PIN.error || 'no output'}`);
@@ -2234,56 +2240,56 @@ const MEGA_RESUME_STATE = !!STATE_DIR &&
 // Three-valued so that "could not read the pool" never collapses into "free".
 const POOL_SCHEMA = obj({
   verdict: { type: 'string', enum: ['free', 'occupied', 'unknown'] },
-  cards_total: { type: 'number' },
-  cards_free: { type: 'number' },
-  min_free_gib: { type: 'number' },
-  foreign_pids: { type: 'array', items: { type: 'string' } },
-  note: { type: 'string' },
+  cards_total: NUM,
+  cards_free: NUM,
+  min_free_gib: NUM,
+  foreign_pids: STRS,
+  note: STR,
 }, ['verdict']);
 
 const MEGA_SETUP_SCHEMA = obj({
-  eval_dir: { type: 'string' }, workspace: { type: 'string' }, baseline_dir: { type: 'string' },
-  kernel_name: { type: 'string' }, source_files: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
+  eval_dir: STR, workspace: STR, baseline_dir: STR,
+  kernel_name: STR, source_files: STRS, notes: STR,
   // Frozen baseline: timing and parity must use the real online kernel (baseline_src/ or
   // meta.baseline_callable), never kernel_src/. The run aborts if neither is confirmed.
-  baseline_frozen: { type: 'boolean' }, baseline_callable: { type: 'string' },
-  mega_workspace_from_original: { type: 'boolean' },
-  mega_candidate_state_checked: { type: 'boolean' },
+  baseline_frozen: BOOL, baseline_callable: STR,
+  mega_workspace_from_original: BOOL,
+  mega_candidate_state_checked: BOOL,
   // Resume only: the director fills this when STATE_DIR holds a prior best, so a continued wave keeps
   // its cumulative speedup and history. Absent on a fresh run.
-  resumed: { type: 'boolean' },
-  workflow_revision: { type: 'string' },
-  workflow_clean: { type: 'boolean' },
+  resumed: BOOL,
+  workflow_revision: STR,
+  workflow_clean: BOOL,
   prior_state: obj({
-    cumulative: { type: 'number' }, insights: { type: 'array', items: { type: 'string' } },
+    cumulative: NUM, insights: STRS,
     // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
   // out of `roadmap_rung`.
   ledger: { type: 'array', items: obj({
-    id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
+    id: STR, title: STR, specialty: STR,
     // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by result".
     verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
-    roadmap_rung: { type: ['string', 'null'] },
-    expected: { type: 'number' }, actual: { type: 'number' },
-    lesson: { type: 'string' },
-    first_round: { type: 'number' }, last_round: { type: 'number' },
+    roadmap_rung: STR_N,
+    expected: NUM, actual: NUM,
+    lesson: STR,
+    first_round: NUM, last_round: NUM,
   }, ['id', 'verdict']) },
-    bottleneck_now: { type: 'string' }, best_per_case: perCase,
+    bottleneck_now: STR, best_per_case: perCase,
     // Shelf entries are keyed by id, aged by base_round and offered by files; an entry without files is
     // marked footprint=unknown and never offered.
     shelf: { type: 'array', items: obj({
-      id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
-      geomean: { type: 'number' }, patch: { type: 'string' },
-      files: { type: 'array', items: { type: 'string' } },
+      id: STR, title: STR, specialty: STR,
+      geomean: NUM, patch: STR,
+      files: STRS,
       // Fusion chain id (its terminal rung), carried across waves so a chain's producer commit does not
       // age its consumer half off the shelf. Empty for a standalone optimisation.
-      chain_id: { type: 'string' },
+      chain_id: STR,
       footprint: { type: 'string', enum: ['known', 'unknown'] },
-      base_round: { type: 'number' }, shelved_round: { type: 'number' },
-      absorbed: { type: 'boolean' },
+      base_round: NUM, shelved_round: NUM,
+      absorbed: BOOL,
     }, ['id', 'geomean']) },
-    candidate_registry: { type: 'array', items: { type: 'object', additionalProperties: true } },
-    measurement_calibration: { type: 'object', additionalProperties: true },
-    state_sequence: { type: 'number' },
+    candidate_registry: ANYOBJS,
+    measurement_calibration: ANYOBJ,
+    state_sequence: NUM,
     // round -> files CANONICAL took on that round. Keys are round numbers as strings.
     absorbed_files: { type: 'object' },
   }, []),
@@ -2291,9 +2297,9 @@ const MEGA_SETUP_SCHEMA = obj({
 
 // mode=mega only.
 const MEGA_CANDIDATE_SCHEMA = obj({
-  candidate_id: { type: 'string' },
+  candidate_id: STR,
   candidate_source: { type: 'string', enum: ['search', 'integrated'] },
-  base_candidate_id: { type: 'string' },
+  base_candidate_id: STR,
   candidate_status: {
     type: 'string',
     enum: ['authoring', 'runnable', 'scored', 'finalist', 'rejected'],
@@ -2303,91 +2309,91 @@ const MEGA_CANDIDATE_SCHEMA = obj({
     type: 'boolean',
     description: 'True when this turn finalized its committed artifact, including a GPU-free static checkpoint; hardware gates are separate fields.',
   },
-  checkpoint_complete: { type: 'boolean' },
-  structural_verified: { type: 'boolean' },
-  runtime_verified: { type: 'boolean' },
-  score_complete: { type: 'boolean' },
-  verification_status: { type: 'string' },
-  gpu_executed: { type: 'boolean' },
-  structural_report: { type: 'string' },
-  structural_skill_id: { type: 'string' },
-  structural_candidate_head: { type: 'string' },
-  structural_candidate_tree_digest: { type: 'string' },
-  structural_skill_bundle_sha256: { type: 'string' },
-  structural_planner_extension_sha256: { type: 'string' },
-  structural_contract_revision: { type: 'string' },
-  structural_contract_sha256: { type: 'string' },
+  checkpoint_complete: BOOL,
+  structural_verified: BOOL,
+  runtime_verified: BOOL,
+  score_complete: BOOL,
+  verification_status: STR,
+  gpu_executed: BOOL,
+  structural_report: STR,
+  structural_skill_id: STR,
+  structural_candidate_head: STR,
+  structural_candidate_tree_digest: STR,
+  structural_skill_bundle_sha256: STR,
+  structural_planner_extension_sha256: STR,
+  structural_contract_revision: STR,
+  structural_contract_sha256: STR,
   contract_failures: { type: 'array', items: obj({
-    id: { type: 'string' }, category: { type: 'string' },
-    severity: { type: 'string' },
-    messages: { type: 'array', items: { type: 'string' } },
+    id: STR, category: STR,
+    severity: STR,
+    messages: STRS,
   }, ['id', 'category', 'severity', 'messages']) },
-  failed_required_checks: { type: 'array', items: { type: 'string' } },
-  plan_consistency_errors: { type: 'array', items: { type: 'string' } },
-  input_errors: { type: 'array', items: { type: 'string' } },
-  provenance_attestation_valid: { type: 'boolean' },
-  attempt_id: { type: 'string' },
-  evidence_manifest: { type: 'string' },
-  target_guard: { type: 'string' },
-  correctness: { type: 'string' },
-  build: { type: 'boolean' },
-  tree: { type: 'string' },
-  head: { type: 'string' },
-  patch_file: { type: 'string' },
-  changed_files: { type: 'array', items: { type: 'string' } },
+  failed_required_checks: STRS,
+  plan_consistency_errors: STRS,
+  input_errors: STRS,
+  provenance_attestation_valid: BOOL,
+  attempt_id: STR,
+  evidence_manifest: STR,
+  target_guard: STR,
+  correctness: STR,
+  build: BOOL,
+  tree: STR,
+  head: STR,
+  patch_file: STR,
+  changed_files: STRS,
   topology: obj({}, []),
-  absolute_score: { type: 'number' },
+  absolute_score: NUM,
   per_case: perCase,
-  activation_on_hardware: { type: 'string' },
-  path_marker: { type: 'string' },
-  launches: { type: 'number' },
-  liveness_replays: { type: 'number' },
-  graph_safe: { type: 'string' },
-  topology_sig: { type: 'string' },
-  provenance: { type: 'string' },
-  next_blocker: { type: 'string' },
-  notes: { type: 'string' },
+  activation_on_hardware: STR,
+  path_marker: STR,
+  launches: NUM,
+  liveness_replays: NUM,
+  graph_safe: STR,
+  topology_sig: STR,
+  provenance: STR,
+  next_blocker: STR,
+  notes: STR,
   activation: obj({
-    mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
-    path_marker: { type: 'string' }, marker_how: { type: 'string' },
+    mode: STR, switch_name: STR, switch_value: STR,
+    path_marker: STR, marker_how: STR,
     switches: {
       type: 'array',
-      items: obj({ switch_name: { type: 'string' }, switch_value: { type: 'string' } }, []),
+      items: obj({ switch_name: STR, switch_value: STR }, []),
     },
   }, []),
 }, ['candidate_id', 'candidate_source', 'candidate_status', 'claim_complete',
   'contract_failures']);
 
 const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
-  candidate_id: { type: 'string' },
-  candidate_head: { type: 'string' },
-  candidate_tree_digest: { type: 'string' },
-  skill_id: { type: 'string' },
-  skill_bundle_sha256: { type: 'string' },
-  planner_extension_sha256: { type: 'string' },
-  claim_complete: { type: 'boolean' },
-  report_path: { type: 'string' },
-  structural_compatible: { type: 'boolean' },
-  independent_structure_pass: { type: 'boolean' },
-  capability_eligible: { type: 'boolean' },
-  reference_copy_detected: { type: 'boolean' },
-  reference_copy_suspected: { type: 'boolean' },
-  provenance_status: { type: 'string' },
-  contract_revision: { type: 'string' },
-  contract_sha256: { type: 'string' },
+  candidate_id: STR,
+  candidate_head: STR,
+  candidate_tree_digest: STR,
+  skill_id: STR,
+  skill_bundle_sha256: STR,
+  planner_extension_sha256: STR,
+  claim_complete: BOOL,
+  report_path: STR,
+  structural_compatible: BOOL,
+  independent_structure_pass: BOOL,
+  capability_eligible: BOOL,
+  reference_copy_detected: BOOL,
+  reference_copy_suspected: BOOL,
+  provenance_status: STR,
+  contract_revision: STR,
+  contract_sha256: STR,
   contract_failures: { type: 'array', items: obj({
-    id: { type: 'string' }, category: { type: 'string' },
-    severity: { type: 'string' },
-    messages: { type: 'array', items: { type: 'string' } },
+    id: STR, category: STR,
+    severity: STR,
+    messages: STRS,
   }, ['id', 'category', 'severity', 'messages']) },
-  plan_consistent: { type: 'boolean' },
-  semantic_features_passed: { type: 'number' },
-  semantic_features_total: { type: 'number' },
-  hardware_verified: { type: 'boolean' },
-  accuracy_verified: { type: 'boolean' },
-  performance_verified: { type: 'boolean' },
-  next_blocker: { type: 'string' },
-  notes: { type: 'string' },
+  plan_consistent: BOOL,
+  semantic_features_passed: NUM,
+  semantic_features_total: NUM,
+  hardware_verified: BOOL,
+  accuracy_verified: BOOL,
+  performance_verified: BOOL,
+  next_blocker: STR,
+  notes: STR,
 }, [
   'candidate_id', 'candidate_head', 'claim_complete', 'structural_compatible',
   'candidate_tree_digest', 'skill_id', 'skill_bundle_sha256',
@@ -2401,47 +2407,47 @@ const EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA = obj({
 
 // Operator-neutral whole-kernel topology.
 const MEGA_TOPOLOGY_SCHEMA = obj({
-  launch_count: { type: 'number' },
-  included_regions: { type: 'array', items: { type: 'string' } },
-  included_queues: { type: 'array', items: { type: 'string' } },
-  capabilities: { type: 'array', items: { type: 'string' } },
-  require_overlap: { type: 'boolean' },
-  parameters: { type: 'object', additionalProperties: true },
-  notes: { type: 'string' },
+  launch_count: NUM,
+  included_regions: STRS,
+  included_queues: STRS,
+  capabilities: STRS,
+  require_overlap: BOOL,
+  parameters: ANYOBJ,
+  notes: STR,
 });
 
 const MEGA_ANALYZE_BASE_SCHEMA = obj({
-  kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
-  modifiable_files: { type: 'array', items: { type: 'string' } },
-  bottleneck_guess: { type: 'string' }, roadmap_summary: { type: 'string' },
+  kernel_type: STR, kernel_file: STR, entry_point: STR,
+  modifiable_files: STRS,
+  bottleneck_guess: STR, roadmap_summary: STR,
   // The ladder: Analyze's ranked rungs and what each is conditional on.
   candidate_directions: { type: 'array', items: obj({
-    id: { type: 'string' },              // short, stable, quotable: D0, D1, ...
-    title: { type: 'string' },
-    candidate_id: { type: 'string' },
+    id: STR,              // short, stable, quotable: D0, D1, ...
+    title: STR,
+    candidate_id: STR,
     candidate_source: { type: 'string', enum: ['search', 'integrated'] },
-    base_candidate_id: { type: 'string' },
-    specialty: { type: 'string' },
-    focus_files: { type: 'array', items: { type: 'string' } },
-    prompt: { type: 'string' },
-    rationale: { type: 'string' },
-    rung_deviation: { type: 'string' },
-    expected_speedup: { type: 'number' },
-    gated_on: { type: 'array', items: { type: 'string' } },
-    mandatory_arms: { type: 'array', items: { type: 'string' } },
-    is_positive_control: { type: 'boolean' },
+    base_candidate_id: STR,
+    specialty: STR,
+    focus_files: STRS,
+    prompt: STR,
+    rationale: STR,
+    rung_deviation: STR,
+    expected_speedup: NUM,
+    gated_on: STRS,
+    mandatory_arms: STRS,
+    is_positive_control: BOOL,
     // How a rung closes: terminal on a measurement; enabling on functional acceptance, since a
     // prerequisite step has no standalone speedup. See stepRoleOf.
     step_role: { type: 'string', enum: ['enabling', 'terminal'] },
-    enables: { type: 'string' },
-    cost_budget_pct: { type: 'number' },
+    enables: STR,
+    cost_budget_pct: NUM,
     // A terminal rung must say what shape closes it.
     target_shape: {
       type: 'object',
       properties: {
-        launches: { type: 'number' },
-        stages_fused: { type: 'array', items: { type: 'string' } },
-        require_overlap: { type: 'boolean' },
+        launches: NUM,
+        stages_fused: STRS,
+        require_overlap: BOOL,
       },
       required: ['launches'],
       additionalProperties: true,
@@ -2449,47 +2455,47 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     target_topology: MEGA_TOPOLOGY_SCHEMA,
   }, ['id', 'title', 'gated_on']) },
   // perf_knowledge mapping (reference only): operator/language and the most relevant card paths.
-  kk_operator: { type: ['string', 'null'] }, kk_language: { type: ['string', 'null'] },
-  kk_refs: { type: 'array', items: { type: 'string' } },
+  kk_operator: STR_N, kk_language: STR_N,
+  kk_refs: STRS,
   baseline_operator_map: { type: 'array', items: obj({
-    role: { type: 'string' },
-    file: { type: 'string' },
-    symbol: { type: 'string' },
-    kind: { type: 'string' },
-    semantics: { type: 'string' },
-    inputs: { type: 'array', items: { type: 'string' } },
-    outputs: { type: 'array', items: { type: 'string' } },
-    layout: { type: 'string' },
-    synchronization: { type: 'string' },
+    role: STR,
+    file: STR,
+    symbol: STR,
+    kind: STR,
+    semantics: STR,
+    inputs: STRS,
+    outputs: STRS,
+    layout: STR,
+    synchronization: STR,
     action: { type: 'string', enum: [
       'reuse', 'extract_shared', 'inline', 'rewrite_equivalent', 'rewire', 'extend',
     ] },
-    target_role: { type: 'string' },
-    proof: { type: 'string' },
+    target_role: STR,
+    proof: STR,
   }, ['role', 'file', 'symbol', 'semantics', 'action']) },
-  prior_art: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  prior_art: ANYOBJS,
   // Fine-grained dependency graph; taskGraphGate owns semantic validation.
   task_graph: {
     type: ['object', 'null'],
     additionalProperties: true,
     properties: {
       nodes: { type: 'array', items: obj({
-        id: { type: 'string' }, stage: { type: 'string' }, duration_us: { type: 'number' },
+        id: STR, stage: STR, duration_us: NUM,
         // measured | assumed.
         source: { type: 'string', enum: ['measured', 'assumed'] },
       }, ['id', 'source']) },
       edges: { type: 'array', items: obj({
-        from: { type: 'string' }, to: { type: 'string' },
+        from: STR, to: STR,
         // data | launch_boundary | barrier | assumed.
-        enforced_by: { type: 'string' },
-        scope: { type: 'string' },
-        fan_in: { type: 'number' },
+        enforced_by: STR,
+        scope: STR,
+        fan_in: NUM,
         // Consumer operands the producer does not supply (weights, scales, descriptors).
-        producer_independent_operands: { type: 'array', items: { type: 'string' } },
+        producer_independent_operands: STRS,
       }, ['from', 'to', 'enforced_by']) },
-      unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
-      critical_path_us: { type: 'number' },
-      measured_e2e_us: { type: 'number' },
+      unknowns: ANYOBJS,
+      critical_path_us: NUM,
+      measured_e2e_us: NUM,
     },
   },
   // Per-pipe resource timeline, required alongside task_graph: the graph says what MAY overlap, this
@@ -2499,13 +2505,13 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     additionalProperties: true,
     properties: {
       pipes: { type: 'array', items: obj({
-        stage: { type: 'string' },
-        pipe: { type: 'string' },   // valu|mfma|vmem|lds|hbm|interconnect|scalar
-        utilization_pct: { type: ['number', 'null'] },
-        source: { type: 'string' },
+        stage: STR,
+        pipe: STR,   // valu|mfma|vmem|lds|hbm|interconnect|scalar
+        utilization_pct: NUM_N,
+        source: STR,
       }, ['stage', 'pipe', 'utilization_pct']) },
       interkernel_gap_us: obj({
-        median: { type: 'number' }, max: { type: 'number' }, n_boundaries: { type: 'number' },
+        median: NUM, max: NUM, n_boundaries: NUM,
       }, ['median']),
       // The gate DERIVES the class from the numbers and compares it against this one; a mismatch is
       // itself reportable, so the stated value must be present to be contradicted.
@@ -2513,12 +2519,12 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
       // id, the size fields and rides_on are read by the gate, so they are declared; rides_on records that
       // another rung absorbs this hole.
       idle_pipe_opportunities: { type: 'array', items: obj({
-        id: { type: 'string' }, window: { type: 'string' }, idle_pipe: { type: 'string' },
-        recoverable_us: { type: ['number', 'null'] }, pct_of_e2e: { type: ['number', 'null'] },
-        rides_on: { type: 'string' },
+        id: STR, window: STR, idle_pipe: STR,
+        recoverable_us: NUM_N, pct_of_e2e: NUM_N,
+        rides_on: STR,
       }, []) },
-      closed_axes: { type: 'array', items: { type: 'object', additionalProperties: true } },
-      unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      closed_axes: ANYOBJS,
+      unknowns: ANYOBJS,
     },
   },
   // Lowerable whole-kernel schedule contract.
@@ -2526,52 +2532,52 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     type: ['object', 'null'],
     additionalProperties: true,
     properties: {
-      plan_version: { type: 'string' },
-      expert_skill_id: { type: ['string', 'null'] },
-      expert_skill_revision: { type: ['string', 'null'] },
-      expert_skill_bundle_sha256: { type: ['string', 'null'] },
-      expert_skill_planner_extension_sha256: { type: ['string', 'null'] },
-      expert_skill_validation_status: { type: ['string', 'null'] },
+      plan_version: STR,
+      expert_skill_id: STR_N,
+      expert_skill_revision: STR_N,
+      expert_skill_bundle_sha256: STR_N,
+      expert_skill_planner_extension_sha256: STR_N,
+      expert_skill_validation_status: STR_N,
       expert_skill_auto_apply: { type: ['boolean', 'null'] },
       expert_skill_explicit_pin_modes: {
-        type: 'array', items: { type: 'string' },
+        type: 'array', items: STR,
       },
       target: obj({
-        launch_count: { type: 'number' },
-        required_regions: { type: 'array', items: { type: 'string' } },
-        required_queues: { type: 'array', items: { type: 'string' } },
-        required_capabilities: { type: 'array', items: { type: 'string' } },
+        launch_count: NUM,
+        required_regions: STRS,
+        required_queues: STRS,
+        required_capabilities: STRS,
       }, ['launch_count', 'required_regions', 'required_queues']),
       work_domains: { type: 'array', items: obj({
-        id: { type: 'string' }, unit: { type: 'string' },
-        extent: { type: 'string' }, index_type: { type: 'string' },
+        id: STR, unit: STR,
+        extent: STR, index_type: STR,
       }, ['id', 'unit', 'extent', 'index_type']) },
       regions: { type: 'array', items: obj({
-        id: { type: 'string' }, role: { type: 'string' },
-        work_domain: { type: 'string' }, engine: { type: 'string' },
+        id: STR, role: STR,
+        work_domain: STR, engine: STR,
       }, ['id', 'role', 'work_domain']) },
       buffers: { type: 'array', items: {
         type: 'object', additionalProperties: true,
         properties: {
-          id: { type: 'string' }, role: { type: 'string' },
-          element_type: { type: 'string' }, capacity: { type: 'string' },
-          address_space: { type: 'string' }, format: { type: 'string' },
-          producers: { type: 'array', items: { type: 'string' } },
-          consumers: { type: 'array', items: { type: 'string' } },
-          lifetime: { type: 'string' }, alias_group: { type: 'string' },
+          id: STR, role: STR,
+          element_type: STR, capacity: STR,
+          address_space: STR, format: STR,
+          producers: STRS,
+          consumers: STRS,
+          lifetime: STR, alias_group: STR,
         },
         required: ['id', 'role', 'element_type', 'capacity', 'address_space'],
       } },
       counters: { type: 'array', items: {
         type: 'object', additionalProperties: true,
         properties: {
-          id: { type: 'string' }, element_type: { type: 'string' },
-          capacity: { type: 'string' }, scope: { type: 'string' },
-          lifecycle: { type: 'string' }, reset_owner: { type: 'string' },
-          generation: { type: 'string' },
-          producers: { type: 'array', items: { type: 'string' } },
-          consumers: { type: 'array', items: { type: 'string' } },
-          publish: { type: 'string' }, wait: { type: 'string' },
+          id: STR, element_type: STR,
+          capacity: STR, scope: STR,
+          lifecycle: STR, reset_owner: STR,
+          generation: STR,
+          producers: STRS,
+          consumers: STRS,
+          publish: STR, wait: STR,
         },
         required: [
           'id', 'element_type', 'capacity', 'scope', 'lifecycle',
@@ -2579,34 +2585,34 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
         ],
       } },
       queues: { type: 'array', items: obj({
-        id: { type: 'string' }, work_domain: { type: 'string' },
-        claim_unit: { type: 'string' }, owner: { type: 'string' },
-        shards: { type: 'number' }, stride_bytes: { type: 'number' },
-        chunk_policy: { type: 'string' }, ready_when: { type: 'string' },
-        priority: { type: 'number' },
+        id: STR, work_domain: STR,
+        claim_unit: STR, owner: STR,
+        shards: NUM, stride_bytes: NUM,
+        chunk_policy: STR, ready_when: STR,
+        priority: NUM,
       }, ['id', 'work_domain', 'claim_unit', 'owner']) },
       events: { type: 'array', items: obj({
-        id: { type: 'string' }, producer: { type: 'string' },
-        consumer: { type: 'string' }, scope: { type: 'string' },
-        counter: { type: 'string' }, publish: { type: 'string' },
-        wait: { type: 'string' },
+        id: STR, producer: STR,
+        consumer: STR, scope: STR,
+        counter: STR, publish: STR,
+        wait: STR,
       }, ['id', 'producer', 'consumer', 'scope']) },
       abi: {
         type: 'object',
         additionalProperties: true,
         properties: {
-          entry_point: { type: 'string' },
+          entry_point: STR,
           arguments: { type: 'array', items: {
             type: 'object', additionalProperties: true,
             properties: {
-              id: { type: 'string' }, type: { type: 'string' },
-              role: { type: 'string' }, source: { type: 'string' },
-              consumers: { type: 'array', items: { type: 'string' } },
-              optional: { type: 'boolean' },
+              id: STR, type: STR,
+              role: STR, source: STR,
+              consumers: STRS,
+              optional: BOOL,
             },
             required: ['id', 'type', 'role'],
           } },
-          parameters: { type: 'object', additionalProperties: true },
+          parameters: ANYOBJ,
         },
         required: ['entry_point', 'arguments'],
       },
@@ -2614,38 +2620,38 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
         type: 'object',
         additionalProperties: true,
         properties: {
-          arch: { type: 'string' },
+          arch: STR,
           workgroup: obj({
-            wave_size: { type: 'number' }, wave_count: { type: 'number' },
-            thread_count: { type: 'number' },
+            wave_size: NUM, wave_count: NUM,
+            thread_count: NUM,
           }, ['wave_size', 'wave_count', 'thread_count']),
           local_memory: obj({
-            total_bytes: { type: 'number' },
-            limit_bytes: { type: 'number' },
-            allocation_rule: { type: 'string' },
+            total_bytes: NUM,
+            limit_bytes: NUM,
+            allocation_rule: STR,
             allocations: { type: 'array', items: {
               type: 'object', additionalProperties: true,
             } },
           }, ['total_bytes', 'limit_bytes', 'allocation_rule', 'allocations']),
           registers: obj({
-            vgpr_max: { type: ['number', 'null'] },
-            sgpr_max: { type: ['number', 'null'] },
-            scratch_bytes_max: { type: ['number', 'null'] },
-            source: { type: 'string' },
+            vgpr_max: NUM_N,
+            sgpr_max: NUM_N,
+            scratch_bytes_max: NUM_N,
+            source: STR,
           }, ['vgpr_max', 'sgpr_max', 'scratch_bytes_max', 'source']),
           occupancy: obj({
-            compute_units: { type: 'number' },
-            grid_blocks: { type: 'number' },
-            min_workgroups_per_cu: { type: 'number' },
-            requires_full_grid_residency: { type: 'boolean' },
+            compute_units: NUM,
+            grid_blocks: NUM,
+            min_workgroups_per_cu: NUM,
+            requires_full_grid_residency: BOOL,
           }, [
             'compute_units', 'grid_blocks', 'min_workgroups_per_cu',
             'requires_full_grid_residency',
           ]),
           engines: { type: 'array', items: obj({
-            region: { type: 'string' }, pipe: { type: 'string' },
+            region: STR, pipe: STR,
           }, ['region', 'pipe']) },
-          parameters: { type: 'object', additionalProperties: true },
+          parameters: ANYOBJ,
         },
         required: [
           'arch', 'workgroup', 'local_memory', 'registers', 'occupancy', 'engines',
@@ -2656,24 +2662,24 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
         additionalProperties: true,
         properties: {
           primary_loop: obj({
-            kind: { type: 'string' },
-            carried_state: { type: 'array', items: { type: 'string' } },
-            queue_priority: { type: 'array', items: { type: 'string' } },
-            queue_selection: { type: 'string' },
-            progress_invariants: { type: 'array', items: { type: 'string' } },
+            kind: STR,
+            carried_state: STRS,
+            queue_priority: STRS,
+            queue_selection: STR,
+            progress_invariants: STRS,
           }, ['kind', 'carried_state', 'progress_invariants']),
-          policies: { type: 'object', additionalProperties: true },
-          parameters: { type: 'object', additionalProperties: true },
+          policies: ANYOBJ,
+          parameters: ANYOBJ,
         },
         required: ['primary_loop', 'policies'],
       },
       compiler_constraints: { type: 'array', items: {
         type: 'object', additionalProperties: true,
-        properties: { id: { type: 'string' }, rule: { type: 'string' } },
+        properties: { id: STR, rule: STR },
         required: ['id', 'rule'],
       } },
-      evidence_requirements: { type: 'object', additionalProperties: true },
-      known_unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      evidence_requirements: ANYOBJ,
+      known_unknowns: ANYOBJS,
     },
     required: [
       'plan_version', 'target', 'work_domains', 'regions', 'buffers', 'counters',
@@ -2706,45 +2712,45 @@ const MEGA_ANALYZE_SCHEMA = {
 };
 
 const MEGA_BENCH_SCHEMA = obj({
-  commandment_path: { type: 'string' }, correctness_cmd: { type: 'string' },
-  benchmark_cmd: { type: 'string' }, profile_cmd: { type: 'string' }, parse_hint: { type: 'string' },
-  baseline_per_case: { type: 'array', items: { type: 'object', additionalProperties: true } },
-  baseline_geomean_ms: { type: 'number' }, num_test_cases: { type: 'number' },
+  commandment_path: STR, correctness_cmd: STR,
+  benchmark_cmd: STR, profile_cmd: STR, parse_hint: STR,
+  baseline_per_case: ANYOBJS,
+  baseline_geomean_ms: NUM, num_test_cases: NUM,
   // Workload-aligned outputs (present with a workload spec): metric = Σweight / Σ(weight/speedup);
   // baseline_weighted_total_ms is the baseline time the weights represent.
-  workload_aligned: { type: 'boolean' },
-  baseline_weighted_total_ms: { type: 'number' },
-  weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
+  workload_aligned: BOOL,
+  baseline_weighted_total_ms: NUM,
+  weights_provenance: STR, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
   // args.positive_control result.
   positive_control: obj({
-    ran: { type: 'boolean' },
-    claim_complete: { type: 'boolean' },
-    attempt_id: { type: 'string' },
-    evidence_manifest: { type: 'string' },
+    ran: BOOL,
+    claim_complete: BOOL,
+    attempt_id: STR,
+    evidence_manifest: STR,
     switch_present: { type: ['boolean', 'null'] },
-    switch_checked: { type: 'string' },
-    measured_pct: { type: ['number', 'null'] },
-    expected_lo: { type: 'number' }, expected_hi: { type: 'number' },
-    passed: { type: 'boolean' }, reps: { type: 'number' },
-    control_pairs_pct: { type: 'array', items: { type: 'number' } },
-    null_pairs_pct: { type: 'array', items: { type: 'number' } },
-    null_arm_pct: { type: 'number' },
-    note: { type: 'string' },
+    switch_checked: STR,
+    measured_pct: NUM_N,
+    expected_lo: NUM, expected_hi: NUM,
+    passed: BOOL, reps: NUM,
+    control_pairs_pct: { type: 'array', items: NUM },
+    null_pairs_pct: { type: 'array', items: NUM },
+    null_arm_pct: NUM,
+    note: STR,
     // Required only when the object exists at all: a run with no control omits it entirely.
   }, ['ran', 'claim_complete', 'switch_present', 'measured_pct']),
-  reliable: { type: 'boolean' }, notes: { type: 'string' },
+  reliable: BOOL, notes: STR,
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
 
 const ANALYSIS_RESULT_SCHEMA = obj({
   status: { type: 'string', enum: ['ready', 'degraded'] },
-  analysis_skill: { type: 'string' },
-  analysis_schema_version: { type: 'string' },
+  analysis_skill: STR,
+  analysis_schema_version: STR,
   analysis_status: {
     type: 'string',
     enum: ['awaiting_measurement', 'evidence_complete', 'unavailable'],
   },
-  analysis_json: { type: 'string' },
-  failure_note: { type: 'string' },
+  analysis_json: STR,
+  failure_note: STR,
 }, [
   'status',
   'analysis_skill',
@@ -2755,49 +2761,49 @@ const ANALYSIS_RESULT_SCHEMA = obj({
 ]);
 
 const MEGA_PLAN_BASE_SCHEMA = obj({
-  stop: { type: 'boolean' }, reasoning: { type: 'string' },
+  stop: BOOL, reasoning: STR,
   directions: {
     type: 'array',
     items: obj({
-      id: { type: 'string' }, title: { type: 'string' },
+      id: STR, title: STR,
       specialty: { type: 'string', enum: ['algorithm', 'memory', 'compute', 'host_runtime', 'distributed', 'deep_explore'] },
-      focus_files: { type: 'array', items: { type: 'string' } },
-      expected_speedup: { type: 'number' }, prompt: { type: 'string' },
-      kk_refs: { type: 'array', items: { type: 'string' } }, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
+      focus_files: STRS,
+      expected_speedup: NUM, prompt: STR,
+      kk_refs: STRS, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
       // Binds the direction to Analyze's pipe table: fills_pipe is the unit it loads or relieves,
       // pipe_util_pct that unit's measured utilization, headroom_basis which bound caps the claim (idle
       // fraction or measured_e2e_us - critical_path_us). See knowledge/pipe_occupancy.md.
-      fills_pipe: { type: 'string' },
-      pipe_util_pct: { type: 'number' },
-      headroom_basis: { type: 'string' },
-      graph_refs: { type: 'array', items: { type: 'string' } }, // task_graph node/edge ids this direction acts on
+      fills_pipe: STR,
+      pipe_util_pct: NUM,
+      headroom_basis: STR,
+      graph_refs: STRS, // task_graph node/edge ids this direction acts on
       // The idle_pipe_opportunities id this direction fills, so each hole can be checked as owned or not.
-      fills_hole: { type: 'string' },
+      fills_hole: STR,
       // Binds the direction to the ladder: roadmap_rung is the rung id or `off_ladder`.
-      roadmap_rung: { type: 'string' },
-      rung_deviation: { type: 'string' },
+      roadmap_rung: STR,
+      rung_deviation: STR,
       // Step kind: terminal (default) is judged on speed; enabling is a prerequisite in a multi-step
       // fusion, judged on function (builds, path taken, correct, no deadlock).
       step_role: { type: 'string', enum: ['enabling', 'terminal'] },
-      enables: { type: 'string' },
-      cost_budget_pct: { type: 'number' },
-      gated_on: { type: 'array', items: { type: 'string' } },
-      mandatory_arms: { type: 'array', items: { type: 'string' } },
+      enables: STR,
+      cost_budget_pct: NUM,
+      gated_on: STRS,
+      mandatory_arms: STRS,
       target_shape: {
         type: 'object',
         properties: {
-          launches: { type: 'number' },
-          stages_fused: { type: 'array', items: { type: 'string' } },
-          require_overlap: { type: 'boolean' },
+          launches: NUM,
+          stages_fused: STRS,
+          require_overlap: BOOL,
         },
         required: ['launches'],
         additionalProperties: true,
       },
       // Operator-neutral multi-lever descriptor for a whole-kernel candidate.
       target_topology: MEGA_TOPOLOGY_SCHEMA,
-      candidate_id: { type: 'string' },
-      candidate_source: { type: 'string' },
-      base_candidate_id: { type: 'string' },
+      candidate_id: STR,
+      candidate_source: STR,
+      base_candidate_id: STR,
     }, ['id', 'title', 'specialty', 'prompt']),
   },
 }, ['stop', 'directions']);
@@ -2829,240 +2835,240 @@ const MEGA_PLAN_SCHEMA = {
 };
 
 const MEGA_VERIFY_SCHEMA = obj({
-  status: { type: 'string' }, correctness: { type: 'string' },
-  claim_complete: { type: 'boolean' }, attempt_id: { type: 'string' },
-  timeout_recovery_safe: { type: 'boolean' },
-  active_gpu_processes: { type: 'number' },
-  lane_lock_free: { type: 'boolean' },
-  evidence_complete: { type: 'boolean' },
-  evidence_manifest: { type: 'string' }, candidate_id: { type: 'string' },
-  candidate_source: { type: 'string' }, candidate_tree: { type: 'string' },
-  candidate_head: { type: 'string' },
+  status: STR, correctness: STR,
+  claim_complete: BOOL, attempt_id: STR,
+  timeout_recovery_safe: BOOL,
+  active_gpu_processes: NUM,
+  lane_lock_free: BOOL,
+  evidence_complete: BOOL,
+  evidence_manifest: STR, candidate_id: STR,
+  candidate_source: STR, candidate_tree: STR,
+  candidate_head: STR,
   activation: obj({
-    mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
-    path_marker: { type: 'string' }, marker_how: { type: 'string' },
+    mode: STR, switch_name: STR, switch_value: STR,
+    path_marker: STR, marker_how: STR,
     switches: {
       type: 'array',
-      items: obj({ switch_name: { type: 'string' }, switch_value: { type: 'string' } }, []),
+      items: obj({ switch_name: STR, switch_value: STR }, []),
     },
   }, []),
-  verified_geomean: { type: ['number', 'null'] }, verified_arithmetic: { type: ['number', 'null'] },
-  verified_weighted: { type: ['number', 'null'] }, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
-  per_case: perCase, variance_note: { type: 'string' }, notes: { type: 'string' },
-  graph_safe: { type: 'string' },
-  liveness: { type: 'string' }, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
-  replay_count: { type: 'number' },
+  verified_geomean: NUM_N, verified_arithmetic: NUM_N,
+  verified_weighted: NUM_N, // time-weighted ratio-of-sums (PRIMARY when workload_aligned)
+  per_case: perCase, variance_note: STR, notes: STR,
+  graph_safe: STR,
+  liveness: STR, // pass|fail|n/a — deadlock/stale-read stress (distributed specialty)
+  replay_count: NUM,
   replay_results: { type: 'array', items: obj({
-    guard: { type: 'string' }, count: { type: 'number' },
-    status: { type: 'string' }, graph_safe: { type: 'string' },
+    guard: STR, count: NUM,
+    status: STR, graph_safe: STR,
   }, ['guard', 'count', 'status']) },
-  arms_run: { type: 'array', items: { type: 'string' } },
+  arms_run: STRS,
   // Accuracy as a number (metric, value, threshold, guard/route) so functionalAcceptance can check
   // value < threshold. Missing fields fall back to the `correctness` string check.
   accuracy: obj({
-    metric: { type: 'string' }, value: { type: 'number', minimum: 0 },
+    metric: STR, value: { type: 'number', minimum: 0 },
     threshold: { type: 'number', exclusiveMinimum: 0 },
-    guard: { type: 'string' }, method: { type: 'string' },
+    guard: STR, method: STR,
   }, []),
   accuracy_results: { type: 'array', items: obj({
-    metric: { type: 'string' }, value: { type: 'number', minimum: 0 },
+    metric: STR, value: { type: 'number', minimum: 0 },
     threshold: { type: 'number', exclusiveMinimum: 0 },
-    guard: { type: 'string' }, method: { type: 'string' },
+    guard: STR, method: STR,
   }, ['metric', 'value', 'threshold', 'guard']) },
   // Launches per call for base and candidate, read paired; target is caller-owned; how_counted is the
   // evidence (trace record count, marker tally). Missing fields leave the launch criterion unjudged.
   launch_shape: obj({
-    launches_base: { type: 'number' }, launches_cand: { type: 'number' },
-    per_rank: { type: 'boolean' }, target: { type: 'number' },
-    stages_fused: { type: 'array', items: { type: 'string' } }, how_counted: { type: 'string' },
+    launches_base: NUM, launches_cand: NUM,
+    per_rank: BOOL, target: NUM,
+    stages_fused: STRS, how_counted: STR,
   }, []),
   // reps = interleaved A/B pairs; null_arm_pct = the delta of an arm doing identical work (the noise
   // floor).
-  reps: { type: 'number' }, null_arm_pct: { type: 'number' },
+  reps: NUM, null_arm_pct: NUM,
   // Raw per-pair readings tagged by guard/route, so the driver can split caller-declared bimodal guards
   // by state (modeSplit/pairedModeAware) and check the number came from a target guard.
   paired_readings: { type: 'array', items: obj({
-    guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
+    guard: STR, base: NUM, cand: NUM,
   }, ['guard', 'base', 'cand']) },
   // Did the patched path execute in the measured run?
-  activation_confirmed: { type: 'string' },  // yes|no|unknown
-  activation_evidence: { type: 'string' },   // the command + the marker output that proves it
+  activation_confirmed: STR,  // yes|no|unknown
+  activation_evidence: STR,   // the command + the marker output that proves it
   // Did the switched path run on the device this round?
-  activation_on_hardware: { type: 'string' }, // yes|no|n/a|unknown
-  hardware_evidence: { type: 'string' },       // the gpu_lock cmd + the device-side observable it produced
+  activation_on_hardware: STR, // yes|no|n/a|unknown
+  hardware_evidence: STR,       // the gpu_lock cmd + the device-side observable it produced
   // A marker proves the host path ran, not that the arms compiled differently: a JIT disk cache can
   // serve one binary to both arms if the switch is not in the cache key.
-  artifact_distinct: { type: 'string' },     // yes|no|n/a|unknown
-  artifact_hash_base: { type: 'string' },
-  artifact_hash_candidate: { type: 'string' },
+  artifact_distinct: STR,     // yes|no|n/a|unknown
+  artifact_hash_base: STR,
+  artifact_hash_candidate: STR,
   // Files the patch touches.
-  touched_files: { type: 'array', items: { type: 'string' } },
+  touched_files: STRS,
   // Overlap (see knowledge/overlap_instrument.md).
   overlap: obj({
     measured: { type: 'string', enum: ['yes', 'no', 'unknown'] },
-    fraction: { type: 'number' },        // wall-clock, >=2 distinct roles active
-    cu_fraction: { type: 'number' },     // CU-weighted; wall-clock alone is manufacturable
-    method: { type: 'string' },
+    fraction: NUM,        // wall-clock, >=2 distinct roles active
+    cu_fraction: NUM,     // CU-weighted; wall-clock alone is manufacturable
+    method: STR,
     // The meter's controls: base_reading on the unfused path must read ~0 (else the meter is broken);
     // forced_reading must read high (else the meter is dead).
-    base_reading: { type: 'number' },
-    forced_reading: { type: 'number' },
-    clock_skew_ns: { type: 'number' },   // s_memrealtime coherence across XCDs — assumed at your peril
-    meter_overhead_pct: { type: 'number' },
-    note: { type: 'string' },
+    base_reading: NUM,
+    forced_reading: NUM,
+    clock_skew_ns: NUM,   // s_memrealtime coherence across XCDs — assumed at your peril
+    meter_overhead_pct: NUM,
+    note: STR,
   }, ['measured']),
   // Attribution (see knowledge/fusion_preconditions.md): for any patch that adds, removes or merges a
   // launch, report changed_us (patched kernel) and replaced_sum_us (the kernels it replaces), paired at
   // the same guard.
   attribution: obj({
-    changed_us: { type: 'number' },
-    replaced_sum_us: { type: 'number' },
-    guard: { type: 'string' },
+    changed_us: NUM,
+    replaced_sum_us: NUM,
+    guard: STR,
     // e2e minus the sum of all kernel times, both arms. Where a gap-win hides.
-    residual_ms_base: { type: 'number' },
-    residual_ms_cand: { type: 'number' },
-    method: { type: 'string' },
-    absolute_to_frozen: { type: 'boolean' },
-    note: { type: 'string' },
+    residual_ms_base: NUM,
+    residual_ms_cand: NUM,
+    method: STR,
+    absolute_to_frozen: BOOL,
+    note: STR,
   }, []),
 }, ['status', 'verified_geomean', 'touched_files']);
 
 const MEGA_MEMORY_SCHEMA = obj({
-  insights: { type: 'array', items: { type: 'string' } },
-  candidate_registry: { type: 'array', items: { type: 'object', additionalProperties: true } },
-  measurement_calibration: { type: 'object', additionalProperties: true },
-  state_written: { type: 'boolean' }, state_round: { type: 'number' },
-  state_path: { type: 'string' }, state_generation: { type: 'string' },
-  state_sequence: { type: 'number' },
+  insights: STRS,
+  candidate_registry: ANYOBJS,
+  measurement_calibration: ANYOBJ,
+  state_written: BOOL, state_round: NUM,
+  state_path: STR, state_generation: STR,
+  state_sequence: NUM,
   // memoryMerge keys and dedupes rows by id and reads the ladder from roadmap_rung; a row without
   // verdict is treated as untried.
   ledger: { type: 'array', items: obj({
-    id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
+    id: STR, title: STR, specialty: STR,
     // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by result".
     verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
-    roadmap_rung: { type: ['string', 'null'] },
-    expected: { type: 'number' }, actual: { type: 'number' },
-    lesson: { type: 'string' },
-    first_round: { type: 'number' }, last_round: { type: 'number' },
+    roadmap_rung: STR_N,
+    expected: NUM, actual: NUM,
+    lesson: STR,
+    first_round: NUM, last_round: NUM,
   }, ['id', 'verdict']) },
   // Durable hardware/toolchain facts (lowerings true for every kernel on this box), as opposed to
   // insights about this operator.
   knowledge_delta: { type: 'array', items: obj({
-    fact: { type: 'string' },
+    fact: STR,
     // Which card it belongs in, so the merge is a placement decision and not a search.
-    card: { type: 'string' },
+    card: STR,
     // The artifact that establishes it: an ISA dump path, a counter, a sha256, a measured number.
-    evidence: { type: 'string' },
+    evidence: STR,
     // What a reader would have believed without this fact; a lowering earns a card only when the
     // source-level reading says otherwise.
-    contradicts: { type: 'string' },
+    contradicts: STR,
     // true = holds for any kernel on this target; false = this operator's shape.
-    generalizes: { type: 'boolean' },
+    generalizes: BOOL,
   }, ['fact', 'evidence', 'generalizes']) },
-  bottleneck_now: { type: 'string' }, suggest_next: { type: 'string' },
+  bottleneck_now: STR, suggest_next: STR,
 }, ['insights']);
 
 const MEGA_SELECTION_SCHEMA = obj({
-  claim_complete: { type: 'boolean' },
-  attempt_id: { type: 'string' },
-  evidence_manifest: { type: 'string' },
-  selected_candidate_id: { type: 'string' },
-  selected_source: { type: 'string' },
-  selected_tree: { type: 'string' },
-  selected_head: { type: 'string' },
-  materialized_from_head: { type: 'string' },
-  selected_score: { type: 'number' },
-  selected_patch: { type: 'string' },
+  claim_complete: BOOL,
+  attempt_id: STR,
+  evidence_manifest: STR,
+  selected_candidate_id: STR,
+  selected_source: STR,
+  selected_tree: STR,
+  selected_head: STR,
+  materialized_from_head: STR,
+  selected_score: NUM,
+  selected_patch: STR,
   candidates: { type: 'array', items: obj({
-    candidate_id: { type: 'string' }, source: { type: 'string' },
-    tree: { type: 'string' }, head: { type: 'string' }, score: { type: 'number' },
-    status: { type: 'string' },
-    touched_files: { type: 'array', items: { type: 'string' } },
+    candidate_id: STR, source: STR,
+    tree: STR, head: STR, score: NUM,
+    status: STR,
+    touched_files: STRS,
     activation: obj({
-      mode: { type: 'string' }, switch_name: { type: 'string' }, switch_value: { type: 'string' },
-      path_marker: { type: 'string' }, marker_how: { type: 'string' },
+      mode: STR, switch_name: STR, switch_value: STR,
+      path_marker: STR, marker_how: STR,
       switches: {
         type: 'array',
-        items: obj({ switch_name: { type: 'string' }, switch_value: { type: 'string' } }, []),
+        items: obj({ switch_name: STR, switch_value: STR }, []),
       },
     }, []),
-    correctness: { type: 'string' }, guards_pass: { type: 'boolean' },
+    correctness: STR, guards_pass: BOOL,
     path_marker: { type: 'string', description: 'The path marker line the candidate printed.' },
     path_marker_count: { type: 'number', description: 'Ranks that printed path_marker.' },
-    world_size: { type: 'number' },
-    launches: { type: 'number' }, launches_base: { type: 'number' },
+    world_size: NUM,
+    launches: NUM, launches_base: NUM,
     graph_safe: { type: 'string', enum: ['pass', 'fail'] },
     artifact_distinct: { type: 'string', enum: ['yes', 'no'] },
-    artifact_hash_base: { type: 'string' }, artifact_hash_candidate: { type: 'string' },
-    overlap_measured: { type: 'string' }, overlap_fraction: { type: 'number' },
-    overlap_cu_fraction: { type: 'number' },
-    overlap_base_reading: { type: 'number' }, overlap_forced_reading: { type: 'number' },
-    attribution_complete: { type: 'boolean' },
+    artifact_hash_base: STR, artifact_hash_candidate: STR,
+    overlap_measured: STR, overlap_fraction: NUM,
+    overlap_cu_fraction: NUM,
+    overlap_base_reading: NUM, overlap_forced_reading: NUM,
+    attribution_complete: BOOL,
     attribution: obj({
-      changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
-      residual_ms_base: { type: 'number' }, residual_ms_cand: { type: 'number' },
-      guard: { type: 'string' }, method: { type: 'string' },
-      absolute_to_frozen: { type: 'boolean' },
+      changed_us: NUM, replaced_sum_us: NUM,
+      residual_ms_base: NUM, residual_ms_cand: NUM,
+      guard: STR, method: STR,
+      absolute_to_frozen: BOOL,
     }, []),
-    accuracy_metric: { type: 'string' }, accuracy_value: { type: 'number' },
+    accuracy_metric: STR, accuracy_value: NUM,
     accuracy_results: { type: 'array', items: obj({
-      metric: { type: 'string' }, value: { type: 'number' },
-      threshold: { type: 'number' }, guard: { type: 'string' },
-      method: { type: 'string' },
+      metric: STR, value: NUM,
+      threshold: NUM, guard: STR,
+      method: STR,
     }, ['metric', 'value', 'guard']) },
-    liveness_replays: { type: 'number' }, claim_complete: { type: 'boolean' },
+    liveness_replays: NUM, claim_complete: BOOL,
     replay_results: { type: 'array',
       description: 'One row per guard in TARGET_GUARDS and REGRESSION_GUARDS, named exactly as given.',
       items: obj({
-      guard: { type: 'string' }, count: { type: 'number' },
+      guard: STR, count: NUM,
       status: { type: 'string', enum: ['pass', 'fail'] },
       graph_safe: { type: 'string', enum: ['pass', 'fail'] },
       arrival_jitter: { type: 'boolean',
         description: 'True only when the graph contract injected arrival jitter (Expert Skill runtime).' },
     }, ['guard', 'count', 'status', 'graph_safe', 'arrival_jitter']) },
     paired_readings: { type: 'array', items: obj({
-      guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
+      guard: STR, base: NUM, cand: NUM,
     }, ['guard', 'base', 'cand']) },
-    null_arm_pct: { type: 'number' },
+    null_arm_pct: NUM,
     per_case: perCase,
-    reason: { type: 'string' },
+    reason: STR,
   }, ['candidate_id', 'claim_complete', 'path_marker', 'path_marker_count', 'graph_safe',
     'artifact_distinct', 'replay_results']) },
-  notes: { type: 'string' },
+  notes: STR,
 }, ['claim_complete', 'attempt_id', 'evidence_manifest', 'selected_candidate_id', 'selected_tree']);
 
 const MEGA_IDENTITY_SCHEMA = obj({
-  passed: { type: 'boolean' },
-  selected_candidate_id: { type: 'string' },
-  source_head: { type: 'string' },
-  materialized_head: { type: 'string' },
-  note: { type: 'string' },
+  passed: BOOL,
+  selected_candidate_id: STR,
+  source_head: STR,
+  materialized_head: STR,
+  note: STR,
 }, ['passed', 'selected_candidate_id', 'source_head', 'materialized_head']);
 
 const MEGA_VALIDATE_SCHEMA = obj({
-  kernel_name: { type: 'string' },
-  director_verified_speedup_geomean: { type: 'number' },
-  director_verified_speedup_arithmetic: { type: 'number' },
-  director_verified_speedup_weighted: { type: 'number' }, // PRIMARY when workload_aligned
-  tech_lead_reported_speedup_geomean: { type: 'number' },
-  validation_status: { type: 'string' }, correctness: { type: 'string' },
-  autonomy_acceptance_confirmed: { type: 'boolean' },
-  workflow_unchanged: { type: 'boolean' },
-  workflow_revision_end: { type: 'string' },
-  materialization_matches: { type: 'boolean' },
-  selected_source_head: { type: 'string' },
-  selected_materialized_head: { type: 'string' },
-  final_patch_verified: { type: 'boolean' },
+  kernel_name: STR,
+  director_verified_speedup_geomean: NUM,
+  director_verified_speedup_arithmetic: NUM,
+  director_verified_speedup_weighted: NUM, // PRIMARY when workload_aligned
+  tech_lead_reported_speedup_geomean: NUM,
+  validation_status: STR, correctness: STR,
+  autonomy_acceptance_confirmed: BOOL,
+  workflow_unchanged: BOOL,
+  workflow_revision_end: STR,
+  materialization_matches: BOOL,
+  selected_source_head: STR,
+  selected_materialized_head: STR,
+  final_patch_verified: BOOL,
   attribution: obj({
-    changed_us: { type: 'number' }, replaced_sum_us: { type: 'number' },
-    guard: { type: 'string' }, residual_ms_base: { type: 'number' },
-    residual_ms_cand: { type: 'number' }, method: { type: 'string' },
-    absolute_to_frozen: { type: 'boolean' },
+    changed_us: NUM, replaced_sum_us: NUM,
+    guard: STR, residual_ms_base: NUM,
+    residual_ms_cand: NUM, method: STR,
+    absolute_to_frozen: BOOL,
   }, []),
-  per_case: perCase, applied_to_original: { type: 'string' },
+  per_case: perCase, applied_to_original: STR,
   // Count of GPU-lease jobs still alive for this EVAL_DIR when validation finished.
-  orphan_leases_swept: { type: 'number' },
-  arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
+  orphan_leases_swept: NUM,
+  arbitration_note: STR, final_patch: STR,
 }, ['director_verified_speedup_geomean', 'validation_status', 'correctness']);
 
 // ---------------------------------------------------------------------------
@@ -6111,12 +6117,12 @@ async function megaAfterSetup() {
       `Run exactly: ${cmd}\nIt prints one JSON object. Return its fields verbatim. If the command ` +
       `fails, return error with its last output lines. Do nothing else.`,
       { phase: 'Setup', label, schema: { type: 'object', additionalProperties: true,
-        properties: { ...props, error: { type: 'string' } }, required: [] } });
+        properties: { ...props, error: STR }, required: [] } });
     for (const field of ['candidate_registry', 'insights', 'ledger']) {
       const replied = setup.prior_state[field];
       if (field !== 'candidate_registry' && Array.isArray(replied)) continue;
       const head = (await runChunk(`${chunkTool} ${field}`, `state:${field}`,
-        { length: { type: 'number' }, chunks: { type: 'number' } })) || {};
+        { length: NUM, chunks: NUM })) || {};
       if (head.error || !Number.isInteger(head.chunks)) {
         throw new Error(`MEGA RESUME REFUSED: reading ${field} from ${stateFile} failed: ` +
           `${head.error || 'no output'}`);
@@ -6124,7 +6130,7 @@ async function megaAfterSetup() {
       const values = [];
       for (let i = 0; i < head.chunks; i++) {
         const part = (await runChunk(`${chunkTool} ${field} --chunk ${i}`, `state:${field}:${i}`,
-          { chunk: { type: 'number' }, items: { type: 'array' } })) || {};
+          { chunk: NUM, items: { type: 'array' } })) || {};
         if (part.error || part.chunk !== i || !Array.isArray(part.items)) {
           throw new Error(`MEGA RESUME REFUSED: reading ${field} chunk ${i} from ${stateFile} failed: ` +
             `${part.error || 'bad reply'}`);

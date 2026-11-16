@@ -26,7 +26,7 @@ ok(Object.keys(gmi('mega', true)).length === 0, 'skill-on mega gets no measureme
 {
   // Outside the mega backend section, every mega hook is called under MEGA only.
   const full = require('./mega_source').full();
-  const lanePart = full.replace(src, '');
+  const lanePart = full.replace(require('./mega_source').raw(), '');
   const calls = [...lanePart.matchAll(/await (mega[A-Z]\w*)\(/g)];
   ok(/\nconst MEGA = MODE === 'mega';/.test(full) && calls.length >= 10 &&
      calls.every((m) => /MEGA/.test(lanePart.slice(Math.max(0, m.index - 60), m.index))),

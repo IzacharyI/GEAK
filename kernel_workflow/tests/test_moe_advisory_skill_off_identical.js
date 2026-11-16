@@ -94,7 +94,7 @@ ok(
   'roleAgent appends analysis text dynamically',
 );
 ok(
-  /const ANALYSIS_RESULT_SCHEMA[\s\S]*?analysis_json:\s*\{\s*type:\s*'string'\s*\}/.test(src),
+  /const ANALYSIS_RESULT_SCHEMA[\s\S]*?analysis_json:\s*(?:\{\s*type:\s*'string'\s*\}|STR\b)/.test(src),
   'dedicated analysis-result schema carries generic analysis_json',
 );
 ok(
