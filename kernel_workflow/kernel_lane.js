@@ -19,9 +19,7 @@ export const meta = {
 };
 
 // ---------------------------------------------------------------------------
-// Args + defaults. (The script cannot touch the filesystem or read its own
-// path; agents do all FS work, and every path is supplied/derived from args —
-// nothing about the install location is hard-coded.)
+// Args + defaults.
 // ---------------------------------------------------------------------------
 const A = args || {};
 if (A.optimizer != null && typeof A.optimizer !== 'string') {
@@ -34,15 +32,12 @@ if (OPTIMIZER && !['greedy', 'evo'].includes(OPTIMIZER)) {
 if (!A.kernel_path) throw new Error('args.kernel_path is required (absolute path to the kernel/model directory)');
 
 // WORKFLOW_DIR = the directory that holds this script + roles/ + knowledge/ + scripts/.
-// A JS workflow script can't read its own path, so the caller passes it (it is just the
-// dirname of the scriptPath used to launch the workflow).
 const WORKFLOW_DIR = String(A.workflow_dir || '').replace(/\/+$/, '');
 if (!WORKFLOW_DIR) {
   throw new Error('args.workflow_dir is required: absolute path to the directory containing ' +
     'kernel_workflow.js, roles/, knowledge/, scripts/ (i.e. the dirname of this script).');
 }
-// EXP_ROOT = where timestamped run dirs are written. Default: a sibling "exp/" next to the
-// kernel_workflow dir (…/<parent>/kernel_workflow -> …/<parent>/exp). Override with args.exp_root.
+// EXP_ROOT = where timestamped run dirs are written.
 const EXP_ROOT = String(A.exp_root || (WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/exp')).replace(/\/+$/, '');
 
 let EVO = OPTIMIZER === 'evo' ? createEvolution() : null;
@@ -76,19 +71,14 @@ const GPU_FAMILY_DEFAULT = { name: 'default', isa: null, isolate: false, matrixC
 const gpuFamily = (gfx) => GPU_FAMILIES.find((f) => f.isa.test(String(gfx || ''))) || GPU_FAMILY_DEFAULT;
 // ---- end GPU families ----
 const BUDGET = parseInt(A.budget != null ? A.budget : 6, 10);
-// Minimum verified geomean improvement over the cumulative best for a round winner to be COMMITTED
-// into the canonical workspace (default 2%). Kept as a knob rather than a hard-coded constant so the
-// gate is tunable per run (e.g. raise it on a noisy box, lower it to bank small compounding wins).
+// Minimum verified geomean improvement over the cumulative best for a round winner to be COMMITTED into
+// the canonical workspace (default 2%).
 const MIN_IMPROVE = (() => {
   const v = parseFloat(A.min_improve != null ? A.min_improve : 0.02);
   return Number.isFinite(v) && v >= 0 ? v : 0.02;
 })();
 // Minimum verified speedup for a candidate to enter the round's candidate list (default 1.0 = only a
-// candidate that beats the baseline is worth looking at). A knob for the same reason MIN_IMPROVE is:
-// a transcription (plain Triton -> Gluon/TileLang/HIP) lands BELOW the comparator by construction, and
-// at 1.0 its recovery phase is invisible -- no patch saved, no verify, `winner` null every round. The
-// COMMIT gate is separate and still requires beating `cumulative` by MIN_IMPROVE, so a sub-baseline
-// candidate can be TRACKED but never BANKED.
+// candidate that beats the baseline is worth looking at).
 const CANDIDATE_FLOOR = (() => {
   const v = parseFloat(A.candidate_floor != null ? A.candidate_floor : 1.0);
   return Number.isFinite(v) && v > 0 ? v : 1.0;
@@ -98,45 +88,21 @@ const CANDIDATE_FLOOR = (() => {
 const CANDIDATE_FLOOR_TXT = Number.isInteger(CANDIDATE_FLOOR)
   ? CANDIDATE_FLOOR.toFixed(1) : String(CANDIDATE_FLOOR);
 // How far BELOW the best candidate ever seen a round may land and still count as "the search is
-// advancing" (default +MIN_IMPROVE = the historical test). A knob because a climb that starts under
-// the comparator advances for many rounds without ever clearing `cumulative`, and scoring those as
-// stalls ends it at MAX_NO_IMPROVE however much budget was given -- and no static counter substitutes,
-// since it would have to pre-guess how many rounds the climb takes. Negative admits a round that gives
-// ground (a layout experiment that does not pay is information, not a stall).
+// advancing" (default +MIN_IMPROVE = the historical test).
 const PROGRESS_DELTA = (() => {
   const v = parseFloat(A.progress_delta != null ? A.progress_delta : MIN_IMPROVE);
   return Number.isFinite(v) && v > -1 ? v : MIN_IMPROVE;
 })();
-// Budget cost of ONE `deep_explore` direction. The deep-explore engineer does far more than a single
-// specialist — broad rewrite authority, its own multi-iteration measure→profile→rewrite loop — so it
-// is charged more than 1 against the direction budget (default 2). It also always runs in a DEDICATED
-// round (no other directions that round), enforced below.
+// Budget cost of ONE `deep_explore` direction.
 const DEEP_COST = (() => {
   const v = parseInt(A.deep_cost != null ? A.deep_cost : 2, 10);
   return Number.isFinite(v) && v >= 1 ? v : 2;
 })();
 const GPU_IDS = String(A.gpu_ids != null ? A.gpu_ids : '0');
 const GPU_LIST = GPU_IDS.split(',').map(s => s.trim()).filter(Boolean);
-// Every GPU consumer gets the WHOLE pool rather than a pinned lane. gpu_lock.sh
-// resolves a comma spec by flocking whichever lane is free AND idle at acquire
-// time, so placement follows what work actually costs instead of an index fixed
-// before the cost is known. Measured task costs span 23x on campaign20, and a
-// pinned round ends with the slowest LANE, not the slowest task -- at 4-way that
-// idles ~43% of lane time. Pinning is also fragile on a shared box: GPU_LIST[0]
-// has no fallback when lane 0 has a foreign tenant.
-// gpu_mode='pin' restores the pre-scheduler behavior (direction i pinned to GPU_LIST[i % n]).
-// It exists ONLY so the scheduler can be A/B'd as a single-variable change against the arm it
-// replaced; leaving it out would make the "before" arm unreachable and force the comparison to be
-// made across two different scripts, where any other drift would be indistinguishable from the
-// scheduler's effect. Default 'pool'.
+// Every GPU consumer gets the WHOLE pool rather than a pinned lane.
 const GPU_MODE = String(A.gpu_mode || 'pool') === 'pin' ? 'pin' : 'pool';
-// Multi-GPU jobs (multi-rank ops). gpus_per_job > 1 leases any N GPUs of gpu_ids per command
-// (gpu_lock.sh pool:N:<ids>); job_gpu_ids pins one fixed group (group:<ids>). Either may also come
-// from op_spec.resource. Without any of them the count is what Setup found in the task's own
-// test/benchmark (`detected`, see scripts/detect_gpu_requirement.py). Every GPU consumer then gets
-// that one spec, so each command holds the whole group. One GPU per job leaves everything unchanged.
-// Setup's finding is a static hint: one that cannot run in gpu_ids (unknown, no usable count, more
-// GPUs than the pool) keeps the lane single-GPU with a warning. Only an explicit request throws.
+// Multi-GPU jobs (multi-rank ops).
 function resolveGpuRequest(A, gpuList, detected) {
   const resource = (A.op_spec && A.op_spec.resource) || {};
   const parseIds = (name, value) => {
@@ -203,34 +169,18 @@ const EVAL_DIR_OVERRIDE = A.eval_dir || '';
 const APPLY_TO_ORIGINAL = String(A.apply_to_original != null ? A.apply_to_original : 'false');
 const KERNEL_NAME_HINT = KERNEL_PATH_ORIG.replace(/\/+$/, '').split('/').pop();
 
-// --- author mode: when there is NO existing source, write a fresh from-scratch SEED first, then optimize it.
-// mode=optimize (default) keeps the exact original behavior (backward compatible). mode=author seeds
-// the workspace from an op task dir (immutable oracle + frozen online kernel in baseline_src/), the
-// author_engineer writes a passing seed, then the SAME optimize loop runs — always timing against the
-// frozen online kernel, never against the seed's own language. KERNEL_KNOWLEDGE_DIR is the AMD authoring
-// knowledge base — REFERENCE ONLY (facts/how-to, never decisions; the author always measures regardless). Default:
-// sibling perf_knowledge/ so standalone runs use it too; empty if WORKFLOW_DIR is unset (no behavior change).
+// --- author mode: when there is NO existing source, write a fresh from-scratch SEED first, then
+// optimize it.
 const MODE = String(A.mode != null ? A.mode : 'optimize').trim() || 'optimize';
 const MEGA = MODE === 'mega';   // multi-rank candidate search: see the mode=mega backend section
 const TARGET_LANGUAGE = String(A.target_language != null ? A.target_language : 'triton').trim() || 'triton';
 const OP_SPEC = A.op_spec || {};
-// When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets op_spec.cuda_graph_safe=true),
-// the isolated oracle alone CANNOT catch a kernel that passes iso but host-syncs or lazily-compiles under
-// graph capture — the "wins isolated, crashes serving" class (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
-// This turns on an OPTIONAL capture+replay smoke in the verify step so that failure is caught at the cheap
-// isolated stage. Unset (standalone single-kernel runs / non-graph ops) => byte-identical to before.
+// When the op will run on the CUDA/HIP-graph-captured decode path (e2e sets
+// op_spec.cuda_graph_safe=true), the isolated oracle alone CANNOT catch a kernel that passes iso but
+// host-syncs or lazily-compiles under graph capture — the "wins isolated, crashes serving" class
+// (cuda_graph_capture_unsafe / NO_BINARY_FOR_GPU).
 const REQUIRE_GRAPH_CAPTURE = !!(OP_SPEC && OP_SPEC.cuda_graph_safe === true);
-// WORKLOAD ALIGNMENT (optional). When the caller supplies the real-workload shape/dtype case
-// distribution, the benchmark harness benchmarks EXACTLY those (shape, dtype) cases, weights each
-// by its total time contribution in the workload (weight = count * baseline_latency), and the
-// optimization target becomes the time-weighted ratio-of-sums instead of an unweighted geomean.
-//   workload_spec_path : path to a workload-v1 json (produced by parse_profile.py --workload-out,
-//                        or hand-written). The benchmark_engineer reads it (JS can't touch FS).
-//   op_spec.workload   : inline cases, same shape as a workload-v1 "kernels[].cases" list (or the
-//                        full object). Takes precedence; weight_source becomes "caller".
-// Both unset => unweighted behavior, byte-identical to before. Correctness ALWAYS stays on the
-// frozen immutable oracle (parity vs baseline_src/, + a recorded reference_io.pt where the task dir
-// came from e2e's kernel_extractor); this only shapes the PERFORMANCE measurement.
+// WORKLOAD ALIGNMENT (optional).
 const WORKLOAD_SPEC_PATH = String(A.workload_spec_path || (OP_SPEC && OP_SPEC.workload_path) || '').trim();
 const WORKLOAD_SPEC = (OP_SPEC && OP_SPEC.workload) || A.workload || null;
 const HAS_WORKLOAD = !!(WORKLOAD_SPEC_PATH ||
@@ -248,15 +198,10 @@ const primSpeedup = (o) => {
 };
 // Gate fields like `correctness` / `status` are free strings in the schemas, so an agent legitimately
 // answers "PASS - 15/15 draws" and a `=== 'pass'` test silently drops a genuinely verified candidate.
-// Match the leading word instead: "PASS - ..." / "passed" gate open, "FAIL"/"did not pass" stay shut.
 const says = (v, w) => String(v == null ? '' : v).trim().toLowerCase().startsWith(w);
 let KERNEL_KNOWLEDGE_DIR = String(A.perf_knowledge_dir ||
   (WORKFLOW_DIR ? WORKFLOW_DIR.replace(/\/[^/]*$/, '') + '/perf_knowledge' : '')).replace(/\/+$/, '');
-// Expert skills = human-authored, validated kernel recipes (perf_knowledge/expert_skills/). ADVISORY
-// priors only: a matched `validated` skill is a HIGH-PRIOR author/optimize candidate the planning/author
-// roles reproduce, then gate by the isolated A/B vs the oracle — it NEVER overrides measurement. Default
-// OFF (opt-in: pass use_expert_skills="true"). When OFF (the default) NOTHING is injected -> byte-identical
-// to a build without this feature. When invoked by the e2e layer the flag + dir are passed down.
+// Expert skills = human-authored, validated kernel recipes (perf_knowledge/expert_skills/).
 const USE_EXPERT_SKILLS_REQUESTED = String(A.use_expert_skills != null ? A.use_expert_skills : 'false') === 'true' ||
   (MEGA && A.use_expert_skills == null && !!A.expert_skill_id);   // a mega run that names a skill uses it
 let USE_EXPERT_SKILLS = USE_EXPERT_SKILLS_REQUESTED;
@@ -265,17 +210,11 @@ const EXPERT_SKILLS_DIR = String(A.expert_skills_dir ||
 // Only planning + authoring roles consult skills; every other role gets no injection.
 const EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engineer', 'deep_engineer']);
 // Expected-identity isolation must apply before Setup (no CDNA skills/KB on a declared isolated run).
-// Detected identity is OR'd in after director setup — do not read GFX here (TDZ).
 let SKILLS_ISOLATE = gpuFamily(EXPECTED_GFX).isolate;
 
 // --- Deep Research Agent (DRA) -------------------------------------------------------------------
 // OPT-IN: a v4-native research phase that runs AFTER Profile and BEFORE the optimize loop (so the
-// COMMANDMENT + baseline profile + analysis exist). The `researcher` persona extracts facts and a
-// ranked set of research QUESTIONS; the script fans those out in PARALLEL (each question = one
-// hang-guarded agent using native WebSearch/WebFetch), then a synthesis pass writes a ranked
-// directions portfolio (deep_search.md / deep_search_brief.md / deep_search.json) into EVAL_DIR that
-// the TechLead's plan_round seeds from. DEFAULT OFF: when dra_enabled is not "true" NOTHING runs and
-// behavior is byte-identical to a build without this feature (existing runs unchanged).
+// COMMANDMENT + baseline profile + analysis exist).
 const DRA_ENABLED = String(A.dra_enabled != null ? A.dra_enabled : 'false') === 'true';
 const DRA_MAX_QUESTIONS = (() => {
   const v = parseInt(A.dra_max_questions != null ? A.dra_max_questions : 8, 10);
@@ -289,49 +228,20 @@ const DRA_MAX_BLINDSPOTS = (() => {
 })();
 
 // ---------------------------------------------------------------------------
-// LEARNED-KNOWLEDGE SINK. Derived from WORKFLOW_DIR and nothing else, so a lane spawned by
-// e2e_workflow still curates into kernel_workflow/knowledge/learned/ — e2e's learned/ is a
-// separate memory owned by its own system_architect step.
-//   update_experience = on (default) | off | false | none
-// The bake-off dispatcher passes `off` and curates once centrally instead (N parallel lanes would
-// file N near-duplicate cards for one op).
+// LEARNED-KNOWLEDGE SINK.
 const LEARNED_DIR = `${WORKFLOW_DIR}/knowledge/learned`;
-// How much of ONE round the learned KB may steer. Measured, not guessed: an arm whose planner was
-// handed at most 3 matched cards and could KB-seed at most one direction reached 4.45x geomean on 16
-// kernels; the same 16 under a planner that reads the whole 84-line index and picks freely reached
-// 3.44x — a 22.7% regression, with the losses concentrated on kernels where the bounded arm had found
-// an unusual win (one went 25.77x -> 2.15x). Both arms averaged ~3 rounds, so it was not lost rounds.
-// The index-reading design is better at RECALL; what it lost was the profile-driven direction that
-// nothing from the KB had touched — the per-round control. `knowledge/learned/README.md` says the KB
-// must be "an accelerant, NOT a cage", and this is the line that keeps that true.
-//   KB_DIR_CAP        directions per round that may draw on cards (default 1)
-//   KB_COLD_DIRECTION at least one direction per round must be profile-only (default on)
-// Whether the planner is being pointed at the learned KB at all. Defined HERE because this lane is
-// where it is USED: the constant of this name lives in the dispatcher, and referencing it from the
-// lane threw `USE_LEARNED_READ is not defined` at the first plan step of every kernel — 13 of them
-// before the run was stopped. A parse test cannot catch that: the file compiles, and the reference
-// only resolves when the line runs. Default ON, matching this branch's design where the tech_lead
-// role reads INDEX.md unconditionally; `use_learned_kb=false` turns the budget block off with it.
+// How much of ONE round the learned KB may steer.
 let USE_LEARNED_READ = String(A.use_learned_kb != null ? A.use_learned_kb : 'true') === 'true';
 const KB_DIR_CAP = Math.max(0, parseInt(A.kb_dir_cap != null ? A.kb_dir_cap : 1, 10));
 const KB_COLD_DIRECTION = String(A.kb_cold_direction != null ? A.kb_cold_direction : 'true') === 'true';
 let kbCapBound = 0;      // rounds where the cap actually had to strip something
 const UPDATE_EXPERIENCE = String(A.update_experience != null ? A.update_experience : 'on').trim().toLowerCase() || 'on';
 const UPDATE_EXPERIENCE_ON = UPDATE_EXPERIENCE !== 'off' && UPDATE_EXPERIENCE !== 'false' && UPDATE_EXPERIENCE !== 'none';
-// Did the CALLER freeze this kernel through oracle_freezer? Only the bake-off dispatcher does, so this
-// tells director whether a GEAK_TIMING_RECEIPT is producible at all before it gates on one. Must be an
-// ARG: this file never runs Freeze itself, and a workflow script has no filesystem access to go looking.
+// Did the CALLER freeze this kernel through oracle_freezer?
 const FROZEN_ORACLE = String(A.frozen_oracle != null ? A.frozen_oracle : 'false') === 'true';
 
 // ---------------------------------------------------------------------------
-// WARM-START (the experience KB). Before the optimize loop, search the machine-produced KB —
-// addressed by canonical id on both planes — for the top-3 best patches for THIS (kernel, language,
-// gfx), validate each through the SAME verify_engineer gate, and adopt the first that passes; after
-// write this run's own win back.
-//   on (default)      | read + validate top-3, ADOPT the first that passes.
-//   reference         | read top-3 as prose only, never auto-apply.
-//   return_after_read | adopt then RETURN before the optimize loop.
-//   off/false/none, a STATE_DIR resume, or no arch => cold start (byte-identical to pre-feature).
+// WARM-START (the experience KB).
 const WARM_START = String(A.warm_start != null ? A.warm_start : 'on').trim().toLowerCase() || 'on';
 let WARM_START_ON = WARM_START !== 'off' && WARM_START !== 'false' && WARM_START !== 'none';
 if (SKILLS_ISOLATE) {
@@ -348,23 +258,12 @@ const EXPERIENCE_STORE = `${WORKFLOW_DIR}/scripts/experience_store.py`;
 // Every candidate costs a full on-box verify to reject, so a recorded near-tie is not worth reading.
 const WARM_START_MIN_SPEEDUP = Number.isFinite(parseFloat(A.warm_start_min_speedup))
   ? parseFloat(A.warm_start_min_speedup) : 1.05;
-// How hard the resolver may work to map this run's kernel name onto a stored page. The name is
-// layout-derived (`fused_moe_kernel` standalone, `fused_moe_kernel_task` from an e2e head extraction),
-// so `exact` alone would make the head path miss its own history; `fuzzy` also accepts an op_kind.
+// How hard the resolver may work to map this run's kernel name onto a stored page.
 const WARM_START_MATCH = ['exact', 'normalized', 'fuzzy'].includes(String(A.warm_start_match || '').trim())
   ? String(A.warm_start_match).trim() : 'fuzzy';
-// Which PLANE the experience is READ from. Same phases, same schemas, same verify gate either way
-// — only the command string differs, because the store subcommands were built to print the same
-// JSON as the directory ones.
-//   store (default)  a KB Store on disk, in the shape the service uses, keyed by canonical id.
-//   local            the kb_artifacts/ tree, keyed by slug. The original scheme, kept as an escape
-//                    hatch for a box whose store is unusable.
+// Which PLANE the experience is READ from.
 //
-// `store` is the default because it is the SAME addressing the service uses. Two schemes side by
-// side drifted — `resolve` and `resolve-remote` assembled their filter chains separately, which is
-// how the keyed read lost the `--include-retired` the slug read always had. Nothing moves: the tree
-// is still written (`write-remote --plane both`) and `sync-local` carries the backlog across before
-// each read; the tree stays the assembly buffer and the surface a curation pass edits.
+// `store` is the default because it is the SAME addressing the service uses.
 const KB_MODE = String(A.kb_mode || 'store').trim().toLowerCase() === 'local' ? 'local' : 'store';
 const KB_STORE_DIR = String(A.kb_store_dir ||
   (KB_ARTIFACTS_DIR ? KB_ARTIFACTS_DIR.replace(/\/[^/]*$/, '') + '/kb_store_local' : '')).replace(/\/+$/, '');
@@ -374,27 +273,9 @@ const KB_FRAMEWORK_VERSION = String(A.kb_framework_version || '').trim();
 const KB_VERSION_FLAG = KB_FRAMEWORK_VERSION ? ` --framework-version ${JSON.stringify(KB_FRAMEWORK_VERSION)}` : '';
 const KB_ROOT_OK = KB_MODE === 'store' ? !!KB_STORE_DIR : !!KB_ARTIFACTS_DIR;
 // Whether this run may also talk to the KB Store SERVICE, on top of whichever local plane KB_MODE
-// selected. `auto` (default) uses it when credentials are present and silently does not when they
-// are not; `off` restores the directory-only behaviour byte for byte.
+// selected.
 const KB_REMOTE = String(A.kb_remote || 'auto').trim().toLowerCase() === 'off' ? 'off' : 'auto';
-// The credentials are NOT visible from this process. They live in the user's profile, and the
-// shells these commands run in are non-interactive, so `process.env.KB_STORE_TOKEN` is empty here
-// even on a box where the service is configured. Deciding the plane in JS would therefore mean
-// deciding it wrong. Instead every emitted command exports its own credentials from the profile's
-// two sources and then branches on what it actually got — the test happens where the answer is
-// knowable. The token is read from a 0600 file into a variable, never passed in argv, because
-// `ps` is world-readable on this box.
-// The gateway's internal AMD CA is not in a stock container trust store, so a KB command run inside
-// one fails TLS (the old workaround was `curl -k`). DETECT then heal: only when the caller has NOT
-// already established trust (SSL_CERT_FILE unset) do we point urllib/requests/curl/node at the first
-// readable AMD-root bundle we find. Most callers here run OUTSIDE the warm-start launcher (which sets
-// these at `docker run`), so this self-heal is what keeps their KB reachable. Path-only, no CA
-// content; overridable with KB_CA_BUNDLE; a no-op when SSL_CERT_FILE is already set or no bundle is
-// readable (so CI and already-trusting images are byte-identical). DNS (the host has none
-// in-container) is a launch concern, handled with `docker run --add-host`.
-// GEAK_KB_STORE_* wins over the bare KB_STORE_* (so a host that also runs Hyperloom, which carries
-// its own KB_STORE_*, can point GEAK at a distinct store); re-exported under the bare names every
-// downstream reader here branches on.
+// The credentials are NOT visible from this process.
 const KB_ENV_PRELUDE =
   'export KB_STORE_URL="${GEAK_KB_STORE_URL:-${KB_STORE_URL:-https://global.primus-safe.amd.com/knowledge-base}}"; ' +
   'export KB_STORE_TOKEN="${GEAK_KB_STORE_TOKEN:-${KB_STORE_TOKEN:-$(cat ~/.geak_kb_token 2>/dev/null)}}"; ' +
@@ -408,37 +289,14 @@ const KB_WRITE_OK = KB_ROOT_OK && !!KB_ARTIFACTS_DIR;
 const kebab = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 // ---------------------------------------------------------------------------
-// DEEP-MODE continuation + cross-backend / e2e-feedback hooks. ALL OPTIONAL.
-// When none are passed (every normal/fast e2e run, and every standalone run) these are '' / the
-// current defaults and are NEVER threaded into a prompt — so behavior is byte-identical to the
-// pre-feature build. They are set ONLY by e2e_workflow's deep_mode head scheduler.
-//   STATE_DIR        a STABLE dir for THIS (kernel,backend) ACROSS deep waves. When set the run
-//                    RESUMES: director seeds the canonical from STATE_DIR/best (the cumulative-best
-//                    code) and returns prior_state (cumulative + history) so re-invocation CONTINUES
-//                    instead of restarting (no lost experience, no re-explored directions). The frozen
-//                    oracle baseline (immutable unittest.py/meta.json) stays the reference, so speedups
-//                    remain comparable to the TRUE baseline across waves. update_memory writes STATE.json
-//                    + syncs best/ each round.
-//   SHARED_KB        cross-backend blackboard file (read by plan+engineers, appended by update_memory).
-//   GLOBAL_KB        run-global cross-KERNEL technique blackboard (deep): techniques that generalize
-//                    across head ops/backends. Optional; unset (default/fast) => byte-identical prompts.
-//   E2E_FEEDBACK     path to the latest end-to-end A/B result + problems from e2e_workflow (engaged?,
-//                    cudagraph behavior, mem footprint, decode regression, e2e delta) — steers planning.
-//   HARNESS_ADDENDUM path to an e2e-refined harness addendum (timing-weight / cudagraph-capture / hard
-//                    constraint gates). The IMMUTABLE oracle is NEVER touched; this only refines what the
-//                    perf bench emphasizes so the isolated target aligns with e2e.
-//   MAX_NO_IMPROVE   consecutive non-improving rounds before stopping (default 2 = current behavior).
+// DEEP-MODE continuation + cross-backend / e2e-feedback hooks.
 const STATE_DIR = String(A.state_dir || '').replace(/\/+$/, '');
 const SHARED_KB = String(A.shared_kb || '').trim();
 const GLOBAL_KB = String(A.global_kb || '').trim();   // run-global cross-KERNEL technique blackboard (deep)
 const E2E_FEEDBACK = String(A.e2e_feedback || '').trim();
 const HARNESS_ADDENDUM = String(A.harness_addendum || '').trim();
 // P2 (deep continuation): on a RESUMED wave (STATE_DIR holds prior work) the cold re-derivation of
-// Analyze + baseline Profile is largely redundant. INCREMENTAL_RESUME tells those two ADVISORY agents to
-// load the prior roadmap/profile and return it with only delta updates instead of re-deriving from
-// scratch, so each burst spends its budget on optimization ROUNDS, not re-analysis. Benchmark is NEVER
-// incremental (it re-pins a fresh in-window baseline every wave \u2014 the matched-A/B correctness rail).
-// Unset (default/fast / first deep burst) => spreading {} adds nothing => byte-identical prompts.
+// Analyze + baseline Profile is largely redundant.
 const INCREMENTAL = !!STATE_DIR && String(A.incremental_analyze || '') === 'true';
 const RESUME_INPUT = INCREMENTAL ? { INCREMENTAL_RESUME: '1' } : {};
 const MAX_NO_IMPROVE = Math.max(1, parseInt(A.max_no_improve != null ? A.max_no_improve : 2, 10));
@@ -462,10 +320,8 @@ const perCase = {
       baseline_ms: { type: 'number' },
       optimized_ms: { type: 'number' },
       speedup: { type: 'number' },
-      // Workload-alignment fields (present only when a WORKLOAD_SPEC drives the harness; absent
-      // on a normal unweighted run). weight = this case's baseline time SHARE in the real workload;
-      // it is the coefficient of the time-weighted metric Σweight / Σ(weight/speedup). count is
-      // optional/informational (regime-attributed cases have no per-call count).
+      // Workload-alignment fields (present only when a WORKLOAD_SPEC drives the harness; absent on a
+      // normal unweighted run).
       weight: { type: 'number' },
       count: { type: 'number' },
       dims: { type: 'array', items: { type: 'array', items: { type: 'number' } } },
@@ -485,10 +341,7 @@ const SETUP_SCHEMA = obj({
   device_name: { type: 'string' },
   physical_cu_count: { type: 'number' },
   source_files: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' },
-  // Frozen-baseline verdict (BOTH modes). The unittest's timing + random-value parity baseline MUST be
-  // the real online kernel — the immutable baseline_src/ dir OR an importable meta.baseline_callable —
-  // never kernel_src/ (the candidate's own scaffold). The director sets baseline_frozen=true after it
-  // copies baseline_src/ + confirms meta.baseline_callable; the script aborts the run if neither holds.
+  // Frozen-baseline verdict (BOTH modes).
   baseline_frozen: { type: 'boolean' }, baseline_callable: { type: 'string' },
   // GPUs one run of the task's test/benchmark needs (roles/director.md "GPU requirement").
   gpu_requirement: obj({
@@ -496,8 +349,7 @@ const SETUP_SCHEMA = obj({
     gpus_per_job: { type: 'number' }, evidence: { type: 'string' },
   }, ['kind']),
   // DEEP-MODE resume only: populated by the director ONLY when STATE_DIR was provided AND a prior best
-  // exists there. Lets a continued wave restore its cumulative speedup + insight/ledger history so it
-  // does not re-explore dead directions. Absent (undefined) on a fresh run -> no behavior change.
+  // exists there.
   resumed: { type: 'boolean' },
   prior_state: obj({
     cumulative: { type: 'number' }, insights: { type: 'array', items: { type: 'string' } },
@@ -530,8 +382,6 @@ const BENCH_SCHEMA = obj({
   baseline_per_case: { type: 'array', items: { type: 'object', additionalProperties: true } },
   baseline_geomean_ms: { type: 'number' }, num_test_cases: { type: 'number' },
   // Workload-aligned outputs: present when a WORKLOAD_SPEC drove case selection + weights.
-  // baseline_weighted_total_ms = the baseline time the weights represent (Σ weight_i in time units).
-  // The metric is Σ weight_i / Σ (weight_i/speedup_i). workload_aligned flags weights are real (not 1).
   workload_aligned: { type: 'boolean' },
   baseline_weighted_total_ms: { type: 'number' },
   weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
@@ -549,10 +399,9 @@ const PROFILE_SCHEMA = obj({
   summary_path: { type: 'string' }, shift_note: { type: 'string' },
 }, ['bottleneck', 'top_opportunities']);
 
-// --- Deep Research Agent (DRA) schemas (opt-in via args.dra_enabled) -------
-// Stage 0+1/2: the researcher extracts facts and returns a ranked set of research QUESTIONS the
-// script then fans out in parallel. Stages 3/4: one answer per question (run concurrently). Stage 5:
-// optional blindspot critique. Stage 7: the ranked-directions portfolio + brief the planner consumes.
+// --- Deep Research Agent (DRA) schemas (opt-in via args.dra_enabled) ------- Stage 0+1/2: the
+// researcher extracts facts and returns a ranked set of research QUESTIONS the script then fans out in
+// parallel.
 const RESEARCH_PLAN_SCHEMA = obj({
   facts: { type: 'object', additionalProperties: true },
   questions: {
@@ -588,8 +437,7 @@ const RESEARCH_BLINDSPOT_SCHEMA = obj({
   },
 }, ['blindspots']);
 
-// Stage 7 final portfolio. `directions` is kept COMPACT here (mirrors deep_search_brief.md): the
-// planner reads the brief on disk, so this structured echo is just for logging/validation.
+// Stage 7 final portfolio.
 const RESEARCH_SCHEMA = obj({
   num_questions: { type: 'number' }, num_directions: { type: 'number' },
   brief_path: { type: 'string' }, full_path: { type: 'string' }, json_path: { type: 'string' },
@@ -616,12 +464,7 @@ const PLAN_SCHEMA = obj({
       focus_files: { type: 'array', items: { type: 'string' } },
       expected_speedup: { type: 'number' }, prompt: { type: 'string' },
       kk_refs: { type: 'array', items: { type: 'string' } }, // optional: perf_knowledge card paths for THIS direction (REFERENCE ONLY)
-      // Learned cards that SEEDED this direction, by filename. Structural attribution: the planner
-      // declares what it opened, the script joins that against what the VERIFIER independently
-      // measured. Declared here rather than inferred because the read path is semantic — the planner
-      // reads INDEX.md and judges by meaning, so nothing downstream can reconstruct which card it
-      // acted on. A citation is not a causal claim (the planner saw the profile too, and one run
-      // holds no counterfactual); it is the only way a card can ever LOSE standing.
+      // Learned cards that SEEDED this direction, by filename.
       learned_refs: { type: 'array', items: { type: 'string' } },
     }, ['id', 'title', 'specialty', 'prompt']),
   },
@@ -636,7 +479,6 @@ const ENG_SCHEMA = obj({
   engineer_id: { type: 'string' }, specialty: { type: 'string' }, task: { type: 'string' },
   strategy: { type: 'string' }, speedup_geomean: { type: 'number' }, speedup_arithmetic: { type: 'number' },
   // Time-weighted ratio-of-sums vs the TRUE baseline (PRIMARY metric when workload_aligned).
-  // = Σ weight_i / Σ (weight_i / speedup_i). Omitted on unweighted runs.
   speedup_weighted: { type: 'number' },
   per_case: perCase, status: { type: 'string' }, patch_file: { type: 'string' },
   measurement_valid: { type: 'boolean' },
@@ -670,18 +512,11 @@ const COMMIT_SCHEMA = obj({
 }, ['committed']);
 
 // eikos v2 E1 (R4 round-4 / Astra re-review #4): the round-3 PRECOMMIT_SCHEMA + RECOVERY_SCHEMA were
-// removed with the restore-and-continue recovery they served. ABORT-AND-QUARANTINE neither snapshots a
-// pre-attempt reference nor dispatches a restore, so no schema is needed for the failed-commit path.
+// removed with the restore-and-continue recovery they served.
 
-// eikos v2 E1 (R9 / Astra re-review #10, Finding 2 — SHORTEST ROUTE): the round-7/8 host-side deterministic
-// commit fallback (its fixed-script dispatch, its result schema, and its observed-postcondition acceptance
-// predicate) have been REMOVED. Astra reproduced that a host-side install can only ever be accepted on
-// AGENT-REPORTED evidence: a patch that merely APPLIES does not prove identity with the verified candidate;
-// the committed-tree equivalence was computed from the CURRENT HEAD, not a pinned verified baseline; and the
-// acceptance predicate consumed the returned flags/strings — she obtained acceptance with an empty reported
-// post-HEAD. Rather than build a full install proof we take her explicit shortest route: there is NO host-side
-// apply/commit path anymore. An unconfirmed commit is QUARANTINED + RETAINED (the verified winner stays
-// recoverable) and is never installed from self-reported evidence, so no commit-fallback schema is needed.
+// eikos v2 E1 (R9 / Astra re-review #10, Finding 2 — SHORTEST ROUTE): the round-7/8 host-side
+// deterministic commit fallback (its fixed-script dispatch, its result schema, and its
+// observed-postcondition acceptance predicate) have been REMOVED.
 
 const REPORT_SCHEMA = obj({
   final_speedup_geomean: { type: 'number' }, final_speedup_arithmetic: { type: 'number' },
@@ -703,8 +538,7 @@ const VALIDATE_SCHEMA = obj({
   director_verified_speedup_weighted: { type: 'number' }, // PRIMARY when workload_aligned
   tech_lead_reported_speedup_geomean: { type: 'number' },
   validation_status: { type: 'string' }, correctness: { type: 'string' },
-  // clean | host_bound | unprimed | unknown | not_applicable. Declared so the relaying agent has no
-  // reason to drop it -- the gate calls it REQUIRED so a speedup never travels downstream unlabelled.
+  // clean | host_bound | unprimed | unknown | not_applicable.
   timing_basis: { type: 'string' },
   per_case: perCase, applied_to_original: { type: 'string' },
   arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
@@ -715,11 +549,9 @@ const WARMSTART_RESOLVE_SCHEMA = obj({
   read_reason: { type: 'string' }, slug: { type: 'string' },
   // What this run's name derived to vs the page actually served, so a surprising match is visible.
   requested_slug: { type: 'string' }, match_tier: { type: 'string' },
-  // store mode only: the key the candidates came from. Declared rather than left to
-  // additionalProperties so the agent relaying this JSON has no reason to drop it.
+  // store mode only: the key the candidates came from.
   canonical_id: { type: 'string' },
-  // Which of the keyed read's planes answered ("remote" | "local"). Both are addressed by canonical
-  // id, so this is the ONLY field telling them apart — and the attest step picks its flags from it.
+  // Which of the keyed read's planes answered ("remote" | "local").
   read_plane: { type: 'string' },
   // Same kernel, another language: the wrong target_language was passed, not an empty store.
   other_language_pages: { type: 'array', items: { type: 'string' } },
@@ -740,20 +572,17 @@ const WARMSTART_RESOLVE_SCHEMA = obj({
       session_id: { type: 'string' },
       patch_path: { type: 'string' }, prose_path: { type: 'string' },
       strategy: { type: 'string' }, status: { type: 'string' },
-      // direction = the IDEA (one rank each). comparable=false: recorded on a different bench key
-      // than rank 1's, so the order between them is a prior only.
+      // direction = the IDEA (one rank each).
       direction: { type: 'string' }, bench_key: { type: 'string' }, comparable: { type: 'boolean' },
     }, ['rank', 'patch_path']),
   },
 }, ['read_reason']);
-// Warm-start writer output = experience_store.py `write` JSON, verbatim. written=false with reason
-// "duplicate_impl" is a success: the store already held this code and counted a reproduction.
+// Warm-start writer output = experience_store.py `write` JSON, verbatim.
 const WARMSTART_WRITE_SCHEMA = obj({
   written: { type: 'boolean' }, reason: { type: 'string' }, slug: { type: 'string' },
   dir: { type: 'string' }, speedup: { type: 'number' },
   reproduced: { type: 'string' }, reproductions: { type: 'number' },
-  // store mode only: where the same result landed on the KB plane. `replaced` says which of the
-  // two outcomes it was — a new candidate under the key, or this patch's own one measured again.
+  // store mode only: where the same result landed on the KB plane.
   remote: obj({
     written: { type: 'boolean' }, reason: { type: 'string' }, canonical_id: { type: 'string' },
     session_id: { type: 'string' }, champion: { type: 'boolean' }, replaced: { type: 'boolean' },
@@ -761,42 +590,18 @@ const WARMSTART_WRITE_SCHEMA = obj({
 }, ['written']);
 
 // ---------------------------------------------------------------------------
-// Prompt helpers. Every agent reads its role file from WORKFLOW_DIR and the
-// relevant knowledge files itself; the script only passes paths + JSON inputs.
+// Prompt helpers.
 // ---------------------------------------------------------------------------
 const cfg = (o) => Object.entries(o).map(([k, v]) =>
   `- ${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
 
-// --- Hung-agent guard ------------------------------------------------------
-// An agent LLM call that HANGS (no response, no terminal error) blocks a
-// parallel()/pipeline() round-barrier forever (observed: engineer agents frozen
-// mid-turn wedged the whole optimize round for >30min). The harness resolves
-// terminal API errors to null but NOT an indefinite hang. So bound every agent()
-// call: if it has not returned after AGENT_TIMEOUT_MS, resolve it to null (which
-// every .filter(Boolean)/null-check downstream already tolerates) and let the
-// round proceed. VERY generous default (60min): a true hang never returns, so this only fires on a
-// hang, NEVER on a legitimately-long agent. Inner agents include benchmark/profile/verify that build
-// (hipcc/ninja) and run benches — minutes, well under 60min — plus the LLM-heavy optimize engineers
-// (the ones observed hanging). A too-short bound would kill legit long agents (e.g. a slow rocprof or
-// build), so keep it large. Cache keys (prompt, opts) are unchanged so resume still works. Falls back
-// to raw agent() if setTimeout is unavailable. args.agent_timeout_ms=0 disables.
-// API-FAULT TOLERANCE: a transient API failure (gateway 4xx/5xx, rate-limit, dropped connection, the
-// model API going down mid-run) must NOT crash the whole workflow. agentT retries the call up to
-// AGENT_RETRIES times on a thrown API/agent error, then resolves to null (every .filter(Boolean)/
-// null-check downstream — incl. the Director validate + final report — already degrades on null rather
-// than exiting). A timeout (hang) resolves null immediately and is NOT retried (a real hang would just
-// burn another full timeout window). args.agent_retries tunes the count. If the failure is PERSISTENT
-// (e.g. an auth/header requirement the client doesn't send), retries are exhausted then the run
-// degrades — re-run with Workflow({resumeFromRunId}) once the client/API is fixed; cached agent results
-// make resume cheap.
+// --- Hung-agent guard ------------------------------------------------------ An agent LLM call that
+// HANGS (no response, no terminal error) blocks a parallel()/pipeline() round-barrier forever
+// (observed: engineer agents frozen mid-turn wedged the whole optimize round for >30min).
 const AGENT_TIMEOUT_MS = parseInt(A.agent_timeout_ms != null ? A.agent_timeout_ms : 3600000, 10);
 const AGENT_RETRIES = Math.max(1, parseInt(A.agent_retries != null ? A.agent_retries : 4, 10));
-// GEAK-ABLATION-ARMS-v1 (B6): registered mechanical dispatches are folded into the NEXT
-// agent instead of getting an agent of their own. In the historical Qwen3 run the
-// storage-reclaim agent -- whose whole job is to run one fixed bash command -- cost
-// 152 calls across 8 agents ($13.90), because every one of them paid the full
-// bootstrap floor and then held a conversation. Folding removes the dispatch; the
-// command still runs, verbatim, as the next agent's first action.
+// GEAK-ABLATION-ARMS-v1 (B6): registered mechanical dispatches are folded into the NEXT agent instead
+// of getting an agent of their own.
 const ABLATION_ARM = String(A.ablation_arm || '').trim().toUpperCase();
 const ABL_B6 = ABLATION_ARM === 'B6';
 const ABL_PENDING = [];
@@ -810,14 +615,10 @@ function ablDrainPrelude() {
 }
 
 // LLM token+time accounting (PURELY ADDITIVE; args.llm_stats="false" makes it a no-op).
-// DELIBERATELY NO TIMESTAMPS: Date.now()/new Date() are unavailable in workflow scripts. Every
-// duration in the report comes from the transcripts (scripts/llm_ledger.py); this records only the
-// role/phase/attempt identity of each agent call so the ledger attributes tokens to the right agent.
 const LLM_STATS = String(A.llm_stats != null ? A.llm_stats : 'true').trim().toLowerCase() !== 'false';
 const LLM_TL = { schema: 'geak.agent_timeline/1', workflow: 'kernel_lane', events: [], nested: [] };
 const TL_ROLE_RE = /You are the ([A-Za-z0-9_.\-]+)\.\s*PHASE=([A-Za-z0-9_.\-]+)\./;
 // Called AT DISPATCH (before the await) so LLM_TL.events is in dispatch order, not completion order.
-// Returns the event so the caller flips `ok` once the attempt resolves (null when off).
 function tlAgent(prompt, o, attempt, dispatchId) {
   if (!LLM_STATS) return null;
   const m = TL_ROLE_RE.exec(String(prompt || ''));
@@ -830,29 +631,16 @@ function tlAgent(prompt, o, attempt, dispatchId) {
     attempt: attempt,
     ok: false,
   };
-  // NIT (Astra re-review #6): thread the router's host dispatch id into the timeline event so the
-  // abort receipt_ref (keyed on dispatch_id) is reachable END-TO-END — a post-mortem can match
+  // NIT (Astra re-review #6): thread the router's host dispatch id into the timeline event so the abort
+  // receipt_ref (keyed on dispatch_id) is reachable END-TO-END — a post-mortem can match
   // commit_failure.receipt_ref.dispatch_id to THIS event's dispatch_id in the persisted agent_timeline/
-  // ledger geak_report.py renders, closing "reachable by dispatch id". Set ONLY when a routed dispatch id
-  // is present: a non-routed call (routing=false, or a router's own carrier) passes none, so the event
-  // stays BYTE-IDENTICAL to before — routing-off timeline parity preserved; __routeReduce untouched.
+  // ledger geak_report.py renders, closing "reachable by dispatch id".
   if (dispatchId != null) e.dispatch_id = dispatchId;
   LLM_TL.events.push(e);
   return e;
 }
 
 // --- Expt-3 cost ladder: route EVERY agent scope to the lowest sufficient model.
-// The POLICY is e2e_workflow/routing/SKILL.md; this region is what ENFORCES it. OFF unless A.routing is
-// truthy (or GEAK_ROUTING=1 for a harness) -> agentT() never consults it -> the run is BYTE-IDENTICAL to
-// a non-routing build. Reversible via git on expt/3-routing.
-//   brain    director:* / tech_lead:*         -> Opus 5.5, fixed (planning, decomposition, adjudication)
-//   helper   the fixed-script scopes below    -> Haiku 4.5, fixed (their schema is the check)
-//   decider  route:* (the classifier itself)  -> Sonnet 5.5, fixed, never itself classified (no recursion)
-//   worker   every other scope                -> classified once by the decider, then moved UP the ladder
-//            only on a DETERMINISTIC failure: Haiku 4.5 -> Sonnet 5.5 -> Opus 5.5. Opus 4.6 is not a lane: it
-//            costs more than Opus 5.5 on every price bucket (input, cache write, cache read, output).
-// Keys = `${phase}` + U+0000 + labelPrefix (everything before the first space), so dynamic round/tag
-// suffixes collapse to one stable scope identity.
 // <<ROUTING-INLINE-START>>
 const ROUTE_LANES = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'];
 const ROUTE_LANE_OF = { small: 0, medium: 1, high: 2, escalate: 2 };
@@ -871,16 +659,12 @@ const ROUTE_TIER_MAP = (function () {
   return m;
 })();
 const ROUTING_ON = (function () {
-  // kernel_lane runs ONLY as a native-Workflow child lane (no `process`); A.routing is forwarded in from
-  // the parent (e2e_workflow.js / kernel_workflow.js), so it is the single enable source here. The
-  // GEAK_ROUTING env fallback for a standalone harness lives on the top-level e2e_workflow.js copy;
-  // reading process.env here would be dead on the native host AND a native-forbidden construct the
-  // conformance guard rejects (evo/tests/test_dispatch.py::test_lane_script_uses_no_native_forbidden_constructs).
+  // kernel_lane runs ONLY as a native-Workflow child lane (no `process`); A.routing is forwarded in
+  // from the parent (e2e_workflow.js / kernel_workflow.js), so it is the single enable source here.
   const a = String(A.routing != null ? A.routing : '').trim().toLowerCase();
   return a === 'true' || a === '1' || a === 'on';   // anything else (incl. unset) stays OFF — default-OFF
 })();
-// Thresholds and caps. CODE owns them: the decider never sees or moves them. Each is a per-run arg so an
-// operator-approved proposal from route_review.py applies without a code change.
+// Thresholds and caps.
 function __routeNum(v, d) { const x = Number(v); return v != null && v !== '' && Number.isFinite(x) ? x : d; }
 const ROUTE_CONF_ESCALATE = __routeNum(A.route_conf_escalate, 0.70);
 const ROUTE_MAX_FAILS_PER_LANE = Math.max(1, __routeNum(A.route_max_retries_per_lane, 3));
@@ -897,8 +681,7 @@ const ROUTE_FLOORS = (function () {
   if (typeof f === 'string') { try { f = JSON.parse(f); } catch (e) { f = null; } }
   return (f && typeof f === 'object') ? f : {};
 })();
-// Decider backend. 'sonnet' is the only one wired here. 'jev' is a reserved slot: the Jev router lives on
-// feat/geak-jev and, as of 2026-09-28, the gateway refuses every Jev request, so asking for it falls back.
+// Decider backend.
 const ROUTE_DECIDER = String(A.route_decider || 'sonnet').trim().toLowerCase();
 const ROUTE_DECISION_SCHEMA = {
   type: 'object',
@@ -923,16 +706,14 @@ function __routeLabelPrefix(label) {
   const sp = s.indexOf(' ');                // colon is part of static identity; a space starts dynamic text
   return sp >= 0 ? s.slice(0, sp) : s;
 }
-// Ladder identity. Coarser than the dispatch label, finer than its prefix: `eng d3:memory` and
-// `eng d7:memory` share one ladder ('eng:memory'), `eng d3:compute` gets its own.
+// Ladder identity.
 function __routeScope(label) {
   const parts = String(label == null ? '' : label).split(' ');
   const rest = parts[1] || '';
   const c = rest.indexOf(':');
   return c >= 0 ? parts[0] + ':' + rest.slice(c + 1) : parts[0];
 }
-// Static part. A model for brain / helper / decider scopes; undefined for a worker (which __routePick
-// classifies). OFF -> undefined everywhere.
+// Static part.
 function __routeModel(opts) {
   if (!ROUTING_ON) return undefined;
   const pfx = __routeLabelPrefix(opts && opts.label);
@@ -947,13 +728,7 @@ function __routeValid(d) {
     ['continue', 'retry', 'verify', 'escalate', 'complete'].indexOf(d.action) >= 0 &&
     typeof d.scope_drift === 'boolean';
 }
-// Pure: (previous ladder state, decider answer) -> next state. `confidence` is always the decider's
-// estimate that the CURRENT lane finishes the task correctly (Haiku for a scope not yet tried), so one
-// gate serves both moments:
-//   first sight    stay on SMALL unless confidence < gate, then take the classified lane. The task has
-//                  to prove it deserves more; an invalid answer proves nothing -> SMALL.
-//   after failure  move up ONE lane if confidence < gate, or this lane has failed MAX times, or a
-//                  risk_flag is raised. Otherwise retry on the same lane.
+// Pure: (previous ladder state, decider answer) -> next state.
 function __routeStep(st, d, scope) {
   const ok = __routeValid(d);
   const floor = Math.max(0, Math.min(ROUTE_TOP, __routeNum(ROUTE_FLOORS[scope], 0)));
@@ -982,16 +757,12 @@ function __routeSessionSpent() {
 }
 // budget.spent() is the whole SESSION's running output-token total, not this run's: a probe on
 // 2026-09-28 read 4,727,204 before the lane began, and an absolute cap tripped on the first worker.
-// So the cap applies to growth since this lane started. Anything else the session spends meanwhile
-// (the launching conversation, another workflow) still counts: the switch can trip early, never late.
 const ROUTE_SPENT_AT_START = __routeSessionSpent();
 function __routeSpent() {
   const now = __routeSessionSpent();
   return now == null ? null : now - (ROUTE_SPENT_AT_START || 0);
 }
-// Kill switch. The only spend a workflow script can see is output tokens (budget.spent()); dollars are
-// settled afterwards by the ledger. Once tripped it stays tripped: no new round, no new worker dispatch.
-// Brain dispatches still run so the report and Director validation are not lost.
+// Kill switch.
 function __routeOverBudget() {
   if (__routeKilled) return true;
   if (!ROUTE_MAX_OUTPUT_TOKENS) return false;
@@ -1030,8 +801,7 @@ ${String(p == null ? '' : p).slice(0, 1500)}`;
                           schema: ROUTE_DECISION_SCHEMA });
   } catch (e) { return null; }
 }
-// The whole decision for one dispatch. Returns { model } to override, {} to leave the pinned model,
-// or { skip: true } when the kill switch has tripped.
+// The whole decision for one dispatch.
 async function __routePick(p, o) {
   const fixed = __routeModel(o);
   if (fixed) return { model: fixed };
@@ -1060,16 +830,9 @@ async function __routePick(p, o) {
   }
   __routeAudit.push({ event: 'dispatch', scope, label: (o && o.label) || '', phase: (o && o.phase) || '',
                       model: ROUTE_LANES[lane], capped });
-  // eikos v2 E1 (bugs 3,4): pass the model ACTUALLY dispatched (ROUTE_LANES[lane], post quota-downgrade)
-  // and the pre-dispatch quota snapshot; __p1Shadow records the dispatched model for the outcome hook.
-  // eikos v2 E1 (R1): issue an IMMUTABLE per-dispatch shadow record for THIS sonnet dispatch, keyed by a
-  // host-issued dispatch id, and return the id so the outcome path binds back to the model ACTUALLY
-  // dispatched here (not a later same-scope dispatch's mutable last_dispatch_model). This mirrors the
-  // eikos/live-P1 per-dispatch binding; it is P1-shadow observability and never alters the legacy ladder
-  // (`__routeLadder[scope]` still keys only on scope, exactly as before) or the live pick above.
-  // eikos v2 E1 (R8 / Astra re-review #9 item 5): CREATE the per-dispatch id so the Sonnet-carrier
-  // dispatch record binds to the model ACTUALLY dispatched here. Pure telemetry — it does NOT change the
-  // live pick or the reduction.
+  // eikos v2 E1 (bugs 3,4): pass the model ACTUALLY dispatched (ROUTE_LANES[lane], post
+  // quota-downgrade) and the pre-dispatch quota snapshot; __p1Shadow records the dispatched model for
+  // the outcome hook.
   const __p1Did = `d${++__routeDispatchSeq}`;
   const __p1Rec = { id: __p1Did, label: (o && o.label) || '', scope, seq: __routeDispatchSeq, model: ROUTE_LANES[lane],
                     outcome: null, p1Outcome: null, decider: 'sonnet' };
@@ -1078,35 +841,21 @@ async function __routePick(p, o) {
   __p1Shadow('sonnet', scope, (o && o.label) || '', ROUTE_LANES[lane], __p1TopUsedPre);   // never changes the pick above
   return { model: ROUTE_LANES[lane], scope, dispatch_id: __p1Did };
 }
-// Deterministic outcome of one cycle for a worker scope. ok=false queues a re-classification before the
-// scope's next dispatch. `evidence` must be compact: status words and numbers, never a log.
-// `kind` names the failure: work_product, non_improvement, invalid_measurement or no_result. The Sonnet
-// decider counts every failure as before and only records the kind; the Eikos decider treats them apart.
-// `p1Kind` (optional) is a shadow-ONLY re-classification of `kind` for P1; the LIVE sonnet/eikos state
-// below always uses `kind`, so the default path stays byte-identical (see bug 5).
+// Deterministic outcome of one cycle for a worker scope.
 function __routeOutcome(scope, ok, evidence, kind, source, label, dispatchId, p1Kind) {
   // When P1 is the LIVE decider there is no legacy decider to keep identical, so P1 gets the corrected kind.
   if (ROUTE_P1_ON) return __p1OutcomeLive(scope, ok, evidence, (p1Kind || kind) || 'work_product', source, label, dispatchId);  // gated; OFF by default
   const st = __routeLadder[scope];
   if (!st) return;
   if (st.decider === 'eikos') return __routeEikosOutcome(st, scope, ok, evidence, kind || 'work_product', source, label, dispatchId, p1Kind);
-  // eikos v2 E1 shadow (bug 3 / R1): attribute to the model ACTUALLY dispatched. R1 binds to the IMMUTABLE
-  // per-dispatch record issued at dispatch (keyed by dispatchId) so two overlapping same-scope dispatches
-  // (A=Opus, B quota-downgraded to Sonnet) each book their OWN model — A's failure is no longer mis-booked
-  // on Sonnet because B overwrote a single mutable value. The record is also VALIDATED (scope+label) and
-  // DEDUPLICATED (a replayed outcome must not double-count and promote the floor). When no dispatch id
-  // flowed we fall back to the per-scope last_dispatch_model, then ROUTE_LANES[st.lane] (legacy-safe).
-  // (bug 5): use the corrected shadow kind when supplied. Writes ONLY __p1Ladder — the legacy ladder below
-  // is byte-identical.
+  // eikos v2 E1 shadow (bug 3 / R1): attribute to the model ACTUALLY dispatched.
   const __p1st = __p1Ladder[scope];
   const __p1d = dispatchId != null ? __routeDispatchById[dispatchId] : null;
   let __p1skip = false;
   // eikos v2 E1 (R1 residual / Astra re-review #3 finding 3): VALIDATE whenever an id was supplied
-  // (dispatchId != null), not only when it RESOLVES (the pre-fix `if (__p1d)` let a NON-NULL but UNKNOWN id
-  // bypass validation and silently bump the shadow floor via last_dispatch_model, with no ignored-outcome
-  // event). A non-null unknown id is now REJECTED (ignored + audited), matching the __p1WorkerOutcome shadow
-  // guard below AND the Python DispatchBook.resolve replica (both already reject unknown ids) — resolving
-  // the JS/Python replica mismatch. A NULL id still falls through to the legacy-safe fallback (unchanged).
+  // (dispatchId != null), not only when it RESOLVES (the pre-fix `if (__p1d)` let a NON-NULL but
+  // UNKNOWN id bypass validation and silently bump the shadow floor via last_dispatch_model, with no
+  // ignored-outcome event).
   if (dispatchId != null) {
     const __p1why = !__p1d ? 'unknown dispatch id'
       : (__p1d.scope !== scope || __p1d.label !== String(label || '')) ? 'dispatch id issued for another label or scope'
@@ -1131,9 +880,7 @@ function __routeOutcome(scope, ok, evidence, kind, source, label, dispatchId, p1
                       kind: kind || 'work_product' });
 }
 function __routeReport() {
-  // eikos v2 E1 (bug 2): report the TRUE live decider. Under route_decider=p1 the top-level decider is
-  // 'p1' (was mislabelled claude-sonnet-5-5); the P1 ladder + per-dispatch terminal outcomes are exposed
-  // below so the report is not an empty legacy __routeLadder with a zero-event shadow summary.
+  // eikos v2 E1 (bug 2): report the TRUE live decider.
   return { lanes: ROUTE_LANES, decider: ROUTE_P1_ON ? 'p1' : ROUTE_EIKOS_ON ? 'eikos' : ROUTE_MODEL_DECIDER,
            thresholds: { conf_escalate: ROUTE_CONF_ESCALATE, max_retries_per_lane: ROUTE_MAX_FAILS_PER_LANE,
                          max_top_escalations: ROUTE_MAX_TOP_DISPATCHES, max_output_tokens: ROUTE_MAX_OUTPUT_TOKENS,
@@ -1148,8 +895,7 @@ function __routeReport() {
                  // per-dispatch terminal outcomes (incl. successes) that otherwise lived only in memory.
                  ladder: __p1Ladder, dispatches: __routeDispatchById,
                  // eikos v2 E1 (R2): the measured P1 policy is SCOPED to the roles with a terminal
-                 // success/work_product signal. Other routed roles contribute only `no_result` (infra, via
-                 // agentT's null-return path), which moves nothing — reported here so the scope is explicit.
+                 // success/work_product signal.
                  coverage: {
                    roles_with_terminal_feedback: ['eng/deep (engineer cycle outcome)', 'commit (committed=true/false)', 'verify (usable measurement = success; invalid/empty = infra)'],
                    roles_without_terminal_feedback: ['plan/replan (tech_lead)', 'profile/reprofile', 'tech_lead:memory', 'integrate', 'condense', 'route:classify', 'storage reclaim'],
@@ -1166,34 +912,18 @@ function __routeReport() {
 }
 // --- Eikos decider (route_decider=eikos; OFF unless chosen) --------------------------------------
 // Contract: research/eikos_ladder_routing_proposal_20261009.md rev 2, section 7, plus Astra's S0 plan
-// review (2026-10-12). Eikos never picks a lane: through a transport-only carrier it returns one
-// independent estimate per lane that the next attempt on that lane meets the task's acceptance event
-// (for an engineer: verify finds the patch applies, is correct and beats the candidate floor).
-// __routeReduce, pure host code, applies every rule and picks the lane. Thresholds, classes and floors
-// are UNVALIDATED EXPERIMENTAL settings and the report says so.
+// review (2026-10-12).
 //
-// Units. A consultation is one carrier call (no carrier retries). A dispatch is one agentT() call; the
-// transport retries inside agentTCore are part of that dispatch, not new attempts. A decision
-// occurrence is one frozen card (`seq`); replaying it reuses it, and a new attempt after a completed one
-// is a new occurrence. Only a host-verified work-product failure counts against a lane.
+// Units.
 const ROUTE_EIKOS_ON = ROUTE_DECIDER === 'eikos';
 // iraj465 (CHANGES_REQUESTED) Fix 1 (bug 1): run_e2e.py probes the Eikos carrier ONCE at startup; if it
-// is down it sets the route_eikos_probe_failed workflow ARG (and, for the standalone top-level only, also
-// exports GEAK_EIKOS_PROBE_FAILED=1). This lane reads ONLY the ARG, exactly as ROUTING_ON reads A.routing:
-// kernel_lane runs on the native Workflow host (no `process`), and the arg is threaded through the
-// workflow args and forwarded parent->child (e2e_workflow.js / kernel_workflow.js) the same way routing
-// is, so the failed-probe state is seen here on the native runtime. (Reading process.env here would be
-// dead AND a native-forbidden construct the conformance guard rejects.) When down, the live eikos:route
-// carrier is SKIPPED per decision; the pick falls back to the static control ladder via __routeReduce's
-// estimates-null path.
+// is down it sets the route_eikos_probe_failed workflow ARG (and, for the standalone top-level only,
+// also exports GEAK_EIKOS_PROBE_FAILED=1).
 const ROUTE_EIKOS_PROBE_DOWN = (function () {
   const a = String(A.route_eikos_probe_failed != null ? A.route_eikos_probe_failed : '').trim().toLowerCase();
   return a === '1' || a === 'true' || a === 'on';   // anything else (incl. unset) stays OFF
 })();
-// eikos v2 (E1): P1 is the DETERMINISTIC measured-signal host router (no model, no d3). OFF by default:
-// route_decider stays 'sonnet'/'eikos' and P1 only runs in SHADOW (a 'p1_shadow' audit beside the live
-// pick). Selecting route_decider=p1 (a later E1 canary; separate go) flips the gated __p1Pick live. With
-// it unselected (ROUTE_P1_ON=false) the default path is byte-identical to today.
+// eikos v2 (E1): P1 is the DETERMINISTIC measured-signal host router (no model, no d3).
 const ROUTE_P1_ON = ROUTE_DECIDER === 'p1';
 const ROUTE_EIKOS_QUESTION = 'lane_sufficiency';
 const ROUTE_EIKOS_QUESTION_VERSION = 'lane_sufficiency.v3';
@@ -1258,10 +988,7 @@ const ROUTE_EIKOS_MAX_CONSULTS = __routeIntArg('route_eikos_max_consults', 40);
 const ROUTE_EIKOS_CARRIER_MODEL = (typeof A.route_eikos_carrier_model === 'string' && A.route_eikos_carrier_model.trim())
   ? A.route_eikos_carrier_model.trim() : 'claude-sonnet-5-5';
 const ROUTE_EIKOS_CARRIER_TIMEOUT_MS = Math.max(10000, __routeIntArg('route_eikos_carrier_timeout_ms', 180000));
-// Episode-vs-promotion identity (eikos v2). OFF by default == current behavior: a scope's
-// highest *dispatched* lane (effective_rank) stays a persistent floor. ON drops effective_rank
-// as a floor so a corrected estimator can route a scope back down; the FAILURE-earned floor
-// (scope_floor_rank / floor_rank) still pins legitimately climbed scopes.
+// Episode-vs-promotion identity (eikos v2).
 const ROUTE_EPISODE_IDENTITY = (A.route_episode_identity === true
   || A.route_episode_identity === 1 || A.route_episode_identity === '1');
 // Host POLICY rank for floors and escalation: the existing lane numbering (ROUTE_LANES), so a numeric
@@ -1293,9 +1020,8 @@ function __routeScopeClass(scope) {
        'update_experience'].indexOf(head) >= 0) return 'evidence';
   return 'code_change';        // unknown: the strictest class
 }
-// A task is what the next attempt is asked to do: its direction (or label), the whole dispatch prompt and
-// the requested effort. A change in any of them is a different attempt with its own occurrence, even
-// under the same direction ID.
+// A task is what the next attempt is asked to do: its direction (or label), the whole dispatch prompt
+// and the requested effort.
 function __routeTaskKey(label, p, o) {
   const t = __routeTasks[label];
   const who = t ? 'direction:' + t.id : 'label:' + String(label || '');
@@ -1309,17 +1035,11 @@ function __routeOpFloorRank(scope) {
   const f = ROUTE_FLOORS[scope];
   return f == null ? 0 : Math.max(0, Math.min(ROUTE_TOP, __routeNum(f, 0)));
 }
-// Card size caps, mirrored by eikos_decide.py (MAX_DIRECTION_PROMPT_CHARS, MAX_STATE_CHARS). A direction
-// prompt over the cap is condensed by the carrier model (__routeCondense) rather than refused; the
-// engineer itself always receives the full text.
+// Card size caps, mirrored by eikos_decide.py (MAX_DIRECTION_PROMPT_CHARS, MAX_STATE_CHARS).
 const ROUTE_CARD_PROMPT_CHARS = 8000;
 const ROUTE_CARD_STATE_CHARS = 12000;
 const ROUTE_CONDENSE_TARGET_CHARS = 6000;
-// The frozen card for one occurrence. S0 has an explicit task projection only for engineers with a
-// registered direction: the direction object goes in verbatim (bounded, never cut) unless it had to be
-// condensed (`fit`, which the card then says), the WHOLE dispatch prompt only as its digest and length,
-// which says nothing about its meaning. Every other scope is ineligible and routed by host policy. The
-// card never holds a routing answer or an outcome of itself.
+// The frozen card for one occurrence.
 function __routeCard(p, o, scope, cls, occ, fit) {
   const label = String((o && o.label) || '');
   const d = (fit && fit.direction) || __routeTasks[label];
@@ -1384,10 +1104,8 @@ function __routeParseEstimates(s) {
   }
   return out;
 }
-// One condensation: the carrier model rewrites a direction prompt that is over the card cap, so Eikos can
-// still be asked about it. Called with agent() directly (journaled, so a replay reuses it), never routed,
-// one attempt under the carrier's wait bound. Returns the shortened direction, or null -- the card then
-// stays ineligible, as before.
+// One condensation: the carrier model rewrites a direction prompt that is over the card cap, so Eikos
+// can still be asked about it.
 const ROUTE_CONDENSE_SCHEMA = { type: 'object', properties: { prompt: { type: 'string' } },
                                 required: ['prompt'], additionalProperties: false };
 async function __routeCondense(d, scope, phase) {
@@ -1410,9 +1128,7 @@ ${d.prompt}`;
   if (ev) ev.ok = true;
   return Object.assign({}, d, { prompt: s });
 }
-// One consultation: the carrier runs ONE fixed command built here and relays its JSON. It is called with
-// agent() directly, so it is never routed. One attempt, its own wait bound, no retries; the lane caps
-// consultations. Everything the host acts on is checked against digests and the expected versions.
+// One consultation: the carrier runs ONE fixed command built here and relays its JSON.
 async function __routeEikosConsult(card, host) {
   if (__routeConsults >= ROUTE_EIKOS_MAX_CONSULTS) return { status: 'consult_budget_exhausted' };
   __routeConsults++;
@@ -1463,11 +1179,7 @@ It prints one JSON object. Return that object unchanged as StructuredOutput. Do 
   res.host_changed = env.decision_host_sha256 !== env.host_sha256;
   return Object.assign(res, { status: 'ok', estimates: est });
 }
-// Pure: every rule for one occurrence. x is __routeHostInput() plus { backend, estimates }. Floors and
-// escalation use the policy rank. The scope's current effective lane (the highest lane it has actually
-// dispatched) is a floor too: a new task gets new estimates but never silently moves the scope down.
-// Availability and quota are removed before any choice; the list-price proxy orders only what remains. A missing or unusable estimate is unknown -- never zero and never a
-// threshold miss -- and still passes every hard constraint. No I/O, no clock, no shared state.
+// Pure: every rule for one occurrence.
 function __routeReduce(x) {
   const top = x.policy_rank[x.policy_rank.length - 1];
   const lo = Math.max(x.class_floor_rank, x.operator_floor_rank, x.scope_floor_rank,
@@ -1530,8 +1242,7 @@ function __routeEikosPick(p, o, scope) {
       history: [], tasks: {}, model: null, lane: -1, why: '' });
     let tk = st.tasks[key];
     // eikos v2 E1 (bug 4): pre-dispatch top-lane quota snapshot for the P1 shadow (updated just before
-    // this occurrence reserves a unit). The shadow is emitted once per DISPATCH below (not per fresh
-    // decision), so repeated dispatches are covered and deferrals (no dispatch) are not counted.
+    // this occurrence reserves a unit).
     let __p1TopUsedPre = __routeTopUsed;
     const fresh = !tk || tk.pending;
     if (fresh) {
@@ -1547,10 +1258,7 @@ function __routeEikosPick(p, o, scope) {
       const reg = __routeTasks[label];
       let fit = null;
       // iraj465 (CHANGES_REQUESTED) Fix 1 (bug 2): the failed-probe gate runs BEFORE every carrier --
-      // both the eikos:condense condensation here AND the eikos:route consultation below. Condensation
-      // was itself a carrier dispatch, so an overlong card under a down probe used to still call one;
-      // now a probe-down run makes ZERO carrier calls. Condensation runs only when Eikos will actually
-      // be asked: a feasible lane exists AND the probe is up.
+      // both the eikos:condense condensation here AND the eikos:route consultation below.
       if (!none && !ROUTE_EIKOS_PROBE_DOWN && reg && reg.prompt.length > ROUTE_CARD_PROMPT_CHARS) {
         const short = await __routeCondense(reg, scope, (o && o.phase) || '');
         if (short) fit = { direction: short, from_chars: reg.prompt.length };
@@ -1558,9 +1266,7 @@ function __routeEikosPick(p, o, scope) {
       const c = __routeCard(p, o, scope, cls, occ, fit);
       // A failed startup probe is a no-answer: the pick falls back to the static control ladder
       // (__routeReduce estimates-null path; __routeReduce byte-identical), dispatching NO eikos:route
-      // carrier. Gated ahead of BOTH the ineligible check and the consultation so a probe-down run is
-      // recorded as 'probe_down' (or 'not_asked_no_feasible_lane' when no lane is feasible at all),
-      // never a carrier status. With the probe UP this chain is byte-identical to before.
+      // carrier.
       const res = ROUTE_EIKOS_PROBE_DOWN ? (none ? { status: 'not_asked_no_feasible_lane' } : { status: 'probe_down' })
         : c.ineligible ? { status: 'ineligible' } : none ? { status: 'not_asked_no_feasible_lane' }
         : await __routeEikosConsult(c.card, host);
@@ -1595,9 +1301,7 @@ function __routeEikosPick(p, o, scope) {
         max_estimate: red.max_estimate, override: red.override, interventions, reduce: red, why: red.reason });
     } else if (tk.model) {
       // A repeated dispatch of a decided occurrence passes the CURRENT hard constraints too: a failure
-      // elsewhere in the scope may have excluded its lane, or the top-lane quota may be used. If its lane
-      // is no longer feasible, the rules run again on the occurrence's own estimates, never below its
-      // decided lane; with nothing feasible it is deferred. Recorded either way.
+      // elsewhere in the scope may have excluded its lane, or the top-lane quota may be used.
       const now = __routeHostInput(scope, cls);
       const feasible = __routeReduce(Object.assign({}, now, { backend: 'check', estimates: null })).feasible;
       if (feasible.indexOf(tk.model) < 0) {
@@ -1635,10 +1339,7 @@ function __routeEikosPick(p, o, scope) {
   });
 }
 // One dispatch's outcome, bound by the host-issued dispatch id that the dispatch site carried through
-// engineer, verify and result (never by label order, never by a worker-supplied id). An outcome with no
-// id, an unknown id, an id issued for another label or scope, or an id whose outcome is already in, is
-// recorded and changes nothing. A late outcome (its occurrence already superseded) still counts against
-// its own lane, but schedules nothing.
+// engineer, verify and result (never by label order, never by a worker-supplied id).
 function __routeEikosOutcome(st, scope, ok, evidence, kind, source, label, dispatchId, p1Kind) {
   const d = dispatchId != null ? __routeDispatchById[dispatchId] : null;
   const why = dispatchId == null ? 'no dispatch id' : !d ? 'unknown dispatch id'
@@ -1667,25 +1368,13 @@ function __routeEikosOutcome(st, scope, ok, evidence, kind, source, label, dispa
 }
 
 // <<P1-ROUTER-START>>  (eikos v2 — E1: the P1 deterministic measured-signal host router)
-// P1 reduces over MEASURED host signals ONLY — class/operator/scope floors, per-lane work_product failure
-// counts and the corrected episode identity (effective_rank is a measured fact, NEVER a floor). It makes
-// NO model call and NO d3 consultation. A scope climbs toward Opus ONLY when an objective, worker-
-// attributable work_product failure has raised its EARNED floor; a non_improvement feeds a SEPARATE
-// stagnation counter and never climbs; invalid_measurement / no_result (infra) move nothing. P1 never
-// reaches for a dearer lane speculatively — with no estimate it always takes the cheapest feasible lane at
-// or above the earned floor.
+// P1 reduces over MEASURED host signals ONLY — class/operator/scope floors, per-lane work_product
+// failure counts and the corrected episode identity (effective_rank is a measured fact, NEVER a floor).
 //
-// FIRST LANDING = SHADOW ONLY. P1 keeps its OWN state (__p1Ladder, new keys) and its OWN reducer
-// (__p1Reduce); it never mutates any legacy task_key / effective_rank / quota / persisted decision, never
-// touches the eikos cards or history, and makes no synchronous model call. At each live pick __p1Shadow
-// records {live_pick, p1_pick, differ, signals} as a 'p1_shadow' audit event WITHOUT changing the live
-// pick. The gated __p1Pick / __p1OutcomeLive live path is reached only under route_decider=p1 (ROUTE_P1_ON),
-// a later E1 canary that needs separate go.
+// FIRST LANDING = SHADOW ONLY.
 const P1_REDUCER_VERSION = 'p1_measured.v1';
 const __p1Ladder = {};   // scope -> P1's OWN measured-signal state, kept apart from __routeLadder
-// A fresh P1 scope. floor_rank starts at the class floor and is the ONLY thing a work_product failure
-// raises; effective_rank is the highest lane that actually ran (measured), reported but never a floor;
-// stagnation counts non_improvement outcomes apart from any lane escalation.
+// A fresh P1 scope.
 function __p1NewState(cls) {
   return { scope_class: cls, fails_by_lane: {}, floor_rank: ROUTE_CLASS_FLOOR[cls], effective_rank: -1,
            stagnation: 0, occurrences: 0,
@@ -1694,11 +1383,7 @@ function __p1NewState(cls) {
            // ladder lane, so a quota-downgraded Sonnet failure is not booked as an Opus failure.
            last_dispatch_model: null };
 }
-// The MEASURED reduction inputs for a scope, read from __p1Ladder. No estimates, no model, no d3. The
-// top-lane quota is READ from the live counter so P1 honours the same budget, but shadow never consumes it.
-// `topUsedSnapshot` (optional, eikos v2 E1 bug 4): the top-lane used-count as it was BEFORE the live
-// dispatch consumed its unit, so the shadow reduces on the same quota the live pick saw. Omitted -> the
-// current live counter (unchanged default behavior).
+// The MEASURED reduction inputs for a scope, read from __p1Ladder.
 function __p1HostInput(scope, cls, topUsedSnapshot) {
   const st = __p1Ladder[scope];
   const fails = st ? st.fails_by_lane : {};
@@ -1713,12 +1398,7 @@ function __p1HostInput(scope, cls, topUsedSnapshot) {
            top_quota_left: ROUTE_MAX_TOP_DISPATCHES == null ? null : Math.max(0, ROUTE_MAX_TOP_DISPATCHES - used),
            available: ROUTE_LANES.slice() };
 }
-// Pure: the P1 signal->lane decision tree. x is __p1HostInput(). The floor is the MAX of the class,
-// operator and EARNED scope floors — effective_rank is deliberately NOT a floor (corrected episode
-// identity). Excluded and unavailable lanes and a used-up top-lane quota are removed; with nothing left the
-// worker is deferred. Otherwise P1 takes the CHEAPEST feasible lane at or above the earned floor — with no
-// estimate and no speculation. No I/O, no clock, no shared state. The legacy __routeReduce is UNCHANGED;
-// this is a separate, simpler reducer (same floor/feasibility shape, minus the estimate/tau selection).
+// Pure: the P1 signal->lane decision tree.
 function __p1Reduce(x) {
   const top = x.policy_rank[x.policy_rank.length - 1];
   const lo = Math.max(x.class_floor_rank, x.operator_floor_rank, x.scope_floor_rank);  // effective_rank NOT a floor
@@ -1739,10 +1419,7 @@ function __p1Reduce(x) {
   return Object.assign(base, { model: feasible[0],
     reason: `cheapest feasible lane at or above the earned floor ${lo} (deterministic; no model/d3 consult)` });
 }
-// Update P1's OWN measured state from a dispatch outcome. `liveModel` is the lane that actually ran (the
-// live decider's pick in shadow mode, or P1's own pick when it is live). Only a work_product failure earns
-// the next lane up (mirrors the legacy earned floor); a non_improvement bumps the stagnation counter apart;
-// invalid_measurement / no_result (infra) move nothing. Writes ONLY __p1Ladder — never any legacy state.
+// Update P1's OWN measured state from a dispatch outcome.
 function __p1Observe(scope, liveModel, ok, kind) {
   const st = __p1Ladder[scope];
   if (!st) return;                                   // only scopes P1 has shadowed/decided
@@ -1761,15 +1438,7 @@ function __p1Observe(scope, liveModel, ok, kind) {
   // invalid_measurement / no_result: not worker-attributable — neither excludes a lane nor stagnates.
 }
 // eikos v2 E1: the durable P1-shadow telemetry sink (a best-effort append-only mirror of each p1_shadow
-// verdict to <EVAL_DIR>/reports/trace/p1_shadow.jsonl) was REMOVED. It needed require('fs') and a
-// new Date() timestamp — both native-forbidden on the Workflow host (no fs, no clock) and rejected by the
-// merged-in conformance guard (evo/tests/test_dispatch.py::test_lane_script_uses_no_native_forbidden_constructs).
-// It was ADDITIVE insurance only: the in-memory __routeAudit -> __routeReport() -> run_result.json path is
-// and always was the PRIMARY source of the p1_shadow events and is UNCHANGED, so removing the mirror
-// NEVER affects a routing decision or the live pick.
-// Shadow emission (observability only). Ensures P1's scope state exists, computes P1's would-be pick on the
-// CURRENT measured signals and records {live_pick, p1_pick, differ, signals} as a 'p1_shadow' audit event
-// WITHOUT changing the live pick. Returns the P1 reduction.
+// verdict to <EVAL_DIR>/reports/trace/p1_shadow.jsonl) was REMOVED.
 function __p1Shadow(decider, scope, label, liveModel, topUsedSnapshot) {
   if (!__p1Ladder[scope]) __p1Ladder[scope] = __p1NewState(__routeScopeClass(scope));
   const st = __p1Ladder[scope];
@@ -1790,9 +1459,7 @@ function __p1Shadow(decider, scope, label, liveModel, topUsedSnapshot) {
     p1_reason: red.reason });
   return red;
 }
-// GATED LIVE path (route_decider=p1). NOT the default and NOT reached unless explicitly selected; a later
-// E1 canary flips it on (separate go). Reuses the shadow state and the pure P1 reducer, issues a host
-// dispatch id, and honours the kill switch and the top-lane quota exactly like the other deciders.
+// GATED LIVE path (route_decider=p1).
 function __p1Pick(p, o, scope) {
   return __routeSerial(scope, async () => {
     const label = String((o && o.label) || '');
@@ -1826,8 +1493,7 @@ function __p1Pick(p, o, scope) {
     return { model: red.model, scope, dispatch_id: id };
   });
 }
-// GATED LIVE outcome handler (route_decider=p1). Binds by the host-issued dispatch id like the eikos path,
-// then updates P1's measured state via __p1Observe. Reached only when ROUTE_P1_ON.
+// GATED LIVE outcome handler (route_decider=p1).
 function __p1OutcomeLive(scope, ok, evidence, kind, source, label, dispatchId) {
   const d = dispatchId != null ? __routeDispatchById[dispatchId] : null;
   const why = dispatchId == null ? 'no dispatch id' : !d ? 'unknown dispatch id'
@@ -1857,19 +1523,11 @@ function __p1OutcomeLive(scope, ok, evidence, kind, source, label, dispatchId) {
     stagnation: st ? st.stagnation : null });
 }
 // eikos v2 E1 (bug 1): route a NON-ENGINEER worker's attributable terminal outcome to P1 ONLY — the
-// gated live-P1 handler under route_decider=p1, else P1's SHADOW state. It NEVER touches the legacy
-// sonnet/eikos ladder, so wiring these signals (e.g. the committer's {committed:false}) leaves the
-// default sonnet/eikos run byte-identical while giving P1's observer the work_product/success signal it
-// was being starved of. The dispatched model is resolved from the host dispatch id when present (eikos /
-// live-P1), else from the scope's shadow last_dispatch_model (sonnet). agentT's null-return path already
-// reports `no_result` for these workers; this adds the non-null success/failure signal it cannot see.
+// gated live-P1 handler under route_decider=p1, else P1's SHADOW state.
 function __p1WorkerOutcome(scope, ok, evidence, kind, source, label, dispatchId) {
   if (!ROUTING_ON || !scope) return;
   if (ROUTE_P1_ON) { __p1OutcomeLive(scope, ok, evidence, kind || 'work_product', source, label, dispatchId); return; }
-  // SHADOW path (sonnet/eikos live). eikos v2 E1 (R1 hardening): when a host dispatch id is present, bind to
-  // its IMMUTABLE record, VALIDATE scope+label and DEDUPLICATE — replaying one commit/verify outcome twice
-  // must NOT double-count and promote the shadow floor. The model is the one ACTUALLY dispatched (d.model),
-  // not the scope's mutable last_dispatch_model, so overlapping same-scope dispatches attribute correctly.
+  // SHADOW path (sonnet/eikos live).
   const d = dispatchId != null ? __routeDispatchById[dispatchId] : null;
   if (dispatchId != null) {
     const why = !d ? 'unknown dispatch id'
@@ -1892,12 +1550,7 @@ function __p1WorkerOutcome(scope, ok, evidence, kind, source, label, dispatchId)
     scope_floor_rank: st ? st.floor_rank : null, stagnation: st ? st.stagnation : null });
 }
 // eikos v2 E1 (R8 / Astra re-review #9 BUG 3): the ONE verdict table for a dispatched commit attempt
-// (initial / retry). It routes EVERY attempt's correctly-bound terminal outcome to P1 via
-// __p1WorkerOutcome (shadow by default): committed===true -> success (work_product ok); committed===false
-// EXPLICIT -> a real work_product failure; a null receipt OR a non-null receipt WITHOUT an explicit
-// committed verdict -> infrastructure/AMBIGUOUS (kind no_result, which moves nothing) — NEVER mis-booked as
-// a work_product failure. (A null was already reported no_result by agentT; __p1WorkerOutcome DEDUPLICATES
-// by dispatch id, so this is idempotent.) Routed-only — routing=false never reaches the commit salvage.
+// (initial / retry).
 function __commitAttemptOutcome(receipt, route, scopeLabel) {
   if (!ROUTING_ON) return;
   const did = (route && route.dispatch_id) || null;
@@ -1945,13 +1598,11 @@ async function agentT(p, o, route) {
     o = Object.assign({}, o, { model: pick.model });
     try { log(`  [route] ${(o && o.label) || 'agent'} @${(o && o.phase) || ''} -> ${pick.model}`); } catch (e) {}
   }
-  // eikos v2 E1 (Astra re-review #6 — NIT): thread the host dispatch id the router just issued (the SAME
-  // id written to `route.dispatch_id` above, and the one the abort `receipt_ref` keys on) into the agent
-  // timeline event, so the commit's execution evidence is reachable BY DISPATCH ID end-to-end. Routed
-  // calls only; routing=false never reaches here (it returned agentTCore(p, o) above with no id).
+  // eikos v2 E1 (Astra re-review #6 — NIT): thread the host dispatch id the router just issued (the
+  // SAME id written to `route.dispatch_id` above, and the one the abort `receipt_ref` keys on) into the
+  // agent timeline event, so the commit's execution evidence is reachable BY DISPATCH ID end-to-end.
   const r = await agentTCore(p, o, pick.dispatch_id || null);
-  // An engineer's cycle is judged by the oracle after verify (see the Optimize round), not here. For
-  // every other worker the one deterministic failure visible at this layer is no result at all.
+  // An engineer's cycle is judged by the oracle after verify (see the Optimize round), not here.
   if (pick.scope && !/^(eng|deep):/.test(pick.scope) && r == null) {
     __routeOutcome(pick.scope, false, 'no result (timeout, API fault or lost StructuredOutput)', 'no_result',
                    (o && o.label) || '', (o && o.label) || '', pick.dispatch_id);
@@ -1963,11 +1614,10 @@ async function agentT(p, o, route) {
 // overrides AGENT_RETRIES, and timeout_marker makes a timeout return {__agent_timed_out, label} instead of
 // null, for callers that must tell a hang from an empty answer (mode=mega).
 async function agentTCore(p, o) {
-  // eikos v2 E1 (Astra re-review #6 — NIT): the router's host dispatch id is threaded as an OPTIONAL 3rd
-  // argument and read via `arguments` so this function's declared signature stays two-arg — the in-repo
-  // routing test (scripts/test_eikos_route.js) slices the agentT region using this function's two-arg
-  // declaration as its end sentinel, so a signature change would break that slice. null/absent when
-  // non-routed (routing=false calls it with no id), so the recorded timeline event stays byte-identical.
+  // eikos v2 E1 (Astra re-review #6 — NIT): the router's host dispatch id is threaded as an OPTIONAL
+  // 3rd argument and read via `arguments` so this function's declared signature stays two-arg — the
+  // in-repo routing test (scripts/test_eikos_route.js) slices the agentT region using this function's
+  // two-arg declaration as its end sentinel, so a signature change would break that slice.
   const dispatchId = arguments.length > 2 ? arguments[2] : null;
   const label = (o && o.label) ? o.label : 'agent';
   const timeoutMs = Number(o && o.timeout_ms) > 0 ? Number(o.timeout_ms) : AGENT_TIMEOUT_MS;
@@ -2011,33 +1661,19 @@ async function agentTCore(p, o) {
   return null;
 }
 
-// eikos v2 E1 (R4 round-4 / Astra re-review #4): the round-3 `agentGuaranteed` helper was removed with the
-// restore-and-continue recovery it served (its only two call sites — the pre-attempt snapshot and the
-// recovery dispatch — are gone under ABORT-AND-QUARANTINE). Nothing else needs a non-routed guaranteed
-// dispatch, so the helper would be dead code.
+// eikos v2 E1 (R4 round-4 / Astra re-review #4): the round-3 `agentGuaranteed` helper was removed with
+// the restore-and-continue recovery it served (its only two call sites — the pre-attempt snapshot and
+// the recovery dispatch — are gone under ABORT-AND-QUARANTINE).
 
 
 // ---------------------------------------------------------------------------
 // WALL-CLOCK DEADLINE (opt-in; absent => byte-identical to a build without it).
-//   DEADLINE_EPOCH  unix seconds after which NO new optimization round may start.
-//   NO_STOP_S       while more than this many seconds remain, the TechLead may not end the run on
-//                   its own convergence gates; it gets exactly one forced re-plan.
-// In CODE and not in the caller's prose because the prose version was measured: a "fixed 4h window
-// per kernel" comparison whose window had no implementation anywhere realised 1.55h to 15.22h, a
-// 9.81x spread, and the comparison it existed to make was void. The loop below is
-// `while (dispatched < BUDGET && noImprove < MAX_NO_IMPROVE)` — no time term. Emphatic prompt text
-// is not a constraint, it is one more input to a judgement call.
-// A workflow script has no clock (Date.now() is unavailable — it would break resume), so the time is
-// read by a tiny low-effort agent. If that read FAILS the run is NOT killed: an unreadable clock
-// returns Infinity, degrading to the old budget-only behaviour rather than truncating a healthy run.
 const DEADLINE_EPOCH = (() => {
   const v = parseInt(A.deadline_epoch != null ? A.deadline_epoch : 0, 10);
   return Number.isFinite(v) && v > 0 ? v : 0;
 })();
 const NO_STOP_S = Math.max(0, parseInt(A.no_stop_s != null ? A.no_stop_s : 900, 10));
 // Run-level cap on how many TechLead stops may be refused (forcedReplans is not reset per round).
-// Not 1: the refusal must scale with the window, or a long budget is handed back early.
-// Not unbounded: a role that truly cannot name a direction would spend the window planning.
 const MAX_FORCED_REPLANS = Math.max(1, parseInt(A.max_forced_replans != null ? A.max_forced_replans : 6, 10));
 const CLOCK_SCHEMA = { type: 'object', properties: { epoch: { type: 'number' } },
                        required: ['epoch'], additionalProperties: true };
@@ -2061,21 +1697,7 @@ Return {"epoch": <the integer it printed>}. Do NOT modify any file and do NOT ru
 }
 
 // --- Eikos shadow pilot (OFF unless eikos_shadow=round_continue) -----------------------------
-// Plumbing pilot for research/eikos_decision_audit_20261001.md sec 5. At the round's effective
-// continue/stop point it asks local Eikos the same question through ONE fixed command, records the
-// answer, and NEVER lets it control the branch. When OFF nothing here runs and the lane is unchanged.
-//   - State is frozen in code before the planning attempt it describes, and never contains the
-//     TechLead's answer. Fields the lane does not track (noise_band) are "unknown", not estimated.
-//   - Eikos is asked only where the host would itself permit a stop (the exact refusal predicate).
-//     A fixed-window round, or an unreadable clock, is recorded as skipped with zero Eikos calls.
-//   - A native workflow cannot write files or call HTTP, so the state travels inside one
-//     shell-quoted command that a carrier agent runs verbatim; eikos_decide.py validates, asks,
-//     and persists the first decision per logical key. The carrier relays the script's JSON, which
-//     carries the state's SHA-256 rather than the state: a carrier was observed to parse a relayed
-//     JSON string into an object, so the lane checks a hex digest it computes itself.
-//   - The carrier gets ONE attempt and its own wait bound. Promise.race only stops the wait: the
-//     agent is not cancelled and may finish later, but the script's first-persisted rule means a
-//     late finish cannot change the recorded decision.
+// Plumbing pilot for research/eikos_decision_audit_20261001.md sec 5.
 // <<EIKOS-SHADOW-START>>
 const EIKOS_SHADOW_ON = String(A.eikos_shadow || '').split(',').map((x) => x.trim()).indexOf('round_continue') >= 0;
 const EIKOS_CARRIER_MODEL = String(A.eikos_carrier_model || 'claude-sonnet-5-5');
@@ -2089,9 +1711,7 @@ let eikosLastOutcome = 'none';     // set from measurements at the end of each r
 
 function eikosShellQuote(x) { return "'" + String(x).replace(/'/g, "'\\''") + "'"; }
 
-// SHA-256 of a string's UTF-8 bytes, hex. Pure JS: the workflow sandbox has no crypto or
-// TextEncoder, but has encodeURIComponent/unescape, which yield the UTF-8 bytes. The relay check
-// compares this to the script's state_sha256 — a hex digest a carrier has no reason to reinterpret.
+// SHA-256 of a string's UTF-8 bytes, hex.
 function eikosSha256(str) {
   const b = unescape(encodeURIComponent(String(str)));
   const K = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -2163,9 +1783,8 @@ function eikosStopPermitted(leftS) {
   return { permitted: true, reason: null };
 }
 
-// Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False), for the decision digest.
-// The digested fields are strings, booleans and null only (eikos_decide.py's wire contract): number
-// formatting differs between the languages (Python 1.0, JavaScript 1), so no number is ever hashed.
+// Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False), for the decision
+// digest.
 function eikosCanonical(v) {
   if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
   if (Array.isArray(v)) return '[' + v.map(eikosCanonical).join(',') + ']';
@@ -2206,10 +1825,7 @@ It prints one JSON object. Return that object unchanged as StructuredOutput. Do 
   return r;
 }
 
-// The shadow call at the effective decision point. The TechLead's decision is already final here.
-// rawFinal / hostReason: when the harness itself changes the plan after the model answered (e.g. the
-// unknown-peaks filter empties it), the model's own final choice is read BEFORE that change and the
-// host's own stop reason is recorded, so a harness stop is never filed as the model's choice.
+// The shadow call at the effective decision point.
 async function eikosShadowRound(roundNo, snap, firstChoice, finalPlan, forcedThisRound, leftS,
                                 rawFinal, hostReason) {
   const finalChoice = eikosRawChoice(finalPlan);          // what the host acts on
@@ -2239,7 +1855,6 @@ async function eikosShadowRound(roundNo, snap, firstChoice, finalPlan, forcedThi
     rec.carrier = { status: 'error', error: env.__error };
   } else {
     // Did the script receive exactly the frozen state, and did its decision come back unaltered?
-    // Both compared on digests computed here; a carrier that edits either is detected, not trusted.
     rec.relay_ok = env.state_sha256 === eikosSha256(stateJson);
     const dec = {};
     EIKOS_DECISION_FIELDS.forEach((k) => { dec[k] = env[k] === undefined ? null : env[k]; });
@@ -2256,10 +1871,7 @@ async function eikosShadowRound(roundNo, snap, firstChoice, finalPlan, forcedThi
 }
 // <<EIKOS-SHADOW-END>>
 
-// Expert-skills injection. PURELY ADDITIVE: '' when OFF or the role is not a skills consumer, so both
-// call sites (roleAgent, and the inline Optimize prompt) are byte-identical to the pre-feature build in
-// those cases. When ON, appends an advisory pointer telling the agent to Read the fragment + query the
-// skills index (scripts have no fs access).
+// Expert-skills injection.
 function expertSkillsBlock(role) {
   if (!USE_EXPERT_SKILLS || !EXPERT_SKILL_ROLES.has(role) || !EXPERT_SKILLS_DIR) return '';
   return `\n\n## Expert skills (ADVISORY — opt-in, enabled this run)\n` +
@@ -2426,7 +2038,7 @@ const EXPERT_SKILL_RUNTIME_FILE = PINNED_MEGA_SKILL
 const SKILL_PIN_KEYS = ['validation_status', 'bundle_sha256', 'planner_extension_sha256', 'contract_sha256'];
 let SKILL_PIN = {};
 if (MEGA && PINNED_MEGA_SKILL && SKILL_PIN_KEYS.some((k) => !A[`expert_skill_${k}`])) {
-  phase('Setup');
+  phase('Setup')
   SKILL_PIN = (await agent(
     `Run exactly: python3 ${EXPERT_SKILL_BUNDLE_TOOL} ${EXPERT_SKILL_ID} --emit-bundle\n` +
     `It prints one JSON object. Return its ${SKILL_PIN_KEYS.join(', ')} values verbatim. If the ` +
@@ -7746,8 +7358,7 @@ if (!MEGA && !GPU_RESOURCE.explicit && setup.gpu_requirement) {
   }
 }
 // `_task` is the e2e head's DIRECTORY suffix, and the director returns the basename verbatim, so it
-// would otherwise ride into the session id and the stored record. The canonical id is folded store-
-// side (experience_store.remote_identity); this keeps the rest of the run calling it one name.
+// would otherwise ride into the session id and the stored record.
 const KERNEL_NAME = MEGA ? setup.kernel_name
   : String(setup.kernel_name || '').replace(/_task$/, '') || setup.kernel_name;
 const COMMANDMENT = `${EVAL_DIR}/COMMANDMENT.md`;
@@ -7758,13 +7369,7 @@ if (MEGA) {
 }
 
 // ---------------------------------------------------------------------------
-// Enforce a FROZEN REAL-ONLINE BASELINE in BOTH modes (author AND same-language
-// optimize). The immutable unittest times + parity-checks the candidate against
-// baseline_src/ / meta.baseline_callable (the live online kernel); if neither
-// exists it would silently fall back to timing kernel_src/ against itself — the
-// "optimized-HIP vs naive-HIP = fake 15.7×" bug this harness exists to prevent.
-// The script has no FS access, so we trust the director's structured verdict
-// (it copied baseline_src/ + confirmed the callable). Missing -> abort/re-extract.
+// Enforce a FROZEN REAL-ONLINE BASELINE in BOTH modes (author AND same-language optimize).
 // ---------------------------------------------------------------------------
 const hasBaseline = setup.baseline_frozen === true ||
   (typeof setup.baseline_callable === 'string' && setup.baseline_callable.trim().length > 0);
@@ -7780,14 +7385,7 @@ if (!hasBaseline) {
 }
 
 // ===========================================================================
-// PHASE: Author (mode=author only) — write a fresh from-scratch impl as the
-// optimize loop's CODE SEED. On success, HEAD of CANONICAL becomes that seed
-// (what the optimize loop diffs its edits against) and the rest of the pipeline
-// (Analyze/Benchmark/Profile/optimize loop) runs UNCHANGED on it. The SPEEDUP
-// denominator is NEVER the seed — it is the frozen REAL ONLINE kernel in
-// baseline_src/ (meta.baseline_callable), regardless of TARGET_LANGUAGE.
-// On failure (no correct seed), abort early with a structured result so the
-// e2e caller drops this language.
+// PHASE: Author (mode=author only) — write a fresh from-scratch impl as the optimize loop's CODE SEED.
 // ===========================================================================
 if (MODE === 'author') {
   phase('Author');
@@ -7795,8 +7393,7 @@ if (MODE === 'author') {
     roleAgent('author_engineer', 'author', 'Write the simplest correct baseline in the target language.', {
       TARGET_LANGUAGE, OP_SPEC, WORKSPACE: CANONICAL, TASK_DIR: KERNEL_PATH_ORIG,
       GPU_ID: GPU_POOL, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT, KERNEL_KNOWLEDGE_DIR,
-      // The author engineer reads the learned index too, so the switch has to reach it. It is the
-      // second reader; a switch that covers one of two readers is not a switch.
+      // The author engineer reads the learned index too, so the switch has to reach it.
       LEARNED_KB: USE_LEARNED_READ ? 'on' : 'off',
     }),
     { phase: 'Author', label: `author:${TARGET_LANGUAGE}`, schema: AUTHOR_SCHEMA });
@@ -7829,9 +7426,8 @@ if (MEGA) {
   { phase: 'Analyze', label: 'tech_lead:analyze', schema: ANALYZE_SCHEMA });
 log(`Analyze done. kernel_type=${analysis ? analysis.kernel_type : '?'}`);
 
-// perf_knowledge pointers resolved by the TechLead in analyze (REFERENCE ONLY; threaded to the
-// planner + engineers so they read focused op/language cards instead of the whole base). Empty when
-// no operator card applies (e.g. point-cloud HIP ops) or KERNEL_KNOWLEDGE_DIR is unset → no change.
+// perf_knowledge pointers resolved by the TechLead in analyze (REFERENCE ONLY; threaded to the planner
+// + engineers so they read focused op/language cards instead of the whole base).
 const KK_OPERATOR = (analysis && analysis.kk_operator) || '';
 const KK_LANGUAGE = (analysis && analysis.kk_language) || '';
 const KK_REFS = (analysis && Array.isArray(analysis.kk_refs)) ? analysis.kk_refs : [];
@@ -7880,13 +7476,9 @@ if (MEGA) {
 log(`Baseline bottleneck: ${profileSummary ? profileSummary.bottleneck : '?'} (dispatch_count=${profileSummary ? profileSummary.dispatch_count : '?'})`);
 
 // ===========================================================================
-// PHASE: Research (Deep Research Agent — OPT-IN via args.dra_enabled)
-// Runs AFTER Profile / BEFORE the optimize loop: profile + COMMANDMENT + analysis exist by now, so
-// the researcher has the facts it needs. It produces EVAL_DIR/deep_search_brief.md (compact, ranked
-// directions) which the TechLead's plan_round seeds directions from. The per-question research is
-// fanned out with parallel() and EVERY research agent is wrapped in the agentT() hang-guard, so a
-// hung research agent resolves to null and the parallel round-barrier still proceeds (it never wedges
-// the run — the known v4 failure mode the hang-guard was built for). DEFAULT OFF → no behavior change.
+// PHASE: Research (Deep Research Agent — OPT-IN via args.dra_enabled) Runs AFTER Profile / BEFORE the
+// optimize loop: profile + COMMANDMENT + analysis exist by now, so the researcher has the facts it
+// needs.
 // ===========================================================================
 let researchBriefPath = '';   // EVAL_DIR/deep_search_brief.md when the DRA produced one; '' otherwise
 if (DRA_ENABLED && !MEGA) {
@@ -7980,15 +7572,13 @@ let bestPerCase = BASELINE_PER_CASE;
 let finalWinner = null;      // {geomean, arithmetic, per_case, patch, source} — also set by a warm-start adopt
 let roundsCommitted = 0;     // rounds this run actually landed; a warm-start adopt is NOT one of them
 const history = { insights: [], ledger: [], rounds: [], bottleneck_now: profileSummary ? profileSummary.bottleneck : 'unknown', suggest_next: '' };
-// One row per KB-seeded direction, joined against what the verifier measured (see the push site in
-// the round loop). Fed to update_experience and returned to the caller: a driver aggregating these
-// is how anyone notices the KB has been cited fifty times and never once carried a round.
+// One row per KB-seeded direction, joined against what the verifier measured (see the push site in the
+// round loop).
 const citations = [];
 
 // DEEP-MODE resume: restore cumulative speedup + insight/ledger history from the prior wave so this
 // continuation builds ON the cumulative best (canonical was already seeded from STATE_DIR/best by the
-// director) and does not re-explore dead directions. No-op on a fresh run (prior_state undefined).
-// mode=mega restores its candidate registry instead (megaLoopInit).
+// director) and does not re-explore dead directions.
 if (!MEGA && setup.resumed && setup.prior_state) {
   const ps = setup.prior_state;
   if (Number.isFinite(ps.cumulative) && ps.cumulative > cumulative) cumulative = ps.cumulative;
@@ -8000,14 +7590,9 @@ if (!MEGA && setup.resumed && setup.prior_state) {
 }
 
 // ===========================================================================
-// PHASE: WarmStart. The recorded speedup only RANKS; adoption is decided by a fresh
-// measurement through the verify gate here. gfx comes from the baseline profile's
-// on-box `device` string (no extra probe).
+// PHASE: WarmStart.
 // ===========================================================================
-// One benched candidate -> one of kb/attest.py's four outcomes. `inapplicable` is a verdict on the
-// PAIRING, excluded from the retire arithmetic — both "this workspace lacks those files" and "it
-// won but could not be committed here" belong there. A patch that ran and gave a WRONG ANSWER is
-// `failed`: it applied, it ran, and it did not deliver what the record promised.
+// One benched candidate -> one of kb/attest.py's four outcomes.
 const kbVerdict = (ver, sp) => {
   if (!ver) return 'not_reproduced';
   if (says(ver.correctness, 'fail')) return 'failed';
@@ -8037,17 +7622,10 @@ if (!MEGA && WARM_START_ON && !setup.resumed && KB_ROOT_OK) {
     const localResolveCmd = KB_MODE === 'store'
       ? `resolve-remote --plane local --store ${JSON.stringify(KB_STORE_DIR)}${KB_VERSION_FLAG}`
       : `resolve --root ${JSON.stringify(KB_ARTIFACTS_DIR)} --match ${WARM_START_MATCH}`;
-    // Bring the local store level with the tree before reading it, scoped to this kernel and arch
-    // so it costs a stat walk over one page. Writes file both schemes, so this is usually a no-op;
-    // what it catches is the backlog and anything a curation pass imported by hand — without it,
-    // reading by key looks like a cold start on the kernels with the longest history. Idempotent
-    // and non-destructive (cmd_sync_local): the session id is a digest of the patch, and the write
-    // carries the store's ledger, retraction and reproduction count forward.
+    // Bring the local store level with the tree before reading it, scoped to this kernel and arch so it
+    // costs a stat walk over one page.
     //
     // `|| true`: a sync that cannot run must degrade to a thinner page, never a failed warm start.
-    // Its summary goes to a file rather than /dev/null because its failures are otherwise
-    // indistinguishable from an empty KB — `skipped.unreadable` above all, which is what a tree
-    // written by a root container looks like to everyone else.
     const syncCmd = KB_MODE === 'store' && KB_ARTIFACTS_DIR
       ? `python3 ${JSON.stringify(EXPERIENCE_STORE)} sync-local --root ${JSON.stringify(KB_ARTIFACTS_DIR)} \\
   --store ${JSON.stringify(KB_STORE_DIR)} --kernel-name ${JSON.stringify(KERNEL_NAME)} --gfx ${GFX} \\
@@ -8057,19 +7635,7 @@ if (!MEGA && WARM_START_ON && !setup.resumed && KB_ROOT_OK) {
       `--kernel-name ${JSON.stringify(KERNEL_NAME)} --language ${JSON.stringify(TARGET_LANGUAGE)} \\\n` +
       `  --gfx ${GFX} --top-n 3 --min-speedup ${WARM_START_MIN_SPEEDUP} \\\n` +
       `  --refs-dir ${JSON.stringify(EVAL_DIR + '/kb_references')}`;
-    // Deliberately NO `--precision` on the read, though the write below states it. The filter earns
-    // its keep on the tuned lane, where a table's destination filename encodes its dtype and a
-    // mismatched one is simply unusable. A PATCH is source: a Triton kernel proven at bf16 is
-    // usually the same code that helps at fp8, so narrowing here would turn a thin page into an
-    // empty one and cost a cold start — the exact hours this read exists to avoid. Recording the
-    // dtype without filtering on it keeps that call reversible once the pages are thick enough to
-    // show whether cross-dtype patches actually carry.
-    // Remote first, local curated tree as the fallback. The service is the shared plane and should
-    // win when it has an answer, but it is still filling up, while `kb_artifacts/` holds a hand-
-    // curated history (retired entries, one entry per direction) that a thin remote page must not
-    // shadow. An empty remote answer is indistinguishable from a 404 on this scheme, so "no
-    // candidates" — not "no error" — is what triggers the second read. Both reads are seconds and
-    // no GPU; the thing they protect against is a cold start that costs hours.
+    // Deliberately NO `--precision` on the read, though the write below states it.
     //
     // The e2e lane pushed this branch into cmd_resolve via `read_planes`; this one stays in bash
     // because its fallback is a DIFFERENT SUBCOMMAND — off the store scheme `localResolveCmd` reads
@@ -8115,11 +7681,7 @@ ${resolveScript}
       session_id: c.session_id || '', exp_dir: c.exp_dir || '',
     }));
     const f = resolved.filtered || {};
-    // Which plane answered — read off the answer, not inferred from the mode. Both keyed reads
-    // emit `canonical_id`, so only `read_plane` (kb/plane.py:read_planes) separates service from
-    // disk. Not cosmetic: it picks the flags the attest step files this run's verdict with. No
-    // canonical id means neither keyed read answered — on `store` mode that is an empty page
-    // (`none`), since the tree is only consulted under `--kb_mode local`.
+    // Which plane answered — read off the answer, not inferred from the mode.
     warm_start.plane = resolved.read_plane === 'remote' ? 'remote'
       : resolved.canonical_id ? 'store'
         : KB_MODE === 'store' ? 'none' : 'local';
@@ -8131,8 +7693,7 @@ ${resolveScript}
       `candidates=${cands.length}${f.total ? ` of ${f.total} recorded [${f.retired || 0} retired, ` +
       `${f.below_min_speedup || 0} below ${WARM_START_MIN_SPEEDUP}x, ` +
       `${f.same_direction_collapsed || 0} same-direction]` : ''}` +
-      // Every count on this line is over the rows FETCHED; a saturated scan means the page held
-      // more.
+      // Every count on this line is over the rows FETCHED; a saturated scan means the page held more.
       `${f.scan_saturated ? ` (SCAN SATURATED at ${f.scanned} — the page holds more)` : ''}`);
     const otherLangs = Array.isArray(resolved.other_language_pages) ? resolved.other_language_pages : [];
     if (!cands.length && otherLangs.length) {   // wrong target_language, not an empty store
@@ -8224,9 +7785,7 @@ correctness check; only report committed=true if it still passes. Return JSON {c
         }
         log(`[kb] warm-start candidate c${c.rank} ${rec ? rec.status : 'rejected'} (${sp ? sp.toFixed(2) + 'x' : 'no measure'}).`);
       }
-      // Record what THIS box saw, so the next one reads a ledger and not just a speedup. Only
-      // candidates carrying an `outcome` reached the GPU — the loop breaks after adopting, and
-      // counting an unbenched record would enter an attempt that never happened.
+      // Record what THIS box saw, so the next one reads a ledger and not just a speedup.
       const benched = warm_start.candidates.filter(x => x.outcome && (x.session_id || x.exp_dir));
       if (benched.length) {
         const planeFlags = warm_start.plane === 'remote' ? '--plane remote'
@@ -8266,9 +7825,8 @@ if (EVO && !(await EVO.initialize())) {
 let plannerStopReason = '';
 // mode=mega ends on the budget, its modeled clock or a stop rule in megaRound, not on no-improve rounds.
 while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE)) {
-  // --- (0) HARD STOP: no new round may START past the deadline ----------
-  // Checked BEFORE round++ so an expired check does not inflate the round count. The in-flight round
-  // is never interrupted — a killed round leaves a half-verified patch and no report.
+  // --- (0) HARD STOP: no new round may START past the deadline ---------- Checked BEFORE round++ so an
+  // expired check does not inflate the round count.
   let left = await secondsLeft(`pre-r${round + 1}`);
   __routeClock = { left_s: left };
   if (left <= 0) {
@@ -8302,18 +7860,9 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
     KERNEL_KNOWLEDGE_DIR, KK_OPERATOR, KK_LANGUAGE, KK_REFS,
     GFX, DEVICE_TARGET, PHYSICAL_CU_COUNT, ROOFLINE_STATUS,
     ...KB_INPUTS,
-    // DRA brief (REFERENCE), from main. plan_round reads it and seeds directions[] from the ranked
-    // DRA directions — see tech_lead.md plan_round. Spread conditionally, so when dra_enabled was off
-    // (or the research degraded) the key is absent and the prompt is byte-identical to a build
-    // without the feature. Threaded through `planInputs` rather than the call site so the forced
-    // re-plan below gets it too: a replan that silently loses the research brief would plan against
-    // a different input set than the round it is replacing.
+    // DRA brief (REFERENCE), from main.
     ...(researchBriefPath ? { DEEP_SEARCH_BRIEF: researchBriefPath } : {}),
-    // Stated UNCONDITIONALLY, in both directions. `use_learned_kb=false` used to omit the budget and
-    // nothing else, while roles/tech_lead.md still listed knowledge/learned/INDEX.md among the files
-    // to read — so the off switch removed the budget that CONSTRAINS the KB and left the instruction
-    // that USES it, i.e. the arm it exists to produce (a clean KB-off control) was never clean. The
-    // role now gates on this value, so it has to be present whichever way it points.
+    // Stated UNCONDITIONALLY, in both directions.
     LEARNED_KB: USE_LEARNED_READ ? 'on' : 'off',
     ...(USE_LEARNED_READ ? { LEARNED_KB_BUDGET:
       `At most ${KB_DIR_CAP} of this round's directions may draw on learned cards, and you must cite ` +
@@ -8348,13 +7897,7 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
     { phase: 'Optimize', label: `tech_lead:plan r${round}`, schema: PLAN_SCHEMA });
   const eikosFirstChoice = EIKOS_SHADOW_ON ? eikosRawChoice(plan) : null;
 
-  // NO EARLY STOP: keep refusing while the window is materially unspent. This used to refuse ONCE,
-  // on the reasoning that a role repeating "stop" has run out of ideas. Measured at a 2h budget that
-  // cost ~3 min (write_req_to_token_pool_triton stopped at 1.95h/2.00h) and looked harmless; the cost
-  // is proportional to the budget, so at 8h the same one-shot escape hands back hours. The caller's
-  // rule is "must keep optimizing until the budget is spent", so the refusal has to be as long-lived
-  // as the window. Bounded by MAX_FORCED_REPLANS so a role that cannot produce a direction at all
-  // degrades to stopping instead of spinning the window away on planning.
+  // NO EARLY STOP: keep refusing while the window is materially unspent.
   while (DEADLINE_EPOCH && left > NO_STOP_S && forcedReplans < MAX_FORCED_REPLANS &&
          (!plan || plan.stop || !plan.directions || plan.directions.length === 0)) {
     forcedReplans++;
@@ -8496,19 +8039,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
       const { d, eng, route } = prev;
       if (EVO && prev.evo_prepare_failed) return { d, eng, ver: null };
       let patch = `${d.out_dir}/best_patch.diff`;
-      // Harvest is MEASUREMENT-anchored, not return-value-anchored. An engineer only writes
-      // best_patch.diff when it beat the floor (the Optimize prompt: "Save best_patch.diff ... when
-      // geomean>CANDIDATE_FLOOR"), so a lost/failed StructuredOutput does NOT imply there is no winning patch: an
-      // engineer that died, timed out, or mis-returned can still have left an applies-clean above-floor diff
-      // on disk (observed in a bake-off: a 1.56x Triton patch was silently dropped because its
-      // worker_result.json/StructuredOutput never came back). The only return we can TRUST to suppress
-      // a patch is a clean below-floor one — the engineer ran, measured, honestly reported <=the floor, and
-      // therefore wrote no patch. In every other case (null/failed return, OR a claimed above-floor one) a patch
-      // MIGHT be on disk, so we hand the path to verify and let the oracle be the source of truth. We
-      // cannot stat the file from the workflow sandbox, so the "is there actually a patch" decision is
-      // delegated to verify, which returns apply_failed on an absent/empty patch — dropped by the
-      // `verified` filter below, i.e. the same outcome as skipping, but with no false loss.
-      // An invalid/missing source verdict must reach Verify, even after an empty-patch return.
+      // Harvest is MEASUREMENT-anchored, not return-value-anchored.
       const trustworthyBelowBaseline = eng && eng.status !== 'failed' && !(primSpeedup(eng) > CANDIDATE_FLOOR) &&
         eng.status !== 'invalid_measurement' && eng.measurement_valid === true;
       if (trustworthyBelowBaseline) {
@@ -8536,22 +8067,11 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
         }),
         { phase: 'Verify', label: vlabel, schema: VERIFY_SCHEMA }, vroute
       ).then((ver) => {
-        // eikos v2 E1 (R2): feed the verifier's own terminal outcome to P1 (shadow by default). A verifier
-        // that produced a USABLE measurement did its job — SUCCESS — even if it found a bad kernel; an
-        // `invalid_measurement` is INFRA (not the verifier's fault) and moves nothing; a null return is
-        // already reported as `no_result` by agentT (so it is skipped here). This never touches the legacy
-        // sonnet/eikos ladder, so routing stays byte-identical; it only feeds P1's shadow. (A worker-fault
-        // climb for the verifier is NOT inferred — the host has no clean self-malfunction signal here.)
+        // eikos v2 E1 (R2): feed the verifier's own terminal outcome to P1 (shadow by default).
         if (ROUTING_ON && ver != null) {
           // eikos v2 E1 (R2 residual / Astra re-review #3 finding 4): "not invalid_measurement" was too
-          // broad — VERIFY_SCHEMA permits ANY status string, so a non-null status:'failed' (or any unknown
-          // status) was booked as SUCCESS. Require a RECOGNIZED, adequately-evidenced terminal verdict for
-          // success: `verified` (a usable good-kernel measurement) OR `correctness_failed` (the verifier
-          // established the kernel is wrong — still a usable measurement; the verifier did its job). An
-          // `invalid_measurement` is INFRA (moves nothing). ANY other/unknown/incomplete status (incl.
-          // 'failed', 'apply_failed', or an arbitrary schema string) is NOT an established measurement: it
-          // is recorded as `no_result` (moves nothing) — NOT success, and NOT a verifier work-product fault
-          // (the host has no clean verifier self-malfunction signal here). Shadow-only; routing byte-identical.
+          // broad — VERIFY_SCHEMA permits ANY status string, so a non-null status:'failed' (or any
+          // unknown status) was booked as SUCCESS.
           const vUsable = says(ver.status, 'verified') || says(ver.status, 'correctness_failed');
           const vInvalid = says(ver.status, 'invalid_measurement');
           __p1WorkerOutcome(__routeScope(vlabel), vUsable,
@@ -8577,8 +8097,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
       : !r.ver ? `engineer reported ${primSpeedup(r.eng)}x <= floor ${CANDIDATE_FLOOR}`
       : `verify status=${r.ver.status} correctness=${r.ver.correctness} speedup=${primSpeedup(r.ver)}x floor=${CANDIDATE_FLOOR}`;
     // What kind of failure, for the Eikos decider: only a wrong or unusable work product says anything
-    // about the lane. A skipped or silent engineer is no result; an invalid measurement is not the
-    // patch's fault; a correct patch that did not beat the floor is a non-improvement.
+    // about the lane.
     const kind = __routeSkipped[`${kindTag} ${r.d.id}:${r.d.specialty}`] ? 'no_result'
       : !r.ver ? 'non_improvement'
       : says(r.ver.status, 'invalid_measurement') ? 'invalid_measurement'
@@ -8589,8 +8108,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
     // eikos v2 E1 (bug 5): the `!r.ver -> non_improvement` branch conflates a DELIBERATELY skipped
     // verification after a valid below-floor measurement (`trustBelow`, a true non_improvement) with a
     // verifier that was asked and returned NOTHING (ver==null from the recovered verify path — a
-    // no_result that must move nothing). `kind` (hence the LIVE sonnet/eikos state) is UNCHANGED; only
-    // P1's shadow receives the corrected `p1Kind`, so the default path stays byte-identical.
+    // no_result that must move nothing).
     const trustBelow = r.eng && r.eng.status !== 'failed' && !(primSpeedup(r.eng) > CANDIDATE_FLOOR) &&
       r.eng.status !== 'invalid_measurement' && r.eng.measurement_valid === true;
     const p1Kind = (kind === 'non_improvement' && !r.ver && !trustBelow) ? 'no_result' : kind;
@@ -8598,10 +8116,9 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
                    `${kindTag} ${r.d.id}:${r.d.specialty}`, r.route ? r.route.dispatch_id : null, p1Kind);
   }
 
-  // --- (d) Build candidate list; integrate if >=2 verified --------------
-  // `geomean` here is the PRIMARY metric used for sorting/gating/cumulative: the time-weighted
-  // ratio-of-sums when a workload spec is active, else the unweighted geomean (unchanged behavior).
-  // The raw unweighted geomean is retained separately for the report.
+  // --- (d) Build candidate list; integrate if >=2 verified -------------- `geomean` here is the
+  // PRIMARY metric used for sorting/gating/cumulative: the time-weighted ratio-of-sums when a workload
+  // spec is active, else the unweighted geomean (unchanged behavior).
   let candidates = verified.map(r => ({
     source: `engineer ${r.d.id}`, id: r.d.id, title: r.d.title, specialty: r.d.specialty,
     geomean: primSpeedup(r.ver), geomean_unweighted: r.ver.verified_geomean,
@@ -8644,30 +8161,18 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   candidates.sort((a, b) => b.geomean - a.geomean);
   const winner = candidates[0] || null;
   const improved = !!(winner && winner.geomean > cumulative * (1 + MIN_IMPROVE));
-  // Separate question from `improved`: is the SEARCH advancing, not did it beat the incumbent. The
-  // `bestSeen > 0` guard keeps round 1 deciding on `improved` alone; from then on bestSeen >= cumulative
-  // at the default floor, so at the default PROGRESS_DELTA this implies `improved` and changes nothing.
-  // A round with NO candidate is never progress, so a dead round still counts against MAX_NO_IMPROVE.
+  // Separate question from `improved`: is the SEARCH advancing, not did it beat the incumbent.
   const madeProgress = !!(winner && bestSeen > 0 && winner.geomean > bestSeen * (1 + PROGRESS_DELTA));
-  // eikos v2 E1 (R3): did the winner ACTUALLY get installed into the canonical workspace this round? This
-  // is the only thing that may reset the stagnation stop below besides genuine new search progress. A
-  // rediscovered-but-uninstalled candidate (improved, yet the commit failed) must NOT reset it.
+  // eikos v2 E1 (R3): did the winner ACTUALLY get installed into the canonical workspace this round?
   let installed = false;
 
   // --- (e) Commit the winner into the canonical workspace ---------------
   if (improved) {
     // eikos v2 E1 (R4 round-4 / Astra re-review #4): ABORT-AND-QUARANTINE replaces the round-3
-    // restore-and-continue recovery, so there is NO pre-attempt snapshot/capture op here. A restore could
-    // not be proven safe against a possibly-still-live committer (Astra defect #1), and a filename snapshot
-    // could not preserve pre-existing untracked contents (defect #2); the host now simply aborts the run and
-    // quarantines the workspace on a failed/ambiguous commit (below) rather than reconstructing it. Removing
-    // the capture keeps the commit request byte-identical to legacy (R4) and leaves routing=false untouched
-    // (it never enters the quarantine branch — its gate `!ROUTING_ON || committed` always advances).
+    // restore-and-continue recovery, so there is NO pre-attempt snapshot/capture op here.
     const commitRoute = {};   // eikos v2 E1 (bug 1): carries the host dispatch id so the commit's outcome binds to P1
-    // eikos v2 E1 (R7 — commit-salvage): hoist the committer request to a const so the ONE-SHOT RETRY below
-    // re-dispatches the BYTE-IDENTICAL committer prompt (there is no second copy to drift). The prompt text
-    // is UNCHANGED from legacy, so routing-off request parity + the static/parity byte-identity checks that
-    // extract this exact literal are preserved.
+    // eikos v2 E1 (R7 — commit-salvage): hoist the committer request to a const so the ONE-SHOT RETRY
+    // below re-dispatches the BYTE-IDENTICAL committer prompt (there is no second copy to drift).
     const commitPrompt =
       `You are the TechLead committing round ${round}'s winning patch into the canonical workspace.
 \`\`\`bash
@@ -8691,61 +8196,28 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
     const commitRes = await agentT(
       commitPrompt,
       { phase: 'Merge', label: `commit r${round}`, schema: COMMIT_SCHEMA }, commitRoute);
-    // observability only (eikos v2): one terminal outcome per completed commit dispatch, before `cumulative` advances.
-    // eikos v2 E1 (R7 — commit-salvage): `let`, not `const`: a successful RETRY or HOST-SIDE salvage below may
-    // flip this to true for the CONTROL-FLOW decision (advance vs abort). The original committer outcome fed to
-    // P1 + the `commit_outcome` audit still use this FIRST value (the committer's own self-report), unchanged.
+    // observability only (eikos v2): one terminal outcome per completed commit dispatch, before
+    // `cumulative` advances.
     let committed = !!(commitRes && commitRes.committed);
     __routeAudit.push({ event: 'commit_outcome', round, improved: true,
                         committed,
                         geomean: winner.geomean, source: winner.source });
-    // eikos v2 E1 (bug 1 / R8 Astra re-review #9 BUG 3): feed the committer's attributable terminal outcome
-    // to P1 (shadow by default; the gated live-P1 handler under route_decider=p1) through the ONE verdict
-    // table. committed===true -> success; committed===false EXPLICIT -> work_product failure; a null OR a
-    // non-null receipt WITHOUT an explicit committed verdict -> infrastructure/no_result (NOT a work_product
-    // failure — the prior `committed=false` booking mis-classified a verdict-less receipt). Every dispatched
-    // attempt (initial / retry) routes through this, so ALL reach __p1WorkerOutcome. This
-    // NEVER touches the legacy sonnet/eikos ladder.
+    // eikos v2 E1 (bug 1 / R8 Astra re-review #9 BUG 3): feed the committer's attributable terminal
+    // outcome to P1 (shadow by default; the gated live-P1 handler under route_decider=p1) through the
+    // ONE verdict table.
     __commitAttemptOutcome(commitRes, commitRoute, `commit r${round}`);
 
-    // eikos v2 E1 (R7 round-7 / commit-salvage — user-APPROVED Option A; Astra re-review #7-commit): do NOT
-    // let a TRANSIENT/AMBIGUOUS null commit vaporize a fully-verified run. SHADOW_FAILURE2 was a round-1
-    // commit dispatch that returned null/no-transcript (a $0, 0-token SYNTHETIC placeholder — NOT a real
-    // work-product failure); the host read committed=false and the ROUTING abort-and-quarantine returned
-    // terminal BEFORE director:validate, nuking a correctness-PASS 4.28x winner that was ALREADY integrated
-    // and sitting in round_${round}/integrate/. Option A keeps the Astra-cleared INTENT (never advance from
-    // an UNPROVEN workspace) but first tries to SALVAGE the already-verified winner safely, and only aborts
-    // on a GENUINE failure.
+    // eikos v2 E1 (R7 round-7 / commit-salvage — user-APPROVED Option A; Astra re-review #7-commit): do
+    // NOT let a TRANSIENT/AMBIGUOUS null commit vaporize a fully-verified run.
     //
-    // CLASSIFY. A GENUINE committer failure is a NON-NULL receipt that explicitly reports {committed:false}
-    // (the committer ran and reported a real failure) — that is NOT salvaged and still aborts-and-quarantines
-    // verbatim below (its quarantine is preserved; we never paper over a real commit failure). Everything
-    // else that is not {committed:true} is AMBIGUOUS/transient: commitRes==null (no transcript / hung /
-    // synthetic 0-token) OR a receipt with no explicit committed verdict. ONLY the ambiguous case is salvaged.
-    // routing=false NEVER enters here: the guard SHORT-CIRCUITS on ROUTING_ON, so routing-off runs NONE of
-    // this salvage code (no extra dispatch, no audit) and stays BYTE-IDENTICAL to legacy.
-    // eikos v2 E1 (R8 / Astra re-review #9 BUG 1 — the dispatch mechanism is branch (b)): agentTCore guards a
-    // dispatch with a bare `Promise.race` + `setTimeout(resolve null)`; it holds NO AbortController and NO
-    // child handle, and the native Workflow `agent()` primitive exposes no cancellation, so a TIMED-OUT commit
-    // CANNOT be cancelled and its writer's termination CANNOT be confirmed. Therefore auto-salvage (retry /
-    // host-commit — each launches a NEW writer whose prompt runs `git checkout -- .`) is permitted ONLY from
-    // an authoritatively-safe state: the dispatch was confirmed NOT-STARTED (the router never issued it) or
-    // confirmed TERMINATED (its receipt RESOLVED -> the one-shot subprocess exited => exclusive ownership). An
-    // AMBIGUOUS (receipt-less / timed-out) dispatch may still have a LIVE writer: we do NOT launch a second
-    // writer; we QUARANTINE and RETAIN the already-verified winner as RECOVERABLE (fixes the original
-    // $31-loss motivation without the concurrent-mutation hazard).
+    // CLASSIFY.
     const __commitExclusiveOwnership = (receipt, atRoute) =>
-      // 'not_started' | 'terminated' | 'ambiguous'. A non-null receipt means agent() RESOLVED, so the
-      // one-shot writer subprocess exited; a null with no issued dispatch id means the router never launched a
-      // writer; a null WITH a dispatch id is a timed-out/abandoned dispatch whose writer may still be LIVE.
+      // 'not_started' | 'terminated' | 'ambiguous'.
       (!(atRoute && atRoute.dispatch_id)) ? 'not_started' : (receipt != null ? 'terminated' : 'ambiguous');
     const __retainQuarantine = (stage, atRoute, atReceipt, opts) => {
-      // QUARANTINE + RETAIN: persist a recovery reference to the verified integrated winner (its patch lives
-      // on disk under round_${round}/integrate|engineer_*) so the verified work is RECOVERABLE, not discarded.
-      // eikos v2 E1 (R9 / Astra re-review #10, Finding 2 — shortest route): with the host-side salvage REMOVED
-      // this is the ONLY non-advance commit outcome besides an explicit terminal {committed:false}. An
-      // unconfirmed commit is NEVER installed host-side from agent-reported evidence; `opts` lets the caller
-      // record an accurate reason/note (ambiguous timeout vs. terminated-without-a-verdict).
+      // QUARANTINE + RETAIN: persist a recovery reference to the verified integrated winner (its patch
+      // lives on disk under round_${round}/integrate|engineer_*) so the verified work is RECOVERABLE,
+      // not discarded.
       const o = opts || {};
       const reason = o.reason || 'commit_ambiguous_unconfirmed_termination';
       const why = o.why || 'timed out — CANNOT confirm the writer stopped';
@@ -8803,9 +8275,8 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
       if (__commitExclusiveOwnership(commitRes, commitRoute) === 'ambiguous') {
         return __retainQuarantine(`commit r${round}`, commitRoute, commitRes);
       }
-      // (1) RETRY the commit dispatch ONCE — the initial dispatch is confirmed TERMINATED or NOT-STARTED, so
-      // a second writer has EXCLUSIVE ownership. BYTE-IDENTICAL committer request (the hoisted commitPrompt):
-      // routing-off request parity is untouched.
+      // (1) RETRY the commit dispatch ONCE — the initial dispatch is confirmed TERMINATED or
+      // NOT-STARTED, so a second writer has EXCLUSIVE ownership.
       const retryRoute = {};
       const commitRetry = await agentT(
         commitPrompt,
@@ -8824,10 +8295,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
         log(`Round ${round}: commit was AMBIGUOUS/null; the ONE-SHOT RETRY confirmed committed=true — ` +
             `continuing to director:validate (no abort).`);
       } else if (retryExplicitFail) {
-        // BUG 3: an EXPLICIT {committed:false} retry is a GENUINE failure. R9 (Finding 2 — shortest route):
-        // there is NO host-side salvage to enter, so this is TERMINAL. Carry THIS attempt (the LAST verdict, e.g.
-        // d2) as the terminal-failure provenance (Finding 3 residual), then fall through to the retained gate
-        // -> abort-and-quarantine (committed stays false).
+        // BUG 3: an EXPLICIT {committed:false} retry is a GENUINE failure.
         termRoute = retryRoute; termRes = commitRetry; termScope = `commit r${round} retry`;
         log(`Round ${round}: the commit RETRY returned an EXPLICIT {committed:false} — a genuine failure; ` +
             `TERMINAL (host-side salvage removed in R9). ABORT-AND-QUARANTINE below.`);
@@ -8835,27 +8303,16 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
         // BUG 1: the retry TIMED OUT (receipt-less) — its writer may be live; do NOT launch another writer.
         return __retainQuarantine(`commit r${round} retry`, retryRoute, commitRetry);
       } else {
-        // eikos v2 E1 (R9 / Astra re-review #10, Finding 2 — SHORTEST ROUTE): the automatic HOST-SIDE salvage
-        // commit has been REMOVED. The retry is confirmed TERMINATED/NOT-STARTED (exclusive ownership) but
-        // returned WITHOUT a committed verdict — the commit is STILL-UNCONFIRMED. A host-side apply/commit
-        // could only ever be honoured on AGENT-REPORTED evidence (Astra: a patch merely applying does NOT
-        // prove identity with the verified candidate; the committed-tree equivalence was vs the CURRENT HEAD,
-        // not a pinned verified baseline; and acceptance consumed returned flags/strings — accepted with an
-        // empty reported post-HEAD). So there is NO host-install path: we do NOT launch another writer and do
-        // NOT apply/commit anything host-side; we QUARANTINE + RETAIN the already-verified winner as RECOVERABLE.
+        // eikos v2 E1 (R9 / Astra re-review #10, Finding 2 — SHORTEST ROUTE): the automatic HOST-SIDE
+        // salvage commit has been REMOVED.
         return __retainQuarantine(`commit r${round} retry`, retryRoute, commitRetry,
           { reason: 'commit_unconfirmed_no_verdict',
             why: 'the retry resolved WITHOUT a committed verdict (still-unconfirmed); host-side salvage removed in R9',
             note: 'verified winner RETAINED for recovery — commit UNCONFIRMED (retry returned no committed verdict; host-side salvage removed): no second writer, no host-install' });
       }
     }
-    // eikos v2 E1 (R3/R4 — SHARED HARNESS, BOTH ARMS): a FAILED commit did NOT install the winner, so the
-    // tracked incumbent must not advance on it. This is a user-APPROVED behavior change to commit/progress
-    // semantics applied to BOTH routed arms (sonnet AND eikos), so E1 compares routing on a common, correct
-    // commit/stopping harness instead of confounding it with different commit handling. R4: the gate is
-    // ROUTING_ON (was ROUTE_P1_ON, which only covered route_decider=p1) — the correctness fix applies
-    // whenever ROUTING is on, while the LEGACY unconditional advance is preserved only when routing is
-    // globally OFF (routing=false). With routing off, `installed` therefore tracks `improved` exactly.
+    // eikos v2 E1 (R3/R4 — SHARED HARNESS, BOTH ARMS): a FAILED commit did NOT install the winner, so
+    // the tracked incumbent must not advance on it.
     if (!ROUTING_ON || committed) {
       cumulative = winner.geomean;
       bestPerCase = winner.per_case && winner.per_case.length ? winner.per_case : bestPerCase;
@@ -8871,21 +8328,8 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
         }),
         { phase: 'Optimize', label: `reprofile r${round}`, schema: PROFILE_SCHEMA });
     } else {
-      // eikos v2 E1 (R4 round-4 / Astra re-review #4): ABORT-AND-QUARANTINE (replaces round-3 recovery). The
-      // round was `improved` and a commit was attempted under ROUTING_ON, but it FAILED or is AMBIGUOUS —
-      // a {committed:false} receipt, a null/unverified return, a committer timeout we CANNOT confirm stopped
-      // (Astra defect #1), a failed correctness recheck, or index.lock contention all funnel here via
-      // `!committed`. Astra re-review #4 rejected restore-and-continue: a host-dispatched restore cannot be
-      // proven race-free against a possibly-still-live committer (defect #1), and a filename snapshot cannot
-      // preserve pre-existing untracked CONTENTS (defect #2). So we do NOT touch the workspace — no reset,
-      // no clean, no snapshot — and we do NOT continue the optimize loop. The canonical workspace is left
-      // EXACTLY as the failed attempt left it, QUARANTINED for post-mortem (clearly flagged), and the run
-      // STOPS, returning a terminal FAILED result. We RETURN before the progress accounting below, so
-      // `cumulative`/`finalWinner`/`installed`/`noImprove` are NOT advanced: a failed commit produces NO
-      // false progress (the retained R3 progress-accounting fix). A terminal `commit_failed` audit carries
-      // the committer's typed receipt/transcript + the attempt identity (Astra's retained-evidence point).
-      // ROUTED RUNS ONLY — routing=false advanced above (its gate `!ROUTING_ON` is true), so it is
-      // byte-identical in BOTH accounting AND request/prompt and never quarantines.
+      // eikos v2 E1 (R4 round-4 / Astra re-review #4): ABORT-AND-QUARANTINE (replaces round-3
+      // recovery).
       const ambiguous = termRes == null;   // the TERMINAL attempt's verdict (R9 Finding 3 residual: not commitRes)
       __routeAudit.push({ event: 'commit_failed', round, improved: true, committed: false,
                           ambiguous, quarantined: true, reason: 'commit_failed',
@@ -8893,9 +8337,8 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
                           // attempt (the LAST verdict that terminated the run, e.g. d2) — NOT the initial dispatch.
                           dispatch_id: (termRoute && termRoute.dispatch_id) || null,
                           receipt: termRes || null, workspace: CANONICAL,
-                          // NIT (Astra re-review #5): `receipt` is the committer's TYPED return, not its full
-                          // tool transcript. Retain a LINK to the underlying execution evidence — reachable by
-                          // dispatch id in the persisted agent timeline/ledger even when `receipt` is null.
+                          // NIT (Astra re-review #5): `receipt` is the committer's TYPED return, not
+                          // its full tool transcript.
                           receipt_ref: { dispatch_id: (termRoute && termRoute.dispatch_id) || null,
                                          scope: termScope,
                                          timeline: `${EVAL_DIR}/reports/trace/agent_timeline.json`,
@@ -8912,24 +8355,16 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
           `is intact.`);
       return {
         mode: MODE,
-        // eikos v2 E1 (R5 / Astra re-review #5 — failed-run ACCOUNTING): carry the TERMINAL agent timeline so
-        // the parent dispatcher persists it and runs the token/time/cost ledger + report for an ABORTED run
-        // too. kernel_workflow.js REQUIRES `r.eval_dir && r.llm_timeline` (optimize/author passthrough ~:94)
-        // before it writes agent_timeline.json + invokes geak_report.py, and the bakeoff path (~:598) only
-        // NESTS a lane's timeline when `r.llm_timeline` is present — without this field an aborted run's SPEND
-        // was never ledgered (automatic reporting was skipped). Built byte-identically to the normal return
-        // (…LLM_TL + instance=EVAL_DIR); LLM_TL already holds every attempt dispatched up to the abort, which
-        // is what the ledger later attributes (including a late-finishing worker's spend, by dispatch id).
-        // ADDITIVE accounting ONLY — no recovery, no resume, no workspace mutation; routing=false NEVER reaches
-        // this branch (its gate `!ROUTING_ON` advanced above), so routing-off accounting is unchanged.
+        // eikos v2 E1 (R5 / Astra re-review #5 — failed-run ACCOUNTING): carry the TERMINAL agent
+        // timeline so the parent dispatcher persists it and runs the token/time/cost ledger + report
+        // for an ABORTED run too.
         llm_timeline: LLM_STATS ? { ...LLM_TL, instance: EVAL_DIR } : undefined,
         eval_dir: EVAL_DIR,
         kernel_name: KERNEL_NAME,
         // Failure/validation metadata so the scorer + report classify this as a TERMINAL FAILED run (not
         // 'unknown') while its spend is still counted; N stays not-completed / not-accepted downstream.
         validation_status: 'failed',
-        // TERMINAL FAILURE (eikos v2 E1, R4): a routed commit could not be confirmed installed. The canonical
-        // workspace is QUARANTINED as-is (NOT restored) for post-mortem; no false progress was recorded.
+        // TERMINAL FAILURE (eikos v2 E1, R4): a routed commit could not be confirmed installed.
         status: 'failed',
         stopped_by: 'commit_failed',
         commit_failure: {
@@ -8968,15 +8403,11 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
 
   if (winner && winner.geomean > bestSeen) bestSeen = winner.geomean;
   // eikos v2 E1 (R3): reset the stagnation stop ONLY on genuine new search progress (a candidate better
-  // than any seen before) or a REAL install (the winner actually committed into the canonical workspace).
-  // A rediscovered-but-uninstalled candidate (`improved` yet the commit failed) no longer resets it, so a
-  // run that keeps re-finding the same uninstallable 2x candidate still stagnates and stops. When routing
-  // is OFF, `installed === improved` (every improved round advances), so this reduces to the legacy
-  // `madeProgress || improved` and the default non-routed behavior is preserved exactly.
+  // than any seen before) or a REAL install (the winner actually committed into the canonical
+  // workspace).
   if (madeProgress || installed) { noImprove = 0; } else { noImprove++; }
   if (EIKOS_SHADOW_ON) {
-    // Measured facts only. The commit agent's own return is not captured by the lane, so a commit is
-    // recorded as "not_captured", never inferred from the tracked incumbent value.
+    // Measured facts only.
     const o = { verified_candidates: verified.length, winner_speedup: winner ? winner.geomean : null,
                 improved: improved, made_progress: madeProgress, installed: installed, commit_reported: 'not_captured',
                 tracked_incumbent_after: cumulative };
@@ -9005,11 +8436,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
     if (mem.bottleneck_now) history.bottleneck_now = mem.bottleneck_now;
     if (mem.suggest_next) history.suggest_next = mem.suggest_next;
   }
-  // Enforce the round's KB budget. Honest about what this can and cannot do: stripping a citation
-  // does NOT un-influence a direction that was already planned with a card in mind — only the prompt
-  // above can do that. What the strip buys is OBSERVABILITY: `kbCapBound` counts the rounds where the
-  // planner overran its budget, so "the KB quietly took over planning" becomes a number in the run's
-  // return value instead of something you infer from a speedup that got worse.
+  // Enforce the round's KB budget.
   if (USE_LEARNED_READ) {
     let seeded = 0; const stripped = [];
     for (const d of directions) {
@@ -9029,24 +8456,16 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
     }
   }
 
-  // Join the planner's declared citations against what the verifier independently measured. Derived
-  // here rather than self-reported: the planner said which card seeded which direction, the verifier
-  // re-measured that direction without knowing, and their join is a fact neither one could fake.
-  // `became_winner` and not `verified > 1.0` is the standing test — verified_geomean is measured
-  // against the FROZEN baseline, so once a kernel sits at 2.5x cumulative every non-regressing
-  // direction clears 1.0 and a card would accrue credit for advancing nothing.
+  // Join the planner's declared citations against what the verifier independently measured.
   for (const r of clean) {
     for (const cardRef of (r.d.learned_refs || [])) {
       citations.push({
         card: cardRef, round, direction: r.d.id, specialty: r.d.specialty,
-        // null, NOT 0, when the verifier produced nothing. `kb.py` scores <=1.0 as a real loss, so
-        // encoding "no evidence" as 0 charged a card for a verifier that crashed or timed out.
+        // null, NOT 0, when the verifier produced nothing.
         cited_then_verified: r.ver && Number.isFinite(r.ver.verified_geomean)
           ? r.ver.verified_geomean : null,
         // `winner` is only the best candidate OF THIS ROUND; `improved` is whether it beat the
-        // incumbent by MIN_IMPROVE. Crediting on `winner` alone let a 1.5x round winner confirm a
-        // card while the committed best already sat at 2x — a confirmation for advancing nothing,
-        // which is precisely what the three-state scoring was written to avoid. Require both.
+        // incumbent by MIN_IMPROVE.
         became_winner: !!(winner && winner.id === r.d.id && improved),
       });
     }
@@ -9064,9 +8483,6 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
   log(`Round ${round} done. winner=${winner ? winner.source + ' ' + winner.geomean.toFixed(2) + 'x' : 'none'}, cumulative=${cumulative.toFixed(2)}x, noImprove=${noImprove}`);
 
   // Issue #429: reclaim superseded heavy copies after each round, then CONTINUE optimizing.
-  // Disk pressure must never abort the loop — reclaim (and under pressure, --force-heavy) only.
-  // Agents (not this JS runtime) execute the bash; the prompt below is also mirrored into the
-  // next round's tech_lead context via STORAGE_NOTE so it is not dropped on a dry orchestrator.
   const reclaimCmd =
     `bash ${WORKFLOW_DIR}/scripts/reclaim_eval_artifacts.sh --eval-dir ${EVAL_DIR} --keep-round ${round}` +
     `; bytes=$(du -sb ${EVAL_DIR} 2>/dev/null | awk '{print $1}');` +
@@ -9139,17 +8555,11 @@ log(`COMPLETE. ${KERNEL_NAME}: verified ${HAS_WORKLOAD ? 'time-weighted' : 'geom
     ` (status ${validation ? validation.validation_status : '?'}). Results in ${EVAL_DIR}`);
 
 // ===========================================================================
-// PHASE: UpdateExperience — distill ONE reusable card into this workflow's knowledge/learned/
-// (see knowledge/learned/README.md). Runs ONCE, at the very end: never per round, because only
-// the final director-verified speedup is evidence a card may cite. `validation` is required for
-// the same reason — without it `finalPrimary` falls back to the TechLead's own unverified
-// `cumulative`. ADD-only, so a skipped or failing step leaves the run byte-neutral.
+// PHASE: UpdateExperience — distill ONE reusable card into this workflow's knowledge/learned/ (see
+// knowledge/learned/README.md).
 // ===========================================================================
 let learned_card = null;
-// Two runs must never become a card, and neither is a failure. A run that shared its GPU measured
-// contention, not the kernel. A run on a HELD-OUT kernel is the instrument for measuring whether the
-// KB helps at all — distil it and the next A/B over that kernel reads back its own answer and looks
-// spectacular. Defaults are permissive, so the CALLER is the one who has to declare a busy box.
+// Two runs must never become a card, and neither is a failure.
 const BOX_QUIET = String(A.box_quiet != null ? A.box_quiet : 'true') === 'true';
 const HELD_OUT = String(A.held_out != null ? A.held_out : 'false') === 'true';
 const kbGate = !BOX_QUIET ? 'the box was contended — the number measured neighbours, not the kernel'
@@ -9181,10 +8591,7 @@ if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimar
           // `rounds[]` (per-round directions + per-candidate claimed/verified/status + running
           // `cumulative`) is what makes the card's `stack:` attribution and `pitfall:` lines derivable.
           HISTORY: history,
-          // What this run's plan cited and what the verifier then measured. CONTEXT ONLY — the
-          // counters are applied by `kb.py drain` from the ledger filed below, never by this agent.
-          // The comment that used to sit here said the curator merges them, which stopped being
-          // true when that arithmetic moved into code.
+          // What this run's plan cited and what the verifier then measured.
           CITATIONS: citations,
           PROFILE: profileSummary,
           REPORT_PATH: report && report.report_path ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`,
@@ -9199,18 +8606,6 @@ if (!kbGate && UPDATE_EXPERIENCE_ON && kbAccepted && Number.isFinite(finalPrimar
 }
 
 // FILE THE CITATION LEDGER — OUTSIDE the curation gate, and deliberately so.
-// This is the loss half of the loop. It first shipped INSIDE the `finalPrimary > 1.0` branch above,
-// which is the exact bias it exists to remove: the runs that produce losses are the ones that did
-// not beat the baseline, were flagged, or ran on a contended box, and every one of them was
-// filtered out before it could file anything. Selecting successful runs into the feedback data is
-// worse than no feedback, because the resulting counters look earned. Reported in review of #411.
-// Curation (writing a NEW card) still requires a verified win — a run with nothing to teach must
-// not teach — but the ledger of what the cards ALREADY in the tree did is owed for every run.
-// `held_out` is the one exception: that split is the measuring instrument, so it neither writes
-// cards nor votes on them.
-// A workflow script has no filesystem, hence the one-line agent; the JSON is assembled by
-// `kb.py cite` rather than by the agent, because a proposal hand-written by a model is one more
-// place for the schema to drift.
 if (citations.length && !HELD_OUT) {
   try {
     await agentT(
@@ -9233,21 +8628,14 @@ Return {"filed": <the "citations" number the command printed, or 0>}.`,
 }
 
 // ===========================================================================
-// Write this run's outcome back — the producer half of the loop. One call files all three: the
-// kb_artifacts/ tree (which the remote payload is derived FROM, and which a curation pass edits),
-// the on-disk store the read addresses by key, and the service when credentialed.
-// The script applies its own gate and never fails the run; the `finalPrimary > 1.0`
-// pre-check just avoids spending an agent on a run that cannot pass the gate anyway.
+// Write this run's outcome back — the producer half of the loop.
 // ===========================================================================
 let kb_written = null;
 if (KB_WRITE_OK && GFX && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
   const kernelClass = (analysis && analysis.kernel_type) || 'unknown';
   const finalPatch = report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`;
   const reportPath = report && report.report_path ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`;
-  // What the store cannot infer from a diff but needs to curate this entry later. `direction` is the
-  // IDEA, and only a warm start supplies a real one: a round title is free-form per run, so kebabbing
-  // it would mint a unique label every time and group nothing. Unlabeled is honest — resolve treats
-  // such an entry as its own direction, and a curation pass assigns the shared label later.
+  // What the store cannot infer from a diff but needs to curate this entry later.
   const winnerDirection = kebab(warm_start.direction || '');
   const metricKind = HAS_WORKLOAD ? 'time_weighted' : 'geomean';
   // Commas separate the list, so a case name may not contain one.
@@ -9255,10 +8643,6 @@ if (KB_WRITE_OK && GFX && Number.isFinite(finalPrimary) && finalPrimary > 1.0) {
     .filter(Boolean).join(',');
   // write-remote runs the directory write first and files the same entry in the store, so the two
   // planes cannot drift; its extra `remote` field rides along under the schema's open object.
-  // `--plane both` extends that ordering one hop further: directory tree, then local store, then the
-  // service. Unlike the read there is no branch on credentials here, because `_open_plane` already
-  // makes the right call — a `both` without them degrades to the local planes and reports
-  // `remote_unavailable` rather than failing, which is the behaviour we would have written by hand.
   const remoteWriteOn = KB_REMOTE !== 'off' && !!KB_STORE_DIR;
   const writeCmd = remoteWriteOn
     ? `write-remote --plane both --store ${JSON.stringify(KB_STORE_DIR)}${KB_VERSION_FLAG}`
@@ -9308,10 +8692,9 @@ ${warm_start.exp_dir ? ` \\\n  --parent ${JSON.stringify(warm_start.exp_dir)}` :
 // finalPrimary is the total vs the pristine baseline; when a warm-start patch was adopted, split out
 // the delta ABOVE it so a KB-derived gain is never reported as this run's own work.
 //
-// With no round committed after the adopt, the workspace still holds exactly the adopted code, and
-// the two numbers are two measurements of the SAME thing taken at different times — the ratio is
-// bench noise (~2% on this box; `_gemm_a16_w16_kernel` reported 0.98 and read as a regression).
-// Report 1.0 and say why, rather than dressing the noise up as a delta.
+// With no round committed after the adopt, the workspace still holds exactly the adopted code, and the
+// two numbers are two measurements of the SAME thing taken at different times — the ratio is bench
+// noise (~2% on this box; `_gemm_a16_w16_kernel` reported 0.98 and read as a regression).
 const noRoundsAfterAdopt = !!(warm_start.adopted && roundsCommitted === 0);
 const incrementalSpeedup = warm_start.adopted && warm_start.adopted_speedup
   ? (noRoundsAfterAdopt ? 1.0
@@ -9336,8 +8719,7 @@ return {
   tech_lead_reported_geomean: report ? report.final_speedup_geomean : cumulative,
   validation_status: validation ? validation.validation_status : 'unknown',
   // What KIND of number `final_speedup` is, so bake-off ranking and campaign summaries don't read a
-  // host_bound/unprimed float as a clean device-time win. 'not_applicable' = this lane's own baseline
-  // ratio, no frozen-oracle receipt behind it.
+  // host_bound/unprimed float as a clean device-time win.
   timing_basis: validation ? validation.timing_basis || 'unknown' : 'unknown',
   rounds: report ? report.rounds : round,
   budget_used: dispatched,
@@ -9345,11 +8727,6 @@ return {
   report_path: report ? report.report_path : `${EVAL_DIR}/tech_lead_report.md`,
   final_patch: report ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
   // null when the step was off, or the run earned nothing worth a card.
-  // Which condition actually ended the loop. RECORDED, not inferred: on the previous campaign this
-  // existed only in the driver's return value, which the caller sees after ALL its kernels finish —
-  // so a parent-process death erased it for every kernel already done, and the realised window had
-  // to be reconstructed from queue timestamps. It is the whole point of an enforced window that you
-  // can tell a run that used its budget from one that gave up.
   stopped_by: deadlineHit ? 'deadline'
     : (ROUTING_ON && __routeKilled) ? 'route_output_cap'
     : (dispatched >= BUDGET) ? 'budget'
@@ -9366,16 +8743,12 @@ return {
   // Expt-3 cost ladder: lanes, thresholds, every decision/dispatch/failure. Absent when routing is OFF.
   routing: ROUTING_ON ? __routeReport() : undefined,
   forced_replans: forcedReplans,
-  // What the plan cited and whether it carried its round. Returned ALWAYS, including when nothing was
-  // cited (an empty array is the finding: the KB was read and nothing in it was worth acting on).
+  // What the plan cited and whether it carried its round.
   learned_citations: citations,
-  // Rounds where the planner overran the KB budget. A KB that binds every round is one that has taken
-  // over planning, which is the regression this budget exists to catch.
+  // Rounds where the planner overran the KB budget.
   kb_cap_bound_rounds: kbCapBound,
   // The monoculture canary, and it costs no GPU time: how many DISTINCT (specialty, focus_files)
-  // directions this run explored vs how many it issued. A KB that helps raises the verified speedup;
-  // a KB that cages lowers this without raising that. Reported on KB-less runs too — those are the
-  // baseline it has to be read against.
+  // directions this run explored vs how many it issued.
   direction_entropy: (() => {
     const seen = new Set(); let n = 0;
     for (const r of history.rounds) for (const d of (r.directions || [])) {
@@ -9562,8 +8935,7 @@ function createEvolution() {
     result: () => ({ archive, errors }) };
 }
 
-// SHA-256 of a string's UTF-8 bytes (FIPS 180-4). The workflow sandbox has no crypto module; record-batch
-// passes this digest so archive.py can refuse report JSON that changed while an agent retyped the command.
+// SHA-256 of a string's UTF-8 bytes (FIPS 180-4).
 function sha256Hex(text) {
   const bytes = [];
   for (const character of unescape(encodeURIComponent(text))) bytes.push(character.charCodeAt(0));
