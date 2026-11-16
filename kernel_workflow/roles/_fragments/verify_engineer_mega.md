@@ -454,7 +454,9 @@ denominator.
 ## PHASE=recover
 
 When invoked with `PHASE=recover`, do not run a GPU command, take a lease, apply a patch, or edit a
-candidate. Read only `VERIFY_DIR`: the atomic evidence manifest and final verify result. Return the
+candidate. If the prior Verify timed out, check twice at least 10s apart that no matching
+GPU/torchrun/lease process remains and the lane lock is free; set `timeout_recovery_safe=true` only
+then, and report `active_gpu_processes` and `evidence_complete`. Read only `VERIFY_DIR`: the atomic evidence manifest and final verify result. Return the
 newest result whose `claim_complete:true`, `attempt_id` matches the requested candidate attempt, and
 referenced logs exist. If no complete result exists, return `claim_complete:false`,
 `status:"partial"`, `verified_geomean:null`, `verified_arithmetic:null`, `touched_files:[]`, and

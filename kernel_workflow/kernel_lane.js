@@ -5536,17 +5536,8 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
       const laneDir = tree.replace(/\/tree$/, '');
       const recovered = await agentT(
         roleAgent('engineer', 'recover',
-          `RECOVER ONLY candidate ${candidateId}. First confirm the timed-out writer is quiescent and ` +
-          `the lane lock is free. ` + (drainS ? `If not, wait up to ${drainS}s total, in order: ` +
-          `\`flock -w <left> ${laneLock} true\`; the same on every ` +
-          `\${KERNEL_EXTRACT_LOCK_DIR:-/tmp/team_gpu_locks}/gpu_*.lock; then poll every 30s until no ` +
-          `non-zombie process (ps state not Z) has a cmdline or cwd under ${laneDir} or ${outDir}, ` +
-          `excluding your own shell. Zombies and stale lease_*.json files are not holders; never ` +
-          `use kill -0. Return writer_quiescent=true only if all three held. ` : '') +
-          `Read ${outDir}/candidate_result.json and completed ` +
-          `measurement aggregates. Accept only a manifest with claim_complete:true and attempt_id. ` +
-          `Do not use a partial/older worker result, do not run a GPU command, and do not edit ${tree}. ` +
-          `If the writer is still active or the lock is held, return claim_complete:false.`, {
+          `RECOVER ONLY candidate ${candidateId}: follow "PHASE=recover" in the mode=mega engineer fragment.`, {
+            ...(drainS ? { DRAIN_S: drainS, LANE_LOCK: laneLock, LANE_DIR: laneDir } : {}),
             OUT_DIR: outDir, OUTPUT_DIR: outDir, CANDIDATE_ID: candidateId,
             CANDIDATE_SOURCE: source, BASE_CANDIDATE_ID: baseCandidateId,
             CANDIDATE_TREE: tree, KERNEL_PATH: tree, ATTEMPT_ID: attemptId,
@@ -5843,10 +5834,8 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
       if (recoveryBudgetS >= 30) {
         const recoveredVer = await agentT(
           roleAgent('verify_engineer', 'recover',
-            `RECOVER verification for candidate ${candidateId}, attempt ${attemptId}. Do not run a GPU ` +
-            `command or edit source. If the prior Verify timed out, check twice at least 10s apart that ` +
-            `no matching GPU/torchrun/lease process remains and the lane lock is free. Set ` +
-            `timeout_recovery_safe=true only then; report active_gpu_processes and evidence_complete.`, {
+            `RECOVER verification for candidate ${candidateId}, attempt ${attemptId}: follow "PHASE=recover" ` +
+            'in the mode=mega verify_engineer fragment.', {
               VERIFY_DIR: `${outDir}/verify`, CANDIDATE_ID: candidateId,
               CANDIDATE_SOURCE: source, CANDIDATE_TREE: tree,
               EXPECTED_HEAD: expectedHead, ATTEMPT_ID: attemptId,
@@ -6378,16 +6367,8 @@ async function megaBenchmark() {
     log('Benchmark setup returned nothing.');
     benchR = await agentT(
       roleAgent('benchmark_engineer', 'recover',
-        'The previous benchmark_engineer for this EVAL_DIR did not return. RECOVER ONLY: read ' +
-        `${EVAL_DIR} — baseline_timing.json, COMMANDMENT.md, setup_ab_*.json, ab_logs/ — and ` +
-        'reconstruct the return JSON from what is already there. Do NOT run any GPU command and do ' +
-        'NOT take a lease: this step exists to avoid re-measuring, so a fresh measurement here is a ' +
-        'failure, not a fallback. Write baseline_timing.json / COMMANDMENT.md if measurements exist ' +
-        'but the file does not. A setup_ab_control*.json with claim_complete:true IS the positive ' +
-        'control result — report its measured median and null arm rather than re-running it. If the ' +
-        'measurements genuinely are not on disk, return baseline_per_case: [] and say so in notes. ' +
-        'The timed-out agent may still be writing: if setup_ab_* files changed in the last 10 min, ' +
-        'poll up to 12 min for baseline_timing.json before concluding.',
+        'The previous benchmark_engineer for this EVAL_DIR did not return: follow "PHASE=recover" in the ' +
+        'mode=mega benchmark_engineer fragment.',
         { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
           REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,

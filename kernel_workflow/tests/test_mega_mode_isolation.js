@@ -318,7 +318,7 @@ const safeVerifyTimeoutRecovery = new Function(
   `${timeoutSafeFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
    return safeVerifyTimeoutRecovery;`,
 )();
-ok(/check twice at least 10s apart/.test(src) &&
+ok(/check twice at least 10s apart/.test(megaRole('verify_engineer')) &&
    safeVerifyTimeoutRecovery({
      timeout_recovery_safe: true, active_gpu_processes: 0, lane_lock_free: true,
    }) &&

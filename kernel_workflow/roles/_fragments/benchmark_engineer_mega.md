@@ -548,6 +548,8 @@ reconstruct the Return JSON below from what is there. Specifically:
   as it stands — never pick an older one because it reads better — and name the others in `note`.
 - If the measurements exist but `baseline_timing.json` / `COMMANDMENT.md` were never written, write
   them from the measurements. That is transcription, not measurement.
+- The timed-out agent may still be writing: if `setup_ab_*` files changed in the last 10 min, poll
+  up to 12 min for `baseline_timing.json` before concluding.
 - If the measurements genuinely are not there, return `baseline_per_case: []` and say so in `notes`.
   An empty recovery is the correct output; a fabricated baseline is the worst output this phase can
   produce, because every later number is divided by it.

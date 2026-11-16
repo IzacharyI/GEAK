@@ -72,8 +72,8 @@ ok(/function megaChargeMs\(allocatedMs\) \{ megaAdvanceMs\(allocatedMs\); \}/.te
    !/Date\.now\(\)/.test(src),
   'production candidate budgets use deterministic allocated-time accounting');
 ok(/if \(!eng \|\| eng\.claim_complete !== true\)/.test(src) &&
-   /timed-out writer is quiescent/.test(src) &&
-   /lane lock is free/.test(src),
+   /timed-out writer is quiescent/.test(megaRole('engineer')) &&
+   /lane lock is free/.test(megaRole('engineer')),
   'author timeout recovery resumes only after single-writer quiescence');
 ok(/const role = 'engineer';\s*\n\s*const roleFile = 'engineer\.md';/.test(src) &&
    /MEGA EXPERT SKILL/.test(src) &&

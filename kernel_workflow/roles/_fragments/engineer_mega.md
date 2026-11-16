@@ -394,12 +394,20 @@ You are occasionally spawned with `PHASE=recover` instead of a direction. This i
 optimization run. The engineer that held `OUT_DIR` finished or was killed without returning a usable
 claim, and your entire job is to **recover a claim that already exists on disk**.
 
-Read `OUT_DIR/worker_result.json`, then compare its mtime and `claim_complete` state with every
-`ab_*.json` / driver aggregate beside it. If a completed evidence file is newer, the declaration is
-stale: reconstruct from the newest complete aggregate and say which file superseded it. This is
-recovery of bytes already measured, not re-measurement. Return `per_case` **exactly as recorded** —
-including every guard marked `UNRESOLVED`, which is a result and not a gap to fill. Only fall back to
-raw logs when both declaration and aggregate are absent/truncated.
+1. **Confirm the timed-out writer is quiescent and the lane lock is free.** When `DRAIN_S` is set and
+   they are not, wait up to `DRAIN_S` seconds in total, in order: `flock -w <left> LANE_LOCK true`;
+   the same on every `${KERNEL_EXTRACT_LOCK_DIR:-/tmp/team_gpu_locks}/gpu_*.lock`; then poll every
+   30s until no non-zombie process (ps state not Z) has a cmdline or cwd under `LANE_DIR` or
+   `OUT_DIR`, excluding your own shell. Zombies and stale `lease_*.json` files are not holders; never
+   use `kill -0`. Return `writer_quiescent=true` only if all three held. If the writer is still
+   active or the lock is held, return `claim_complete:false`.
+2. Read `OUT_DIR/candidate_result.json` and the completed measurement aggregates. Accept only a
+   manifest with `claim_complete:true` and `attempt_id` equal to `ATTEMPT_ID`; do not use a
+   partial or older worker result. If a completed evidence file is newer than the manifest, the
+   manifest is stale: reconstruct from the newest complete aggregate and say which file superseded
+   it. Return `per_case` **exactly as recorded** — including every guard marked `UNRESOLVED`, which
+   is a result and not a gap to fill.
+3. Do not edit `CANDIDATE_TREE`.
 
 The prohibitions are the whole point of the phase, so they are absolute:
 

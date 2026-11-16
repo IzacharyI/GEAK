@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const src = require('./mega_source')();
+const engineerMega = fs.readFileSync(path.join(__dirname, '..', 'roles', '_fragments', 'engineer_mega.md'), 'utf8');
 
 const match = src.match(
   /\/\/ <<REPLAY:mega_topology_contract>>([\s\S]*?)\/\/ <<\/REPLAY:mega_topology_contract>>/,
@@ -198,8 +199,9 @@ ok(/megaRefusal = null;\s*if \(plan\.stop\)/.test(src) &&
   'the refusal reason reaches the next plan and resets after an accepted direction');
 ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
    /timeout_ms: \(180 \+ drainS\) \* 1000/.test(src) &&
-   /flock -w <left> \$\{laneLock\} true/.test(src) && /team_gpu_locks\}\/gpu_\*\.lock/.test(src) &&
-   /non-zombie process/.test(src) && /under \$\{laneDir\} or \$\{outDir\}/.test(src) &&
+   /DRAIN_S: drainS, LANE_LOCK: laneLock, LANE_DIR: laneDir/.test(src) &&
+   /flock -w <left> LANE_LOCK true/.test(engineerMega) && /team_gpu_locks\}\/gpu_\*\.lock/.test(engineerMega) &&
+   /non-zombie process/.test(engineerMega) && /under `LANE_DIR` or\s+`OUT_DIR`/.test(engineerMega) &&
    /max_retries: 1 \} : \{\}\) \}\);\s*megaAdvanceMs\(drainS \* 1000\);/.test(src),
   'a timed-out author gets a bounded, charged drain on the lane lock, GPU leases and lane processes');
 ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;[\s\S]{0,120}if \(megaUnsafeTimeout === laneTimeoutMarker\) megaUnsafeTimeout = null;/.test(src) &&

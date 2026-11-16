@@ -204,9 +204,9 @@ console.log('\n# an unreturned baseline is recovered from disk, not thrown away'
 ok(/label: 'benchmark_recover'/.test(wf), 'a recovery agent runs before the phase aborts');
 ok(/no baseline recorded, and none recoverable from EVAL_DIR/.test(wf),
    'the abort still exists — recovery narrows the failure, it does not remove it');
-ok(/Do NOT run any GPU command and do/.test(wf) && /a fresh measurement here is a/.test(wf),
+ok(/Do not run any GPU command and do not take a lease/.test(bench) && /a fresh measurement here/.test(bench),
    'the recovery agent is forbidden from re-measuring, which would hide the cost of the failure');
-ok(/claim_complete:true IS the positive/.test(wf),
+ok(/`claim_complete: true` \*\*is\*\* the positive-control result/.test(bench),
    'a completed positive control on disk is reused rather than re-run — it is the phase\'s costliest step');
 // The role side: persist first, then do the expensive interruptible things.
 ok(/PERSIST THE BASELINE THE MOMENT IT EXISTS/.test(bench),
