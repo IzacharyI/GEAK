@@ -5308,41 +5308,11 @@ function megaCandidateFromVerification(meta, ver, opts) {
 // <</REPLAY:mega_candidate_registry>>
 
 // <<REPLAY:enabling_step>>
-   // a prerequisite that costs more than this is a design error
-const CHAIN_DEBT_MAX_ROUNDS = 2;
-
-const round2 = (x) => Math.round(Number(x) * 100) / 100;
-
 function stepRoleOf(d) {
   const s = String((d && d.step_role) || '').trim().toLowerCase();
   return s === 'enabling' ? 'enabling' : 'terminal';
 }
 
-// The outstanding balance. `debt` is a list of {round, id, enables, cost_pct}.
-function chainDebtReport(debt, roundNow, ladderMeasured) {
-  const open = (Array.isArray(debt) ? debt : []).filter((e) => e && !ladderMeasured.has(e.enables));
-  if (!open.length) return { open: [], overdue: [], caveat: '' };
-  const byRung = new Map();
-  for (const e of open) {
-    const k = e.enables;
-    const cur = byRung.get(k) || { enables: k, steps: [], cost_pct: 0, oldest_round: e.round };
-    cur.steps.push(e.id);
-    cur.cost_pct = round2(cur.cost_pct + (Number(e.cost_pct) || 0));
-    cur.oldest_round = Math.min(cur.oldest_round, e.round);
-    byRung.set(k, cur);
-  }
-  const rows = [...byRung.values()];
-  const overdue = rows.filter((r) => roundNow - r.oldest_round >= CHAIN_DEBT_MAX_ROUNDS);
-  const caveat = 'CHAIN DEBT OUTSTANDING: ' + rows.map((r) =>
-    `${r.enables} owes ${r.cost_pct}% from [${r.steps.join(', ')}] since round ${r.oldest_round}`).join('; ') +
-    '. These steps were committed on function, not on speed, so the canonical tree is currently ' +
-    'that much slower and none of it has been paid back yet. The terminal rung is the only thing ' +
-    'that can pay it.' +
-    (overdue.length ? ` OVERDUE (${CHAIN_DEBT_MAX_ROUNDS}+ rounds unpaid): ${overdue.map((r) => r.enables).join(', ')}. ` +
-      'Plan the terminal rung this round or state what happens to the debt — a chain abandoned ' +
-      'half-built leaves the tree slower than it was found, which is the worst of the three outcomes.' : '');
-  return { open: rows, overdue, caveat };
-}
 // <</REPLAY:enabling_step>>
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
@@ -5364,15 +5334,8 @@ const ATTRIBUTION_CAVEATS = [];
 // Chain caveats: enabling steps kept or refused and the outstanding debt, so a half-built fusion is
 // not reported as a null result.
 const CHAIN_CAVEATS = [];
-// Enabling steps committed on function, each {round, id, enables, cost_pct}. Cleared per rung when
-// that rung is finally measured.
-const CHAIN_DEBT = [];
-// Rung ids that have produced a measurement. Kept alongside rungTally because the debt report needs
-// the same fact and must not depend on the tally's grading order.
+// Rung ids that have produced a measurement.
 const LADDER_MEASURED = new Set();
-// Cumulative speedup and canonical commit pinned at a chain's first enabling step; the terminal
-// step is measured against this pin so the chain's own overhead is not counted as a win.
-let CHAIN_BASELINE = null;
 // Hardware/toolchain facts this wave established, for a human to merge into knowledge/. See
 // MEMORY_SCHEMA.knowledge_delta for why this is surfaced rather than written.
 const KNOWLEDGE_DELTA = [];
@@ -5849,10 +5812,6 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
           EXPERT_SKILL_BUNDLE_SHA256,
           EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
           EXPERT_SKILL_CONTRACT_SHA256,
-        } : {}),
-        ...(CHAIN_DEBT.length ? {
-          CHAIN_DEBT: chainDebtReport(CHAIN_DEBT, currentRound, LADDER_MEASURED).open,
-          CHAIN_BASELINE,
         } : {}),
         TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC, LAUNCH_TARGET,
         REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
@@ -7936,19 +7895,6 @@ async function megaReport() {
       // A half-built fusion: committed prerequisites whose chain never closed, so the cumulative number is
       // below the start for a reason the number does not show.
       ...(CHAIN_CAVEATS.length ? { CHAIN_CAVEATS } : {}),
-      ...(CHAIN_DEBT.length ? {
-        CHAIN_DEBT_FINAL: chainDebtReport(CHAIN_DEBT, round, LADDER_MEASURED).open,
-        CHAIN_BASELINE,
-        CHAIN_NOTE:
-          'Enabling steps are committed on FUNCTION (builds, path taken, correct, no deadlock), not ' +
-          'on speed, because the producer half of a fusion cannot be faster on its own. Any rung ' +
-          'still listed in CHAIN_DEBT_FINAL is a fusion that was started and not closed: state the ' +
-          'cost it left in the tree, and state that the speedup for that chain is NOT YET MEASURED ' +
-          'rather than reporting the degraded number as the result. CHAIN_BASELINE is what the ' +
-          'terminal step must be compared against — the canonical tree already contains the ' +
-          'overhead, so measuring against the canonical would credit the chain with removing its own ' +
-          'cost.',
-      } : {}),
       // Only on a non-default objective: under working_kernel the wave's timings are withdrawn and the
       // deliverable is whether an artifact ran.
       ...(WORKING_KERNEL ? { OBJECTIVE, OBJECTIVE_NOTE:
