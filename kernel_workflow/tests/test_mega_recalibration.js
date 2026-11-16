@@ -66,7 +66,7 @@ ok(/Analyze'[\s\S]{0,600}timeout_ms: 1800000/.test(src), 'Analyze guard is 30 mi
 ok(/label: 'director:setup'[\s\S]{0,400}timeout_ms: 1800000/.test(require('./mega_source').full()), 'mega setup guard is 30 min');
 ok(!/mega_knowledge|MEGA_KNOWLEDGE/.test(src),
   'the generic line derives its plan from the mechanism; no argument injects knowledge files');
-ok(/writer_quiescent === true\) \{\s*laneWriterTimedOut = false;\s*megaUnsafeTimeout = null;[\s\S]{0,300}\}\s*if \(recovered && recovered\.claim_complete === true\)/.test(src),
+ok(/writer_quiescent === true\) \{\s*laneWriterTimedOut = false;[\s\S]{0,120}if \(megaUnsafeTimeout === laneTimeoutMarker\) megaUnsafeTimeout = null;[\s\S]{0,300}\}\s*if \(recovered && recovered\.claim_complete === true\)/.test(src),
   'a quiescent recovered author clears megaUnsafeTimeout even when its result is complete');
 
 if (failures) { console.error(`FAILED: ${failures} assertion(s).`); process.exit(1); }

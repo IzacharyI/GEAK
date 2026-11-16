@@ -147,7 +147,7 @@ console.log('\n# one AUTHOR_GPU_MODE decides Author GPU use');
 
 console.log('\n# stalls are counted by runtime evidence');
 {
-  ok(/megaStall = hasEvidence \|\| improved \|\|[\s\S]{0,120}blockerKey !== megaLastBlocker\) \? 0 : megaStall \+ 1;/.test(src),
+  ok(/const blockerMoved = turns\.some\(\(t\) => t\.gpuExecuted && t\.blockerKey !== megaLastBlocker\);\s*megaStall = hasEvidence \|\| improved \|\| blockerMoved \? 0 : megaStall \+ 1;/.test(src),
     'progress = independent Verify, a better score, or an on-card Author result that moved the blocker');
   ok(/`MEASURE_FIRST` present[\s\S]{0,120}Before any source edit, run a bounded on-card smoke/.test(megaRole('engineer')) &&
      /MEASURE_FIRST: String\(megaStall\)/.test(src),
@@ -161,7 +161,7 @@ console.log('\n# stalls are counted by runtime evidence');
 console.log('\n# lanes can be parked or rewound, never silently replaced');
 {
   ok(/const parkedNow = !!parked && \['authoring', 'runnable'\]\.includes\(parked\.status\)/.test(src) &&
-     /status: 'parked'/.test(src) && /const bound = parkedNow \? raw : bindMegaDirectionToWip/.test(src),
+     /status: 'parked'/.test(src) && /const bound = parkedNow \|\| extra \? raw : bindMegaDirectionToWip/.test(src),
     'an explicit park freezes the lane and skips WIP rebinding for that round only');
   ok(/\/\^\[0-9a-f\]\{7,40\}\$\/\.test\(String\(d\.rewind_head \|\| ''\)\)/.test(src) &&
      /REWIND_TO: d\.rewind_head/.test(src) &&

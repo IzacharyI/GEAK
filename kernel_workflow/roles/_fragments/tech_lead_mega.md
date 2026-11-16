@@ -552,12 +552,17 @@ Inputs include `ROUND`, `BUDGET_REMAINING`, `PROFILE_SUMMARY`,
 `CURRENT_BEST_PER_CASE`, `HISTORY`, `MEGA_CANDIDATE_REGISTRY`,
 `MEASUREMENT_CALIBRATION`, `ROADMAP_LADDER`, `OPEN_RUNGS`, `TASK_GRAPH`,
 `RESOURCE_TIMELINE`, `MEGA_PLAN_IR`, guards, score configuration, and optional
-`STRUCTURAL_ONLY`, plus `BASELINE_OPERATOR_MAP` and `MEGA_STALL` (`rounds` without new runtime
-evidence, and its `limit`). A Skill-enabled run may additionally provide
+`STRUCTURAL_ONLY`, plus `BASELINE_OPERATOR_MAP`, `MEGA_STALL` (`rounds` without new runtime
+evidence, and its `limit`) and optional `MAX_DIRECTIONS`. A Skill-enabled run may additionally provide
 `EXPERT_SKILL_PLANNER_EXTENSION`, Skill identity, and the bundle/component
 digests listed for Analyze.
 
-Plan exactly one complete candidate direction:
+Plan one complete candidate direction per lane. Without `MAX_DIRECTIONS`, return exactly one. With
+`MAX_DIRECTIONS`, return up to that many, each on a different `candidate_id`; their lanes are authored
+and verified in parallel and share the GPU pool. The first direction follows rule 1 below (it is bound to
+the active WIP lane); each further direction opens or resumes another lane — a structurally different
+attempt from `frozen_baseline`, a fork of a scored parent (`base_candidate_id`), or a parked lane — so the
+round explores alternatives instead of repeating one. Every direction follows the rules below.
 
 1. Continue recoverable WIP before opening a duplicate lane. The controller binds every round to
    the active WIP lane, so changing course needs one of two explicit, reversible exits (never a

@@ -230,8 +230,8 @@ ok(replanned.candidate_id === 'same_lane' &&
    replanned.target_topology.included_regions.includes('g2_p2p') &&
    !replanned.target_topology.included_regions.includes('persistent'),
   'a Planner continuing the same WIP lane may restate its topology (a stale stored one was refused every round)');
-ok(/const bound = parkedNow \? raw : bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
-  'every planned round binds to a recoverable WIP unless the Planner parked it this round');
+ok(/const bound = parkedNow \|\| extra \? raw : bindMegaDirectionToWip\(currentRound, raw\);[\s\S]{0,420}continuing recoverable WIP/.test(src),
+  'every planned round binds its first direction to a recoverable WIP unless the Planner parked it this round');
 ok(/const continuation = megaWipContinuationDirection\(currentRound\);[\s\S]{0,420}continuing resumable WIP lane[\s\S]{0,260}raw = continuation/.test(src),
   'a rejected planner direction continues the same WIP lane inside one Workflow');
 ok(/Full and profitable partial[\s\S]*fusion are both legal/.test(searchLead) &&

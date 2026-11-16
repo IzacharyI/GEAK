@@ -58,7 +58,7 @@ ok(/async function samplePool\(round, timeoutMs\)/.test(wf),
    'kernel_lane.js samples the pool rather than trusting the lead to remember');
 // It must run BEFORE the plan, or it is a postmortem of a round already budgeted.
 const iMegaSample = wf.indexOf('const pool = MEGA_STRUCTURAL_ONLY');
-const iMegaPlanCall = wf.indexOf('const d = await planMegaCandidateTurn', iMegaSample);
+const iMegaPlanCall = wf.indexOf('const planned = await planMegaCandidateTurn', iMegaSample);
 ok(iMegaSample > 0 && iMegaPlanCall > iMegaSample,
    'the candidate path samples before planning, while directions remain changeable');
 ok(/\.\.\.\(pool \? \{ GPU_POOL: pool, GPU_MIN_FREE_GIB \} : \{\}\)/.test(wf),

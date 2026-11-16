@@ -2486,6 +2486,8 @@ const MEGA_VERIFY_RESERVE_S = Math.max(300, Number(A.mega_verify_reserve_s || 12
 const MEGA_POST_AUTHOR_RESERVE_S = MEGA_STRUCTURAL_ONLY ? 0
   : (CHECK_EXPERT_SKILL_CONTRACT ? 600 : 0) + MEGA_VERIFY_RESERVE_S;
 const MEGA_STALL_LIMIT = Math.max(0, Number(A.mega_stall_limit != null ? A.mega_stall_limit : 3));
+// Candidate lanes advanced per round. Their GPU work shares one lease pool and queues on it.
+const MEGA_DIRECTIONS = Math.max(1, Math.floor(Number(A.mega_directions_per_round || 1)) || 1);
 if (MEGA && MEGA_PRODUCTION &&
     MEGA_CANDIDATE_TIMEOUT_S - 150 - MEGA_POST_AUTHOR_RESERVE_S < 900) {
   throw new Error(`mega_candidate_timeout_s=${MEGA_CANDIDATE_TIMEOUT_S} cannot fit a 900s Author ` +
@@ -5533,6 +5535,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         MEGA_CANDIDATE_REGISTRY: megaRegistryForSearch(megaCandidateRegistry),
         MEASUREMENT_CALIBRATION: megaMeasurementCalibration,
         MEGA_STALL: { rounds: megaStall, limit: MEGA_STALL_LIMIT },
+        ...(MEGA_DIRECTIONS > 1 ? { MAX_DIRECTIONS: MEGA_DIRECTIONS } : {}),
         ...(megaRefusal ? { PREVIOUS_PLAN_REFUSED: megaRefusal.reason } : {}),
         STRUCTURAL_CONTRACT_POLICY: STRUCTURAL_CONTRACT_BLOCKING ? 'blocking' : 'advisory',
         MEGA_PROFILE, CANDIDATE_TIMEOUT_S: MEGA_CANDIDATE_TIMEOUT_S,
@@ -5573,13 +5576,33 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
   const wipDir = noPlan ? megaWipContinuationDirection(currentRound) : null;
   // A planner that returned nothing never decided to stop: optimize the best scored lane.
   const best = noPlan && !wipDir && !plan ? selectMegaSearchParent(megaCandidateRegistry) : null;
-  if (noPlan && !best) return wipDir;
-  let raw = best ? { id: `r${currentRound}_child_${best.id}`, candidate_id: best.id,
+  if (noPlan && !best) return wipDir ? [wipDir] : [];
+  const raws = best ? [{ id: `r${currentRound}_child_${best.id}`, candidate_id: best.id,
     candidate_source: best.source, base_candidate_id: best.id, title: `optimize ${best.id}`,
     specialty: MEGA_DEFAULT_SPECIALTY, step_role: 'terminal', focus_files: [],
     roadmap_rung: 'off_ladder', target_topology: best.topology,
-    prompt: best.next_blocker || 'Continue the first unresolved measured blocker.' }
-    : plan.directions[0];
+    prompt: best.next_blocker || 'Continue the first unresolved measured blocker.' }]
+    : plan.directions.slice(0, Math.max(1, Math.min(MEGA_DIRECTIONS, remaining)));
+  const out = [];
+  for (const [i, planned] of raws.entries()) {
+    const d = normalizePlannedMegaDirection(currentRound, planned, i > 0);
+    if (!d) continue;
+    if (out.some((o) => o.candidate_id === d.candidate_id)) {
+      log(`Mega round ${currentRound}: dropped a second direction for lane ${d.candidate_id}; ` +
+        'one writer per lane per round.');
+      continue;
+    }
+    out.push(d);
+  }
+  return out;
+}
+
+// Normalizes one planned direction into a lane assignment (fresh-state leak check, parking, WIP binding,
+// candidate id, base and target topology). Returns null when no usable direction remains.
+// `extra` marks a round's second and later directions: they open or resume another lane, so they are not
+// rebound to the active WIP lane.
+function normalizePlannedMegaDirection(currentRound, planned, extra) {
+  let raw = planned;
   const freshLane = !MEGA_RESUME_STATE && megaCandidateRegistry.length === 0;
   if (freshLane && freshMegaDirectionLeak(raw)) {
     const requestedId = String(raw && (raw.candidate_id || raw.id) || '');
@@ -5611,7 +5634,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     log(`Mega round ${currentRound}: Planner parked lane ${parkId} (${raw.park_reason}); resumable.`);
   }
   const plannerCandidateId = String(raw.candidate_id || '');
-  const bound = parkedNow ? raw : bindMegaDirectionToWip(currentRound, raw);
+  const bound = parkedNow || extra ? raw : bindMegaDirectionToWip(currentRound, raw);
   if (bound !== raw) {
     if (plannerCandidateId && plannerCandidateId !== bound.candidate_id) {
       log(`Mega round ${currentRound}: Planner requested replacement lane ${plannerCandidateId}; ` +
@@ -5686,42 +5709,56 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
   };
 }
 
-async function runMegaCandidateTurn(currentRound, remaining) {
-  const turnStartedMs = megaNowMs();
-  const dispatchDeadlineMs = WORKFLOW_STARTED_MS +
-    (MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) * 1000;
+// Plans one round: up to MEGA_DIRECTIONS directions, each on its own candidate lane.
+async function megaPlanRound(currentRound, remaining) {
   if (!megaMeasurementCalibration.ready &&
       (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
     await recoverMegaCalibration(`before-round-${currentRound}`);
   }
   const pool = MEGA_STRUCTURAL_ONLY
     ? null : await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
-  const d = await planMegaCandidateTurn(currentRound, remaining, pool);
-  if (!d) return { stop: true, reason: 'no mega candidate direction was planned' };
-  if (analysis && analysis.resource_timeline) {
-    const pg = pipeOccupancyGate(analysis.resource_timeline, [d]);
-    if (pg.summary) log(`Mega round ${currentRound}: ${pg.summary}`);
-    if (pg.caveat) log(`Mega round ${currentRound}: ${pg.caveat}`);
+  const planned = await planMegaCandidateTurn(currentRound, remaining, pool);
+  if (!planned.length) return { stop: true, reason: 'no mega candidate direction was planned' };
+  const directions = [];
+  let refusal = '';
+  for (const d of planned) {
+    if (analysis && analysis.resource_timeline) {
+      const pg = pipeOccupancyGate(analysis.resource_timeline, [d]);
+      if (pg.summary) log(`Mega round ${currentRound}: ${pg.summary}`);
+      if (pg.caveat) log(`Mega round ${currentRound}: ${pg.caveat}`);
+    }
+    const lg = roadmapLadderGate(LADDER, [d], LADDER_MEASURED);
+    log(`Mega round ${currentRound}: ${lg.summary}`);
+    if (lg.caveat) log(`Mega round ${currentRound}: ${lg.caveat}`);
+    const topologyVerdict = megaTopologyVerdict(
+      d, analysis && analysis.mega_plan_ir, ALLOW_PARTIAL_FUSION);
+    if (!topologyVerdict.pass) {
+      log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
+      refusal = `Mega direction refused before authoring: ${topologyVerdict.reason}`;
+      continue;
+    }
+    for (const rung of lg.planned) {
+      dispatchedRungs.add(rung);
+      const tally = rungTally.get(rung) || { attempts: 0, last_outcome: 'never_planned' };
+      tally.attempts += 1;
+      if (tally.last_outcome !== 'measured') tally.last_outcome = 'unmeasured';
+      rungTally.set(rung, tally);
+    }
+    directions.push(d);
   }
-  const lg = roadmapLadderGate(LADDER, [d], LADDER_MEASURED);
-  log(`Mega round ${currentRound}: ${lg.summary}`);
-  if (lg.caveat) log(`Mega round ${currentRound}: ${lg.caveat}`);
-  const topologyVerdict = megaTopologyVerdict(
-    d, analysis && analysis.mega_plan_ir, ALLOW_PARTIAL_FUSION);
-  if (!topologyVerdict.pass) {
-    log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
-    return {
-      refused: true,
-      reason: `Mega direction refused before authoring: ${topologyVerdict.reason}`,
-    };
-  }
-  for (const rung of lg.planned) {
-    dispatchedRungs.add(rung);
-    const tally = rungTally.get(rung) || { attempts: 0, last_outcome: 'never_planned' };
-    tally.attempts += 1;
-    if (tally.last_outcome !== 'measured') tally.last_outcome = 'unmeasured';
-    rungTally.set(rung, tally);
-  }
+  if (!directions.length) return { refused: true, reason: refusal };
+  return { directions };
+}
+
+// One candidate lane for one round: author, structural check, score Verify. Runs concurrently with the
+// round's other lanes, so it keeps its own modeled clock (`clock.ms`); the round charges the longest.
+async function runMegaCandidateTurn(currentRound, d, clock) {
+  const megaNowMs = () => WORKFLOW_STARTED_MS + clock.ms;
+  const megaAdvanceMs = (ms) => { clock.ms += Math.max(0, Number(ms) || 0); };
+  const megaChargeMs = megaAdvanceMs;
+  const turnStartedMs = megaNowMs();
+  const dispatchDeadlineMs = WORKFLOW_STARTED_MS +
+    (MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) * 1000;
   const candidateId = d.candidate_id;
   const source = d.candidate_source;
   if (!['search', 'integrated'].includes(source)) {
@@ -5808,6 +5845,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   }
   let eng = null;
   let laneWriterTimedOut = false;
+  let laneTimeoutMarker = null;
   const authorGpuProhibited = MEGA_STRUCTURAL_ONLY ||
     (authorPreflightRequired && !stagedGpuAuthoring);
   const role = 'engineer';
@@ -5867,6 +5905,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
 
     if (eng && eng.__agent_timed_out) {
     megaUnsafeTimeout = eng;
+    laneTimeoutMarker = eng;
     laneWriterTimedOut = true;
     log(`Mega round ${currentRound}: candidate author ${eng.label || candidateId} exceeded its ` +
       `deadline. Stopping this workflow invocation because the underlying agent cannot be ` +
@@ -5902,7 +5941,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     if (laneWriterTimedOut && recovered && !recovered.__agent_timed_out &&
         recovered.writer_quiescent === true) {
       laneWriterTimedOut = false;
-      megaUnsafeTimeout = null;
+      // Clear only this lane's marker; a parallel lane may have set its own.
+      if (megaUnsafeTimeout === laneTimeoutMarker) megaUnsafeTimeout = null;
       log(`Mega round ${currentRound}: timed-out author of ${candidateId} is quiescent; its ` +
         `committed WIP stays in the lane and the wave continues.`);
     }
@@ -6109,7 +6149,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   const postAuthoringVerify = structurallyReadyAuthoring &&
     ((sourceAdvancedThisTurn && candidateClaimsSkillTarget) ||
       (!authorPreflightRequired && !sourceAdvancedThisTurn));
-  const gpuWaitBudgetS = Math.max(30, Math.min(300, Math.floor(verifyBudgetS / 4)));
+  const gpuWaitBudgetS = Math.max(30, Math.min(300 * MEGA_DIRECTIONS,
+    Math.floor(verifyBudgetS / (MEGA_DIRECTIONS > 1 ? 2 : 4))));
   const gpuRunBudgetS = Math.max(60, verifyBudgetS - gpuWaitBudgetS - 60);
   const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
     (!contractBlocksRuntime || meta.structural_verified) &&
@@ -6269,6 +6310,42 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     };
   }
 
+  const hasEvidence = !!(ver && ver.claim_complete === true);
+  const reachedHardware = !!(ver &&
+    String(ver.activation_on_hardware || '').toLowerCase() === 'yes');
+  // Source-only checkpoints do not consume the hardware-failure budget; only a complete candidate that
+  // reached Verify counts.
+  const hardwareWasDue = !!shouldVerify;
+  const blockerKey = String(record.next_blocker || '').slice(0, 160);
+  // Analysis gets the identity-bound evidence of THIS candidate instead of scanning EVAL_DIR.
+  if (ANALYSIS_SKILL_ON && ver) profileSummary = { ...profileSummary,
+    analysis_result: await runProfileAnalysis({ ...profileSummary, candidate_evidence: {
+      candidate_id: candidateId, head: record.head, attempt_id: record.attempt_id,
+      target_guard: record.target_guard, frozen_per_case: BASELINE_PER_CASE,
+      per_case: record.per_case, paired_readings: record.paired_readings,
+      denominator_mismatch: record.denominator_mismatch,
+      component_breakdown: record.component_breakdown, hot_path_counters: record.hot_path_counters,
+      evidence_manifest: record.evidence_manifest } }, currentRound, 'mega:analyze') };
+  const verificationFaulted = !!(ver && ver.claim_complete === true &&
+    (String(ver.correctness || '').toLowerCase().startsWith('fail') ||
+      /fail|fault|crash|error/.test(String(ver.status || '').toLowerCase())));
+  const rungOutcome = ver && ver.claim_complete === true &&
+      Array.isArray(ver.per_case) && ver.per_case.length
+    ? 'measured'
+    : (verificationFaulted || eng && (eng.build === false ||
+      String(eng.correctness || '').toLowerCase().startsWith('fail')))
+      ? 'faulted' : 'unmeasured';
+  recordRungOutcome(d.roadmap_rung, rungOutcome);
+  if (rungOutcome === 'measured' && d.roadmap_rung) {
+    LADDER_MEASURED.add(String(d.roadmap_rung));
+  }
+  return { stop: false, direction: d, record, ver, hasEvidence, reachedHardware, hardwareWasDue,
+    blockerKey, gpuExecuted: !!(eng && eng.gpu_executed === true),
+    engStatus: eng ? eng.candidate_status : 'pending' };
+}
+
+// Round-level bookkeeping after every lane of the round has returned.
+async function megaAfterRound(currentRound, turns) {
   // A score may be recorded before calibration completes, but it cannot update the incumbent or be
   // published until a synthetic control proves the harness sees an effect.
   const selection = megaMeasurementCalibration.ready
@@ -6286,52 +6363,24 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       activation: selected.activation,
     };
   }
-
-  const hasEvidence = !!(ver && ver.claim_complete === true);
+  const hasEvidence = turns.some((t) => t.hasEvidence);
   noEvidence = hasEvidence ? 0 : noEvidence + 1;
   noImprove = improved ? 0 : noImprove + 1;
-  const reachedHardware = !!(ver &&
-    String(ver.activation_on_hardware || '').toLowerCase() === 'yes');
-  // Source-only checkpoints do not consume the hardware-failure budget; only a complete candidate that
-  // reached Verify counts.
-  const hardwareWasDue = !!shouldVerify;
-  if (reachedHardware) noHardware = 0;
-  else if (hardwareWasDue) noHardware += 1;
-  const blockerKey = String(record.next_blocker || '').slice(0, 160);
-  megaStall = hasEvidence || improved ||
-    (eng && eng.gpu_executed === true && blockerKey !== megaLastBlocker) ? 0 : megaStall + 1;
-  megaLastBlocker = blockerKey;
-  // Analysis gets the identity-bound evidence of THIS candidate instead of scanning EVAL_DIR.
-  if (ANALYSIS_SKILL_ON && ver) profileSummary = { ...profileSummary,
-    analysis_result: await runProfileAnalysis({ ...profileSummary, candidate_evidence: {
-      candidate_id: candidateId, head: record.head, attempt_id: record.attempt_id,
-      target_guard: record.target_guard, frozen_per_case: BASELINE_PER_CASE,
-      per_case: record.per_case, paired_readings: record.paired_readings,
-      denominator_mismatch: record.denominator_mismatch,
-      component_breakdown: record.component_breakdown, hot_path_counters: record.hot_path_counters,
-      evidence_manifest: record.evidence_manifest } }, currentRound, 'mega:analyze') };
+  if (turns.some((t) => t.reachedHardware)) noHardware = 0;
+  else if (turns.some((t) => t.hardwareWasDue)) noHardware += 1;
+  const blockerMoved = turns.some((t) => t.gpuExecuted && t.blockerKey !== megaLastBlocker);
+  megaStall = hasEvidence || improved || blockerMoved ? 0 : megaStall + 1;
+  megaLastBlocker = turns.length ? turns[turns.length - 1].blockerKey : megaLastBlocker;
   history.rounds.push({
     round: currentRound,
-    directions: [{ id: d.id, title: d.title, specialty: d.specialty,
-      candidate_id: candidateId, candidate_source: source }],
-    results: [{ id: d.id, status: ver ? ver.status : (eng ? eng.candidate_status : 'pending'),
-      verified: record.absolute_score, candidate_status: record.status }],
+    directions: turns.map(({ direction: d, record }) => ({ id: d.id, title: d.title,
+      specialty: d.specialty, candidate_id: record.id, candidate_source: record.source })),
+    results: turns.map(({ direction: d, record, ver, engStatus }) => ({ id: d.id,
+      status: ver ? ver.status : engStatus,
+      verified: record.absolute_score, candidate_status: record.status })),
     winner: selected ? { source: selected.id, geomean: selected.absolute_score } : null,
     improved, cumulative,
   });
-  const verificationFaulted = !!(ver && ver.claim_complete === true &&
-    (String(ver.correctness || '').toLowerCase().startsWith('fail') ||
-      /fail|fault|crash|error/.test(String(ver.status || '').toLowerCase())));
-  const rungOutcome = ver && ver.claim_complete === true &&
-      Array.isArray(ver.per_case) && ver.per_case.length
-    ? 'measured'
-    : (verificationFaulted || eng && (eng.build === false ||
-      String(eng.correctness || '').toLowerCase().startsWith('fail')))
-      ? 'faulted' : 'unmeasured';
-  recordRungOutcome(d.roadmap_rung, rungOutcome);
-  if (rungOutcome === 'measured' && d.roadmap_rung) {
-    LADDER_MEASURED.add(String(d.roadmap_rung));
-  }
   const stateSaved = await persistMegaCandidateState(currentRound);
   if (!stateSaved) {
     return {
@@ -6340,7 +6389,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
         `dispatching another lane`,
     };
   }
-  return { stop: false, direction: d, record, ver, improved, selected };
+  return { stop: false, improved, selected };
 }
 
 let megaSelection = null;
@@ -7084,31 +7133,54 @@ async function megaRound(remaining) {
       `preserving ${Math.round(MEGA_FINAL_RESERVE_S / 60)} minutes for finalist validation.`;
     return { stop: true };
   }
-  const turn = await runMegaCandidateTurn(round, remaining);
-  if (turn.refused && !turn.stop) {
+  const plan = await megaPlanRound(round, remaining);
+  if (plan.refused && !plan.stop) {
     const count = megaRefusal ? megaRefusal.count + 1 : 1;
-    megaRefusal = { reason: turn.reason, count };
+    megaRefusal = { reason: plan.reason, count };
     dispatched += 1;
     megaStall += 1;
-    log(`Mega round ${round}: ${turn.reason} (refusal ${count}/3; re-planning).`);
+    log(`Mega round ${round}: ${plan.reason} (refusal ${count}/3; re-planning).`);
     if (count >= 3) {
-      stopReason = `${count} consecutive refused directions; last: ${turn.reason}`;
+      stopReason = `${count} consecutive refused directions; last: ${plan.reason}`;
       return { stop: true };
     }
     return {};
   }
   megaRefusal = null;
+  if (plan.stop) {
+    stopReason = plan.reason;
+    return { stop: true };
+  }
+  // The round's lanes run concurrently; each charges its own copy of the modeled clock.
+  const roundClockMs = MEGA_CLOCK_MS;
+  const turns = await parallel(plan.directions.map((d) => async () => {
+    const clock = { ms: roundClockMs };
+    const t = await runMegaCandidateTurn(round, d, clock);
+    return { ...t, clockMs: clock.ms };
+  }));
+  MEGA_CLOCK_MS = Math.max(roundClockMs, ...turns.map((t) => t.clockMs));
+  const done = turns.filter((t) => t && !t.stop);
+  const stopped = turns.find((t) => !t || t.stop);
+  if (stopped) {
+    if (done.length && !(await megaAfterRound(round, done)).stop) dispatched += done.length;
+    stopReason = stopped ? stopped.reason : 'a candidate lane returned nothing';
+    return { stop: true };
+  }
+  const turn = await megaAfterRound(round, done);
   if (turn.stop) {
     stopReason = turn.reason;
     return { stop: true };
   }
-  dispatched += 1;
-  log(`Mega round ${round}: candidate=${turn.record.id}[${turn.record.source}:${turn.record.status}], ` +
-    `score=${Number.isFinite(turn.record.absolute_score) ? turn.record.absolute_score.toFixed(4) + 'x' : 'pending'}, ` +
-    `selected=${turn.selected ? turn.selected.id : 'none'}, calibration=` +
-    `${megaMeasurementCalibration.ready ? 'ready' : 'pending'}, budget=${dispatched}/${BUDGET}.`);
-  if (MEGA_STRUCTURAL_ONLY && turn.record.structural_verified) {
-    stopReason = `structural-only acceptance reached by ${turn.record.id}: source checkpoint and ` +
+  dispatched += done.length;
+  for (const t of done) {
+    log(`Mega round ${round}: candidate=${t.record.id}[${t.record.source}:${t.record.status}], ` +
+      `score=${Number.isFinite(t.record.absolute_score) ? t.record.absolute_score.toFixed(4) + 'x' : 'pending'}, ` +
+      `selected=${turn.selected ? turn.selected.id : 'none'}, calibration=` +
+      `${megaMeasurementCalibration.ready ? 'ready' : 'pending'}, budget=${dispatched}/${BUDGET}.`);
+  }
+  const structuralDone = done.find((t) => t.record.structural_verified);
+  if (MEGA_STRUCTURAL_ONLY && structuralDone) {
+    stopReason = `structural-only acceptance reached by ${structuralDone.record.id}: source checkpoint and ` +
       `MegaPlanIR consistency passed; hardware/accuracy/liveness/performance remain unverified.`;
     return { stop: true };
   }

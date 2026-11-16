@@ -188,11 +188,12 @@ ok(!verdict({
 ok(/const MEGA_PLAN_SCHEMA = \{[\s\S]*'candidate_id'[\s\S]*'candidate_source'[\s\S]*'target_topology'/.test(src) &&
    /label: `mega:plan r\$\{currentRound\}`, schema: MEGA_PLAN_SCHEMA/.test(src),
   'Mega plan StructuredOutput requires complete candidate identity and topology');
-ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,280}return \{[\s\S]{0,120}Mega direction refused before authoring/.test(src),
+ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,200}refusal = `Mega direction refused before authoring[\s\S]{0,40}continue;/.test(src) &&
+   /if \(!directions\.length\) return \{ refused: true, reason: refusal \};/.test(src),
   'every Mega run rejects an invalid topology before Engineer dispatch');
-ok(/if \(turn\.refused && !turn\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{\};/.test(src),
+ok(/if \(plan\.refused && !plan\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{\};/.test(src),
   'refusals are charged to the budget and three consecutive refusals still stop');
-ok(/megaRefusal = null;\s*if \(turn\.stop\)/.test(src) &&
+ok(/megaRefusal = null;\s*if \(plan\.stop\)/.test(src) &&
    /\.\.\.\(megaRefusal \? \{ PREVIOUS_PLAN_REFUSED: megaRefusal\.reason \} : \{\}\)/.test(src),
   'the refusal reason reaches the next plan and resets after an accepted direction');
 ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
@@ -201,7 +202,7 @@ ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
    /non-zombie process/.test(src) && /under \$\{laneDir\} or \$\{outDir\}/.test(src) &&
    /max_retries: 1 \} : \{\}\) \}\);\s*megaAdvanceMs\(drainS \* 1000\);/.test(src),
   'a timed-out author gets a bounded, charged drain on the lane lock, GPU leases and lane processes');
-ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;\s*megaUnsafeTimeout = null;/.test(src) &&
+ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;[\s\S]{0,120}if \(megaUnsafeTimeout === laneTimeoutMarker\) megaUnsafeTimeout = null;/.test(src) &&
    /if \(laneWriterTimedOut\) \{\s*await persistMegaCandidateState\(currentRound\);\s*return \{\s*stop: true,/.test(src),
   'only a quiescent timed-out writer continues the wave; a live one still stops it');
 ok(/megaTopologyVerdict\(\s*d, analysis && analysis\.mega_plan_ir, ALLOW_PARTIAL_FUSION\)/.test(src),
