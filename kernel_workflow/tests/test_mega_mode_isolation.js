@@ -334,18 +334,12 @@ ok(/verify_timeout_retry/.test(src) &&
    /TIMEOUT_RECOVERY_ATTEMPT: '1'/.test(src) &&
    /max_retries: 1/.test(src),
   'timeout recovery uses one isolated same-HEAD smoke retry');
-ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY/.test(src) &&
+ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY;/.test(src) &&
    /const benchFirst = noGpuFrontMatter \? structuralBench/.test(src) &&
    /STRUCTURAL_ONLY: no GPU benchmark/.test(src) &&
-   /const pool = \(MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)/.test(src) &&
+   /const pool = MEGA_STRUCTURAL_ONLY/.test(src) &&
    /\? \(MEGA_STRUCTURAL_ONLY\s*\? 'STRUCTURAL_ONLY_NO_GPU'/.test(src),
   'structural-only mode cannot sample, lease, or benchmark a GPU');
-ok(/const MEGA_ROUTE_ONLY = String\(A\.mega_route_only/.test(src) &&
-   /MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)\s*\? null : await samplePool/.test(src) &&
-   /if \(MEGA_ROUTE_ONLY\) \{[\s\S]{0,500}route-only PASS/.test(src) &&
-   /no candidate source or GPU was touched/.test(src) &&
-   /mega_route_only: true[\s\S]{0,500}validation_status: 'route_only'/.test(src),
-  'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
 ok(/requiredAccuracyCases: REQUIRED_ACCURACY_CASES/.test(src) &&
    /A\.required_accuracy_cases != null/.test(src),
   'run-owned accuracy cases remain mandatory without an Expert Skill');

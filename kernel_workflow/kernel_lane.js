@@ -2351,7 +2351,6 @@ const MEGA_MIN_SEARCH_ATTEMPTS = Math.max(0, Number(A.mega_min_search_attempts !
 const MEGA_CANDIDATE_TIMEOUT_S = Math.max(300, Number(A.mega_candidate_timeout_s ||
   3600));
 const MEGA_STRUCTURAL_ONLY = String(A.mega_structural_only != null ? A.mega_structural_only : 'false') === 'true';
-const MEGA_ROUTE_ONLY = String(A.mega_route_only != null ? A.mega_route_only : 'false') === 'true';
 const MEGA_FINAL_TIMEOUT_S = Math.max(600, Number(A.mega_final_timeout_s ||
   (MEGA_PRODUCTION ? 7200 : 3600)));
 const MEGA_TIME_BUDGET_S = Math.max(1800, Number(A.mega_time_budget_s ||
@@ -3699,9 +3698,7 @@ async function samplePool(round, timeoutMs) {
     log(`POOL SAMPLE r${round}: FREE — ${detail}.`);
   } else {
     log(`POOL ${p.verdict.toUpperCase()} r${round}: ${detail}. ${p.note || ''}\n` +
-        `  Plan this round GPU-LESS. A GPU direction dispatched now will spend its clock inside flock ` +
-        `and return nothing; an instrument authored now, with its driver, is a partial the next round ` +
-        `can run in one lease.`);
+        `  Plan this round GPU-LESS.`);
   }
   return p;
 }
@@ -3946,8 +3943,7 @@ function analyzeResumeDegenerate(
     `${(graphMissing || !rungs.length) && megaPlanMissing ? ' and ' : ''}` +
     `${megaPlanMissing
       ? `required mega_plan_ir invalid (${planVerdict.errors.slice(0, 4).join('; ')})`
-      : ''}. ` +
-    'Re-running one full frozen-source analysis before Benchmark.' };
+      : ''}.` };
 }
 // <</REPLAY:analyze_resume_fallback>>
 function applyBaselineOperatorMap(value) {
@@ -4003,8 +3999,7 @@ function taskGraphGate(tg) {
   if (quantified && assumed > 0) {
     return { verdict: 'UNMEASURED_NUMERIC', summary, caveat:
       `TASK GRAPH USES NUMERIC PLACEHOLDERS: ${assumed} node duration(s) are marked assumed while ` +
-      `critical_path_us/measured_e2e_us are numeric. Before Benchmark these numbers are not ` +
-      'measurements and must not rank directions; preserve them as unknown/null until current-run data exists.' };
+      `critical_path_us/measured_e2e_us are numeric.` };
   }
   if (quantified && cp > e2e) {
     return { verdict: 'INCONSISTENT', summary, caveat:
@@ -4019,9 +4014,7 @@ function taskGraphGate(tg) {
   if (edges && launchEdges === edges && narrow === 0) {
     return { verdict: 'KERNEL_GRANULARITY', summary, caveat:
       `TASK GRAPH IS KERNEL-GRANULAR: all ${edges} edges came back enforced_by=launch_boundary with ` +
-      'no edge at a narrower scope, which is what a graph whose nodes are KERNELS looks like. Such ' +
-      'a graph restates the launch order and cannot separate an ordering the data requires from one ' +
-      'the current code imposes. Treat any fusion direction ranked from it as unsupported.' };
+      'no edge at a narrower scope, which is what a graph whose nodes are KERNELS looks like.' };
   }
   // WHAT THE CONSUMER NEEDS that the producer does not supply (weights, scales, descriptors): graph nodes
   // are output tiles, so these never appear as edges. Ask per edge; [] is a valid answer. Advisory:
@@ -4033,11 +4026,7 @@ function taskGraphGate(tg) {
   if (unanswered.length) {
     return { verdict: 'OK', summary, caveat:
       `EDGES THAT DID NOT SAY WHAT THE CONSUMER LOADS ANYWAY (${unanswered.length}): ` +
-      `${unanswered.join(', ')}. Each names an operand the consumer waits for; none names the ` +
-      'operands it needs that the producer does not supply — weights, scales, descriptors, index ' +
-      'arrays. Those depend on nothing and can be loaded during the producer\'s own execution, ' +
-      'which is a different and usually cheaper lever than moving the dependent operand earlier. ' +
-      'It cannot be ranked from this graph because it has no node here.' };
+      `${unanswered.join(', ')}.` };
   }
   return { verdict: 'OK', summary, caveat: '' };
 }
@@ -4106,8 +4095,7 @@ function pipeOccupancyGate(rt, directions) {
       'pipeline drain, so that work is not unscheduled, it is inexpressible.');
     if (!opps) {
       notes.push('NO IDLE-PIPE OPPORTUNITIES LISTED: the table says the pipes are idle and the ' +
-        'artifact names nothing that could be issued into them. That is the one question this ' +
-        'analysis existed to answer; without it the directions below cannot have been derived from it.');
+        'artifact names nothing that could be issued into them.');
     }
   }
   // Directions priced above what their own pipe can pay.
@@ -4126,9 +4114,7 @@ function pipeOccupancyGate(rt, directions) {
     }
   }
   if (unpriced.length) {
-    notes.push(`DIRECTIONS WITH NO PIPE NAMED (${unpriced.length}): ${unpriced.join(', ')}. A ` +
-      'direction that cannot say which functional unit it fills has not been derived from the ' +
-      'table and its expected_speedup is unbounded by anything. Treat as hypotheses.');
+    notes.push(`DIRECTIONS WITH NO PIPE NAMED (${unpriced.length}): ${unpriced.join(', ')}.`);
   }
   if (overclaimed.length) {
     notes.push('DIRECTION OVERCLAIMS ITS PIPE: ' + overclaimed.join('; ') +
@@ -4149,11 +4135,7 @@ function pipeOccupancyGate(rt, directions) {
       .map((o) => `${o.id || o.window || '?'} (${Number(o.recoverable_us) > 0 ? Number(o.recoverable_us).toFixed(0) + 'us' : ''}` +
         `${Number(o.pct_of_e2e) > 0 ? (Number(o.recoverable_us) > 0 ? ', ' : '') + Number(o.pct_of_e2e).toFixed(1) + '% of e2e' : ''})`);
     if (unowned.length) {
-      notes.push(`SIZED HOLE WITH NO DIRECTION (${unowned.length}): ${unowned.join('; ')}. Analyze ` +
-        'located these, measured them and put a number on them, and no direction in this round ' +
-        'names one as the thing it fills. A hole nobody claims is not a hole nobody can reach — it ' +
-        'is a hole nobody looked at. Either give it a direction, or set `rides_on` to the rung that ' +
-        'will absorb it so the claim is recorded and can be checked when that rung reports.');
+      notes.push(`SIZED HOLE WITH NO DIRECTION (${unowned.length}): ${unowned.join('; ')}.`);
     }
   }
   const verdict = notes.length ? (overclaimed.length || (rt.class && rt.class !== derived) ? 'INCONSISTENT' : 'ADVISORY') : 'OK';
@@ -4241,10 +4223,7 @@ function roadmapLadderGate(ladder, directions, completedRungs) {
   if (!rungs.length) {
     return { verdict: 'MISSING', summary: '', planned: [], caveat:
       'LADDER MISSING: Analyze returned no candidate_directions, so there is no recorded ordering ' +
-      'for this run and nothing below can be checked against a plan. Each round is then free to ' +
-      'start from the profile, which is exactly the state in which the most expensive direction — ' +
-      'the one that is conditional on two cheaper ones — is never reached, because nothing is ' +
-      'tracking that it was owed.' };
+      'for this run and nothing below can be checked against a plan.' };
   }
   // `id` is what a plan can quote; fall back to the leading token of the title, which is how these
   // are written in practice ("D2 Per-token ... readiness").
@@ -4290,14 +4269,10 @@ function roadmapLadderGate(ladder, directions, completedRungs) {
 
   const notes = [];
   if (undeclared.length) {
-    notes.push(`DIRECTIONS WITH NO RUNG NAMED (${undeclared.length}): ${undeclared.join(', ')}. ` +
-      'A direction that cannot say which rung it is — including "off_ladder" — has not been ' +
-      'planned against the ladder, and the ladder cannot then be used to tell what is still owed.');
+    notes.push(`DIRECTIONS WITH NO RUNG NAMED (${undeclared.length}): ${undeclared.join(', ')}.`);
   }
   if (offLadder.length) {
-    notes.push(`OFF-LADDER WITHOUT A STATED DEVIATION: ${offLadder.join('; ')}. Leaving the ladder ` +
-      'is allowed and often right; leaving it silently means the rung it displaced is not recorded ' +
-      'anywhere as still open.');
+    notes.push(`OFF-LADDER WITHOUT A STATED DEVIATION: ${offLadder.join('; ')}.`);
   }
   if (gateViolations.length) {
     notes.push('RUNG TAKEN OUT OF ORDER: ' + gateViolations.join('; ') + '. The prerequisite is ' +
@@ -5138,7 +5113,7 @@ function recordRungOutcome(id, outcome) {
 }
 
 const structuralGuardNames = [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])];
-const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY;
+const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY;
 
 // Positive-control gate.
 let PC_OVERSHOOT = '';
@@ -5264,7 +5239,7 @@ const ATTRIBUTION_METRIC = PROMOTION_METRIC === 'legacy' ? 'changed_kernel' : PR
 // A COMPLETE control that failed the gate is re-measured fresh (bounded); the gate never changes.
 async function remeasureMegaCalibration(label, prior) {
   if (megaMeasurementCalibration.ready || !POSITIVE_CONTROL ||
-      MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY || megaPcRemeasured >= 2 ||
+      MEGA_STRUCTURAL_ONLY || megaPcRemeasured >= 2 ||
       !prior || prior.claim_complete !== true) return;
   megaPcRemeasured += 1;
   const r = await agentT(
@@ -5380,7 +5355,7 @@ async function persistMegaCandidateState(currentRound, finalizing) {
       if (!echoOk(retry) && !echoOk(verify)) {
         // In-memory-only checkpoint is not resumable. Stop before a round advances from stale state (lane git commit stays intact).
         log(`MEGA STATE PERSIST FAILED r${currentRound}: STATE.json did not advance to seq=${sequence} ` +
-          `after retry. The invocation must stop; continuing would lose structured candidate progress.`);
+          `after retry.`);
         return false;
       }
     }
@@ -5719,7 +5694,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
       (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
     await recoverMegaCalibration(`before-round-${currentRound}`);
   }
-  const pool = (MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY)
+  const pool = MEGA_STRUCTURAL_ONLY
     ? null : await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
   const d = await planMegaCandidateTurn(currentRound, remaining, pool);
   if (!d) return { stop: true, reason: 'no mega candidate direction was planned' };
@@ -5736,19 +5711,8 @@ async function runMegaCandidateTurn(currentRound, remaining) {
   if (!topologyVerdict.pass) {
     log(`Mega round ${currentRound}: TOPOLOGY CONTRACT: ${topologyVerdict.reason}`);
     return {
-      refused: true, stop: MEGA_ROUTE_ONLY,
+      refused: true,
       reason: `Mega direction refused before authoring: ${topologyVerdict.reason}`,
-    };
-  }
-  if (MEGA_ROUTE_ONLY) {
-    return {
-      stop: true,
-      direction: d,
-      reason: `route-only PASS: candidate=${d.candidate_id}, rung=${
-        d.roadmap_rung || d.id}, launch_count=${topologyLaunchCount(d.target_topology)}, ` +
-        `target=${Number(analysis && analysis.mega_plan_ir &&
-          analysis.mega_plan_ir.target &&
-          analysis.mega_plan_ir.target.launch_count)}; no candidate source or GPU was touched`,
     };
   }
   for (const rung of lg.planned) {
@@ -6210,7 +6174,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
     if (ver && ver.__agent_timed_out) {
       verifierTimedOut = true;
       log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} exceeded its ` +
-        `deadline. Checking process quiescence and on-disk evidence before one safe retry.`);
+        `deadline.`);
       ver = null;
     }
     if (!ver || ver.claim_complete !== true) {
@@ -6474,9 +6438,7 @@ let reportReady = null;
 async function megaAfterSetup() {
   if (setup.mega_workspace_from_original !== true || setup.mega_candidate_state_checked !== true) {
     throw new Error(
-      'MEGA SETUP REFUSED: ordinary workspace must be seeded from KERNEL_PATH_ORIG. Candidate state ' +
-      'must be checked and resumes only inside STATE_DIR/candidates; a legacy STATE_DIR/best must never ' +
-      'replace the frozen base.');
+      'MEGA SETUP REFUSED: ordinary workspace must be seeded from KERNEL_PATH_ORIG.');
   }
   // A grown registry (about 120 KB after 18 rounds) does not fit in the director's setup reply: one
   // reply left it out (the run resumed with zero candidates and the next STATE write erased them),
@@ -6671,9 +6633,7 @@ async function megaAnalyze() {
   // Under working_kernel an empty ladder disables rung, chain-debt and forcing tracking.
   if (WORKING_KERNEL && !LADDER.length) {
     const msg = 'LADDER EMPTY under objective=working_kernel: Analyze returned no candidate_directions, ' +
-      'so there is no staged path to a fused terminal rung. The chain-debt and terminal-forcing ' +
-      'machinery has nothing to act on and every round will start from the profile. Re-run Analyze so ' +
-      'it emits the fusion ladder, or this wave cannot converge on the two-launch shape by construction.';
+      'so there is no staged path to a fused terminal rung.';
     log(msg);
     CHAIN_CAVEATS.push(`setup: ${msg}`);
   }
@@ -6744,13 +6704,11 @@ async function megaBenchmark() {
   // RECOVERY below; only an empty disk makes the timeout terminal.
   const benchTimedOut = !!(benchR && benchR.__agent_timed_out);
   if (benchTimedOut) {
-    log('Benchmark setup hit its full timeout window without returning. Its measurements are usually ' +
-        'already on disk — attempting RECOVERY from EVAL_DIR before treating this as a terminal timeout.');
+    log('Benchmark setup hit its full timeout window without returning.');
     benchR = null; // a timeout marker carries no baseline_per_case; force the recovery path below
   }
   if (!benchR || !benchR.baseline_per_case) {
-    log('Benchmark setup returned nothing. Attempting RECOVERY from EVAL_DIR before aborting — an ' +
-        'agent that died mid-phase usually left its measurements on disk.');
+    log('Benchmark setup returned nothing.');
     benchR = await agentT(
       roleAgent('benchmark_engineer', 'recover',
         'The previous benchmark_engineer for this EVAL_DIR did not return. RECOVER ONLY: read ' +
@@ -7141,19 +7099,6 @@ async function megaRound(remaining) {
   }
   megaRefusal = null;
   if (turn.stop) {
-    if (MEGA_ROUTE_ONLY) {
-      const d = turn.direction || {};
-      return { exit: {
-        mode: MODE, mega_route_only: true,
-        route_pass: String(turn.reason || '').startsWith('route-only PASS:'),
-        eval_dir: EVAL_DIR, kernel_name: KERNEL_NAME,
-        candidate_id: d.candidate_id || '', roadmap_rung: d.roadmap_rung || d.id || '',
-        launch_count: topologyLaunchCount(d.target_topology),
-        target_launch_count: Number(analysis && analysis.mega_plan_ir &&
-          analysis.mega_plan_ir.target && analysis.mega_plan_ir.target.launch_count),
-        validation_status: 'route_only', stop_reason: turn.reason,
-      } };
-    }
     stopReason = turn.reason;
     return { stop: true };
   }
@@ -7216,14 +7161,10 @@ async function megaAfterLoop() {
   if (!stopReason) {
     const left = BUDGET - dispatched;
     if (dispatched >= BUDGET) {
-      stopReason = `the direction budget was exhausted (${dispatched}/${BUDGET} charged over ${round} round(s)). ` +
-        'The budget counts directions, not GPU leases; a round of directions that never reached the ' +
-        'hardware costs the same as a round that did.';
+      stopReason = `the direction budget was exhausted (${dispatched}/${BUDGET} charged over ${round} round(s)).`;
     } else if (!WORKING_KERNEL && noEvidence >= MAX_NO_IMPROVE) {
       stopReason = `${noEvidence} consecutive round(s) produced no admissible measurement, which is the ` +
-        `max_no_improve cap (${MAX_NO_IMPROVE}). ${left} of ${BUDGET} budget unit(s) were left unspent. ` +
-        'This is an instrument failure, not an exhausted search: the next wave should fix the lease ' +
-        'or the activation path before it plans another direction.';
+        `max_no_improve cap (${MAX_NO_IMPROVE}). ${left} of ${BUDGET} budget unit(s) were left unspent.`;
     } else if (!WORKING_KERNEL && noImprove >= MAX_NO_IMPROVE) {
       stopReason = `${noImprove} round(s) in a row measured a candidate and none beat the current best by ` +
         `more than ${(MIN_IMPROVE * 100).toFixed(0)}%, which is the max_no_improve cap (${MAX_NO_IMPROVE}). ` +
@@ -7237,8 +7178,7 @@ async function megaAfterLoop() {
 
   if (megaUnsafeTimeout) {
     log(`MEGA SAFE STOP: ${megaUnsafeTimeout.label || 'agent'} may still be running after the ` +
-      `orchestration timeout. No recovery, fallback, finalist GPU work, report agent or validation ` +
-      `agent will be started in this invocation.`);
+      `orchestration timeout.`);
     return { exit: {
       mode: MODE,
       mega_deliverable: false,
@@ -7568,8 +7508,7 @@ async function megaFinish() {
   // with the measurements just accepted.
   if (validation && validation.orphan_leases_swept > 0) {
     log(`WARNING: ${validation.orphan_leases_swept} orphaned GPU lease(s) were still alive at closeout ` +
-        `and have been killed. Some direction backgrounded a lease job — its measurement is NOT in ` +
-        `the report, and it may have contended with the validated numbers.`);
+        `and have been killed.`);
   }
   const correctnessClean = directorStatus === 'accepted' &&
     reportReady &&
