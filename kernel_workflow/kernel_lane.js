@@ -2338,8 +2338,7 @@ const WORKING_KERNEL = OBJECTIVE === 'working_kernel';
 
 const MEGA_DEFAULT_SPECIALTY = String(A.mega_default_specialty ||
   (GPU_RESOURCE.gpusPerJob > 1 ? 'distributed' : 'compute'));
-// Mega keeps independent workflow-authored whole-kernel candidates. A matched Expert Skill supplies
-// knowledge and an optional contract; external reference trees are never candidate bases.
+// Mega keeps independent workflow-authored whole-kernel candidates.
 const MEGA_PROFILE = String(A.mega_profile || 'production').trim();
 if (MEGA && !['production', 'audit'].includes(MEGA_PROFILE)) {
   throw new Error(`args.mega_profile must be 'production' or 'audit', got '${MEGA_PROFILE}'`);
@@ -2398,8 +2397,7 @@ const BIMODAL_GUARDS = argList(A.bimodal_guards);
 const BASELINE_ACTIVATION = A.baseline_activation &&
   typeof A.baseline_activation === 'object' ? A.baseline_activation : {};
 // operator_e2e is the only metric comparable across a launch-structure change; per-stage timers are
-// diagnostics. changed_kernel needs a same-timeline changed_us/replaced_sum_us measurement; legacy
-// keeps the old global score.
+// diagnostics.
 const PROMOTION_METRIC = String(A.promotion_metric || 'legacy').trim();
 if (MEGA && !['legacy', 'operator_e2e', 'changed_kernel'].includes(PROMOTION_METRIC)) {
   throw new Error(`args.promotion_metric must be 'legacy', 'operator_e2e' or 'changed_kernel', got ${PROMOTION_METRIC}`);
@@ -2646,12 +2644,10 @@ const MEGA_SETUP_SCHEMA = obj({
   prior_state: obj({
     cumulative: { type: 'number' }, insights: { type: 'array', items: { type: 'string' } },
     // Declared, because memoryMerge keys rows by `id` and dedupes on it, and the ladder is read back
-  // out of `roadmap_rung`. A row missing `id` merges as a new row every round; a row missing
-  // `verdict` is treated by the next plan_round as untried. Both read as normal ledger growth.
+  // out of `roadmap_rung`.
   ledger: { type: 'array', items: obj({
     id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
-    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by
-    // result". `unresolved` is what keeps a rung re-openable instead of closing everything above it.
+    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by result".
     verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
     roadmap_rung: { type: ['string', 'null'] },
     expected: { type: 'number' }, actual: { type: 'number' },
@@ -2680,8 +2676,7 @@ const MEGA_SETUP_SCHEMA = obj({
   }, []),
 }, ['eval_dir', 'workspace', 'kernel_name']);
 
-// mode=mega only. Every whole-kernel lane — validated artifact, skill reproduction, or open search —
-// uses one lifecycle. A WIP may advance its own lane without becoming the global incumbent.
+// mode=mega only.
 const MEGA_CANDIDATE_SCHEMA = obj({
   candidate_id: { type: 'string' },
   candidate_source: { type: 'string', enum: ['search', 'integrated'] },
@@ -2806,10 +2801,7 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
   kernel_type: { type: 'string' }, kernel_file: { type: 'string' }, entry_point: { type: 'string' },
   modifiable_files: { type: 'array', items: { type: 'string' } },
   bottleneck_guess: { type: 'string' }, roadmap_summary: { type: 'string' },
-  // The ladder: Analyze's ranked rungs and what each is conditional on. Each rung declares id,
-  // gated_on (rungs that must run to spec first; [] is an explicit answer), mandatory_arms and
-  // is_positive_control, so roadmapLadderGate can check dispatch order against them; prose cannot be
-  // checked.
+  // The ladder: Analyze's ranked rungs and what each is conditional on.
   candidate_directions: { type: 'array', items: obj({
     id: { type: 'string' },              // short, stable, quotable: D0, D1, ...
     title: { type: 'string' },
@@ -2830,8 +2822,7 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     step_role: { type: 'string', enum: ['enabling', 'terminal'] },
     enables: { type: 'string' },
     cost_budget_pct: { type: 'number' },
-    // A terminal rung must say what shape closes it. Without this a three-launch partial fusion and
-    // the requested two-launch terminal are indistinguishable to the rung tracker.
+    // A terminal rung must say what shape closes it.
     target_shape: {
       type: 'object',
       properties: {
@@ -2845,7 +2836,6 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     target_topology: MEGA_TOPOLOGY_SCHEMA,
   }, ['id', 'title', 'gated_on']) },
   // perf_knowledge mapping (reference only): operator/language and the most relevant card paths.
-  // Empty when no card applies.
   kk_operator: { type: ['string', 'null'] }, kk_language: { type: ['string', 'null'] },
   kk_refs: { type: 'array', items: { type: 'string' } },
   baseline_operator_map: { type: 'array', items: obj({
@@ -2872,19 +2862,16 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
     properties: {
       nodes: { type: 'array', items: obj({
         id: { type: 'string' }, stage: { type: 'string' }, duration_us: { type: 'number' },
-        // measured | assumed. The gate counts assumed durations, because a graph whose every
-        // duration is assumed is a hypothesis wearing a measurement's formatting.
+        // measured | assumed.
         source: { type: 'string', enum: ['measured', 'assumed'] },
       }, ['id', 'source']) },
       edges: { type: 'array', items: obj({
         from: { type: 'string' }, to: { type: 'string' },
-        // data | launch_boundary | barrier | assumed. `launch_boundary` is the load-bearing value:
-        // it marks an ordering the DATA does not require, which is the only kind fusion can delete.
+        // data | launch_boundary | barrier | assumed.
         enforced_by: { type: 'string' },
         scope: { type: 'string' },
         fan_in: { type: 'number' },
-        // Consumer operands the producer does not supply (weights, scales, descriptors). They can load while
-        // the producer runs and have no node in the graph, so they are named here. [] is a real answer.
+        // Consumer operands the producer does not supply (weights, scales, descriptors).
         producer_independent_operands: { type: 'array', items: { type: 'string' } },
       }, ['from', 'to', 'enforced_by']) },
       unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
@@ -2894,11 +2881,6 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
   },
   // Per-pipe resource timeline, required alongside task_graph: the graph says what MAY overlap, this
   // says which unit is idle and what could fill it.
-  //   {pipes: [{stage, pipe, utilization_pct, source}], interkernel_gap_us: {median, max, n_boundaries},
-  //    class: throughput_bound|latency_bound|launch_bound|mixed, stall_reason: [...],
-  //    idle_pipe_opportunities: [...], closed_axes: [...], unknowns: [...]}
-  // `class` rules out lever families early (knowledge/pipe_occupancy.md). The gate drops pipe rows
-  // without a finite utilization_pct, so the fields are declared.
   resource_timeline: {
     type: ['object', 'null'],
     additionalProperties: true,
@@ -2926,8 +2908,7 @@ const MEGA_ANALYZE_BASE_SCHEMA = obj({
       unknowns: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-  // Lowerable whole-kernel schedule contract. Unlike roadmap prose, every downstream Mega role
-  // receives this object verbatim and static Verify checks the authored source against it.
+  // Lowerable whole-kernel schedule contract.
   mega_plan_ir: {
     type: ['object', 'null'],
     additionalProperties: true,
@@ -3121,8 +3102,7 @@ const MEGA_BENCH_SCHEMA = obj({
   workload_aligned: { type: 'boolean' },
   baseline_weighted_total_ms: { type: 'number' },
   weights_provenance: { type: 'string' }, // e.g. "trace" | "regime" | "regime_floor" | "prior" | "caller" | "mixed"
-  // args.positive_control result. switch_present=false means both arms ran the same code. Fields are
-  // declared so a dropped one cannot validate as a passing control.
+  // args.positive_control result.
   positive_control: obj({
     ran: { type: 'boolean' },
     claim_complete: { type: 'boolean' },
@@ -3137,8 +3117,7 @@ const MEGA_BENCH_SCHEMA = obj({
     null_pairs_pct: { type: 'array', items: { type: 'number' } },
     null_arm_pct: { type: 'number' },
     note: { type: 'string' },
-    // Required only when the object exists at all: a run with no control omits it entirely. When it
-    // IS reported, these three are what separate a control from a number, so none may be defaulted.
+    // Required only when the object exists at all: a run with no control omits it entirely.
   }, ['ran', 'claim_complete', 'switch_present', 'measured_pct']),
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
@@ -3181,14 +3160,11 @@ const MEGA_PLAN_BASE_SCHEMA = obj({
       graph_refs: { type: 'array', items: { type: 'string' } }, // task_graph node/edge ids this direction acts on
       // The idle_pipe_opportunities id this direction fills, so each hole can be checked as owned or not.
       fills_hole: { type: 'string' },
-      // Binds the direction to the ladder: roadmap_rung is the rung id or `off_ladder`. rung_deviation is
-      // required when the rung is off the ladder, out of order, or has unmet gated_on: say what is skipped
-      // and what happens to it. Skipping is allowed; skipping silently is not.
+      // Binds the direction to the ladder: roadmap_rung is the rung id or `off_ladder`.
       roadmap_rung: { type: 'string' },
       rung_deviation: { type: 'string' },
-      // Step kind: terminal (default) is judged on speed; enabling is a prerequisite in a multi-step fusion,
-      // judged on function (builds, path taken, correct, no deadlock). enables names the terminal rung and is
-      // required for enabling steps; cost_budget_pct is the slowdown this step is allowed.
+      // Step kind: terminal (default) is judged on speed; enabling is a prerequisite in a multi-step
+      // fusion, judged on function (builds, path taken, correct, no deadlock).
       step_role: { type: 'string', enum: ['enabling', 'terminal'] },
       enables: { type: 'string' },
       cost_budget_pct: { type: 'number' },
@@ -3205,7 +3181,6 @@ const MEGA_PLAN_BASE_SCHEMA = obj({
         additionalProperties: true,
       },
       // Operator-neutral multi-lever descriptor for a whole-kernel candidate.
-      // Skill-specific region/queue/capability names remain data values.
       target_topology: MEGA_TOPOLOGY_SCHEMA,
       candidate_id: { type: 'string' },
       candidate_source: { type: 'string' },
@@ -3289,37 +3264,27 @@ const MEGA_VERIFY_SCHEMA = obj({
     stages_fused: { type: 'array', items: { type: 'string' } }, how_counted: { type: 'string' },
   }, []),
   // reps = interleaved A/B pairs; null_arm_pct = the delta of an arm doing identical work (the noise
-  // floor). A win smaller than |null_arm_pct| is unreadable. Missing or low values make the result
-  // provisional rather than void.
+  // floor).
   reps: { type: 'number' }, null_arm_pct: { type: 'number' },
   // Raw per-pair readings tagged by guard/route, so the driver can split caller-declared bimodal guards
-  // by state (modeSplit/pairedModeAware) and check the number came from a target guard. Absent:
-  // verified_geomean is used as before.
+  // by state (modeSplit/pairedModeAware) and check the number came from a target guard.
   paired_readings: { type: 'array', items: obj({
     guard: { type: 'string' }, base: { type: 'number' }, cand: { type: 'number' },
   }, ['guard', 'base', 'cand']) },
-  // Did the patched path execute in the measured run? yes requires the observed path_marker; no or
-  // unknown voids the comparison rather than making it negative.
+  // Did the patched path execute in the measured run?
   activation_confirmed: { type: 'string' },  // yes|no|unknown
   activation_evidence: { type: 'string' },   // the command + the marker output that proves it
-  // Did the switched path run on the device this round? yes requires a gpu_lock-wrapped run with the
-  // switch set and a device-side observable (timing, trace record, on-device marker). Compile-only or
-  // CPU checks are no; n/a means there is no switched path. With REQUIRE_HW_ACTIVATION, a committable or
-  // enabling candidate must be yes.
+  // Did the switched path run on the device this round?
   activation_on_hardware: { type: 'string' }, // yes|no|n/a|unknown
   hardware_evidence: { type: 'string' },       // the gpu_lock cmd + the device-side observable it produced
   // A marker proves the host path ran, not that the arms compiled differently: a JIT disk cache can
-  // serve one binary to both arms if the switch is not in the cache key. For JIT candidates Verify
-  // reports cache keys / IR-ISA hashes and they must differ; n/a is for non-JIT candidates.
+  // serve one binary to both arms if the switch is not in the cache key.
   artifact_distinct: { type: 'string' },     // yes|no|n/a|unknown
   artifact_hash_base: { type: 'string' },
   artifact_hash_candidate: { type: 'string' },
-  // Files the patch touches. Required: an empty list would read as "touches nothing" and make the
-  // patch look combinable. The candidate shelf uses it to decide whether a patch still applies.
+  // Files the patch touches.
   touched_files: { type: 'array', items: { type: 'string' } },
-  // Overlap (see knowledge/overlap_instrument.md). After fusion there is one trace record, so overlap
-  // needs its own meter. measured is three-valued: no = measured and none found; unknown = not
-  // measured.
+  // Overlap (see knowledge/overlap_instrument.md).
   overlap: obj({
     measured: { type: 'string', enum: ['yes', 'no', 'unknown'] },
     fraction: { type: 'number' },        // wall-clock, >=2 distinct roles active
@@ -3335,9 +3300,7 @@ const MEGA_VERIFY_SCHEMA = obj({
   }, ['measured']),
   // Attribution (see knowledge/fusion_preconditions.md): for any patch that adds, removes or merges a
   // launch, report changed_us (patched kernel) and replaced_sum_us (the kernels it replaces), paired at
-  // the same guard. An end-to-end win can come from inter-kernel gaps rather than the kernel. A sign
-  // mismatch rejects under promotion_metric=changed_kernel; under operator_e2e it only withholds the
-  // mechanism claim.
+  // the same guard.
   attribution: obj({
     changed_us: { type: 'number' },
     replaced_sum_us: { type: 'number' },
@@ -3362,8 +3325,7 @@ const MEGA_MEMORY_SCHEMA = obj({
   // verdict is treated as untried.
   ledger: { type: 'array', items: obj({
     id: { type: 'string' }, title: { type: 'string' }, specialty: { type: 'string' },
-    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by
-    // result". `unresolved` is what keeps a rung re-openable instead of closing everything above it.
+    // confirmed | partial | unresolved | dead_end — see tech_lead.md "Verdict by SPEC, not by result".
     verdict: { type: 'string', enum: ['confirmed', 'partial', 'unresolved', 'dead_end'] },
     roadmap_rung: { type: ['string', 'null'] },
     expected: { type: 'number' }, actual: { type: 'number' },
@@ -3371,20 +3333,17 @@ const MEGA_MEMORY_SCHEMA = obj({
     first_round: { type: 'number' }, last_round: { type: 'number' },
   }, ['id', 'verdict']) },
   // Durable hardware/toolchain facts (lowerings true for every kernel on this box), as opposed to
-  // insights about this operator. knowledge/ is read-only to the script, so candidates are surfaced in
-  // the log and report for a human to merge. See tech_lead.md for the bar.
+  // insights about this operator.
   knowledge_delta: { type: 'array', items: obj({
     fact: { type: 'string' },
     // Which card it belongs in, so the merge is a placement decision and not a search.
     card: { type: 'string' },
     // The artifact that establishes it: an ISA dump path, a counter, a sha256, a measured number.
-    // A fact whose evidence is "the engineer said so" is an insight, not a knowledge delta.
     evidence: { type: 'string' },
     // What a reader would have believed without this fact; a lowering earns a card only when the
     // source-level reading says otherwise.
     contradicts: { type: 'string' },
-    // true = holds for any kernel on this target; false = this operator's shape. Only the first
-    // kind is a card edit; the second belongs in the report and nowhere else.
+    // true = holds for any kernel on this target; false = this operator's shape.
     generalizes: { type: 'boolean' },
   }, ['fact', 'evidence', 'generalizes']) },
   bottleneck_now: { type: 'string' }, suggest_next: { type: 'string' },
@@ -3488,8 +3447,7 @@ const MEGA_VALIDATE_SCHEMA = obj({
     absolute_to_frozen: { type: 'boolean' },
   }, []),
   per_case: perCase, applied_to_original: { type: 'string' },
-  // Count of GPU-lease jobs still alive for this EVAL_DIR when validation finished. Non-zero means
-  // some direction backgrounded a lease and produced a measurement that is NOT in the report.
+  // Count of GPU-lease jobs still alive for this EVAL_DIR when validation finished.
   orphan_leases_swept: { type: 'number' },
   arbitration_note: { type: 'string' }, final_patch: { type: 'string' },
 }, ['director_verified_speedup_geomean', 'validation_status', 'correctness']);
@@ -4087,8 +4045,7 @@ function taskGraphGate(tg) {
 
 // <<REPLAY:pipe_occupancy_gate>>
 // Pipe table gate, separate from taskGraphGate: the graph says what may overlap, this says whether the
-// pipe is even busy. It prints the table, derives the class from the numbers, and names directions
-// that claim more than their pipe's idle fraction.
+// pipe is even busy.
 const PIPE_SATURATED_PCT = 80;
 const PIPE_LOW_PCT = 50;
 const GAP_NEGLIGIBLE_US = 0.5;
@@ -4153,8 +4110,7 @@ function pipeOccupancyGate(rt, directions) {
         'analysis existed to answer; without it the directions below cannot have been derived from it.');
     }
   }
-  // Directions priced above what their own pipe can pay. Checked here rather than trusted, because
-  // expected_speedup is the field most likely to be a wish.
+  // Directions priced above what their own pipe can pay.
   const overclaimed = [];
   const unpriced = [];
   for (const d of dirs) {
@@ -4179,8 +4135,7 @@ function pipeOccupancyGate(rt, directions) {
       '. These are arithmetically impossible against the reported utilization and can be rejected ' +
       'without a run; if the utilization is wrong, that is the finding.');
   }
-  // A sized hole no direction claims. Checked only once directions exist; rides_on (another rung
-  // absorbs it) is a valid answer, silence is not.
+  // A sized hole no direction claims.
   if (dirs.length) {
     const claimed = new Set();
     for (const d of dirs) {
@@ -4207,21 +4162,15 @@ function pipeOccupancyGate(rt, directions) {
 // <</REPLAY:pipe_occupancy_gate>>
 
 // <<REPLAY:roadmap_ladder_gate>>
-// Did the round plan against Analyze's ladder? Diffs dispatched rungs against it, exposing skipped
-// controls and never-proposed fusion rungs.
+// Did the round plan against Analyze's ladder?
 //
 // <<REPLAY:open_rungs>>
-// A rung is done when it produced a number, not when it was planned. Outcomes per rung:
-//   never_planned  no round has taken it
-//   faulted        a direction took it and the code did not run
-//   unmeasured     it ran but returned no verified number
-//   measured       a verified number exists; only this closes the rung
+// A rung is done when it produced a number, not when it was planned.
 const RUNG_OUTCOMES = ['never_planned', 'faulted', 'unmeasured', 'measured'];
 function rungIdOf(c) {
   return String((c && c.id) || String((c && c.title) || '').trim().split(/\s+/)[0] || '').trim();
 }
-// tally: Map<rungId, {attempts, last_outcome}>. Returns the entries the next wave still owes,
-// strongest-evidence-last so `measured` can never be reintroduced by a later weaker grade.
+// tally: Map<rungId, {attempts, last_outcome}>.
 function openRungs(ladder, tally) {
   const t = tally instanceof Map ? tally : new Map(Object.entries(tally || {}));
   return (Array.isArray(ladder) ? ladder : [])
@@ -4232,8 +4181,7 @@ function openRungs(ladder, tally) {
       const outcome = RUNG_OUTCOMES.includes(e.last_outcome) ? e.last_outcome : 'never_planned';
       return { id, title: c.title || id, gated_on: Array.isArray(c.gated_on) ? c.gated_on : [],
         is_positive_control: !!c.is_positive_control,
-        // Carried so the next wave knows what closing this rung would even mean. A prerequisite
-        // re-planned as a speed experiment is a prerequisite that gets rejected again.
+        // Carried so the next wave knows what closing this rung would even mean.
         step_role: stepRoleOf(c), enables: String(c.enables || '') || undefined,
         mandatory_arms: Array.isArray(c.mandatory_arms) ? c.mandatory_arms : [],
         target_shape: c.target_shape || undefined,
@@ -4677,8 +4625,7 @@ function megaHistoryForSearch(sourceHistory, registry) {
     .filter((c) => c.source === 'search' || c.source === 'integrated');
   return {
     ...h,
-    // Global insights are free-form and have no reliable source label. Rebuild the search board from
-    // candidate records that belong to the common lifecycle.
+    // Global insights are free-form and have no reliable source label.
     insights: searchRegistry.flatMap((c) =>
       [c.next_blocker, c.notes].filter((text) => String(text || '').trim())),
     rounds: (Array.isArray(h.rounds) ? h.rounds : []).map((round) => {
@@ -4788,8 +4735,7 @@ function pairedGuardReadout(rows, guard, bimodalGuards = []) {
     if (widest >= 0.03 && splitAt >= 0) {
       const lowArms = new Set(values.slice(0, splitAt + 1).map((x) => x.arm));
       const highArms = new Set(values.slice(splitAt + 1).map((x) => x.arm));
-      // Arm-blind state conditioning is valid only when BOTH arms draw both states. Otherwise the
-      // gap may simply be a large real effect separating base from candidate.
+      // Arm-blind state conditioning is valid only when BOTH arms draw both states.
       if (lowArms.size === 2 && highArms.size === 2) {
         split = (values[splitAt].value + values[splitAt + 1].value) / 2;
         pairs = rawPairs.filter((r) => Number(r.base) <= split && Number(r.cand) <= split);
@@ -5019,8 +4965,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
   return { pass: reasons.length === 0, reasons, source, row };
 }
 
-// The absolute score is frozen-relative. A paired base arm that drifted from the frozen latency (e.g. a
-// candidate-tree switch-off path that regressed shared code) is re-scored against the frozen row.
+// The absolute score is frozen-relative.
 function megaFrozenPerCase(rows, frozen, tol) {
   const f = new Map((Array.isArray(frozen) ? frozen : []).map((r) =>
     [String(r && r.name || ''), Number(r && (r.latency_ms || r.baseline_ms))]));
@@ -5156,8 +5101,7 @@ function stepRoleOf(d) {
 // <</REPLAY:enabling_step>>
 
 const REQUIRE_TASK_GRAPH = !!A.require_task_graph;
-// Overlap caveats, carried to the report. TWO_LAUNCH_REACHED ratchets true once any verified
-// candidate meets the launch target.
+// Overlap caveats, carried to the report.
 let TWO_LAUNCH_REACHED = false;
 let AUTONOMY_ACCEPTANCE_REACHED = false;
 const ACCEPTANCE_CAVEATS = [];
@@ -5176,8 +5120,7 @@ const ATTRIBUTION_CAVEATS = [];
 const CHAIN_CAVEATS = [];
 // Rung ids that have produced a measurement.
 const LADDER_MEASURED = new Set();
-// Hardware/toolchain facts this wave established, for a human to merge into knowledge/. See
-// MEMORY_SCHEMA.knowledge_delta for why this is surfaced rather than written.
+// Hardware/toolchain facts this wave established, for a human to merge into knowledge/.
 const KNOWLEDGE_DELTA = [];
 let TASK_GRAPH_CAVEAT = '';
 let PIPE_TABLE_CAVEAT = '';
@@ -5189,8 +5132,7 @@ function recordRungOutcome(id, outcome) {
   const key = String(id || '').trim();
   if (!key) return;
   const e = rungTally.get(key) || { attempts: 0, last_outcome: 'never_planned' };
-  // `measured` is absorbing. A rung that produced a number once is closed; a later round that takes
-  // it again and faults must not reopen it, or the ladder never terminates.
+  // `measured` is absorbing.
   if (e.last_outcome !== 'measured') e.last_outcome = outcome;
   rungTally.set(key, e);
 }
@@ -5198,34 +5140,29 @@ function recordRungOutcome(id, outcome) {
 const structuralGuardNames = [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])];
 const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY;
 
-// Positive-control gate. Runs BEFORE any direction budget is spent, because the thing it can prove
-// false — "this harness can detect a real win" — invalidates every measurement taken after it.
+// Positive-control gate.
 let PC_OVERSHOOT = '';
 let PC_UNDERSHOOT = '';
 // Whether a control actually ran in this wave (a missing switch means two identical arms).
 let PC_RAN = false;
 let PC_PASSED = false;
-// Rounds with no admissible measurement. Separate from noImprove (no wins vs no readings); both stop
-// at MAX_NO_IMPROVE and are never summed. See roundEvidence.
+// Rounds with no admissible measurement.
 let noEvidence = 0;
 // Rounds in which the switched path never reached a card, under every objective including
-// working_kernel. Any round that reaches the card (even to crash) resets it. Inert unless
-// REQUIRE_HW_ACTIVATION.
+// working_kernel.
 let noHardware = 0;
 // max_no_hardware (default MAX_NO_IMPROVE): raise it for whole-fusion authoring, whose early rounds
 // may crash before launch; a run truly stuck off-hardware still stops.
 const MAX_NO_HARDWARE = Math.max(1, parseInt(A.max_no_hardware != null ? A.max_no_hardware : MAX_NO_IMPROVE, 10));
 // Why the round loop ended, recorded for the report.
 let stopReason = null;
-// The blackboard behind `history.insights`. Kept as records rather than strings so an insight can
-// carry the round it came from and whether that round produced evidence at all.
+// The blackboard behind `history.insights`.
 let insightBook = [];
 // Candidate shelf: verified non-winners kept as offers; absorbedByRound[r] is the file set CANONICAL
 // took in round r, which ages shelved patches out.
 let shelf = [];
 let absorbedByRound = {};
-// K historical candidates offered to the integrator per round. Kept small because every offer costs
-// verification time on the shared lease; size it from the measured hit rate (0 if offers never combine).
+// K historical candidates offered to the integrator per round.
 const SHELF_OFFER_K = Number(A.shelf_offer_k) > 0 ? Number(A.shelf_offer_k) : 2;
 
 // <<REPLAY:memory_merge>>
@@ -5256,8 +5193,7 @@ function mergeInsights(book, incoming, round, roundVoid, max) {
     index.set(k, out.length - 1);
   }
   if (out.length <= MAX) return { book: out, evicted: [] };
-  // Age out by last-seen round, then by how often the finding kept coming back. Ties break toward
-  // the more recent entry.
+  // Age out by last-seen round, then by how often the finding kept coming back.
   const ranked = out.map((e, i) => ({ e, i })).sort((a, b) =>
     (b.e.last_round - a.e.last_round) || ((b.e.restated || 0) - (a.e.restated || 0)) || (b.i - a.i));
   const keep = new Set(ranked.slice(0, MAX).map((x) => x.i));
@@ -5271,9 +5207,7 @@ function renderInsights(book) {
 // <</REPLAY:memory_merge>>
 
 // <<REPLAY:candidate_shelf>>
-// The shelf keeps verified non-winners as offers. A patch is a diff against the CANONICAL it was cut
-// from, so eligibility is decided by file sets: if nothing absorbed since then touches its files, it
-// still applies. An empty file set means an unknown footprint; such entries are held back and named.
+// The shelf keeps verified non-winners as offers.
 const shelfFile = (s) => String(s == null ? '' : s).replace(/^\.\//, '').replace(/^\/+/, '').trim();
 const shelfFiles = (c) => [...new Set((Array.isArray(c.touched_files) ? c.touched_files : [])
   .map(shelfFile).filter(Boolean))];
@@ -5283,8 +5217,7 @@ const shelfFiles = (c) => [...new Set((Array.isArray(c.touched_files) ? c.touche
 // <<REPLAY:bimodal_split>>
   // a gap smaller than this is a spread, not two states.
 
-// Credit comes only from explicit target guards; regression guards are vetoes. Uses per_case (the
-// verifier's noise-aware result).
+// Credit comes only from explicit target guards; regression guards are vetoes.
 function guardContract(result, targetGuards, regressionGuards, fallbackScore) {
   const rows = Array.isArray(result && result.per_case) ? result.per_case : [];
   const byName = new Map(rows.map((r) => [String(r.name || '').trim(), r]));
@@ -6522,8 +6455,7 @@ const runFinalistBatch = async (batch, label) => {
 };
 let finalists = [];
 
-// Mega provenance/topology labels never change the quality bar. Every source must pass the same final
-// correctness/guard contract, and the same frozen-baseline score chooses what ships.
+// Mega provenance/topology labels never change the quality bar.
 let mega_deliverable = null, mega_note = '';
 // Set by the phase hooks below, read across phases.
 let FINAL_WORKSPACE = null;
@@ -6546,12 +6478,9 @@ async function megaAfterSetup() {
       'must be checked and resumes only inside STATE_DIR/candidates; a legacy STATE_DIR/best must never ' +
       'replace the frozen base.');
   }
-  // A grown registry (about 120 KB after 18 rounds) does not fit in the director's setup reply: one reply
-  // left it out (the run resumed with zero candidates and the next STATE write erased them), another
-  // dropped the score evidence from every row (no row passed selection). The registry is therefore read
-  // from STATE.json a chunk at a time and the director's rows are laid over it (they carry its lane
-  // manifest updates and rows STATE.json does not have yet); insights and ledger are read only when the
-  // reply left them out.
+  // A grown registry (about 120 KB after 18 rounds) does not fit in the director's setup reply: one
+  // reply left it out (the run resumed with zero candidates and the next STATE write erased them),
+  // another dropped the score evidence from every row (no row passed selection).
   if (MEGA_RESUME_STATE && setup.resumed && setup.prior_state) {
     const stateFile = `${STATE_DIR}/STATE.json`;
     const chunkTool = `python3 ${WORKFLOW_DIR}/tools/state_chunks.py ${stateFile}`;
@@ -6739,8 +6668,7 @@ async function megaAnalyze() {
     if (lg0.summary) log(lg0.summary);
     if (lg0.caveat) log(lg0.caveat);
   }
-  // Under working_kernel an empty ladder disables rung, chain-debt and forcing tracking. Not fatal
-  // (analyze_resume_fallback may re-request directions), but escalated to the report.
+  // Under working_kernel an empty ladder disables rung, chain-debt and forcing tracking.
   if (WORKING_KERNEL && !LADDER.length) {
     const msg = 'LADDER EMPTY under objective=working_kernel: Analyze returned no candidate_directions, ' +
       'so there is no staged path to a fused terminal rung. The chain-debt and terminal-forcing ' +
@@ -6810,8 +6738,7 @@ async function megaBenchmark() {
       ...(MEGA_PRODUCTION
         // Baseline/control setup has a separate production window and can recover artifacts on timeout.
         ? { timeout_ms: 10800000, timeout_marker: true, max_retries: 1 } : {}) });
-  // A bench agent that dies usually failed to report, not to measure. Before giving up, ask one agent
-  // to recover the results already on disk (recover only, never re-measure).
+  // A bench agent that dies usually failed to report, not to measure.
   benchR = benchFirst;
   // A timed-out setup agent usually left its baseline/control on disk: fall through to the GPU-free
   // RECOVERY below; only an empty disk makes the timeout terminal.
@@ -6873,8 +6800,7 @@ async function megaCalibrate() {
     const hi = Number(POSITIVE_CONTROL.expected_pct_hi);
     const got = Number(pc.measured_pct);
     // The bounds are asymmetric: below lo the instrument cannot see the effect (abort); above hi it
-    // over-reads (pass with overshoot); absurd or wrong sign measures something else (abort). Computed on
-    // magnitude plus expected sign, so a control may be a deliberate slowdown (benchmark_engineer.md 5b).
+    // over-reads (pass with overshoot); absurd or wrong sign measures something else (abort).
     // <<REPLAY:pc_gate>>  scripts/replay_runs.js lifts this region verbatim; keep it pure (reads only
     // lo, hi, got, pc, POSITIVE_CONTROL; no log, throw or outside state).
     const mLo = Math.min(Math.abs(lo), Math.abs(hi));       // smallest effect the loop must resolve
@@ -6884,8 +6810,7 @@ async function megaCalibrate() {
     const ABSURD = Number.isFinite(Number(POSITIVE_CONTROL.implausible_pct))
       ? Math.abs(Number(POSITIVE_CONTROL.implausible_pct)) : (Number.isFinite(mHi) ? 2 * mHi : NaN);
     const nullArm = Number(pc.null_arm_pct);
-    // An overshoot is only benign if the null arm is quiet. If the byte-identical arm is ALSO reading
-    // high, the interleave is drifting and the overshoot is the drift, not the effect.
+    // An overshoot is only benign if the null arm is quiet.
     const nullQuiet = Number.isFinite(nullArm) && Math.abs(nullArm) <= mLo / 2;
     // Pre-flight: switch_present=false means both arms ran the same code, so the control did not run
     // whatever it reported. Undefined keeps the old behaviour (historical replays unchanged).
@@ -6893,9 +6818,7 @@ async function megaCalibrate() {
     const ran = pc.ran !== false && !switchAbsent &&
       Number.isFinite(got) && Number.isFinite(lo) && Number.isFinite(hi);
 
-    // magnitude=constructed marks a synthetic control whose band is a target. An undershoot is admissible
-    // only if the reading is an effect: above a floor, at least RESOLVE_K x the worst null pair, and sign-
-    // unanimous. A recorded control gets no such latitude.
+    // magnitude=constructed marks a synthetic control whose band is a target.
     const constructed = String(POSITIVE_CONTROL.magnitude || 'recorded') === 'constructed';
     const UNDERSHOOT_FRAC = 0.5;   // below half the target, assume the injection did not take
     const RESOLVE_K = 3;           // effect must beat the worst null pair by this factor
@@ -7034,8 +6957,7 @@ async function megaCalibrate() {
 }
 
 async function megaProfile() {
-  // Before a candidate exists, use only the caller's measured baseline table and declared launch
-  // shape. Candidate-only overlap/path metrics are established by score/finalist verification.
+  // Before a candidate exists, use only the caller's measured baseline table and declared launch shape.
   const targetBaseline = BASELINE_PER_CASE.find((row) =>
     TARGET_GUARDS.includes(String(row && row.name || ''))) || BASELINE_PER_CASE[0] || {};
   profileSummary = {
@@ -7087,13 +7009,11 @@ async function megaProfile() {
 }
 
 async function megaLoopInit() {
-  // The evidence K gets resized from. See the report dispatch for why it is reported even when it is
-  // all zeros.
+  // The evidence K gets resized from.
   SHELF_STATS = { k: SHELF_OFFER_K, shelved: 0, withheld_unknown_footprint: 0,
     rounds_offered: 0, offers: 0, hits: 0, hit_ids: [] };
 
-  // Resume: restore cumulative speedup and insight/ledger history from the prior wave. No-op on a fresh
-  // run.
+  // Resume: restore cumulative speedup and insight/ledger history from the prior wave.
   if (setup.resumed && setup.prior_state) {
     const ps = setup.prior_state;
     if (Number.isFinite(ps.cumulative) && ps.cumulative > cumulative) cumulative = ps.cumulative;
@@ -7190,8 +7110,7 @@ async function megaLoopInit() {
     if (Number.isFinite(Number(ps.state_sequence))) {
       megaStateSequenceBase = Math.max(0, Number(ps.state_sequence));
     }
-    // Calibration is intentionally NOT restored as authority. Every wave runs/recover-checks its own
-    // control; prior calibration remains in STATE for audit only and cannot license fresh scores.
+    // Calibration is intentionally NOT restored as authority.
     log(`RESUMED from STATE_DIR: cumulative=${cumulative.toFixed(3)}x, ${history.insights.length} insights, ${history.ledger.length} ledger entries carried forward.`);
     if (shelf.length) log(`  shelf: ${shelf.length} verified non-winner(s) carried forward, ` +
       `${shelf.filter((e) => e.footprint === 'known').length} with a known file footprint.`);
@@ -7527,11 +7446,9 @@ async function megaReport() {
       STOP_REASON: stopReason,
       BASELINE_GEOMEAN_MS, CUMULATIVE_SPEEDUP: cumulative,
       PROFILE_SUMMARY: profileSummary,
-      // The report's provenance paragraph must cite this, not recollection. UNRECORDED means the
-      // report may not assert anything about what is or is not in the baseline.
+      // The report's provenance paragraph must cite this, not recollection.
       PRIOR_ART_SWEEP: PRIOR_ART_RECORDED ? JSON.stringify(PRIOR_ART) : 'UNRECORDED',
-      // A control that passed but read HIGH is a standing caveat on every number below it. It is
-      // supplied here so the Measurement-confidence section states it instead of quietly dropping it.
+      // A control that passed but read HIGH is a standing caveat on every number below it.
       ...(PC_OVERSHOOT ? { POSITIVE_CONTROL_OVERSHOOT: PC_OVERSHOOT } : {}),
       ...(PC_UNDERSHOOT ? { POSITIVE_CONTROL_UNDERSHOOT: PC_UNDERSHOOT } : {}),
       // Shelf activity this wave (offered vs composed), reported once anything was shelved; K is sized from it.
@@ -7541,7 +7458,6 @@ async function megaReport() {
       // TWO_LAUNCH_REACHED says whether any verified candidate hit it.
       ...(LAUNCH_CAVEATS.length ? { LAUNCH_CAVEATS, TWO_LAUNCH_REACHED } : {}),
       // Guard-scope caveats: an under-sampled bimodal target route, or a win read only off a skew rail.
-      // Present only when something was off, so a wave measured cleanly on target is unchanged.
       ...(GUARD_CAVEATS.length ? { GUARD_CAVEATS } : {}),
       ...(ATTRIBUTION_CAVEATS.length ? { ATTRIBUTION_CAVEATS } : {}),
       // A half-built fusion: committed prerequisites whose chain never closed, so the cumulative number is
