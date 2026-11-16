@@ -36,7 +36,6 @@ expert_skills/
 ├── tuning/                    # the VENDORED tuning skillset, hash-pinned WHOLE and unmodified
 │   ├── tuning-<backend>/SKILL.md   #   one skill per backend, upstream layout, byte-for-byte
 │   └── validate/claims.py     #   its own executable validator (drives validation_status)
-├── expert_workflows/<id>/     # self-contained expert workflows (workflow.js + roles/knowledge/tools/tests)
 ├── _template/                 # skill, optional contract, and validation templates
 └── _contribute/               # the "add a skill to GEAK" skill: scaffold / validate / make_pr / SKILL.md
 ```
@@ -65,18 +64,15 @@ to the exact candidate HEAD/tree digest, and resumed evidence is invalidated
 on any mismatch even when the human revision string was not bumped.
 
 `contract.yaml` is data, not operator-specific verifier code. The checker
-`expert_workflows/mega_fusion/tools/expert_skill_contract.py` (kept with mega_fusion, which runs it on
-every candidate; `validate_skill.py` calls it too) supports AST-normalized regex
+`kernel_workflow/tools/expert_skill_contract.py` (mode=mega runs it on every candidate;
+`validate_skill.py` calls it too) supports AST-normalized regex
 rules, call-keyword identity, forbidden host mutations, runtime-value
 consumption, PlanIR assertions, provenance seals and optional reference-copy
 calibration. If a new invariant cannot be expressed safely, extend this shared
 vocabulary and test it before adding a custom checker.
 
-`expert_workflows/<id>/` holds an expert workflow: a whole workflow that a skill alone cannot express,
-packaged with everything it reads, entry point included. Launch `<id>/workflow.js` directly; nothing in
-`kernel_workflow/` or `e2e_workflow/` refers to it. Today: `expert_workflows/mega_fusion/` (mode=mega,
-multi-rank fused kernels; see its README). L0 CI runs every package's `<id>/tests/` (`test_*.js` with
-node, `test_*.py` with pytest).
+A MegaMoE skill is run by `kernel_workflow` with `mode=mega` (multi-rank fused kernels; see
+`kernel_workflow/README.md`).
 
 `tuning/` is the one skill family that does not follow that layout, because it is not ours to lay
 out: it is vendored from upstream and pinned byte-for-byte by

@@ -27,10 +27,10 @@ import yaml
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 SKILLS_DIR = os.path.join(ROOT, "skills")
-# Skill contract checker and runtime validator, owned by the mega_fusion expert workflow.
-MEGA_TOOLS_DIR = os.path.join(ROOT, "expert_workflows", "mega_fusion", "tools")
 CAP_INDEX = os.path.normpath(os.path.join(ROOT, "..", "index", "capability_index.yaml"))
 GEAK = os.path.normpath(os.path.join(ROOT, "..", ".."))
+# Skill contract checker and runtime validator, owned by kernel_workflow (mode=mega).
+MEGA_TOOLS_DIR = os.path.join(GEAK, "kernel_workflow", "tools")
 REQUIRED_SECTIONS = ["When to use", "Mechanism", "Procedure", "Do-no-harm notes", "Sources"]
 FM_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
 EMBEDDED_TAGS = {
@@ -817,11 +817,10 @@ def emit_plan(skill_path, skill_id, fm, args):
         cross_backend_srcs = [src for src in srcs if src and dst and src != dst]
         mega = identity["validation_status"] == "experimental"
         if mega:
-            print("# EFFICACY (mega_fusion expert workflow, candidate A/B vs the frozen baseline):")
-            print(f"Workflow scriptPath={os.path.join(os.path.dirname(MEGA_TOOLS_DIR), 'workflow.js')} args:")
+            print("# EFFICACY (kernel_workflow mode=mega, candidate A/B vs the frozen baseline):")
         else:
             print("# EFFICACY (kernel_workflow, isolated A/B vs the immutable oracle):")
-            print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
+        print(f"Workflow scriptPath={GEAK}/kernel_workflow/kernel_workflow.js args:")
         extras = [
             f"expert_skill_id={skill_id}",
             f"expert_skill_revision={fm.get('revision') or ''}",
