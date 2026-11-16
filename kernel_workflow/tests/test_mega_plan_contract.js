@@ -194,7 +194,7 @@ ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,200}refusal = `Mega direction refus
   'every Mega run rejects an invalid topology before Engineer dispatch');
 ok(/if \(plan\.refused && !plan\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{\};/.test(src),
   'refusals are charged to the budget and three consecutive refusals still stop');
-ok(/megaRefusal = null;\s*if \(plan\.stop\)/.test(src) &&
+ok(/megaRefusal = plan\.refusal \? \{ reason: plan\.refusal, count: 0 \} : null;\s*if \(plan\.stop\)/.test(src) &&
    /\.\.\.\(megaRefusal \? \{ PREVIOUS_PLAN_REFUSED: megaRefusal\.reason \} : \{\}\)/.test(src),
   'the refusal reason reaches the next plan and resets after an accepted direction');
 ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&

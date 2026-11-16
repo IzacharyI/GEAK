@@ -5365,7 +5365,7 @@ async function megaPlanRound(currentRound, remaining) {
     directions.push(d);
   }
   if (!directions.length) return { refused: true, reason: refusal };
-  return { directions };
+  return { directions, refusal };
 }
 
 // One candidate lane for one round: author, structural check, score Verify. Runs concurrently with the
@@ -6745,7 +6745,8 @@ async function megaRound(remaining) {
     }
     return {};
   }
-  megaRefusal = null;
+  // A refused extra direction still reaches the next plan; it does not count toward the stop.
+  megaRefusal = plan.refusal ? { reason: plan.refusal, count: 0 } : null;
   if (plan.stop) {
     stopReason = plan.reason;
     return { stop: true };
