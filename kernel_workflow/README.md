@@ -381,8 +381,7 @@ scripts/             gpu_lock.sh (single-GPU, pool and multi-GPU group leases), 
                      test_mode_dispatch.js (regression guard: mode dispatch + bake-off lane
                      routing; stubs the runtime, no GPU/agent — `node scripts/test_mode_dispatch.js`)
                      multi_rank_analysis/ (per-rank trace/counter aggregation for mode=mega),
-                     replay_runs.js (re-decide finished mega runs with today's gates, no GPU),
-                     reference_leak_sweep.sh, skill_address_scan.sh (capability-eval containment)
+                     replay_runs.js (re-decide finished mega runs with today's gates, no GPU)
 ```
 The bake-off references e2e's `op_benchmarker` role + `harness_lib.py` **in place** at
 `../e2e_workflow/` (single source, no copy).

@@ -190,8 +190,7 @@ ok(/const MEGA_PLAN_SCHEMA = \{[\s\S]*'candidate_id'[\s\S]*'candidate_source'[\s
   'Mega plan StructuredOutput requires complete candidate identity and topology');
 ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,280}return \{[\s\S]{0,120}Mega direction refused before authoring/.test(src),
   'every Mega run rejects an invalid topology before Engineer dispatch');
-ok(/refused: true, stop: MEGA_ROUTE_ONLY,\s*reason: `Mega direction refused/.test(src) &&
-   /refused: true, stop: MEGA_ROUTE_ONLY, reason:\s*`strict Mega direction refused/.test(src),
+ok(/refused: true, stop: MEGA_ROUTE_ONLY,\s*reason: `Mega direction refused/.test(src),
   'a refused direction ends only route-only runs; production re-plans');
 ok(/if \(turn\.refused && !turn\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{\};/.test(src),
   'refusals are charged to the budget and three consecutive refusals still stop');

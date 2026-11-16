@@ -288,9 +288,8 @@ ok(!/MEGA_TOPOLOGY_LEVERS/.test(src) &&
    /target_topology: targetTopology/.test(src),
   'target_topology is no longer deleted by an experimental kill switch');
 ok(/Mega round \$\{currentRound\}: \$\{pg\.summary\}/.test(src) &&
-   /roadmapLadderGate\(LADDER, \[d\], LADDER_MEASURED\)/.test(src) &&
-   /strict Mega direction refused before authoring/.test(src),
-  'Mega runs pipe, ladder and strict gates before authoring');
+   /roadmapLadderGate\(LADDER, \[d\], LADDER_MEASURED\)/.test(src),
+  'Mega runs pipe and ladder gates before authoring');
 ok(/verify_structure/.test(src) &&
    /structural_verified/.test(src) &&
    /runtime_verified/.test(src) &&

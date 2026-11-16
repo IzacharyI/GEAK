@@ -57,7 +57,7 @@ const region = (name) => {
 // perCase is shared with the lane modes (prelude); the mega schemas are in the mode=mega backend section.
 const full = require('./mega_source').full();
 const schemaBlock = full.slice(full.indexOf('const perCase = {'), full.indexOf('const obj = ')) +
-  src.slice(src.indexOf('const CONTAINMENT_GATE_SCHEMA'), src.indexOf(']);\n', src.indexOf('const MEGA_VALIDATE_SCHEMA')));
+  src.slice(src.indexOf('const POOL_SCHEMA'), src.indexOf(']);\n', src.indexOf('const MEGA_VALIDATE_SCHEMA')));
 const declared = new Set([...strip(schemaBlock).matchAll(/(?:^|[\s{,])([a-z_][a-z0-9_]*)\s*:\s*(?:\{|obj\(|perCase)/gm)]
   .map((m) => m[1]));
 ok(declared.size > 60, `parsed ${declared.size} declared schema properties`);

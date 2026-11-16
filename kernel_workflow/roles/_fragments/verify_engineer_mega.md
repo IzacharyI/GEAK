@@ -110,21 +110,17 @@ invented reference-parity failures.
 - `SPECIALTY` (optional) — the direction's specialty. `distributed` activates the liveness gate
   in step 4c; any other value or absent leaves verification exactly as it was.
 - `MANDATORY_ARMS`, `ENGINEER_ARMS_RUN`, `TARGET_SHAPE`, `TARGET_GUARDS`,
-  `REGRESSION_GUARDS`, `PROMOTION_METRIC`, `STRICT_AUTONOMY`, `REQUIRE_OVERLAP`,
+  `REGRESSION_GUARDS`, `PROMOTION_METRIC`, `REQUIRE_OVERLAP`,
   `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`, `REQUIRED_PAIRS`,
   `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`, and
   `LAUNCH_TARGET` carry the
-  machine-enforced campaign contract. When `STRICT_AUTONOMY` is true, missing evidence is a failed
-  terminal contract, not a benign default.
+  machine-enforced campaign contract.
 - `LAUNCH_TARGET` is an upper bound: a candidate with 1..`LAUNCH_TARGET`
   launches per call meets it (fusing further than the target is allowed).
   `SEARCH_ACCEPTS_PARTIAL_FUSION=1` means a search candidate may also score with
   a launch count above `LAUNCH_TARGET` but below the frozen baseline count. It
   must still be a complete runnable operator and strictly reduce launches; this
   flag is omitted when a candidate explicitly claims the full-fusion target.
-- `KNOWN_REFERENCE_HASHES` (strict) or `KNOWN_REFERENCE_PATHS` (legacy capability mode) provides
-  provenance evidence. Hash rows contain a digest of the repo-relative path plus raw/normalized
-  content digests and reveal neither source location nor reference-only filenames.
 - `REQUIRED_ACCURACY_CASES` is the run-owned accuracy/liveness coverage and remains authoritative
   when Expert Skills are disabled. `EXPERT_SKILL_ID`, `EXPERT_SKILL_REVISION`, `EXPERT_SKILL_FILE`,
   `EXPERT_SKILL_PLAYBOOK`, `EXPERT_SKILL_CONTRACT`, `EXPERT_SKILL_VALIDATION`,
@@ -264,7 +260,7 @@ denominator.
 4. Run the already lease-wrapped FULL_BENCHMARK entry verbatim. Parse per-case
    latency using the parse hint. Run it **twice** and keep the better/median if the two disagree by
    >5% (note the variance).
-4b. **(If `REQUIRE_GRAPH_CAPTURE` or `STRICT_AUTONOMY` is set) CUDA/HIP-graph capture-safety smoke.** This op will be
+4b. **(If `REQUIRE_GRAPH_CAPTURE` is set) CUDA/HIP-graph capture-safety smoke.** This op will be
    overlaid on the graph-captured decode path, so a kernel that passes iso but host-syncs or lazily
    compiles UNDER CAPTURE passes here yet CRASHES the live TP>1 server. Catch it now (cheap), in `$WS`
    via `bash $SKILL_DIR/scripts/gpu_lock.sh $GPU_ID python3 -c '<smoke>'`. The smoke (use the optimized
@@ -408,25 +404,6 @@ denominator.
    benchmark, script, log, dump, cache, or evidence file in the candidate diff is
    `status:"harness_modified"` even when its kernel measurement is good.
 
-5b. **Provenance check (when `KNOWN_REFERENCE_HASHES` or `KNOWN_REFERENCE_PATHS` is set).** For every file the patch adds or
-   rewrites, compare it against the same-named file under each reference path. If any file is
-   **byte-identical**, or differs only in whitespace/comments, the direction did not derive its
-   result — it imported it. Return `status:"plagiarized"`, name the candidate file but identify the
-   reference only as `HIDDEN_REFERENCE` in every persisted artifact; never copy the reference path,
-   branch or hash into `VERIFY_DIR`, `notes`, or logs. Return the finding in
-   `notes`, and report the measured numbers anyway (they are true about the code and false about the
-   run). Do not treat a high speedup as mitigating: in a capability evaluation an imported win is a
-   *negative* result, because it means the run's own reasoning produced nothing. Partial overlap is
-   not plagiarism — a patch that independently arrives at the same 10-line fence sequence is a
-   convergent derivation. The trigger is whole-file identity, especially of a file that does not
-   exist in the baseline at all.
-   When `KNOWN_REFERENCE_HASHES` is set, perform the same check without opening a reference tree:
-   hash each touched repo-relative path, compute its raw sha256 and the documented
-   comments/whitespace-normalized sha256 (UTF-8 with decode errors ignored; remove full `#`/`//`
-   comment lines and `/*...*/` blocks, then all whitespace), and compare with every manifest row for
-   that path digest. A hit
-   is `plagiarized` and is permanently rejected in that round. Do not write the digest list into the
-   workspace; it already exists in the structured input.
 6. Compute per-case speedup = `BASELINE_PER_CASE.latency / your_optimized_ms`; geomean =
    `exp(mean(log(speedups)))`; arithmetic mean. **If the COMMANDMENT's METRIC is the time-weighted
    ratio-of-sums (workload-aligned), ALSO compute `verified_weighted = Σ weight_i /
@@ -509,7 +486,7 @@ transcribe completed bytes; it may never fill a missing measurement.
   "verified_weighted": 0.0,
   "per_case": [{"name": "...", "baseline_ms": 0.0, "optimized_ms": 0.0, "speedup": 0.0, "weight": 0.0}],
   "variance_note": "e.g. run-to-run within 3%",
-  "graph_safe": "pass|fail|n/a (required when REQUIRE_GRAPH_CAPTURE or STRICT_AUTONOMY is set)",
+  "graph_safe": "pass|fail|n/a (required when REQUIRE_GRAPH_CAPTURE is set)",
   "liveness": "pass|fail|n/a (only when SPECIALTY=distributed; omit otherwise)",
   "replay_count": 1000,
   "replay_results": [

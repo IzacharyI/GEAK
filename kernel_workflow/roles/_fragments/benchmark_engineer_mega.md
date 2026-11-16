@@ -7,7 +7,7 @@ Everything not listed here is used as written in `benchmark_engineer.md`.
 ## Inputs
 `WORKSPACE`, `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, and `ANALYSIS` (kernel type, files, existing tests).
 Scoped campaigns also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
-`STRICT_AUTONOMY`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
+`REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
 
 **WORKLOAD ALIGNMENT.** The real-workload shape/dtype distribution is handled by the immutable
 `unittest.py` oracle itself — the Kernel Extractor bakes the weighted cases (`meta.workload.cases[]`)

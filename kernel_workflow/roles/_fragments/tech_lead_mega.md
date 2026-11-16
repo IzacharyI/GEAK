@@ -187,8 +187,8 @@ Return JSON:
 
 Inputs: `EVAL_DIR`, `WORKSPACE`, full `HISTORY` (all rounds), the final winner's verified per-case
 table, `BASELINE_PER_CASE` (the frozen per-case baseline latencies), `BASELINE_GEOMEAN_MS`, and
-`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent). Strict runs
-also receive `STRICT_AUTONOMY`, `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION_GUARDS`,
+`STOP_REASON` (which of the loop's stop conditions fired, and what was left unspent). Mega runs
+also receive `PROMOTION_METRIC`, `TARGET_GUARDS`, `REGRESSION_GUARDS`,
 `LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRE_ATTRIBUTION`, `REQUIRE_ARTIFACT_DISTINCT`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, `ACCURACY_METRIC`, `ACCURACY_THRESHOLD`,
 `AUTONOMY_ACCEPTANCE_REACHED`, and any `ACCEPTANCE_CAVEATS`.
@@ -214,11 +214,9 @@ the Director-materialized selected candidate, not a mutable global floor.
      no external implementation tree was an authoring input and that any
      `EXPERT_SKILL_TARGET_SCORE/BAND` was report-only.
      A candidate at `<=1.0x` may be documented as runnable WIP but must never appear as final output.
-   - **Autonomy acceptance** — required when `STRICT_AUTONOMY` is true. State
-     `AUTONOMY_ACCEPTANCE_REACHED` verbatim. If false, headline status is
-     `autonomy_incomplete` regardless of any partial speedup, and list every `ACCEPTANCE_CAVEATS`
-     entry. Report target guards separately from regression-only guards; never let a regression
-     guard create positive credit.
+   - **Acceptance** — state `AUTONOMY_ACCEPTANCE_REACHED` verbatim and list every
+     `ACCEPTANCE_CAVEATS` entry. Report target guards separately from regression-only guards; never
+     let a regression guard create positive credit.
    - **Round-by-round**: for EACH round list EVERY engineer individually (id, specialty, strategy,
      verified speedup, success/fail + one-line reason), the integrate result, the round winner, and
      the bottleneck shift. This is the "round 1 optimized a, b, c — what were the results, what after merging; round 2 …" narrative.
@@ -297,7 +295,7 @@ lifecycle.
 
 Inputs: `WORKSPACE`, `EVAL_DIR`, `TASK`, `SKILL_DIR`,
 `KERNEL_KNOWLEDGE_DIR`, `GPUS_PER_JOB`, and optionally
-`REQUIRE_TASK_GRAPH`, `CAPABILITY_EVAL`, `STRICT_AUTONOMY`,
+`REQUIRE_TASK_GRAPH`,
 `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `LAUNCH_TARGET`, `REQUIRE_OVERLAP`, `REQUIRED_REPLAYS`,
 `REQUIRED_PAIRS`, `REQUIRED_PAIRS_BY_GUARD`, and, when a matched Skill

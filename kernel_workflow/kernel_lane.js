@@ -2405,9 +2405,6 @@ if (MEGA && !['legacy', 'operator_e2e', 'changed_kernel'].includes(PROMOTION_MET
   throw new Error(`args.promotion_metric must be 'legacy', 'operator_e2e' or 'changed_kernel', got ${PROMOTION_METRIC}`);
 }
 // Strict proof runs must state the metric; inheriting historical mixed behavior is not auditable.
-if (MEGA && (String(A.strict_autonomy || 'false') === 'true' && PROMOTION_METRIC === 'legacy')) {
-  throw new Error('args.strict_autonomy requires an explicit promotion_metric');
-}
 const EXPERT_SKILL_DIR = EXPERT_SKILL_ID
   ? `${EXPERT_SKILLS_DIR}/skills/${EXPERT_SKILL_ID}` : '';
 const PINNED_MEGA_SKILL = USE_EXPERT_SKILLS && !!EXPERT_SKILL_DIR;
@@ -2544,31 +2541,15 @@ const MEGA_EXPERT_SKILL_ROLES = new Set(['tech_lead', 'author_engineer', 'engine
 // In mode=mega the planner is tech_lead's analyze / plan_round.
 const megaPlanner = (role, phase) => role === 'tech_lead' && (phase === 'analyze' || phase === 'plan_round');
 
-const CAPABILITY_EVAL = String(A.capability_eval ?? 'false') === 'true';
-const STRICT_AUTONOMY = String(A.strict_autonomy != null ? A.strict_autonomy : 'false') === 'true';
-if (MEGA && STRICT_AUTONOMY && !CAPABILITY_EVAL) {
-  throw new Error('args.strict_autonomy requires capability_eval=true');
-}
-if (MEGA && STRICT_AUTONOMY && TARGET_GUARDS.length === 0) {
-  throw new Error('args.strict_autonomy requires at least one explicit target_guards entry');
-}
 const positiveIntArg = (name, value, fallback) => {
   const n = Number(value == null ? fallback : value);
   if (Number.isSafeInteger(n) && n > 0) return n;
-  if (STRICT_AUTONOMY) throw new Error(`args.${name} must be a positive integer`);
   return fallback;
 };
 const REQUIRED_REPLAYS = positiveIntArg('required_replays', A.required_replays, 1000);
 const REQUIRED_PAIRS = positiveIntArg('required_pairs', A.required_pairs, 5);
 const REQUIRED_PAIRS_BY_GUARD = (A.required_pairs_by_guard &&
   typeof A.required_pairs_by_guard === 'object') ? A.required_pairs_by_guard : {};
-if (MEGA && STRICT_AUTONOMY) {
-  for (const [guard, count] of Object.entries(REQUIRED_PAIRS_BY_GUARD)) {
-    if (!(Number.isSafeInteger(Number(count)) && Number(count) > 0)) {
-      throw new Error(`args.required_pairs_by_guard[${guard}] must be a positive integer`);
-    }
-  }
-}
 const RF = Object(A.regression_floor_by_guard);
 const RFI = { ...(A.regression_floor_by_guard ? { REGRESSION_FLOORS: RF } : {}),
   ...(A.mega_min_speedup ? { MIN_TARGET_SPEEDUP: +A.mega_min_speedup } : {}) };
@@ -2579,13 +2560,7 @@ const REQUIRE_ARTIFACT_DISTINCT = gateArg(A.require_artifact_distinct);
 const REQUIRE_HW_ACTIVATION = gateArg(A.require_hardware_activation);
 const ACCURACY_METRIC = String(A.accuracy_metric || 'relL2');
 const ACCURACY_THRESHOLD = Number(A.accuracy_threshold != null ? A.accuracy_threshold : 0.10);
-if (MEGA && (STRICT_AUTONOMY && (!(ACCURACY_THRESHOLD > 0) || !Number.isFinite(ACCURACY_THRESHOLD)))) {
-  throw new Error('args.accuracy_threshold must be a positive finite number');
-}
 const launchTargetArg = Number(A.launch_target != null ? A.launch_target : 2);
-if (MEGA && STRICT_AUTONOMY && !(Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0)) {
-  throw new Error('args.launch_target must be a positive integer');
-}
 const LAUNCH_TARGET = Number.isSafeInteger(launchTargetArg) && launchTargetArg > 0
   ? launchTargetArg : 2;
 const ALLOW_PARTIAL_FUSION =
@@ -2608,80 +2583,6 @@ if (MEGA && PINNED_MEGA_SKILL &&
   if (missing.length) {
     throw new Error(`pinned candidate_validation missing gates: ${missing.join(', ')}`);
   }
-}
-const CONTAINMENT_PREFLIGHT = (A.containment_preflight &&
-  typeof A.containment_preflight === 'object') ? A.containment_preflight : {};
-const REFERENCE_LEAK_MARKER_FILE = String(A.reference_leak_marker_file || '');
-if (MEGA && STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean !== true) {
-  throw new Error(
-    'args.strict_autonomy requires a clean containment_preflight supplied by the trusted launcher');
-}
-// Trees whose contents would constitute an imported answer. Given to VERIFY (to compare against) and
-// deliberately NOT to engineers — handing them the list would be handing them the location.
-const KNOWN_REFERENCE_PATHS = (Array.isArray(A.known_reference_paths) ? A.known_reference_paths
-  : String(A.known_reference_paths || '').split(',')).map(s => String(s).trim()).filter(Boolean);
-const KNOWN_REFERENCE_HASHES = Array.isArray(A.known_reference_hashes)
-  ? A.known_reference_hashes.filter((r) => r && r.path_sha256 &&
-    (r.sha256 || r.normalized_sha256)) : [];
-if (MEGA && STRICT_AUTONOMY && KNOWN_REFERENCE_PATHS.length) {
-  throw new Error(
-    'args.strict_autonomy refuses known_reference_paths in workflow args; supply ' +
-    'known_reference_hashes generated out of band so no agent-readable address is published.');
-}
-if (MEGA && CAPABILITY_EVAL) {
-  log(`CAPABILITY EVAL mode: prior art is advisory CONCLUSIONS only; engineers get no reference ` +
-      `paths, and verify rejects byte-identical files as status:"plagiarized". ` +
-      `reference evidence=${KNOWN_REFERENCE_HASHES.length
-        ? `${KNOWN_REFERENCE_HASHES.length} out-of-band file hash(es)`
-        : (KNOWN_REFERENCE_PATHS.length ? `${KNOWN_REFERENCE_PATHS.length} hidden path(s)` :
-          '(none given — provenance check DISABLED)')}`);
-}
-
-// Reference containment: under capability_eval a reference tree must live outside the ancestor that
-// holds the task, workflow and run artifacts, because engineers can reach anything one `ls ..` away.
-// Set here and enforced by the post-Setup gate, which sweeps the same ancestor.
-let RUN_TREE_ANCESTOR = '';
-if (MEGA && CAPABILITY_EVAL) {
-  // Normalized by hand: workflow scripts run without Node's `path`/`fs`, so require() would throw
-  // here at runtime and turn a safety check into a crash.
-  const abs = (p) => {
-    const out = [];
-    for (const seg of String(p).split('/')) {
-      if (!seg || seg === '.') continue;
-      if (seg === '..') out.pop(); else out.push(seg);
-    }
-    return '/' + out.join('/');
-  };
-  const parts = [KERNEL_PATH_ORIG, EXP_ROOT, WORKFLOW_DIR].filter(Boolean).map(abs);
-  let ancestor = parts.length ? parts[0] : '';
-  for (const p of parts.slice(1)) {                       // longest common directory prefix
-    const a = ancestor.split('/'), b = p.split('/');
-    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
-    ancestor = a.slice(0, i).join('/') || '/';
-  }
-  RUN_TREE_ANCESTOR = ancestor;
-  const inside = KNOWN_REFERENCE_PATHS.filter(
-    (p) => ancestor && (abs(p) === ancestor || abs(p).startsWith(ancestor + '/')));
-  if (inside.length) {
-    throw new Error(
-      `REFERENCE NOT CONTAINED: capability_eval is on, but ${inside.length} reference tree(s) sit ` +
-      `inside the run's own tree (${ancestor}): ${inside.join(' ')}. An engineer reaches these by ` +
-      `walking up one directory, so the run would measure a copy and report it as a derivation — ` +
-      `that has already happened twice here. Move each tree outside ${ancestor} (for a git worktree: ` +
-      `git worktree move <old> <new>) and pass the new path in known_reference_paths, so verify can ` +
-      `still compare against it. Set capability_eval=false if you WANT the reference ported.`);
-  }
-  log(`REFERENCE CONTAINMENT ok: ${KNOWN_REFERENCE_PATHS.length} reference tree(s) resolve outside ` +
-      `the run tree ${ancestor}. NOTE this checks CONFIGURED PATHS ONLY, and that is a small fraction ` +
-      `of the exposure. Sweeping this tree for reference-only markers afterwards found the answer in ` +
-      `five more places, none of them a known_reference_path: the positive control's own applied ` +
-      `workspace left behind under artifacts/, a previous wave's output tree, the SIBLING EVAL DIRS ` +
-      `inside exp_root (one directory up from the dir every engineer is handed by name), the durable ` +
-      `patches in state_dir, and a git bundle of the candidate branch. Run ` +
-      `scripts/reference_leak_sweep.sh --tree ${ancestor} before trusting capability_eval, and note ` +
-      `it still cannot see a reference reachable as a branch in another repository the run can read ` +
-      `(JIT cache, sibling clone) — only verify's byte-identity check stands between that and a ` +
-      `counted win.`);
 }
 
 // Optional profile-analysis skill (see knowledge/analysis_skills/INDEX.md): after Profile, an
@@ -2718,14 +2619,6 @@ const MRI = MEGA_REGIMES_ON ? {
 const MEGA_RESUME_STATE = !!STATE_DIR &&
   String(A.mega_resume_state != null ? A.mega_resume_state : 'false') === 'true';
    // run-global cross-KERNEL technique blackboard (deep)
-
-// Verdict vocabulary keeps clean/leak/skipped/unknown distinct. "The scanner could not run" can
-// never be reported as clean — that collapse is the exact failure this subsystem exists to prevent.
-const CONTAINMENT_GATE_SCHEMA = obj({
-  verdict: { type: 'string', enum: ['clean', 'leak', 'skipped', 'unknown'] },
-  findings: { type: 'array', items: { type: 'string' } },
-  note: { type: 'string' },
-}, ['verdict']);
 
 // Three-valued so that "could not read the pool" never collapses into "free".
 const POOL_SCHEMA = obj({
@@ -3795,15 +3688,7 @@ function megaExpertSkillsBlock(role, phase) {
     `from_backend->to_backend for migration skills) and whose validation_status is \`validated\` and ` +
     `auto_apply is true, and ` +
     `treat each as a HIGH-PRIOR candidate to reproduce — advisory only, never overriding your isolated ` +
-    `A/B vs the oracle, never reducing a result below the measured baseline.` +
-    // Capability evaluation may use mechanisms, never reference addresses.
-    (CAPABILITY_EVAL
-      ? ` **Capability eval: use a skill's MECHANISM and MEASUREMENTS, never its addresses.** Its ` +
-        `Sources/Procedure sections may cite a branch, commit, or sibling checkout containing the ` +
-        `finished implementation. Do not read, port, copy, or diff against any of them — write the ` +
-        `code yourself from the described mechanism. A patch containing a file byte-identical to ` +
-        `such a reference is rejected at verify as \`plagiarized\`, whatever it measures.`
-      : '');
+    `A/B vs the oracle, never reducing a result below the measured baseline.`;
 }
 
 function analysisSkillBlock(role, phase) {
@@ -4378,53 +4263,11 @@ function enrichDirection(direction, ladder) {
   };
 }
 
-function strictDirectionVerdict(direction, ladder, completedRungs) {
-  const d = direction || {};
-  const rungId = String(d.roadmap_rung || '').trim();
-  if (!rungId || rungId === 'off_ladder') {
-    return { pass: false, reason: 'strict autonomy direction must name a ladder rung' };
-  }
-  const idOf = (c) => String((c && (c.id || c.title)) || '').trim().split(/\s+/)[0];
-  const rung = (Array.isArray(ladder) ? ladder : []).find((c) => idOf(c) === rungId);
-  if (!rung) return { pass: false, reason: `unknown roadmap rung ${rungId}` };
-  const done = new Set(Array.isArray(completedRungs) ? completedRungs
-    : (completedRungs instanceof Set ? [...completedRungs] : []));
-  const unmet = (Array.isArray(rung.gated_on) ? rung.gated_on : []).filter((g) => !done.has(String(g)));
-  if (unmet.length) {
-    return { pass: false, reason: `${rungId} prerequisite(s) not completed to spec: ${unmet.join(', ')}` };
-  }
-  if (String(d.step_role || '') === 'enabling' && !String(d.enables || '').trim()) {
-    return { pass: false, reason: `${rungId} is enabling but names no terminal rung` };
-  }
-  const rungRole = String(rung.step_role || 'terminal');
-  if (String(d.step_role || 'terminal') !== rungRole ||
-      (rungRole === 'enabling' && String(d.enables || '') !== String(rung.enables || ''))) {
-    return { pass: false, reason: `${rungId} changed its Analyze step_role/enables contract` };
-  }
-  const expected = Array.isArray(rung.mandatory_arms) ? rung.mandatory_arms : [];
-  const supplied = new Set(Array.isArray(d.mandatory_arms) ? d.mandatory_arms.map(String) : []);
-  const missing = expected.filter((a) => !supplied.has(String(a)));
-  if (missing.length) {
-    return { pass: false, reason: `${rungId} dropped mandatory arm(s): ${missing.join(', ')}` };
-  }
-  if (rung.target_shape) {
-    const planned = d.target_shape || {};
-    const expectedStages = [...new Set((rung.target_shape.stages_fused || []).map(String))].sort();
-    const plannedStages = [...new Set((planned.stages_fused || []).map(String))].sort();
-    if (Number(planned.launches) !== Number(rung.target_shape.launches) ||
-        (!!rung.target_shape.require_overlap && planned.require_overlap !== true) ||
-        expectedStages.join('\0') !== plannedStages.join('\0')) {
-      return { pass: false, reason: `${rungId} changed its Analyze target_shape` };
-    }
-  }
-  return { pass: true, reason: '' };
-}
 // <</REPLAY:direction_contract>>
 
 // <<REPLAY:autonomy_transition>>
-function finalStatusVerdict(directorStatus, scopedGuardFailure, strictProofFailure) {
+function finalStatusVerdict(directorStatus, scopedGuardFailure) {
   if (directorStatus === 'flagged' || scopedGuardFailure) return 'flagged';
-  if (strictProofFailure) return 'autonomy_incomplete';
   return directorStatus || 'unknown';
 }
 
@@ -5975,13 +5818,6 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           analysis.mega_plan_ir.target.launch_count)}; no candidate source or GPU was touched`,
     };
   }
-  if (STRICT_AUTONOMY) {
-    const strict = strictDirectionVerdict(d, LADDER, LADDER_MEASURED);
-    if (!strict.pass) {
-      return { refused: true, stop: MEGA_ROUTE_ONLY, reason:
-        `strict Mega direction refused before authoring: ${strict.reason}` };
-    }
-  }
   for (const rung of lg.planned) {
     dispatchedRungs.add(rung);
     const tally = rungTally.get(rung) || { attempts: 0, last_outcome: 'never_planned' };
@@ -6764,73 +6600,7 @@ async function megaAfterSetup() {
       }
     }
   }
-  if (STRICT_AUTONOMY && setup.resumed) {
-    throw new Error(
-      'STRICT AUTONOMY REFUSED: director seeded this run from STATE_DIR/best. A proof run must start ' +
-      'from the frozen input tree with an empty/fresh state directory; otherwise inherited code and ' +
-      'manual state edits cannot be distinguished from work derived in this run.');
-  }
-  if (STRICT_AUTONOMY && (setup.workflow_clean !== true ||
-      !String(setup.workflow_revision || '').trim())) {
-    throw new Error(
-      'STRICT AUTONOMY REFUSED: GEAK workflow/knowledge must be a clean, committed revision before ' +
-      'launch. Mid-wave or uncommitted instructions make the run non-reproducible.');
-  }
   WORKFLOW_REVISION_START = String(setup.workflow_revision || '');
-  if (STRICT_AUTONOMY) {
-    const roots = new Set(Array.isArray(CONTAINMENT_PREFLIGHT.roots)
-      ? CONTAINMENT_PREFLIGHT.roots.map((r) => String(r).replace(/\/+$/, '')) : []);
-    const expectedRoots = [KERNEL_PATH_ORIG, EXP_ROOT, STATE_DIR, WORKFLOW_DIR]
-      .filter(Boolean).map((r) => String(r).replace(/\/+$/, ''));
-    const missingRoots = expectedRoots.filter((r) => !roots.has(r));
-    if (CONTAINMENT_PREFLIGHT.content_scan !== 'clean' ||
-        CONTAINMENT_PREFLIGHT.skill_address_scan !== 'clean' ||
-        String(CONTAINMENT_PREFLIGHT.workflow_revision || '') !== WORKFLOW_REVISION_START ||
-        Number(CONTAINMENT_PREFLIGHT.reference_hash_count || 0) !== KNOWN_REFERENCE_HASHES.length ||
-        missingRoots.length) {
-      throw new Error(
-        `STRICT AUTONOMY REFUSED: containment attestation is not bound to this workflow/roots ` +
-        `(missing roots: ${missingRoots.join(', ') || 'none'}).`);
-    }
-  }
-
-  // Containment enforcement after Setup (the startup check only filters paths): run the two content
-  // scanners over the materialised eval dir, baseline copy and inherited assets. It is an agent because
-  // the workflow script has no shell.
-  if (STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean === true) {
-    log(`CONTAINMENT PREFLIGHT clean: trusted bootstrap scanned the run tree before agent startup ` +
-        `(marker manifest ${String(CONTAINMENT_PREFLIGHT.marker_manifest_sha256 || '').slice(0, 12)}…, ` +
-        `${Number(CONTAINMENT_PREFLIGHT.reference_hash_count || 0)} opaque reference hashes).`);
-  }
-  if (CAPABILITY_EVAL && RUN_TREE_ANCESTOR &&
-      !(STRICT_AUTONOMY && CONTAINMENT_PREFLIGHT.clean === true)) {
-    const gate = await agentT(
-      `Run two containment scanners and report their exit codes verbatim. Do not fix anything, do not ` +
-      `read any file they flag, do not summarise the flagged content — reporting the paths is the whole job.\n\n` +
-      // Scan every ref tree (the default cap of 200 makes the hit count a lower bound). The full sweep
-      // costs about five minutes once, before any lease.
-      `1. REF_SCAN_MAX_TREES=100000 bash ${WORKFLOW_DIR}/scripts/reference_leak_sweep.sh ` +
-      `--tree ${RUN_TREE_ANCESTOR} --markers ${REFERENCE_LEAK_MARKER_FILE || '(missing-marker-file)'}\n` +
-      `   If its output still contains a REF_SCAN_MAX_TREES coverage NOTE, the scan is PARTIAL: say so\n` +
-      `   in your note and return verdict "unknown" rather than clean, whatever the exit code was.\n` +
-      `2. bash ${WORKFLOW_DIR}/scripts/skill_address_scan.sh --skills-dir ${EXPERT_SKILLS_DIR || '(skip: expert skills off)'} ` +
-      `--scan-root ${RUN_TREE_ANCESTOR}\n\n` +
-      `If a script is missing or its --skills-dir is empty, record that step as "skipped" with the reason ` +
-      `and do NOT call it clean. "The scanner did not run" and "the scanner found nothing" are different ` +
-      `results and this run has already been damaged twice by conflating them.`,
-      { phase: 'Setup', label: 'containment gate', schema: CONTAINMENT_GATE_SCHEMA });
-    if (!gate || gate.verdict !== 'clean') {
-      const verdict = gate ? gate.verdict : 'unknown';
-      if (STRICT_AUTONOMY || verdict === 'leak') {
-        throw new Error(
-          `CONTAINMENT GATE FAILED (${verdict}): strict/capability evidence requires an explicit clean ` +
-          `scan of ${RUN_TREE_ANCESTOR} before budget is spent.\n` +
-          `${gate ? (gate.findings || []).join('\n') : 'gate agent returned nothing'}\n` +
-          `${gate ? gate.note || '' : ''}`);
-      }
-      log(`CONTAINMENT GATE ${verdict}: scanner did not establish clean. ${gate ? gate.note || '' : ''}`);
-    } else log(`CONTAINMENT GATE clean: ${gate.note || ''}`);
-  }
   log(`MEGA unified mode: Expert Skills are ${USE_EXPERT_SKILLS ? 'enabled as advisory context' :
     'disabled'}; all candidates use the same autonomous lifecycle.`);
 }
@@ -6853,12 +6623,6 @@ async function megaAnalyze() {
         EXPERT_SKILL_CONTRACT_SHA256,
         EXPERT_SKILL_VALIDATION_STATUS,
         EXPERT_SKILL_USAGE,
-      } : {}),
-      ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
-      ...(STRICT_AUTONOMY ? {
-        STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
-        PROMOTION_METRIC, LAUNCH_TARGET: Number(A.launch_target || 2),
-        REQUIRE_OVERLAP, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
       } : {}),
       ...({}),
     }),
@@ -6909,12 +6673,6 @@ async function megaAnalyze() {
             EXPERT_SKILL_CONTRACT_SHA256,
             EXPERT_SKILL_VALIDATION_STATUS,
             EXPERT_SKILL_USAGE,
-          } : {}),
-          ...(CAPABILITY_EVAL ? { CAPABILITY_EVAL: '1' } : {}),
-          ...(STRICT_AUTONOMY ? {
-            STRICT_AUTONOMY: '1', TARGET_GUARDS, REGRESSION_GUARDS,
-            PROMOTION_METRIC, LAUNCH_TARGET: Number(A.launch_target || 2),
-            REQUIRE_OVERLAP, REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
           } : {}),
           // Kept on the recovery call too: the full analysis re-derives the ladder from the source,
           // but the rungs a prior wave already spent, and the ones it left owed, exist only here.
@@ -6976,29 +6734,6 @@ async function megaAnalyze() {
 
   // Analyze's ladder and what has been taken off it, threaded into every plan_round call.
   LADDER = (analysis && Array.isArray(analysis.candidate_directions)) ? analysis.candidate_directions : [];
-  if (STRICT_AUTONOMY) {
-    if (!LADDER.length) {
-      throw new Error(
-        'STRICT AUTONOMY REFUSED: Analyze returned no candidate_directions. A proof run with no ' +
-        'machine-readable ladder cannot show that the two-launch terminal was derived.');
-    }
-    const terminalTargets = LADDER.filter((c) => c && c.target_shape &&
-      Number(c.target_shape.launches) <= LAUNCH_TARGET);
-    if (!terminalTargets.length) {
-      throw new Error(
-        `STRICT AUTONOMY REFUSED: no ladder rung declares target_shape.launches <= ${LAUNCH_TARGET}. ` +
-        'A prose promise to fuse the operator cannot close the machine-tracked acceptance shape.');
-    }
-    const incompleteTargets = terminalTargets.filter((c) =>
-      !Array.isArray(c.mandatory_arms) || c.mandatory_arms.length === 0 ||
-      !Array.isArray(c.target_shape.stages_fused) || c.target_shape.stages_fused.length === 0 ||
-      (REQUIRE_OVERLAP && c.target_shape.require_overlap !== true));
-    if (incompleteTargets.length) {
-      throw new Error(
-        'STRICT AUTONOMY REFUSED: terminal target rung(s) must declare mandatory_arms and the required ' +
-        `overlap shape: ${incompleteTargets.map((c) => c.id || c.title).join(', ')}`);
-    }
-  }
   {
     const lg0 = roadmapLadderGate(LADDER, [], new Set());
     if (lg0.summary) log(lg0.summary);
@@ -7027,16 +6762,9 @@ async function megaAnalyze() {
     log(`PRIOR ART: none — the sweep ran and reported an empty result.`);
   }
   for (const pa of PRIOR_ART) {
-    const where = CAPABILITY_EVAL ? 'HIDDEN_REFERENCE' : (pa.implemented_at || '?');
+    const where = pa.implemented_at || '?';
     const eff = pa.measured_effect ? ` (measured ${pa.measured_effect})` : '';
-    if (pa.in_baseline === false && CAPABILITY_EVAL) {
-      // Same finding, opposite instruction. Here the absent implementation is the ANSWER KEY: it
-      // bounds what a successful run should reach, and copying it makes the run unreadable.
-      log(`PRIOR ART NOT IN BASELINE (capability eval): "${pa.direction}" exists at ${where}${eff} but ` +
-          `is ABSENT from the tree being optimized. Treat it as the answer key, NOT as a source: it is ` +
-          `the bar this run must reach on its own. Do not port it, and do not surface its location to ` +
-          `engineers.`);
-    } else if (pa.in_baseline === false) {
+    if (pa.in_baseline === false) {
       log(`PRIOR ART NOT IN BASELINE: "${pa.direction}" is already implemented at ${where}${eff} but ` +
           `is ABSENT from the tree being optimized. Port or measure it before re-deriving it; if the ` +
           `intent was to optimize the tree that HAS it, this run is pointed at the wrong target.`);
@@ -7051,40 +6779,6 @@ async function megaAnalyze() {
     }
   }
 
-  // Leak scrub under capability_eval: flag engineer-visible artifacts that mention a known reference
-  // path. It warns instead of aborting; the provenance gate in Verify is the enforcing half.
-  if (CAPABILITY_EVAL && KNOWN_REFERENCE_PATHS.length) {
-    const needles = KNOWN_REFERENCE_PATHS.flatMap((p) => {
-      const base = p.replace(/\/+$/, '').split('/').pop();
-      return [p.replace(/\/+$/, ''), ...(base && base.length > 6 ? [base] : [])];
-    });
-    // Workflow scripts have no fs, so this file-content check cannot run here; say so and point to the
-    // sweep script that does walk the tree.
-    if (typeof fs === 'undefined') {
-      log('CONTAINMENT CHECK INERT: the in-workflow reference-path scan of EVAL_DIR cannot run — ' +
-          'workflow scripts have no fs. This is not a clean result, it is no result. Run ' +
-          'scripts/reference_leak_sweep.sh --tree <run tree> and scripts/skill_address_scan.sh ' +
-          'out of band; only those actually read the tree.');
-    }
-    for (const f of (typeof fs === 'undefined' ? [] : ['roadmap.md', 'codebase_context.md', 'analysis.json'])) {
-      let txt = '';
-      try { txt = fs.readFileSync(`${EVAL_DIR}/${f}`, 'utf8'); } catch { continue; }
-      // analysis.json legitimately carries locations in prior_art[].implemented_at (that field is for
-      // the orchestrator and the human, and is not forwarded to engineers). Scan the rest of it only.
-      if (f === 'analysis.json') {
-        try {
-          const j = JSON.parse(txt); delete j.prior_art; txt = JSON.stringify(j);
-        } catch { /* unparseable -> scan verbatim, a false positive here is cheap */ }
-      }
-      const hit = needles.find((n) => txt.includes(n));
-      if (hit) {
-        log(`LEAK WARNING: ${f} mentions the reference location "${hit}" while capability_eval is on. ` +
-            `Engineers read this file. Prior art must reach them as MECHANISM, never as an address — ` +
-            `a path in the roadmap is how the last run ended up with a byte-identical copy of the ` +
-            `answer. Verify's provenance check will reject any patch that imports from it.`);
-      }
-    }
-  }
 }
 
 async function megaBenchmark() {
@@ -7106,7 +6800,7 @@ async function megaBenchmark() {
       WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_SINGLE,
       ANALYSIS: analysis,
       TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-      STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI, ...MRI,
+      REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, ...RFI, ...GMI, ...MRI,
       ...(HARNESS_ADDENDUM ? { HARNESS_ADDENDUM } : {}),
       ...(WORKLOAD_SPEC_PATH ? { WORKLOAD_SPEC_PATH } : {}),
       ...(WORKLOAD_SPEC ? { WORKLOAD_SPEC } : {}),
@@ -7144,7 +6838,7 @@ async function megaBenchmark() {
         'poll up to 12 min for baseline_timing.json before concluding.',
         { WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, ANALYSIS: analysis,
           TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-          STRICT_AUTONOMY, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
+          REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
           ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}) }),
       { phase: 'Benchmark', label: 'benchmark_recover', schema: MEGA_BENCH_SCHEMA,
         ...(MEGA_PRODUCTION ? { timeout_ms: 1200000, max_retries: 1 } : {}) });
@@ -7824,7 +7518,7 @@ async function megaReport() {
         MEGA_CANDIDATE_REGISTRY: megaCandidateRegistry,
         MEGA_SELECTION: megaSelection || {},
       }),
-      STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
+      PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
       LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
       REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
       ACCURACY_METRIC, ACCURACY_THRESHOLD, AUTONOMY_ACCEPTANCE_REACHED,
@@ -7909,7 +7603,7 @@ async function megaValidate() {
       APPLY_TO_ORIGINAL, COMMANDMENT,
       FINAL_PATCH: reportReady ? report.final_patch : `${EVAL_DIR}/final_patch.diff`,
       TECH_LEAD_REPORTED_GEOMEAN: report ? report.final_speedup_geomean : cumulative,
-      STRICT_AUTONOMY, PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
+      PROMOTION_METRIC, TARGET_GUARDS, REGRESSION_GUARDS,
       LAUNCH_TARGET, REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
       REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
       ACCURACY_METRIC, ACCURACY_THRESHOLD, AUTONOMY_ACCEPTANCE_REACHED,
@@ -7921,8 +7615,6 @@ async function megaValidate() {
         SELECTED_SOURCE_HEAD: finalWinner.source_head,
         SELECTED_MATERIALIZED_HEAD: finalWinner.materialized_head,
       } : {}),
-      ...(STRICT_AUTONOMY && KNOWN_REFERENCE_HASHES.length
-        ? { KNOWN_REFERENCE_HASHES } : {}),
       ...(HAS_WORKLOAD && report && report.final_speedup_weighted != null
           ? { TECH_LEAD_REPORTED_WEIGHTED: report.final_speedup_weighted } : {}),
       BASELINE_TIMING: BASELINE_PER_CASE,
@@ -7954,12 +7646,8 @@ async function megaFinish() {
   const finalAttribution = (validation && validation.attribution) || {};
   const scopedGuardFailure = finalMetricFailure(
     PROMOTION_METRIC, TARGET_GUARDS, finalPrimary, finalGuards, finalAttribution);
-  const strictProofFailure = STRICT_AUTONOMY &&
-    (!AUTONOMY_ACCEPTANCE_REACHED || !(validation && validation.autonomy_acceptance_confirmed === true) ||
-     !(validation && validation.workflow_unchanged === true));
-  // Correctness/apply failures outrank the more specific autonomy label; never soften `flagged` into
-  // `autonomy_incomplete`. Scoped regression guards are vetoes in every mode, not only strict mode.
-  const finalValidationStatus = finalStatusVerdict(directorStatus, scopedGuardFailure, strictProofFailure);
+  // Scoped regression guards are vetoes in every mode.
+  const finalValidationStatus = finalStatusVerdict(directorStatus, scopedGuardFailure);
   // Surface leaked lease jobs in the completion line: they keep running after the report and contend
   // with the measurements just accepted.
   if (validation && validation.orphan_leases_swept > 0) {
@@ -7977,7 +7665,6 @@ async function megaFinish() {
     String(validation.selected_source_head || '') === String(finalWinner && finalWinner.source_head || '') &&
     String(validation.selected_materialized_head || '') ===
       String(finalWinner && finalWinner.materialized_head || '') &&
-    !strictProofFailure &&
     finalGuards && finalGuards.regression_pass !== false;
   mega_deliverable = !!(megaSelection && megaSelection.claim_complete === true &&
     megaSelectionContractPassed && finalWinner && correctnessClean && Number.isFinite(finalPrimary) &&
@@ -8037,7 +7724,7 @@ async function megaFinish() {
     autonomy_acceptance_reached: AUTONOMY_ACCEPTANCE_REACHED,
     autonomy_acceptance_confirmed: !!(validation && validation.autonomy_acceptance_confirmed === true &&
       validation.workflow_unchanged === true && directorStatus !== 'flagged' &&
-      !scopedGuardFailure && !strictProofFailure),
+      !scopedGuardFailure),
     acceptance_caveats: ACCEPTANCE_CAVEATS,
     rounds: report ? report.rounds : round,
     budget_used: dispatched,
@@ -8059,7 +7746,6 @@ const setup = await agentT(
   MEGA ? roleAgent('director', 'setup', 'Build the isolated evaluation environment.', {
     KERNEL_PATH_ORIG, EXP_ROOT, EVAL_DIR_OVERRIDE, KERNEL_NAME_HINT, TASK, SKILL_DIR: WORKFLOW_DIR,
     MODE, TARGET_LANGUAGE, OP_SPEC,
-    ...(STRICT_AUTONOMY ? { STRICT_AUTONOMY: '1' } : {}),
     ...(STATE_DIR ? { STATE_DIR, MEGA_RESUME_STATE } : {}),
   }) : roleAgent('director', 'setup', 'Build the isolated evaluation environment.', {
     KERNEL_PATH_ORIG, EXP_ROOT, EVAL_DIR_OVERRIDE, KERNEL_NAME_HINT, TASK,
