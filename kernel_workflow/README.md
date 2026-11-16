@@ -354,7 +354,7 @@ kernel_lane.js         WORKER: the deterministic optimize/author pipeline (calle
                        backend (multi-rank whole-kernel candidate search, hooks on the same phases)
 roles/_fragments/*_mega.md  what mode=mega changes in each role (sections replace the role's same-named ones)
 tools/                 mega_graph_ab, mega_regime, generic_graph_contract, expert_skill_contract/runtime,
-                       ab_retry, fast_test_key, rebase_commandment (mode=mega helpers)
+                       ab_retry, rebase_commandment (mode=mega helpers)
 tests/                 mode=mega regression tests (`node tests/<t>.js`, `python -m pytest tests/`)
 kernel_workflow_bmk.js batch orchestrator (runs kernel_lane on a list of kernels, one batch per GPU)
 roles/               director, tech_lead, engineer, deep_engineer (deep_explore),

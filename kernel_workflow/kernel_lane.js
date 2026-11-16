@@ -2532,7 +2532,6 @@ const GRAPH_CONTRACT_TOOL = PINNED_MEGA_SKILL
 // Only the skill runtime injects arrival jitter into graph replays; generic_graph_contract.py does not,
 // so a generic finalist cannot report jittered replays and is not asked to.
 const ARRIVAL_JITTER_CONTRACT = PINNED_MEGA_SKILL;
-const FAST_TEST_KEY_TOOL = `${WORKFLOW_DIR}/tools/fast_test_key.py`;
 const BENCH_HARNESS = String(A.benchmark_harness || '');
 const CANDIDATE_IMPORT_MODULES = Object.freeze(argList(
   A.candidate_import_modules || [],
@@ -2721,11 +2720,6 @@ const MRI = MEGA_REGIMES_ON ? {
 
 const MEGA_RESUME_STATE = !!STATE_DIR &&
   String(A.mega_resume_state != null ? A.mega_resume_state : 'false') === 'true';
-// Fast-test cache (mega + STATE_DIR only, default off): reuse a prior wave's front-matter measurements
-// (control calibration, profile replays) when the validity key matches. It never touches the scoring
-// denominator: every candidate A/B re-measures the frozen baseline.
-const MEGA_FAST_TEST = !!STATE_DIR &&
-  String(A.mega_fast_test != null ? A.mega_fast_test : 'false') === 'true';
    // run-global cross-KERNEL technique blackboard (deep)
 
 // Verdict vocabulary keeps clean/leak/skipped/unknown distinct. "The scanner could not run" can
@@ -3258,31 +3252,6 @@ const MEGA_BENCH_SCHEMA = obj({
   }, ['ran', 'claim_complete', 'switch_present', 'measured_pct']),
   reliable: { type: 'boolean' }, notes: { type: 'string' },
 }, ['commandment_path', 'baseline_per_case', 'baseline_geomean_ms']);
-
-// Fast-test cache load: the agent recomputes the validity key from disk (frozen base revision, harness
-// hash, control spec, guards) and compares it with the stored key; only an exact match (key_valid)
-// reuses prior measurements. bench/analysis have the same shape as the live Benchmark/Profile results.
-const FAST_TEST_LOAD_SCHEMA = obj({
-  cache_present: { type: 'boolean' },   // any cache artifact found at all
-  key_valid: { type: 'boolean' },       // cache present AND its stored key matches the current key
-  commandment_materialized: { type: 'boolean' },
-  commandment_current_identity: { type: 'boolean' },
-  current_key: { type: 'string' }, cached_key: { type: 'string' },
-  note: { type: 'string' },
-  bench: { type: 'object', additionalProperties: true },     // reconstructed BENCH_SCHEMA payload (CACHE_KIND=bench)
-  analysis: { type: 'object', additionalProperties: true },  // reconstructed MEGA_ANALYSIS payload (CACHE_KIND=profile)
-}, [
-  'cache_present', 'key_valid', 'commandment_materialized',
-  'commandment_current_identity',
-]);
-
-// Fast-test cache publish: copy this wave's fresh artifacts into STATE_DIR/fast_test_cache and write
-// fast_test_key.json with the validity key computed from disk.
-const FAST_TEST_PUBLISH_SCHEMA = obj({
-  published: { type: 'boolean' }, key: { type: 'string' },
-  cache_dir: { type: 'string' }, files: { type: 'array', items: { type: 'string' } },
-  note: { type: 'string' },
-}, ['published']);
 
 const ANALYSIS_RESULT_SCHEMA = obj({
   status: { type: 'string', enum: ['ready', 'degraded'] },
@@ -5423,62 +5392,6 @@ function recordRungOutcome(id, outcome) {
   rungTally.set(key, e);
 }
 
-// Fast-test cache (mega + STATE_DIR): reuse a prior wave's front-matter measurements when the
-// validity key matches. Disk I/O goes through an agent. When off, no agent() call is made, so the
-// call sequence and resume cache keys are unchanged.
-const FAST_TEST_CACHE_DIR = STATE_DIR ? `${STATE_DIR}/fast_test_cache` : '';
-async function fastTestCacheLoad(kind /* 'bench' | 'profile' */) {
-  if (!MEGA_FAST_TEST) return null;
-  const res = await agentT(
-    roleAgent('benchmark_engineer', 'fast_test_load',
-      `FAST-TEST CACHE LOAD (${kind}). NO GPU, NO lease: read the cache and validate its key, measure ` +
-      `nothing. Reconstruct the ${kind === 'bench' ? 'benchmark' : 'mega_analysis'} payload from the ` +
-      `cached artifacts ONLY if the stored key matches the key you recompute from disk now.`, {
-        CACHE_DIR: FAST_TEST_CACHE_DIR, CACHE_KIND: kind, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR,
-        FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-        BENCH_HARNESS,
-        FAST_TEST_KEY_TOOL: FAST_TEST_KEY_TOOL, CONTROL_JSON: JSON.stringify(POSITIVE_CONTROL),
-        GUARDS_JSON: JSON.stringify([...TARGET_GUARDS, ...REGRESSION_GUARDS]),
-        TARGET_GUARDS, REGRESSION_GUARDS,
-        ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
-      }),
-    { phase: 'Benchmark', label: `fast_test_load:${kind}`, schema: FAST_TEST_LOAD_SCHEMA,
-      timeout_ms: 300000, max_retries: 1 });
-  const commandmentReady = kind !== 'bench' ||
-    (res && res.commandment_materialized === true &&
-     res.commandment_current_identity === true &&
-     String(res.bench && res.bench.commandment_path || '') === COMMANDMENT);
-  if (!res || res.key_valid !== true || !commandmentReady) {
-    log(`Fast-test cache MISS (${kind}): ` +
-        `${res ? (!commandmentReady ? 'current EVAL_DIR COMMANDMENT was not materialized' :
-          (res.note || (res.cache_present ? 'stored key mismatches current key' : 'no cache on disk'))) :
-          'load agent returned nothing'}` +
-        ` — running the real ${kind} phase fresh (and re-publishing).`);
-    return null;
-  }
-  log(`Fast-test cache HIT (${kind}): reusing prior on-card artifacts (key ${String(res.cached_key || '').slice(0, 12)}…). ${res.note || ''}`);
-  return res;
-}
-async function fastTestCachePublish() {
-  if (!MEGA_FAST_TEST) return;
-  const res = await agentT(
-    roleAgent('benchmark_engineer', 'fast_test_publish',
-      'FAST-TEST CACHE PUBLISH. NO GPU, NO lease: copy THIS wave\'s freshly-measured artifacts into the ' +
-      'cache and write the validity key, so a later fast-test wave can reuse them. Copy files, measure ' +
-      'nothing.', {
-        CACHE_DIR: FAST_TEST_CACHE_DIR, EVAL_DIR, MEGA_ANALYSIS_DIR: `${EVAL_DIR}/mega_analysis`,
-        SKILL_DIR: WORKFLOW_DIR, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-        BENCH_HARNESS,
-        FAST_TEST_KEY_TOOL: FAST_TEST_KEY_TOOL, CONTROL_JSON: JSON.stringify(POSITIVE_CONTROL),
-        GUARDS_JSON: JSON.stringify([...TARGET_GUARDS, ...REGRESSION_GUARDS]),
-        TARGET_GUARDS, REGRESSION_GUARDS,
-        ...(POSITIVE_CONTROL ? { POSITIVE_CONTROL } : {}),
-      }),
-    { phase: 'Profile', label: 'fast_test_publish', schema: FAST_TEST_PUBLISH_SCHEMA,
-      timeout_ms: 300000, max_retries: 1 });
-  if (res && res.published) log(`Fast-test cache PUBLISHED to ${res.cache_dir || FAST_TEST_CACHE_DIR} (key ${String(res.key || '').slice(0, 12)}…, ${(res.files || []).length} files).`);
-  else log(`Fast-test cache publish did not complete: ${res ? (res.note || 'no confirmation') : 'agent returned nothing'}.`);
-}
 const structuralGuardNames = [...new Set([...TARGET_GUARDS, ...REGRESSION_GUARDS])];
 const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY;
 
@@ -6866,7 +6779,6 @@ let PRIOR_ART = null;
 let PRIOR_ART_RECORDED = null;
 let SHELF_STATS = null;
 let WORKFLOW_REVISION_START = null;
-let benchCache = null;
 let benchR = null;
 let ranked = null;
 let reportReady = null;
@@ -7272,8 +7184,7 @@ async function megaBenchmark() {
     positive_control: { claim_complete: false },
     notes: 'STRUCTURAL_ONLY: no GPU benchmark.',
   };
-  benchCache = noGpuFrontMatter ? null : await fastTestCacheLoad('bench');
-  const benchFirst = noGpuFrontMatter ? structuralBench : benchCache ? benchCache.bench : await agentT(
+  const benchFirst = noGpuFrontMatter ? structuralBench : await agentT(
     roleAgent('benchmark_engineer', 'setup', 'Build the COMMANDMENT and record a reliable baseline.', {
       WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_SINGLE,
       ANALYSIS: analysis,
@@ -7562,9 +7473,6 @@ async function megaProfile() {
     };
   }
 
-  // Publish this wave's front-matter measurements to the fast-test cache when any stage ran fresh.
-  // No agent() call when MEGA_FAST_TEST is off.
-  if (!noGpuFrontMatter && MEGA_FAST_TEST && !benchCache) await fastTestCachePublish();
 }
 
 async function megaLoopInit() {

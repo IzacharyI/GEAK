@@ -8,11 +8,6 @@ Everything not listed here is used as written in `benchmark_engineer.md`.
 `WORKSPACE`, `EVAL_DIR`, `SKILL_DIR`, `GPU_ID`, and `ANALYSIS` (kernel type, files, existing tests).
 Scoped campaigns also receive `TARGET_GUARDS`, `REGRESSION_GUARDS`, `PROMOTION_METRIC`,
 `STRICT_AUTONOMY`, `REQUIRED_PAIRS`, and `REQUIRED_PAIRS_BY_GUARD`.
-The fast-test cache phases (`PHASE=fast_test_load` / `PHASE=fast_test_publish`, mega only) receive
-`CACHE_DIR`, `FROZEN_KERNEL_PATH`, and `BENCH_HARNESS`; load also receives `CACHE_KIND`; publish also
-receives `MEGA_ANALYSIS_DIR`. Both receive `FAST_TEST_KEY_TOOL`,
-`CONTROL_JSON`, and `GUARDS_JSON`; the checked-in tool is the sole authority
-for key computation.
 
 **WORKLOAD ALIGNMENT.** The real-workload shape/dtype distribution is handled by the immutable
 `unittest.py` oracle itself — the Kernel Extractor bakes the weighted cases (`meta.workload.cases[]`)
@@ -218,10 +213,8 @@ guard, and any `setup_ab_control*.json` with `claim_complete: true` — that is 
 control and re-running it is the single most expensive redundant act available to you. Say in `notes`
 which files you reused and which measurements are fresh.
 
-This reuse scope is exact: current `EVAL_DIR`, or `CACHE_DIR` only in
-`PHASE=fast_test_load`. In ordinary `PHASE=setup`, do not scan/copy a sibling
-directory under `EXP_ROOT`, a prior wave, or a path found in prior state. The
-key-validated fast-test cache is the only cross-wave calibration channel.
+This reuse scope is exact: the current `EVAL_DIR` only. Do not scan/copy a sibling
+directory under `EXP_ROOT`, a prior wave, or a path found in prior state.
 
 **`setup_ab_*.json` has a required shape, because it outlives the run.** These files are the corpus
 `SKILL_DIR/scripts/replay_runs.js` re-decides finished runs from, on no GPU — which is how a change to
@@ -587,88 +580,6 @@ null pair` impossible. This is a fresh measurement of the SAME instrument, not a
   worst null pair). A failed re-measurement is a valid, honest result: return it with `passed:false`.
 - Return the Return JSON with `baseline_per_case` etc. transcribed from `baseline_timing.json`
   (do not re-measure the baseline) and `positive_control` from the NEW attempt only.
-
-## PHASE=fast_test_load — reuse a prior wave's front matter, GATED on a validity key, measure nothing
-
-Mega fast-test mode reuses the front matter's expensive on-card measurements (positive-control
-calibration + profile replays) from a PRIOR wave instead of re-running them, so a full-workflow
-iteration costs minutes not ~40 min. You are the gate that decides whether the cache is still valid.
-**Do NOT run any GPU command and do NOT take a lease** — read files and hash them, nothing else.
-
-The VALIDITY KEY is what makes reuse honest. Do not reimplement or infer its
-serialization. Run the checked-in authority exactly:
-
-```bash
-python3 "$FAST_TEST_KEY_TOOL" \
-  --frozen "$FROZEN_KERNEL_PATH" \
-  --bench "$BENCH_HARNESS" \
-  --control-json "$CONTROL_JSON" \
-  --guards-json "$GUARDS_JSON"
-```
-
-Its JSON output contains `key`, `frozen_rev`, `bench_sha`, `control_sha`,
-`guards_sha`, and `algorithm`. `frozen_rev` is path-independent; JSON
-canonicalization is internal to the tool. The load and publish phases must both
-use this output verbatim. Hand-written `find`, alternate `json.dumps`, ignored
-comment fields, or a remembered prior digest are pipeline failures.
-
-Steps:
-1. If `CACHE_DIR/fast_test_key.json` is absent → `cache_present:false`,
-   `key_valid:false`, `commandment_materialized:false`,
-   `commandment_current_identity:false`, done.
-2. Read the cached key. Recompute `current_key` from disk NOW. Set `key_valid` iff they are EXACTLY
-   equal. A mismatch is not an error — it means the base/instrument/spec moved and the wave must
-   re-measure; say which component differs in `note`.
-3. Only when `key_valid` is true, reconstruct the payload for `CACHE_KIND`:
-   - `bench`: read `CACHE_DIR/baseline_timing.json`, `CACHE_DIR/COMMANDMENT.md`, `CACHE_DIR/setup_ab_control*.json`
-     and rebuild the full `PHASE=setup` Return JSON (below) into the `bench` field — including
-     `positive_control` from a `setup_ab_control*.json` with `claim_complete:true`. This is the same
-     reconstruction as `PHASE=recover`, from `CACHE_DIR` instead of `EVAL_DIR`. Before returning,
-     materialize a run-local contract with:
-     `python3 "$SKILL_DIR/tools/rebase_commandment.py" --source
-     "$CACHE_DIR/COMMANDMENT.md" --target "$EVAL_DIR/COMMANDMENT.md"
-     --target-eval "$EVAL_DIR"`. The tool permits exactly one transformation:
-     every cached EVAL_DIR occurrence becomes the current EVAL_DIR. It rejects
-     multiple/foreign run roots and fixed candidate paths and proves normalized
-     source/output bytes are identical. Set both commandment booleans true only
-     when it returns `materialized:true`; set `bench.commandment_path` to the
-     current path, never the cache or an older run. A raw byte-hash match is
-     neither required nor sufficient because the run-local path must change.
-     Rebase `positive_control.evidence_manifest` to
-     `CACHE_DIR/setup_ab_control_evidence_manifest.json`; that self-contained
-     copy must exist. Any failed tool/payload check makes this a cache MISS:
-     set both commandment booleans and `key_valid` false.
-   - `profile`: read `CACHE_DIR/mega_analysis/*.json` (rank_records / xgmi / combine_wait) and rebuild
-     the `mega_analysis` return shape into the `analysis` field (`bottleneck`, `top_opportunities`,
-     `dispatch_count`, `path_marker`, `rank_max_ms`, `xgmi_amplification`, `combine_wait_p95_us`, …).
-     Set both commandment booleans false; they are not applicable to this cache kind.
-   A reconstructed payload that is missing required fields is a cache MISS — set `key_valid:false` and
-   say so, never fabricate a number.
-
-Return JSON: `{ "cache_present": bool, "key_valid": bool, "commandment_materialized": bool,
-"commandment_current_identity": bool,
-"current_key": "…", "cached_key": "…",
-"note": "…", "bench": { …PHASE=setup shape… }, "analysis": { …mega_analysis shape… } }`. Fill only
-the field matching `CACHE_KIND`; leave the other `{}`.
-
-## PHASE=fast_test_publish — copy this wave's fresh artifacts into the cache, measure nothing
-
-You ran (or recovered) a real front matter this wave; persist its artifacts so a later fast-test wave
-can reuse them. **NO GPU, NO lease** — copy files and write the key.
-
-1. `mkdir -p "$CACHE_DIR"`.
-2. Copy from `EVAL_DIR` into `CACHE_DIR`: `baseline_timing.json`, `COMMANDMENT.md`, every
-   `setup_ab_control*.json` (the completed positive control), its referenced evidence manifest as
-   `setup_ab_control_evidence_manifest.json`, and `MEGA_ANALYSIS_DIR/*.json`
-   (rank_records / xgmi / combine_wait) into `CACHE_DIR/mega_analysis/`. Skip any that do not exist and
-   note it — a partial publish is fine; the next load will treat a missing payload as a MISS.
-3. Compute the validity key EXACTLY as `PHASE=fast_test_load` defines it (`frozen_rev`, `bench_sha`,
-   `control_sha`, `guards_sha` → combined digest) and write `CACHE_DIR/fast_test_key.json` =
-   `{ "key": "…", "frozen_rev": "…", "bench_sha": "…", "control_sha": "…", "guards_sha": "…",
-   "algorithm": "geak-fast-test-key-v1",
-   "written_at": "<iso8601>" }`.
-
-Return JSON: `{ "published": bool, "key": "…", "cache_dir": "$CACHE_DIR", "files": ["…"], "note": "…" }`.
 
 ## Return JSON
 ```json

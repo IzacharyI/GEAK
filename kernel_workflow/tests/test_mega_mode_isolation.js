@@ -336,7 +336,6 @@ ok(/verify_timeout_retry/.test(src) &&
    /max_retries: 1/.test(src),
   'timeout recovery uses one isolated same-HEAD smoke retry');
 ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY/.test(src) &&
-   /benchCache = noGpuFrontMatter \? null/.test(src) &&
    /const benchFirst = noGpuFrontMatter \? structuralBench/.test(src) &&
    /STRUCTURAL_ONLY: no GPU benchmark/.test(src) &&
    /const pool = \(MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)/.test(src) &&
@@ -346,7 +345,6 @@ ok(/const MEGA_ROUTE_ONLY = String\(A\.mega_route_only/.test(src) &&
    /MEGA_STRUCTURAL_ONLY \|\| MEGA_ROUTE_ONLY\)\s*\? null : await samplePool/.test(src) &&
    /if \(MEGA_ROUTE_ONLY\) \{[\s\S]{0,500}route-only PASS/.test(src) &&
    /no candidate source or GPU was touched/.test(src) &&
-   /!noGpuFrontMatter && MEGA_FAST_TEST/.test(src) &&
    /mega_route_only: true[\s\S]{0,500}validation_status: 'route_only'/.test(src),
   'route-only mode stops after topology derivation without GPU, source, state, or cache mutation');
 ok(/requiredAccuracyCases: REQUIRED_ACCURACY_CASES/.test(src) &&
