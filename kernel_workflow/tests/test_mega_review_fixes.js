@@ -135,8 +135,8 @@ console.log('\n# Verify time is reserved before the Author is sized');
 console.log('\n# one AUTHOR_GPU_MODE decides Author GPU use');
 {
   ok(/AUTHOR_GPU_MODE: authorGpuProhibited \? 'forbidden' : 'bounded_smoke'/.test(src) &&
-     /AUTHOR_GPU_MODE=bounded_smoke: use the supplied EP8 device/.test(src) &&
-     /before AND after source edits/.test(src),
+     /AUTHOR_GPU_MODE=bounded_smoke/.test(megaRole('engineer')) &&
+     /before AND after source edits/.test(megaRole('engineer')),
     'the Author prompt grants bounded smokes before and after edits');
   ok(!/GPU authorization is revoked/.test(src),
     'no production-fix revocation rule remains in the orchestrator prompt');
@@ -149,7 +149,7 @@ console.log('\n# stalls are counted by runtime evidence');
 {
   ok(/megaStall = hasEvidence \|\| improved \|\|[\s\S]{0,120}blockerKey !== megaLastBlocker\) \? 0 : megaStall \+ 1;/.test(src),
     'progress = independent Verify, a better score, or an on-card Author result that moved the blocker');
-  ok(/MEASURE_FIRST: \$\{n\} rounds produced no new runtime evidence/.test(src) &&
+  ok(/`MEASURE_FIRST` present[\s\S]{0,120}Before any source edit, run a bounded on-card smoke/.test(megaRole('engineer')) &&
      /MEASURE_FIRST: String\(megaStall\)/.test(src),
     'at the limit the Author must measure the banked HEAD before editing');
   ok(/megaStall >= 2 \* MEGA_STALL_LIMIT[\s\S]{0,260}Mega stall stop/.test(src),
@@ -164,7 +164,8 @@ console.log('\n# lanes can be parked or rewound, never silently replaced');
      /status: 'parked'/.test(src) && /const bound = parkedNow \? raw : bindMegaDirectionToWip/.test(src),
     'an explicit park freezes the lane and skips WIP rebinding for that round only');
   ok(/\/\^\[0-9a-f\]\{7,40\}\$\/\.test\(String\(d\.rewind_head \|\| ''\)\)/.test(src) &&
-     /git tag -f parked_r\$\{currentRound\} HEAD && git reset --hard/.test(src) &&
+     /REWIND_TO: d\.rewind_head/.test(src) &&
+     /tag the current\s+HEAD `parked_r<ROUND>` and `git reset --hard` to `REWIND_TO`/.test(megaRole('engineer')) &&
      /rewind_head: planned\.rewind_head/.test(src),
     'a rewind accepts only a commit id, survives WIP binding, and keeps the old HEAD tagged');
   ok(/if \(existing && existing\.status === 'parked'\) \{[\s\S]{0,200}status: 'authoring'/.test(src),

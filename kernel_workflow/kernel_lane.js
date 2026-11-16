@@ -2492,9 +2492,6 @@ const MEGA_VERIFY_RESERVE_S = Math.max(300, Number(A.mega_verify_reserve_s || 12
 const MEGA_POST_AUTHOR_RESERVE_S = MEGA_STRUCTURAL_ONLY ? 0
   : (CHECK_EXPERT_SKILL_CONTRACT ? 600 : 0) + MEGA_VERIFY_RESERVE_S;
 const MEGA_STALL_LIMIT = Math.max(0, Number(A.mega_stall_limit != null ? A.mega_stall_limit : 3));
-const MEASURE_FIRST_TEXT = (n) => MEGA_STALL_LIMIT && n >= MEGA_STALL_LIMIT
-  ? `MEASURE_FIRST: ${n} rounds produced no new runtime evidence; before any source edit run a ` +
-    'bounded on-card smoke of the current HEAD and report its concrete result. ' : '';
 if (MEGA && MEGA_PRODUCTION &&
     MEGA_CANDIDATE_TIMEOUT_S - 150 - MEGA_POST_AUTHOR_RESERVE_S < 900) {
   throw new Error(`mega_candidate_timeout_s=${MEGA_CANDIDATE_TIMEOUT_S} cannot fit a 900s Author ` +
@@ -6091,7 +6088,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           CANDIDATE_PYTHONPATH: tree,
           CANDIDATE_IMPORT_MODULES,
           LANE_MANIFEST: laneManifest, LANE_LOCK: laneLock,
-          CANDIDATE_TIMEOUT_S: commandBudgetS,
+          CANDIDATE_TIMEOUT_S: commandBudgetS, ENGINEER_BUDGET_S: engineerBudgetS,
           PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
           SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY, DIRECTION: d,
           KERNEL_PATH: tree, OP_SPEC, TASK_DIR: KERNEL_PATH_ORIG, COMMANDMENT,
@@ -6102,7 +6099,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           GPUS_PER_JOB: authorGpuProhibited
             ? '0' : String(GPU_RESOURCE.gpusPerJob),
           AUTHOR_GPU_MODE: authorGpuProhibited ? 'forbidden' : 'bounded_smoke',
-          ...(MEASURE_FIRST_TEXT(megaStall) ? { MEASURE_FIRST: String(megaStall) } : {}),
+          ...(MEGA_STALL_LIMIT && megaStall >= MEGA_STALL_LIMIT ? { MEASURE_FIRST: String(megaStall) } : {}),
           ...(/^[0-9a-f]{7,40}$/.test(String(d.rewind_head || ''))
             ? { REWIND_TO: d.rewind_head, REWIND_REASON: String(d.rewind_reason || '') } : {}),
           AUTHORING_CONTRACT_PREFLIGHT_REQUIRED:
@@ -6131,46 +6128,7 @@ async function runMegaCandidateTurn(currentRound, remaining) {
           INSIGHTS: megaHistoryForSearch(history, megaCandidateRegistry).insights,
           PRIOR_CANDIDATE: priorForAgent, ...GMI, ...MRI,
         }) +
-      `\n\n${authorGpuProhibited
-        ? `AUTHOR_GPU_MODE=forbidden (${MEGA_STRUCTURAL_ONLY ? 'STRUCTURAL-ONLY RUN'
-          : 'AUTHORING CONTRACT PREFLIGHT IS REQUIRED'}): no rocm-smi, torchrun, benchmark, ` +
-          `correctness command or GPU runtime import. Repair required failures in category order, ` +
-          `commit a coherent checkpoint, and return claim_complete=true with ` +
-          `candidate_status=authoring; runtime_verified, gpu_executed, and score_complete remain ` +
-          `false separately. `
-        : `AUTHOR_GPU_MODE=bounded_smoke: use the supplied EP8 device for bounded construction/JIT/` +
-          `correctness/short-perf smokes of the HEAD you are editing, before AND after source edits, ` +
-          `repeatedly in this turn. Author smokes are development evidence; independent Verify owns ` +
-          `scoring. Revert diagnostic-only probes before committing. ${MEASURE_FIRST_TEXT(megaStall)}`}` +
-      (/^[0-9a-f]{7,40}$/.test(String(d.rewind_head || ''))
-        ? `REWIND_TO=${d.rewind_head}: after taking the lane lock and before other edits, run ` +
-          `\`git tag -f parked_r${currentRound} HEAD && git reset --hard ${d.rewind_head}\` in ` +
-          `${tree}; the old HEAD stays recoverable through that tag. ` : '') +
-      `Before any source edit, acquire the single-writer lane lock in your persistent shell: ` +
-      `mkdir -p "$(dirname "${laneLock}")"; exec 9>"${laneLock}"; flock -n 9, and keep fd 9 open ` +
-      `through the final commit/manifest write, then release it with exec 9>&-. Start every background ` +
-      `command or timer with 9>&- so no orphan inherits the lock. If the lock is held, return incomplete without editing. ` +
-      `Candidate-lane setup is part of this task. If ${tree}/.git does not exist, create ${tree}. ` +
-      (baseHead
-        ? `Export exact parent commit ${baseHead} from ${baseTree} with git archive into the lane. `
-        : `Copy ${baseTree} into it with a tar pipe excluding .git/build/__pycache__/.torch_ext/*.so/*.o. `) +
-      `then initialize a fresh git repository, add .rocprofv3/ to .git/info/exclude, remove any ` +
-      `tracked .rocprofv3/ from the index (profiler dumps are not candidate source), and commit ` +
-      `"candidate base ${baseCandidateId}". ` +
-      `Before any long-running command, atomically write ${laneManifest} with candidate_id/source/` +
-      `base_candidate_id/tree/attempt_id so a ` +
-      `timed-out first attempt is discoverable on resume. ` +
-      `If it exists, continue from its HEAD; never recreate it. Read ${megaRoleFiles(roleFile)}. ` +
-      `Before every candidate Python or torchrun command, export ` +
-      `PYTHONPATH="${tree}\${PYTHONPATH:+:\$PYTHONPATH}" and fail closed unless both ` +
-      `every module in ${JSON.stringify(CANDIDATE_IMPORT_MODULES)} resolves under ${tree}. ` +
-      `Commit WIP to THIS lane after every real advance. Write ${outDir}/candidate_result.json ` +
-      `atomically only after its evidence files are final. Return candidate_id/source/base, tree, head, ` +
-      `candidate_status, claim_complete, attempt_id, evidence_manifest, patch_file (cumulative from the ` +
-      `lane root), correctness, absolute_score, per_case, topology_sig, next_blocker and notes. ` +
-      `This Engineer gets ` +
-      `${engineerBudgetS}s and every GPU command is bounded by ${commandBudgetS}s. A timeout or ` +
-      `force-emit returns claim_complete:false and status authoring; it is not score 0.`,
+      '\n\nFollow "Candidate lane procedure" in the mode=mega engineer fragment.',
       { phase: 'Optimize', label: `mega:${source}:${candidateId}`, schema: MEGA_CANDIDATE_SCHEMA,
         timeout_ms: engineerBudgetS * 1000, timeout_marker: true, max_retries: 1 });
 

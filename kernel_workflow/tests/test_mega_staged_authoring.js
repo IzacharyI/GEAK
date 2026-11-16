@@ -113,7 +113,7 @@ ok(/required_changed_files_missing/.test(verifier) &&
   'structural verifier preserves exact PlanIR and does not promote reference parity advisories');
 ok(/CANDIDATE_IMPORT_MODULES/.test(wf) &&
    /CANDIDATE_PYTHONPATH/.test(wf) &&
-   /every module in \$\{JSON\.stringify\(CANDIDATE_IMPORT_MODULES\)\}/.test(wf),
+   /every module in\s+`CANDIDATE_IMPORT_MODULES` resolves under `CANDIDATE_TREE`/.test(megaRole('engineer')),
   'the caller supplies a generic candidate import-identity contract');
 ok(/IMPORT_IDENTITY_VOID/.test(engineer) &&
    /IMPORT_IDENTITY_VOID/.test(verifier) &&

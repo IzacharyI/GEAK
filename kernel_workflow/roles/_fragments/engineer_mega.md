@@ -105,7 +105,8 @@ DIRECTION wording that calls the Skill contract a GPU or preflight gate.
   `contract_failures`: preserve every failing contract check ID as its own entry
   with the tool's category/severity/messages; never collapse them into a summary
   ID or prose. `claim_complete:true` is valid for that finalized static
-  checkpoint and lets independent structural Verify populate the next round.
+  checkpoint and lets independent structural Verify populate the next round;
+  runtime_verified, gpu_executed, and score_complete remain false separately.
 - `AUTHOR_GPU_MODE=bounded_smoke` (the normal candidate-validation turn): the
   supplied device is yours for the whole turn, before AND after source edits.
   Run the earliest construction/JIT/small-correctness smoke of each
@@ -175,6 +176,34 @@ structural Verify. GPU absence is not a reason to defer source authoring: for
 interlocked device changes, implement one coherent static checkpoint and leave
 runtime claims pending. Do not stop at a partial launch shape and do not claim
 runtime correctness, activation, liveness or performance.
+
+## Candidate lane procedure (mode=mega, PHASE=optimize)
+
+1. **Lane lock.** Before any source edit, in your persistent shell:
+   `mkdir -p "$(dirname "$LANE_LOCK")"; exec 9>"$LANE_LOCK"; flock -n 9`. Keep fd 9 open through the
+   final commit and manifest write, then release it with `exec 9>&-`. Start every background command or
+   timer with `9>&-` so no orphan inherits the lock. If the lock is held, return incomplete without
+   editing.
+2. **Lane setup** (part of this task). If `CANDIDATE_TREE/.git` does not exist, create `CANDIDATE_TREE`:
+   with `BASE_HEAD` set, export exactly that commit from `BASE_TREE` with `git archive`; otherwise copy
+   `BASE_TREE` with a tar pipe excluding `.git/build/__pycache__/.torch_ext/*.so/*.o`. Then initialize a
+   fresh git repository, add `.rocprofv3/` to `.git/info/exclude`, remove any tracked `.rocprofv3/` from
+   the index (profiler dumps are not candidate source), and commit `candidate base <BASE_CANDIDATE_ID>`.
+   If the lane exists, continue from its HEAD; never recreate it.
+3. **Manifest.** Before any long-running command, atomically write `LANE_MANIFEST` with
+   candidate_id/source/base_candidate_id/tree/attempt_id, so a timed-out first attempt is discoverable on
+   resume.
+4. **Imports.** Before every candidate Python or torchrun command, export
+   `PYTHONPATH="$CANDIDATE_TREE${PYTHONPATH:+:$PYTHONPATH}"` and fail closed unless every module in
+   `CANDIDATE_IMPORT_MODULES` resolves under `CANDIDATE_TREE`.
+5. **Commit** WIP to this lane after every real advance. Write `OUTPUT_DIR/candidate_result.json`
+   atomically only after its evidence files are final.
+6. **Return** candidate_id/source/base, tree, head, candidate_status, claim_complete, attempt_id,
+   evidence_manifest, patch_file (cumulative from the lane root), correctness, absolute_score, per_case,
+   topology_sig, next_blocker and notes.
+7. **Time.** You get `ENGINEER_BUDGET_S` seconds and every GPU command is bounded by
+   `CANDIDATE_TIMEOUT_S`. A timeout or force-emit returns claim_complete:false and status authoring; it is
+   not score 0.
 
 ## Load only the knowledge for your specialty (keeps context focused)
 - algorithm  → `hip_optimization.md` (P0/P1) or `triton_optimization.md`, + `geomean_levers.md`

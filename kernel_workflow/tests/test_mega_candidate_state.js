@@ -83,7 +83,7 @@ ok(!structuralIdentity(
 console.log('\n# each lane owns persistent source state');
 ok(/STATE_DIR}\/candidates\/\$\{candidateId\}\/tree/.test(src),
   'candidate workspaces live under stable per-id state paths');
-ok(/If .*\/\.git does not exist[\s\S]*If it exists, continue from its HEAD/.test(src),
+ok(/If `CANDIDATE_TREE\/\.git` does not exist[\s\S]*If the lane exists, continue from its HEAD; never recreate it/.test(megaRole('engineer')),
   'an existing lane is continued and never recreated');
 ok(/candidate_registry: <CANDIDATE_REGISTRY>/.test(lead) &&
    /never collapse them into `\$STATE_DIR\/best`/.test(lead),

@@ -18,10 +18,8 @@ const schema = src.match(
   /const MEGA_CANDIDATE_SCHEMA = obj\(\{([\s\S]*?)\n\}, \['candidate_id'/,
 );
 if (!schema) throw new Error('missing Mega candidate schema');
-const authorPrompt = src.slice(
-  src.indexOf('AUTHORING CONTRACT PREFLIGHT IS REQUIRED'),
-  src.indexOf('Before any source edit', src.indexOf('AUTHORING CONTRACT PREFLIGHT IS REQUIRED')),
-);
+// The Author's GPU-mode and checkpoint rules live in the engineer's mode=mega fragment.
+const authorPrompt = engineer;
 
 console.log('\n# static checkpoint completion is separate from hardware proof');
 ok(/claim_complete: \{[\s\S]*GPU-free static checkpoint/.test(schema[0]),
@@ -32,7 +30,7 @@ ok(/runtime_verified: \{ type: 'boolean' \}/.test(schema[0]) &&
    /gpu_executed: \{ type: 'boolean' \}/.test(schema[0]) &&
    /score_complete: \{ type: 'boolean' \}/.test(schema[0]),
   'runtime, GPU, and scoring gates remain independent fields');
-ok(/claim_complete=true[\s\S]*candidate_status=authoring/.test(authorPrompt) &&
+ok(/candidate_status:"authoring"[\s\S]*claim_complete:true/.test(authorPrompt) &&
    /runtime_verified, gpu_executed, and score_complete remain[\s\S]*false separately/.test(authorPrompt),
   'the dispatched Author prompt states the exact static checkpoint result');
 ok(/claim_complete` describes this turn's[\s\S]*set it true with[\s\S]*candidate_status:"authoring"/.test(engineer),
