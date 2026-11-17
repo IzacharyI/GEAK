@@ -236,6 +236,11 @@ ok(/allow_partial_fusion=false/.test(src) &&
    /allowPartialFusion: ALLOW_PARTIAL_FUSION/.test(src),
   'pinned exact-target policy also reaches score verification and promotion');
 
+ok(/const wip = raws\.length > 1 \? megaWipContinuationDirection\(currentRound\) : null;/.test(src) &&
+   /bindAt = parks \? -1 : named >= 0 \? named : raws\.length - 1;/.test(src) &&
+   /normalizePlannedMegaDirection\(currentRound, planned, i !== bindAt\)/.test(src),
+  'with several directions the WIP lane takes the slot naming it, else the last, so the first choice runs');
+
 console.log(failures ? `\nFAILED: ${failures}` :
   '\nPASS: Mega topology is an operator-neutral typed plan contract.');
 process.exit(failures ? 1 : 0);

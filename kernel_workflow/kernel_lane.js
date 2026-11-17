@@ -5201,9 +5201,19 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
     roadmap_rung: 'off_ladder', target_topology: best.topology,
     prompt: best.next_blocker || 'Continue the first unresolved measured blocker.' }]
     : plan.directions.slice(0, Math.max(1, Math.min(MEGA_DIRECTIONS, remaining)));
+  // With several directions the WIP lane takes the slot that already names it, else the last one, so the
+  // Planner's first choice still runs; a direction that parks the WIP leaves every slot unbound.
+  let bindAt = 0;
+  const wip = raws.length > 1 ? megaWipContinuationDirection(currentRound) : null;
+  if (wip) {
+    const named = raws.findIndex((p) => String(p && p.candidate_id || '') === wip.candidate_id);
+    const parks = raws.some((p) => p && String(p.park_candidate_id || '') === wip.candidate_id &&
+      String(p.park_reason || '').trim());
+    bindAt = parks ? -1 : named >= 0 ? named : raws.length - 1;
+  }
   const out = [];
   for (const [i, planned] of raws.entries()) {
-    const d = normalizePlannedMegaDirection(currentRound, planned, i > 0);
+    const d = normalizePlannedMegaDirection(currentRound, planned, i !== bindAt);
     if (!d) continue;
     if (out.some((o) => o.candidate_id === d.candidate_id)) {
       log(`Mega round ${currentRound}: dropped a second direction for lane ${d.candidate_id}; ` +
@@ -5217,8 +5227,7 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
 
 // Normalizes one planned direction into a lane assignment (fresh-state leak check, parking, WIP binding,
 // candidate id, base and target topology). Returns null when no usable direction remains.
-// `extra` marks a round's second and later directions: they open or resume another lane, so they are not
-// rebound to the active WIP lane.
+// `extra` marks a direction that is not rebound to the active WIP lane (see planMegaCandidateTurn).
 function normalizePlannedMegaDirection(currentRound, planned, extra) {
   let raw = planned;
   const freshLane = !MEGA_RESUME_STATE && megaCandidateRegistry.length === 0;
