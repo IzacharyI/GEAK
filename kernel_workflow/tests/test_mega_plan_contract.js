@@ -245,12 +245,18 @@ ok(/const wip = raws\.length > 1 \? megaWipContinuationDirection\(currentRound\)
   // One Optimize loop: mega runs the lane round's plan -> engineer -> verify steps, not a loop of its own.
   const lane = require('./mega_source').full();
   ok(!/function megaRound\(/.test(lane) &&
-     /const megaPlan = MEGA \? await megaPlanStep\(round, remaining\) : null;/.test(lane) &&
-     /let plan = megaPlan \|\| await agentT\(/.test(lane) &&
+     /const megaPre = MEGA \? await megaBeforePlan\(round\) : null;/.test(lane) &&
+     /let plan = await agentT\(\s*MEGA \? megaPlanPrompt\(round, remaining, megaPre\.pool\)/.test(lane) &&
+     /plan = megaPlanStep\(round, remaining, plan\);/.test(lane) &&
      /if \(MEGA\) return megaAuthorStep\(round, d\);/.test(lane) &&
      /if \(MEGA\) return prev\.verifyStep \? prev\.verifyStep\(\) : prev;/.test(lane) &&
-     /if \(\(await megaAfterTurns\(round, results\)\)\.stop\) break;/.test(lane),
-    'mode=mega runs inside the lane round: plan, engineer and verify steps, then select and record');
+     /const megaTurns = MEGA \? megaCloseRound\(results\) : null;/.test(lane) &&
+     /const verified = MEGA \? \[\] : clean\.filter\(/.test(lane) &&
+     /const winner = MEGA \? \(megaSelected && megaWinnerOf\(megaSelected\)\) : candidates\[0\] \|\| null;/.test(lane) &&
+     /if \(MEGA && winner && \(improved \|\| !finalWinner\)\) \{[\s\S]{0,200}\} else if \(!MEGA && improved\) \{/.test(lane) &&
+     /const mem = MEGA \? await persistMegaCandidateState\(round\) : await agentT\(/.test(lane) &&
+     /if \(MEGA && megaStopRule\(round, megaTurns\.done, megaSelected\)\) break;/.test(lane),
+    'mode=mega runs every step of the lane round: plan, engineer, verify, select, record, memory, stop');
 }
 console.log(failures ? `\nFAILED: ${failures}` :
   '\nPASS: Mega topology is an operator-neutral typed plan contract.');

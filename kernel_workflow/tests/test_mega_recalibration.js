@@ -19,7 +19,7 @@ const ok = (value, message) => {
 };
 
 const fnBody = (name) => {
-  const start = src.indexOf(`async function ${name}(`);
+  const start = src.search(new RegExp(`(?:async )?function ${name}\\(`));
   if (start < 0) throw new Error(`missing ${name}`);
   return src.slice(start, src.indexOf('\n}\n', start));
 };
@@ -51,8 +51,8 @@ ok(!gate({ ...base, null_pairs_pct: [-1.38, 1.53, 0.81, -2.23, -5.81, 0.17, 0.39
 ok(gate({ ...base, null_pairs_pct: [-1.38, 1.53, 0.81, -2.23, -1.1, 0.17, 0.39, -0.39] }, cfg),
   'the same control passes on a quiet null set');
 
-const plan = fnBody('planMegaCandidateTurn');
-ok(/timeout_ms: 900000/.test(plan), 'planner guard is 15 min (late plans ran 6-7 min)');
+const plan = fnBody('megaPlannedDirections');
+ok(/timeout_ms: 900000/.test(fnBody('megaPlanOpts')), 'planner guard is 15 min (late plans ran 6-7 min)');
 ok(/noPlan && !wipDir && !plan \? selectMegaSearchParent/.test(plan),
   'a null (hung) plan continues the best scored lane; a deliberate stop does not');
 

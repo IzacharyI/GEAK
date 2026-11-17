@@ -37,7 +37,7 @@ ok(/A\.expert_skill_id/.test(src) &&
   'Expert Skill configuration is supplied by the caller, not a packaged task');
 
 console.log('\n# valid output triggers early convergence');
-ok(/MEGA_STOP_ON_DELIVERABLE && turn\.selected/.test(src) &&
+ok(/MEGA_STOP_ON_DELIVERABLE && selected/.test(src) &&
    /expertTargetReached/.test(src) &&
    /EXPERT_SKILL_RECORDED_LOW/.test(src) &&
    /searchAttempts >= MEGA_MIN_SEARCH_ATTEMPTS/.test(src),

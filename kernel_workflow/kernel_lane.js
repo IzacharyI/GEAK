@@ -5140,10 +5140,10 @@ function bindMegaDirectionToWip(currentRound, direction) {
   };
 }
 
-async function planMegaCandidateTurn(currentRound, remaining, pool) {
+// mode=mega inputs of the lane's tech_lead plan_round call.
+function megaPlanPrompt(currentRound, remaining, pool) {
   const searchHistory = megaHistoryForSearch(history, megaCandidateRegistry);
-  const plan = await agentT(
-    roleAgent('tech_lead', 'plan_round',
+  return roleAgent('tech_lead', 'plan_round',
       'Choose one whole-kernel candidate direction. Expert knowledge guides the common candidate lifecycle; it never creates a reserved lane.', {
         ...(pool ? { GPU_POOL: pool, GPU_MIN_FREE_GIB } : {}),
         EVAL_DIR, ROUND: currentRound, BUDGET_REMAINING: remaining,
@@ -5186,10 +5186,17 @@ async function planMegaCandidateTurn(currentRound, remaining, pool) {
         REQUIRE_OVERLAP, REQUIRE_ATTRIBUTION, REQUIRE_ARTIFACT_DISTINCT,
         REQUIRED_REPLAYS, REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD,
         KERNEL_KNOWLEDGE_DIR: '', KK_OPERATOR: '', KK_LANGUAGE: '', KK_REFS: [], ...KB_INPUTS,
-      }),
-    { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
-      // Late-round plans read a large registry and ran 6-7 min; a 5 min guard nulled them.
-      ...(MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) });
+      });
+}
+
+function megaPlanOpts(currentRound) {
+  return { phase: 'Optimize', label: `mega:plan r${currentRound}`, schema: MEGA_PLAN_SCHEMA,
+    // Late-round plans read a large registry and ran 6-7 min; a 5 min guard nulled them.
+    ...(MEGA_PRODUCTION ? { timeout_ms: 900000, max_retries: 1 } : {}) };
+}
+
+// The planned directions, each bound to a candidate lane. A plan with no direction continues the WIP lane.
+function megaPlannedDirections(currentRound, remaining, plan) {
   const noPlan = !plan || plan.stop || !Array.isArray(plan.directions) || !plan.directions.length;
   const wipDir = noPlan ? megaWipContinuationDirection(currentRound) : null;
   // A planner that returned nothing never decided to stop: optimize the best scored lane.
@@ -5336,15 +5343,9 @@ function normalizePlannedMegaDirection(currentRound, planned, extra) {
   };
 }
 
-// Plans one round: up to MEGA_DIRECTIONS directions, each on its own candidate lane.
-async function megaPlanRound(currentRound, remaining) {
-  if (!megaMeasurementCalibration.ready &&
-      (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
-    await recoverMegaCalibration(`before-round-${currentRound}`);
-  }
-  const pool = MEGA_STRUCTURAL_ONLY
-    ? null : await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0);
-  const planned = await planMegaCandidateTurn(currentRound, remaining, pool);
+// The direction contract of one round: up to MEGA_DIRECTIONS directions, each on its own candidate lane.
+function megaPlanRound(currentRound, remaining, plan) {
+  const planned = megaPlannedDirections(currentRound, remaining, plan);
   if (!planned.length) return { stop: true, reason: 'no mega candidate direction was planned' };
   const directions = [];
   let refusal = '';
@@ -5967,25 +5968,31 @@ async function megaAuthorStep(currentRound, d) {
   return { d, clock, verifyStep };
 }
 
-// Round-level bookkeeping after every lane of the round has returned.
-async function megaAfterRound(currentRound, turns) {
-  // A score may be recorded before calibration completes, but it cannot update the incumbent or be
-  // published until a synthetic control proves the harness sees an effect.
-  const selection = megaMeasurementCalibration.ready
-    ? selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT)
-    : { selected: null, eligible: [], tie_kept_skill: false };
-  const selected = selection.selected;
-  const improved = !!(selected && selected.absolute_score > cumulative * (1 + MIN_IMPROVE));
-  if (selected && (improved || !finalWinner)) {
-    cumulative = Math.max(cumulative, selected.absolute_score);
-    bestPerCase = selected.per_case.length ? selected.per_case : bestPerCase;
-    finalWinner = {
-      id: selected.id, source: selected.source, geomean: selected.absolute_score,
-      per_case: selected.per_case, patch: selected.patch, tree: selected.tree,
-      topology_sig: selected.topology_sig, provenance: selected.provenance,
-      activation: selected.activation,
-    };
-  }
+// mode=mega round bookkeeping, called from the lane round after Verify.
+// The round's modeled clock is its longest lane; a lane that stopped (timeout) ends the run.
+function megaCloseRound(turns) {
+  MEGA_CLOCK_MS = Math.max(megaRoundStartMs, ...turns.filter((t) => t && t.clock).map((t) => t.clock.ms));
+  return { done: turns.filter((t) => t && !t.stop), stopped: turns.find((t) => t && t.stop) || null };
+}
+
+// Candidates are never merged: the winner is the best eligible candidate in the registry. A score may be
+// recorded before calibration completes, but it cannot update the incumbent until a synthetic control
+// proves the harness sees an effect.
+function megaSelectCandidate() {
+  return megaMeasurementCalibration.ready
+    ? selectMegaCandidate(megaCandidateRegistry, MEGA_TIE_NOISE_PCT).selected : null;
+}
+
+function megaWinnerOf(selected) {
+  return {
+    id: selected.id, source: selected.source, geomean: selected.absolute_score,
+    per_case: selected.per_case, patch: selected.patch, tree: selected.tree,
+    topology_sig: selected.topology_sig, provenance: selected.provenance,
+    activation: selected.activation,
+  };
+}
+
+function megaRoundCounters(turns, improved) {
   const hasEvidence = turns.some((t) => t.hasEvidence);
   noEvidence = hasEvidence ? 0 : noEvidence + 1;
   noImprove = improved ? 0 : noImprove + 1;
@@ -5994,7 +6001,10 @@ async function megaAfterRound(currentRound, turns) {
   const blockerMoved = turns.some((t) => t.gpuExecuted && t.blockerKey !== megaLastBlocker);
   megaStall = hasEvidence || improved || blockerMoved ? 0 : megaStall + 1;
   megaLastBlocker = turns.length ? turns[turns.length - 1].blockerKey : megaLastBlocker;
-  history.rounds.push({
+}
+
+function megaRoundEntry(currentRound, turns, selected, improved) {
+  return {
     round: currentRound,
     directions: turns.map(({ direction: d, record }) => ({ id: d.id, title: d.title,
       specialty: d.specialty, candidate_id: record.id, candidate_source: record.source })),
@@ -6003,16 +6013,7 @@ async function megaAfterRound(currentRound, turns) {
       verified: record.absolute_score, candidate_status: record.status })),
     winner: selected ? { source: selected.id, geomean: selected.absolute_score } : null,
     improved, cumulative,
-  });
-  const stateSaved = await persistMegaCandidateState(currentRound);
-  if (!stateSaved) {
-    return {
-      stop: true,
-      reason: `candidate state for round ${currentRound} could not be persisted; stopped before ` +
-        `dispatching another lane`,
-    };
-  }
-  return { stop: false, improved, selected };
+  };
 }
 
 let megaSelection = null;
@@ -6740,16 +6741,27 @@ async function megaLoopInit() {
   }
 }
 
-// mode=mega plan step of the Optimize loop: the modeled-clock deadline, then the plan and its direction
-// contract. Returns {directions}, {skip} for a refused plan (re-plan next round) or {stop}.
-async function megaPlanStep(currentRound, remaining) {
+// mode=mega before the lane's plan call: the modeled-clock deadline, calibration recovery and the GPU pool.
+// Returns {stop} or {pool}.
+async function megaBeforePlan(currentRound) {
   const elapsedS = (megaNowMs() - WORKFLOW_STARTED_MS) / 1000;
   if (elapsedS >= MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) {
     stopReason = `${MEGA_PROFILE} dispatch deadline reached after ${Math.round(elapsedS / 60)} minutes; ` +
       `preserving ${Math.round(MEGA_FINAL_RESERVE_S / 60)} minutes for finalist validation.`;
     return { stop: true };
   }
-  const plan = await megaPlanRound(currentRound, remaining);
+  if (!megaMeasurementCalibration.ready &&
+      (currentRound === 2 || (currentRound > 2 && currentRound % 3 === 1))) {
+    await recoverMegaCalibration(`before-round-${currentRound}`);
+  }
+  return { pool: MEGA_STRUCTURAL_ONLY
+    ? null : await samplePool(currentRound, MEGA_PRODUCTION ? 120000 : 0) };
+}
+
+// mode=mega after the lane's plan call: the direction contract. Returns {directions}, {skip} for a refused
+// plan (re-plan next round) or {stop}.
+function megaPlanStep(currentRound, remaining, rawPlan) {
+  const plan = megaPlanRound(currentRound, remaining, rawPlan);
   if (plan.refused && !plan.stop) {
     const count = megaRefusal ? megaRefusal.count + 1 : 1;
     megaRefusal = { reason: plan.reason, count };
@@ -6772,33 +6784,19 @@ async function megaPlanStep(currentRound, remaining) {
   return { directions: plan.directions };
 }
 
-// mode=mega steps after Verify: select instead of merge, record the winner instead of applying it (the
-// candidate tree is the artifact), persist the candidate state, then the mega stop rules.
-async function megaAfterTurns(currentRound, turns) {
-  MEGA_CLOCK_MS = Math.max(megaRoundStartMs, ...turns.filter((t) => t && t.clock).map((t) => t.clock.ms));
-  const done = turns.filter((t) => t && !t.stop);
-  const stopped = turns.find((t) => !t || t.stop);
-  if (stopped) {
-    if (done.length) await megaAfterRound(currentRound, done);
-    stopReason = stopped ? stopped.reason : 'a candidate lane returned nothing';
-    return { stop: true };
-  }
-  const turn = await megaAfterRound(currentRound, done);
-  if (turn.stop) {
-    stopReason = turn.reason;
-    return { stop: true };
-  }
+// mode=mega stop rules, checked at the end of the lane round.
+function megaStopRule(currentRound, done, selected) {
   for (const t of done) {
     log(`Mega round ${round}: candidate=${t.record.id}[${t.record.source}:${t.record.status}], ` +
       `score=${Number.isFinite(t.record.absolute_score) ? t.record.absolute_score.toFixed(4) + 'x' : 'pending'}, ` +
-      `selected=${turn.selected ? turn.selected.id : 'none'}, calibration=` +
+      `selected=${selected ? selected.id : 'none'}, calibration=` +
       `${megaMeasurementCalibration.ready ? 'ready' : 'pending'}, budget=${dispatched}/${BUDGET}.`);
   }
   const structuralDone = done.find((t) => t.record.structural_verified);
   if (MEGA_STRUCTURAL_ONLY && structuralDone) {
     stopReason = `structural-only acceptance reached by ${structuralDone.record.id}: source checkpoint and ` +
       `MegaPlanIR consistency passed; hardware/accuracy/liveness/performance remain unverified.`;
-    return { stop: true };
+    return true;
   }
   const searchAttempts = megaCandidateRegistry
     .filter((c) => c.source === 'search' || c.source === 'integrated')
@@ -6811,35 +6809,35 @@ async function megaAfterTurns(currentRound, turns) {
     Number.isFinite(EXPERT_SKILL_RECORDED_LOW) &&
     Number.isFinite(expertTargetLaunches);
   const expertTargetReached = !expertTargetConfigured || (
-    turn.selected &&
-    Number(turn.selected.absolute_score) >= Number(EXPERT_SKILL_RECORDED_LOW) &&
-    Number(turn.selected.launches) === expertTargetLaunches
+    selected &&
+    Number(selected.absolute_score) >= Number(EXPERT_SKILL_RECORDED_LOW) &&
+    Number(selected.launches) === expertTargetLaunches
   );
-  if (MEGA_STOP_ON_DELIVERABLE && turn.selected &&
-      Number(turn.selected.absolute_score) > 1.0 &&
+  if (MEGA_STOP_ON_DELIVERABLE && selected &&
+      Number(selected.absolute_score) > 1.0 &&
       expertTargetReached &&
       searchAttempts >= MEGA_MIN_SEARCH_ATTEMPTS) {
-    stopReason = `production early-stop after ${round} round(s): candidate ${turn.selected.id} ` +
-      `has calibrated ${Number(turn.selected.absolute_score).toFixed(4)}x speedup over frozen ` +
+    stopReason = `production early-stop after ${round} round(s): candidate ${selected.id} ` +
+      `has calibrated ${Number(selected.absolute_score).toFixed(4)}x speedup over frozen ` +
       `baseline${expertTargetConfigured ? `, reached Expert Skill target ` +
         `${Number(EXPERT_SKILL_RECORDED_LOW).toFixed(4)}x at ${expertTargetLaunches} launches` : ''}, ` +
       `and ${searchAttempts} search attempt(s) have run; reserve the remaining ` +
       `${BUDGET - dispatched} direction(s) for finalist validation instead of exhaustive search.`;
-    return { stop: true };
+    return true;
   }
   if (REQUIRE_HW_ACTIVATION && noHardware >= MAX_NO_HARDWARE) {
     stopReason = `${noHardware} consecutive portfolio attempts did not execute the candidate path ` +
       `on hardware; stopping before another unmeasured direction. Lane WIP remains resumable.`;
     log(`Mega hardware stop: ${stopReason}`);
-    return { stop: true };
+    return true;
   }
   if (MEGA_STALL_LIMIT && megaStall >= 2 * MEGA_STALL_LIMIT) {
     stopReason = `${megaStall} consecutive rounds produced no new runtime evidence (independent ` +
       'Verify, better score, or a changed on-card blocker); lane WIP remains resumable.';
     log(`Mega stall stop: ${stopReason}`);
-    return { stop: true };
+    return true;
   }
-  return {};
+  return false;
 }
 
 async function megaAfterLoop() {
@@ -7848,10 +7846,9 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   round++;
   const remaining = BUDGET - dispatched;
   phase('Optimize');
-  // mode=mega: the modeled-clock deadline and the mega plan with its direction contract.
-  const megaPlan = MEGA ? await megaPlanStep(round, remaining) : null;
-  if (megaPlan && megaPlan.stop) break;
-  if (megaPlan && megaPlan.skip) continue;
+  // mode=mega: the modeled-clock deadline, calibration recovery and the GPU pool come first.
+  const megaPre = MEGA ? await megaBeforePlan(round) : null;
+  if (megaPre && megaPre.stop) break;
 
   // --- (a) Plan the round (TechLead) ------------------------------------
   const planInputs = (forbidStop) => ({
@@ -7893,10 +7890,18 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   // Eikos shadow: freeze the state the planning attempt sees, before that attempt.
   let eikosSnap = EIKOS_SHADOW_ON ? eikosSnapshot(round, left, 'pre_plan_clock') : null;
   const forcedBeforeRound = forcedReplans;
-  let plan = megaPlan || await agentT(
-    roleAgent('tech_lead', 'plan_round', 'Decide this round\'s orthogonal directions (or stop).',
-      planInputs(false)) + evoPlannerRole,
-    { phase: 'Optimize', label: `tech_lead:plan r${round}`, schema: PLAN_SCHEMA });
+  let plan = await agentT(
+    MEGA ? megaPlanPrompt(round, remaining, megaPre.pool)
+      : roleAgent('tech_lead', 'plan_round', 'Decide this round\'s orthogonal directions (or stop).',
+        planInputs(false)) + evoPlannerRole,
+    MEGA ? megaPlanOpts(round)
+      : { phase: 'Optimize', label: `tech_lead:plan r${round}`, schema: PLAN_SCHEMA });
+  // mode=mega: bind the directions to candidate lanes and refuse those that break the topology contract.
+  if (MEGA) {
+    plan = megaPlanStep(round, remaining, plan);
+    if (plan.stop) break;
+    if (plan.skip) continue;
+  }
   const eikosFirstChoice = EIKOS_SHADOW_ON ? eikosRawChoice(plan) : null;
 
   // NO EARLY STOP: keep refusing while the window is materially unspent.
@@ -8090,12 +8095,15 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   );
 
   const clean = results.filter(Boolean);
-  if (MEGA) {
-    if ((await megaAfterTurns(round, results)).stop) break;
-    continue;
+  // mode=mega: the round's modeled clock; a lane that stopped (timeout) ends the run after the bookkeeping.
+  const megaTurns = MEGA ? megaCloseRound(results) : null;
+  if (megaTurns && megaTurns.stopped && !megaTurns.done.length) {
+    stopReason = megaTurns.stopped.reason;
+    break;
   }
   if (EVO) await EVO.recordBatch(clean);
-  const verified = clean.filter(r => r.ver && says(r.ver.status, 'verified') &&
+  // mode=mega selects from its candidate registry below; whole-kernel candidates are never merged.
+  const verified = MEGA ? [] : clean.filter(r => r.ver && says(r.ver.status, 'verified') &&
     says(r.ver.correctness, 'pass') && primSpeedup(r.ver) > CANDIDATE_FLOOR);
   // Routing: a direction that did not produce a verified, correct, above-floor patch is a failed cycle
   // for its lane. Honest below-floor counts too — the task was the speedup, not a clean return.
@@ -8168,7 +8176,8 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   }
 
   candidates.sort((a, b) => b.geomean - a.geomean);
-  const winner = candidates[0] || null;
+  const megaSelected = MEGA ? megaSelectCandidate() : null;
+  const winner = MEGA ? (megaSelected && megaWinnerOf(megaSelected)) : candidates[0] || null;
   const improved = !!(winner && winner.geomean > cumulative * (1 + MIN_IMPROVE));
   // Separate question from `improved`: is the SEARCH advancing, not did it beat the incumbent.
   const madeProgress = !!(winner && bestSeen > 0 && winner.geomean > bestSeen * (1 + PROGRESS_DELTA));
@@ -8176,7 +8185,12 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   let installed = false;
 
   // --- (e) Commit the winner into the canonical workspace ---------------
-  if (improved) {
+  // mode=mega: the candidate tree is the artifact, so the winner is recorded and nothing is applied.
+  if (MEGA && winner && (improved || !finalWinner)) {
+    cumulative = Math.max(cumulative, winner.geomean);
+    bestPerCase = winner.per_case.length ? winner.per_case : bestPerCase;
+    finalWinner = winner;
+  } else if (!MEGA && improved) {
     // eikos v2 E1 (R4 round-4 / Astra re-review #4): ABORT-AND-QUARANTINE replaces the round-3
     // restore-and-continue recovery, so there is NO pre-attempt snapshot/capture op here.
     const commitRoute = {};   // eikos v2 E1 (bug 1): carries the host dispatch id so the commit's outcome binds to P1
@@ -8414,7 +8428,8 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
   // eikos v2 E1 (R3): reset the stagnation stop ONLY on genuine new search progress (a candidate better
   // than any seen before) or a REAL install (the winner actually committed into the canonical
   // workspace).
-  if (madeProgress || installed) { noImprove = 0; } else { noImprove++; }
+  if (MEGA) megaRoundCounters(megaTurns.done, improved);
+  else if (madeProgress || installed) { noImprove = 0; } else { noImprove++; }
   if (EIKOS_SHADOW_ON) {
     // Measured facts only.
     const o = { verified_candidates: verified.length, winner_speedup: winner ? winner.geomean : null,
@@ -8425,7 +8440,9 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
   }
 
   // --- update cross-round memory (insight blackboard + hypothesis ledger)
-  const mem = await agentT(
+  // mode=mega: the round's history entry and the candidate registry are persisted to STATE.
+  if (MEGA) history.rounds.push(megaRoundEntry(round, megaTurns.done, megaSelected, improved));
+  const mem = MEGA ? await persistMegaCandidateState(round) : await agentT(
     roleAgent('tech_lead', 'update_memory', 'Distill durable insights + update the hypothesis ledger.', {
       EVAL_DIR, ROUND: round, SKILL_DIR: WORKFLOW_DIR,
       ROUND_RESULTS: clean.map(r => ({ id: r.d.id, title: r.d.title, specialty: r.d.specialty,
@@ -8439,7 +8456,16 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
       ...(SHARED_KB ? { SHARED_KB, TARGET_LANGUAGE } : {}),
     }),
     { phase: 'Optimize', label: `tech_lead:memory r${round}`, schema: MEMORY_SCHEMA });
-  if (mem) {
+  if (MEGA && megaTurns.stopped) {
+    stopReason = megaTurns.stopped.reason;
+    break;
+  }
+  if (MEGA && !mem) {
+    stopReason = `candidate state for round ${round} could not be persisted; stopped before ` +
+      `dispatching another lane`;
+    break;
+  }
+  if (!MEGA && mem) {
     if (mem.insights) history.insights = mem.insights;
     if (mem.ledger) history.ledger = history.ledger.concat(mem.ledger);
     if (mem.bottleneck_now) history.bottleneck_now = mem.bottleneck_now;
@@ -8479,7 +8505,7 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
       });
     }
   }
-  history.rounds.push({
+  if (!MEGA) history.rounds.push({
     round,
     directions: directions.map(d => ({ id: d.id, title: d.title, specialty: d.specialty,
       learned_refs: d.learned_refs || [] })),
@@ -8490,6 +8516,10 @@ re-check is not required.) Return JSON {committed, current_best_diff, note}.`;
     improved, cumulative,
   });
   log(`Round ${round} done. winner=${winner ? winner.source + ' ' + winner.geomean.toFixed(2) + 'x' : 'none'}, cumulative=${cumulative.toFixed(2)}x, noImprove=${noImprove}`);
+
+  if (MEGA && megaStopRule(round, megaTurns.done, megaSelected)) break;
+  // mode=mega keeps every round's artifacts: they are its candidates' Verify evidence.
+  if (MEGA) continue;
 
   // Issue #429: reclaim superseded heavy copies after each round, then CONTINUE optimizing.
   const reclaimCmd =

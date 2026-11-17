@@ -76,11 +76,11 @@ ok(!/if \(USE_EXPERT_SKILLS && \(!MEGA_SEARCH_ENABLED/.test(src) &&
    !/megaSkillLaneDue\(megaCandidateRegistry, currentRound/.test(src),
   'candidate dispatch never branches into a reproduction schedule');
 const leakFn = src.match(
-  /function freshMegaDirectionLeak\(direction\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+  /function freshMegaDirectionLeak\(direction\) \{[\s\S]*?\n\}\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt/,
 );
 if (!leakFn) throw new Error('cannot lift freshMegaDirectionLeak');
 const freshMegaDirectionLeak = new Function(
-  `${leakFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+  `${leakFn[0].replace(/\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt$/, '')}
    return freshMegaDirectionLeak;`,
 )();
 ok(freshMegaDirectionLeak({
@@ -110,11 +110,11 @@ ok(freshMegaDirectionLeak({
 }),
   'a continuation introduced by a comma after a negation is still detected');
 const authorLeakFn = src.match(
-  /function freshMegaAuthorLeak\(result\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+  /function freshMegaAuthorLeak\(result\) \{[\s\S]*?\n\}\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt/,
 );
 if (!authorLeakFn) throw new Error('cannot lift freshMegaAuthorLeak');
 const freshMegaAuthorLeak = new Function(
-  `${authorLeakFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+  `${authorLeakFn[0].replace(/\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt$/, '')}
    return freshMegaAuthorLeak;`,
 )();
 ok(freshMegaAuthorLeak({
@@ -167,7 +167,7 @@ ok(!validMegaSearchDirection({
   title: 'diagnostic-only instrumentation',
 }), 'an explicitly diagnostic-only direction remains ineligible');
 const continuationFn = src.match(
-  /function megaWipContinuationDirection\(currentRound\) \{[\s\S]*?\n\}\n\nfunction bindMegaDirectionToWip\(currentRound, direction\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+  /function megaWipContinuationDirection\(currentRound\) \{[\s\S]*?\n\}\n\nfunction bindMegaDirectionToWip\(currentRound, direction\) \{[\s\S]*?\n\}\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt/,
 );
 if (!continuationFn) throw new Error('cannot lift Mega WIP continuation helpers');
 const { makeWipContinuation, bindWipDirection } = new Function(`
@@ -191,7 +191,7 @@ const { makeWipContinuation, bindWipDirection } = new Function(`
   const analysis = { mega_plan_ir: { target: { launch_count: 2 } } };
   const MEGA_DEFAULT_SPECIALTY = 'distributed';
   const topologyLaunchCount = (topology) => Number(topology.launch_count);
-  ${continuationFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+  ${continuationFn[0].replace(/\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt$/, '')}
   return {
     makeWipContinuation: megaWipContinuationDirection,
     bindWipDirection: bindMegaDirectionToWip,
@@ -311,11 +311,11 @@ ok(/const MEGA_STRUCTURAL_ONLY = String\(A\.mega_structural_only/.test(src) &&
    /structural-only acceptance reached/.test(src),
   'structural-only mode forbids runtime Verify and stops on a complete source contract');
 const timeoutSafeFn = src.match(
-  /function safeVerifyTimeoutRecovery\(result\) \{[\s\S]*?\n\}\n\nasync function planMegaCandidateTurn/,
+  /function safeVerifyTimeoutRecovery\(result\) \{[\s\S]*?\n\}\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt/,
 );
 if (!timeoutSafeFn) throw new Error('cannot lift safeVerifyTimeoutRecovery');
 const safeVerifyTimeoutRecovery = new Function(
-  `${timeoutSafeFn[0].replace(/\n\nasync function planMegaCandidateTurn$/, '')}
+  `${timeoutSafeFn[0].replace(/\n\n\/\/ mode=mega inputs of the lane's tech_lead plan_round call\.\nfunction megaPlanPrompt$/, '')}
    return safeVerifyTimeoutRecovery;`,
 )();
 ok(/check twice at least 10s apart/.test(megaRole('verify_engineer')) &&
@@ -337,7 +337,7 @@ ok(/verify_timeout_retry/.test(src) &&
 ok(/const noGpuFrontMatter = MEGA_STRUCTURAL_ONLY;/.test(src) &&
    /const benchFirst = noGpuFrontMatter \? structuralBench/.test(src) &&
    /STRUCTURAL_ONLY: no GPU benchmark/.test(src) &&
-   /const pool = MEGA_STRUCTURAL_ONLY/.test(src) &&
+   /return \{ pool: MEGA_STRUCTURAL_ONLY\s*\? null :/.test(src) &&
    /\? \(MEGA_STRUCTURAL_ONLY\s*\? 'STRUCTURAL_ONLY_NO_GPU'/.test(src),
   'structural-only mode cannot sample, lease, or benchmark a GPU');
 ok(/requiredAccuracyCases: REQUIRED_ACCURACY_CASES/.test(src) &&

@@ -94,7 +94,7 @@ ok(/Mega candidate-registry exception/.test(director) &&
   'Director restores candidate state without requiring a legacy global best');
 ok(/MEGA STATE PERSIST FAILED/.test(src) &&
    /return false;/.test(src) &&
-   /candidate state for round \$\{currentRound\} could not be persisted/.test(src),
+   /candidate state for round \$\{round\} could not be persisted/.test(require('./mega_source').full()),
   'a round cannot advance without a confirmed monotonic state write');
 ok(/working_snapshot: \{/.test(src) &&
    /activation: next\.activation/.test(src) &&
