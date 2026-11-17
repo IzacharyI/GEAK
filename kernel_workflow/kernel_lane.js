@@ -5377,9 +5377,12 @@ async function megaPlanRound(currentRound, remaining) {
   return { directions, refusal };
 }
 
-// One candidate lane for one round: author, structural check, score Verify. Runs concurrently with the
-// round's other lanes, so it keeps its own modeled clock (`clock.ms`); the round charges the longest.
-async function runMegaCandidateTurn(currentRound, d, clock) {
+// mode=mega engineer step of the round pipeline: author one candidate lane (and check its structure). It
+// returns `verifyStep`, the lane's Verify step. Lanes of a round run concurrently, so each keeps its own
+// modeled clock (`clock.ms`); the round charges the longest.
+let megaRoundStartMs = 0;
+async function megaAuthorStep(currentRound, d) {
+  const clock = { ms: megaRoundStartMs };
   const megaNowMs = () => WORKFLOW_STARTED_MS + clock.ms;
   const megaAdvanceMs = (ms) => { clock.ms += Math.max(0, Number(ms) || 0); };
   const megaChargeMs = megaAdvanceMs;
@@ -5389,7 +5392,7 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
   const candidateId = d.candidate_id;
   const source = d.candidate_source;
   if (!['search', 'integrated'].includes(source)) {
-    return { stop: true, reason: `invalid Mega candidate source '${String(source)}'; Expert Skills ` +
+    return { d, clock, stop: true, reason: `invalid Mega candidate source '${String(source)}'; Expert Skills ` +
       'must use the common search/integrated lifecycle' };
   }
   const existing = megaCandidateById(candidateId);
@@ -5402,7 +5405,7 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
   const dispatchRemainingS = (dispatchDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && dispatchRemainingS < 900) {
     return {
-      stop: true,
+      d, clock, stop: true,
       reason: `only ${Math.max(0, Math.round(dispatchRemainingS))}s remain before the production ` +
         `final-validation reserve; no new candidate attempt was started`,
     };
@@ -5416,7 +5419,7 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
   const availableAfterPrepS = (turnDeadlineMs - megaNowMs()) / 1000;
   if (MEGA_PRODUCTION && availableAfterPrepS < 900) {
     return {
-      stop: true,
+      d, clock, stop: true,
       reason: `candidate preparation consumed ${Math.round(prepElapsedS)}s; only ` +
         `${Math.max(0, Math.round(availableAfterPrepS))}s remain in the shared turn budget, so no ` +
         `Engineer was started`,
@@ -5571,7 +5574,7 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
   }
   if (!MEGA_RESUME_STATE && !existing && freshMegaAuthorLeak(eng)) {
     return {
-      stop: true,
+      d, clock, stop: true,
       reason: `fresh candidate Author disclosed reuse of a prior candidate/plan; rejecting ${
         candidateId} before structural Verify`,
     };
@@ -5613,351 +5616,355 @@ async function runMegaCandidateTurn(currentRound, d, clock) {
   if (laneWriterTimedOut) {
     await persistMegaCandidateState(currentRound);
     return {
-      stop: true,
+      d, clock, stop: true,
       reason: `candidate author timeout for ${candidateId}; invocation stopped to preserve single-writer ` +
         `lineage safety`,
     };
   }
 
-  let ver = null;
-  let verifierTimedOut = false;
-  const turnRemainingS = turnBudgetS - (megaNowMs() - turnStartedMs) / 1000;
-  let verifyBudgetS = MEGA_PRODUCTION
-    ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
-      Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60)))
-    : MEGA_CANDIDATE_TIMEOUT_S;
-  const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
-  let structural = null;
-  let structuralPassThisTurn = false;
-  const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
-    eng && eng.claim_complete === true && expectedHead;
-  if (shouldStructuralVerify) {
-    structural = await agentT(
-      roleAgent('verify_engineer', 'verify_structure',
-        'GPU-FREE independent post-authoring structure verification. Seal the candidate before ' +
-        'reading an optional reference; never edit candidate source and never run a GPU command.', {
-          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
-          CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
-          CANDIDATE_IMPORT_MODULES,
-          FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+  // mode=mega verify step of the round pipeline: score this lane on the 8-GPU pool.
+  const verifyStep = async () => {
+    let ver = null;
+    let verifierTimedOut = false;
+    const turnRemainingS = turnBudgetS - (megaNowMs() - turnStartedMs) / 1000;
+    let verifyBudgetS = MEGA_PRODUCTION
+      ? Math.max(0, Math.min(Math.floor(turnRemainingS - 60),
+        Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60)))
+      : MEGA_CANDIDATE_TIMEOUT_S;
+    const expectedHead = String(eng && (eng.head || eng.candidate_head) || '');
+    let structural = null;
+    let structuralPassThisTurn = false;
+    const shouldStructuralVerify = CHECK_EXPERT_SKILL_CONTRACT &&
+      eng && eng.claim_complete === true && expectedHead;
+    if (shouldStructuralVerify) {
+      structural = await agentT(
+        roleAgent('verify_engineer', 'verify_structure',
+          'GPU-FREE independent post-authoring structure verification. Seal the candidate before ' +
+          'reading an optional reference; never edit candidate source and never run a GPU command.', {
+            CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+            CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+            CANDIDATE_IMPORT_MODULES,
+            FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+            EXPERT_SKILL_ID,
+            EXPERT_SKILL_REVISION,
+            EXPERT_SKILL_BUNDLE_TOOL,
+            EXPERT_SKILL_BUNDLE_SHA256,
+            EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
+            EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+            EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
+            EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+            EXPERT_SKILL_CONTRACT_SHA256,
+            EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
+            EXPERT_SKILL_REFERENCE_PATH,
+            EXPERT_SKILL_CONTRACT_TOOL,
+            STRUCTURAL_VERIFY_DIR: `${outDir}/structure`,
+            LANE_LOCK: laneLock,
+            REFERENCE_WAS_HIDDEN: EXPERT_SKILL_REFERENCE_PATH ? '1' : 'n/a',
+            MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
+            SKILL_DIR: WORKFLOW_DIR,
+          }),
+        { phase: 'Verify', label: `mega:structure:${candidateId}`,
+          schema: EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA,
+          timeout_ms: 600000, max_retries: 1 });
+      const structuralIdentity = structuralEvidenceIdentityVerdict(structural, {
+        candidateId,
+        candidateHead: expectedHead,
+        skillId: EXPERT_SKILL_ID,
+        skillRevision: EXPERT_SKILL_REVISION,
+        contractSha256: EXPERT_SKILL_CONTRACT_SHA256,
+        plannerExtensionSha256: EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+        skillBundleSha256: EXPERT_SKILL_BUNDLE_SHA256,
+      });
+      const requiredIds = (structural && structural.failed_required_checks || []).map(String);
+      const planErrors = (structural && structural.plan_consistency_errors || []).map(String);
+      const inputErrors = (structural && structural.input_errors || []).map(String);
+      const forbiddenTreeReuse = !MEGA_RESUME_STATE && FORBIDDEN_CANDIDATE_TREE_DIGESTS.has(
+        String(structural && structural.candidate_tree_digest || '')
+      );
+      const authoritativeIds = new Set([
+        ...requiredIds, ...planErrors.map((error) => error.split(':', 1)[0]),
+      ]);
+      const structuralFailures = normalizeContractFailures(
+        structural && structural.contract_failures
+      ).filter((failure) => authoritativeIds.has(failure.id));
+      const structuralPass = !!(structural && structural.claim_complete === true &&
+        structural.structural_compatible === true &&
+        structural.independent_structure_pass === true &&
+        structural.capability_eligible === true &&
+        structural.plan_consistent === true &&
+        structural.provenance_attestation_valid === true &&
+        requiredIds.length === 0 && planErrors.length === 0 && inputErrors.length === 0 &&
+        !forbiddenTreeReuse &&
+        structural.reference_copy_detected !== true &&
+        structural.reference_copy_suspected !== true &&
+        structuralIdentity.pass);
+      structuralPassThisTurn = structuralPass;
+      if (!structuralIdentity.pass) {
+        structuralFailures.unshift({
+          id: 'structural_evidence_identity',
+          category: 'plan',
+          severity: 'required',
+          messages: structuralIdentity.reasons,
+        });
+      }
+      if (forbiddenTreeReuse) {
+        structuralFailures.unshift({
+          id: 'fresh_candidate_tree_reuse',
+          category: 'plan',
+          severity: 'required',
+          messages: ['candidate tree digest matches a forbidden prior process artifact'],
+        });
+      }
+      meta = normalizeMegaCandidate({
+        ...meta,
+        structural_verified: structuralPass,
+        structural_report: structural && structural.report_path || '',
+        structural_skill_id: structuralPass
+          ? String(structural && structural.skill_id || '') : '',
+        structural_candidate_head: structuralPass
+          ? String(structural && structural.candidate_head || '') : '',
+        structural_candidate_tree_digest: structuralPass
+          ? String(structural && structural.candidate_tree_digest || '') : '',
+        structural_skill_bundle_sha256: structuralPass
+          ? String(structural && structural.skill_bundle_sha256 || '') : '',
+        structural_planner_extension_sha256: structuralPass
+          ? String(structural && structural.planner_extension_sha256 || '') : '',
+        structural_contract_revision: structuralPass
+          ? String(structural && structural.contract_revision || EXPERT_SKILL_REVISION) : '',
+        structural_contract_sha256: structuralPass
+          ? String(structural && structural.contract_sha256 || '') : '',
+        contract_failures: structuralPass
+          ? [] : structuralFailures,
+        next_blocker: structuralPass
+          ? meta.next_blocker
+          : (forbiddenTreeReuse
+            ? 'fresh candidate tree exactly matches a forbidden prior process artifact'
+            : !structuralIdentity.pass
+            ? `structural evidence identity failed: ${structuralIdentity.reasons.join('; ')}`
+          : (structural && structural.next_blocker) ||
+            'independent static structure contract did not pass'),
+      });
+      megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
+    }
+    if (shouldStructuralVerify) megaChargeMs(600000);
+    if (MEGA_PRODUCTION) {
+      verifyBudgetS = Math.max(0, Math.min(
+        verifyBudgetS,
+        Math.floor((turnDeadlineMs - megaNowMs()) / 1000 - 60),
+        Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
+      ));
+    }
+    const contractBlocksRuntime = STRUCTURAL_CONTRACT_BLOCKING;
+    const priorLaneHead = existing
+      ? String(existing.working_head || existing.head || '') : '';
+    const sourceAdvancedThisTurn = existing
+      ? expectedHead !== priorLaneHead : reportedChangedFiles.length > 0;
+    const structurallyReadyAuthoring = !!(
+      eng && String(eng.candidate_status || '') === 'authoring' &&
+      eng.claim_complete === true && eng.build !== false &&
+      meta.checkpoint_complete &&
+      (!STRUCTURAL_CONTRACT_BLOCKING || (
+        structuralPassThisTurn &&
+        meta.structural_candidate_head === expectedHead &&
+        !!meta.structural_candidate_tree_digest
+      ))
+    );
+    const postAuthoringVerify = structurallyReadyAuthoring &&
+      ((sourceAdvancedThisTurn && candidateClaimsSkillTarget) ||
+        (!authorPreflightRequired && !sourceAdvancedThisTurn));
+    const gpuWaitBudgetS = Math.max(30, Math.min(300 * MEGA_DIRECTIONS,
+      Math.floor(verifyBudgetS / (MEGA_DIRECTIONS > 1 ? 2 : 4))));
+    const gpuRunBudgetS = Math.max(60, verifyBudgetS - gpuWaitBudgetS - 60);
+    const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
+      (!contractBlocksRuntime || meta.structural_verified) &&
+      !MEGA_STRUCTURAL_ONLY &&
+      (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
+      (postAuthoringVerify ||
+        ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
+    if (shouldVerify) {
+      const verifyInputs = {
+            CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
+            CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
+        PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
+        CANDIDATE_IMPORT_MODULES,
+        EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
+        EXPERT_SKILL_CONTRACT_TOOL,
+        EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
+        LANE_LOCK: laneLock,
+        GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
+        GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
+            BASE_CANDIDATE_ID: baseCandidateId,
+            CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
+            VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
+            VERIFY_TIMEOUT_S: verifyBudgetS,
+            GPU_ID: GPU_SINGLE, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
+            BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
+        VERIFY_TIER: 'score',
+        MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
+        SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
+        TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
+            TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
+            REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
+            REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
+        REQUIRE_GRAPH_CAPTURE: MEGA_REQUIRE_GRAPH_CAPTURE ? '1' : '0',
+            REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
+            ACCURACY_METRIC, ACCURACY_THRESHOLD,
+        REQUIRED_ACCURACY_CASES,
+        MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
+        RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
+        REQUIRE_RESOURCE_VERIFY: '1',
+        SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION ? '1' : '0',
+        ...(USE_EXPERT_SKILLS ? {
           EXPERT_SKILL_ID,
           EXPERT_SKILL_REVISION,
-          EXPERT_SKILL_BUNDLE_TOOL,
-          EXPERT_SKILL_BUNDLE_SHA256,
-          EXPERT_SKILL_PLANNER_EXTENSION: EXPERT_SKILL_PLANNER_EXTENSION_FILE,
-          EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
+          EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
           EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
           EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-          EXPERT_SKILL_CONTRACT_SHA256,
           EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
-          EXPERT_SKILL_REFERENCE_PATH,
-          EXPERT_SKILL_CONTRACT_TOOL,
-          STRUCTURAL_VERIFY_DIR: `${outDir}/structure`,
-          LANE_LOCK: laneLock,
-          REFERENCE_WAS_HIDDEN: EXPERT_SKILL_REFERENCE_PATH ? '1' : 'n/a',
-          MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
-          SKILL_DIR: WORKFLOW_DIR,
-        }),
-      { phase: 'Verify', label: `mega:structure:${candidateId}`,
-        schema: EXPERT_SKILL_CONTRACT_VERIFY_SCHEMA,
-        timeout_ms: 600000, max_retries: 1 });
-    const structuralIdentity = structuralEvidenceIdentityVerdict(structural, {
-      candidateId,
-      candidateHead: expectedHead,
-      skillId: EXPERT_SKILL_ID,
-      skillRevision: EXPERT_SKILL_REVISION,
-      contractSha256: EXPERT_SKILL_CONTRACT_SHA256,
-      plannerExtensionSha256: EXPERT_SKILL_PLANNER_EXTENSION_SHA256,
-      skillBundleSha256: EXPERT_SKILL_BUNDLE_SHA256,
-    });
-    const requiredIds = (structural && structural.failed_required_checks || []).map(String);
-    const planErrors = (structural && structural.plan_consistency_errors || []).map(String);
-    const inputErrors = (structural && structural.input_errors || []).map(String);
-    const forbiddenTreeReuse = !MEGA_RESUME_STATE && FORBIDDEN_CANDIDATE_TREE_DIGESTS.has(
-      String(structural && structural.candidate_tree_digest || '')
-    );
-    const authoritativeIds = new Set([
-      ...requiredIds, ...planErrors.map((error) => error.split(':', 1)[0]),
-    ]);
-    const structuralFailures = normalizeContractFailures(
-      structural && structural.contract_failures
-    ).filter((failure) => authoritativeIds.has(failure.id));
-    const structuralPass = !!(structural && structural.claim_complete === true &&
-      structural.structural_compatible === true &&
-      structural.independent_structure_pass === true &&
-      structural.capability_eligible === true &&
-      structural.plan_consistent === true &&
-      structural.provenance_attestation_valid === true &&
-      requiredIds.length === 0 && planErrors.length === 0 && inputErrors.length === 0 &&
-      !forbiddenTreeReuse &&
-      structural.reference_copy_detected !== true &&
-      structural.reference_copy_suspected !== true &&
-      structuralIdentity.pass);
-    structuralPassThisTurn = structuralPass;
-    if (!structuralIdentity.pass) {
-      structuralFailures.unshift({
-        id: 'structural_evidence_identity',
-        category: 'plan',
-        severity: 'required',
-        messages: structuralIdentity.reasons,
-      });
-    }
-    if (forbiddenTreeReuse) {
-      structuralFailures.unshift({
-        id: 'fresh_candidate_tree_reuse',
-        category: 'plan',
-        severity: 'required',
-        messages: ['candidate tree digest matches a forbidden prior process artifact'],
-      });
-    }
-    meta = normalizeMegaCandidate({
-      ...meta,
-      structural_verified: structuralPass,
-      structural_report: structural && structural.report_path || '',
-      structural_skill_id: structuralPass
-        ? String(structural && structural.skill_id || '') : '',
-      structural_candidate_head: structuralPass
-        ? String(structural && structural.candidate_head || '') : '',
-      structural_candidate_tree_digest: structuralPass
-        ? String(structural && structural.candidate_tree_digest || '') : '',
-      structural_skill_bundle_sha256: structuralPass
-        ? String(structural && structural.skill_bundle_sha256 || '') : '',
-      structural_planner_extension_sha256: structuralPass
-        ? String(structural && structural.planner_extension_sha256 || '') : '',
-      structural_contract_revision: structuralPass
-        ? String(structural && structural.contract_revision || EXPERT_SKILL_REVISION) : '',
-      structural_contract_sha256: structuralPass
-        ? String(structural && structural.contract_sha256 || '') : '',
-      contract_failures: structuralPass
-        ? [] : structuralFailures,
-      next_blocker: structuralPass
-        ? meta.next_blocker
-        : (forbiddenTreeReuse
-          ? 'fresh candidate tree exactly matches a forbidden prior process artifact'
-          : !structuralIdentity.pass
-          ? `structural evidence identity failed: ${structuralIdentity.reasons.join('; ')}`
-        : (structural && structural.next_blocker) ||
-          'independent static structure contract did not pass'),
-    });
-    megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
-  }
-  if (shouldStructuralVerify) megaChargeMs(600000);
-  if (MEGA_PRODUCTION) {
-    verifyBudgetS = Math.max(0, Math.min(
-      verifyBudgetS,
-      Math.floor((turnDeadlineMs - megaNowMs()) / 1000 - 60),
-      Math.floor((dispatchDeadlineMs - megaNowMs()) / 1000 - 60),
-    ));
-  }
-  const contractBlocksRuntime = STRUCTURAL_CONTRACT_BLOCKING;
-  const priorLaneHead = existing
-    ? String(existing.working_head || existing.head || '') : '';
-  const sourceAdvancedThisTurn = existing
-    ? expectedHead !== priorLaneHead : reportedChangedFiles.length > 0;
-  const structurallyReadyAuthoring = !!(
-    eng && String(eng.candidate_status || '') === 'authoring' &&
-    eng.claim_complete === true && eng.build !== false &&
-    meta.checkpoint_complete &&
-    (!STRUCTURAL_CONTRACT_BLOCKING || (
-      structuralPassThisTurn &&
-      meta.structural_candidate_head === expectedHead &&
-      !!meta.structural_candidate_tree_digest
-    ))
-  );
-  const postAuthoringVerify = structurallyReadyAuthoring &&
-    ((sourceAdvancedThisTurn && candidateClaimsSkillTarget) ||
-      (!authorPreflightRequired && !sourceAdvancedThisTurn));
-  const gpuWaitBudgetS = Math.max(30, Math.min(300 * MEGA_DIRECTIONS,
-    Math.floor(verifyBudgetS / (MEGA_DIRECTIONS > 1 ? 2 : 4))));
-  const gpuRunBudgetS = Math.max(60, verifyBudgetS - gpuWaitBudgetS - 60);
-  const shouldVerify = eng && eng.claim_complete === true && expectedHead &&
-    (!contractBlocksRuntime || meta.structural_verified) &&
-    !MEGA_STRUCTURAL_ONLY &&
-    (!MEGA_PRODUCTION || verifyBudgetS >= 300) &&
-    (postAuthoringVerify ||
-      ['runnable', 'scored', 'finalist'].includes(String(eng.candidate_status || '')));
-  if (shouldVerify) {
-    const verifyInputs = {
-          CANDIDATE_ID: candidateId, CANDIDATE_SOURCE: source,
-          CANDIDATE_TREE: tree, EXPECTED_HEAD: expectedHead,
-      PERSISTENT_JIT_CACHE_DIR: persistentJitCache,
-      CANDIDATE_IMPORT_MODULES,
-      EXPECTED_STRUCTURAL_TREE_DIGEST: meta.structural_candidate_tree_digest,
-      EXPERT_SKILL_CONTRACT_TOOL,
-      EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-      LANE_LOCK: laneLock,
-      GPU_WAIT_TIMEOUT_S: gpuWaitBudgetS,
-      GPU_RUN_TIMEOUT_S: gpuRunBudgetS,
-          BASE_CANDIDATE_ID: baseCandidateId,
-          CANONICAL: baseTree, PATCH: (eng && eng.patch_file) || '',
-          VERIFY_DIR: `${outDir}/verify`, ATTEMPT_ID: attemptId,
-          VERIFY_TIMEOUT_S: verifyBudgetS,
-          GPU_ID: GPU_SINGLE, SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
-          BASELINE_PER_CASE, FROZEN_KERNEL_PATH: KERNEL_PATH_ORIG,
-      VERIFY_TIER: 'score',
-      MODIFIABLE_FILES: 'WHOLE_CANDIDATE_TREE',
-      SPECIALTY: d.specialty || MEGA_DEFAULT_SPECIALTY,
-      TARGET_SHAPE: megaShapeFromTopology(d.target_topology),
-          TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
-          REQUIRE_ARTIFACT_DISTINCT: true, REQUIRE_OVERLAP: false,
-          REQUIRE_ATTRIBUTION: false, REQUIRED_REPLAYS: 30,
-      REQUIRE_GRAPH_CAPTURE: MEGA_REQUIRE_GRAPH_CAPTURE ? '1' : '0',
-          REQUIRED_PAIRS, REQUIRED_PAIRS_BY_GUARD, LAUNCH_TARGET,
-          ACCURACY_METRIC, ACCURACY_THRESHOLD,
-      REQUIRED_ACCURACY_CASES,
-      MEGA_PLAN_IR: analysis && analysis.mega_plan_ir || {},
-      RESOURCE_TIMELINE: analysis && analysis.resource_timeline || {},
-      REQUIRE_RESOURCE_VERIFY: '1',
-      SEARCH_ACCEPTS_PARTIAL_FUSION: ALLOW_PARTIAL_FUSION ? '1' : '0',
-      ...(USE_EXPERT_SKILLS ? {
-        EXPERT_SKILL_ID,
-        EXPERT_SKILL_REVISION,
-        EXPERT_SKILL_FILE: `${EXPERT_SKILL_DIR}/skill.md`,
-        EXPERT_SKILL_PLAYBOOK: EXPERT_SKILL_PLAYBOOK_FILE,
-        EXPERT_SKILL_CONTRACT: EXPERT_SKILL_CONTRACT_FILE,
-        EXPERT_SKILL_VALIDATION: EXPERT_SKILL_VALIDATION_FILE,
-        EXPERT_SKILL_RUNTIME_FILE,
-        EXPERT_SKILL_ACCURACY_CASES,
-        EXPERT_SKILL_SOURCE_FILES,
-      } : {}),
-      GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
-      GRAPH_CONTRACT_REPLAYS: 30,
-      ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
-    };
-    ver = await agentT(
-      roleAgent('verify_engineer', 'verify',
-        'Independently verify and score this whole-tree mega candidate against the frozen baseline.',
-        verifyInputs),
-      { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: MEGA_VERIFY_SCHEMA,
-        timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
-    if (ver && ver.__agent_timed_out) {
-      verifierTimedOut = true;
-      log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} exceeded its ` +
-        `deadline.`);
-      ver = null;
-    }
-    if (!ver || ver.claim_complete !== true) {
-      const recoveryBudgetS = MEGA_PRODUCTION
-        ? Math.max(0, Math.floor(turnBudgetS - (megaNowMs() - turnStartedMs) / 1000 - 60))
-        : 300;
-      if (recoveryBudgetS >= 30) {
-        const recoveredVer = await agentT(
-          roleAgent('verify_engineer', 'recover',
-            `RECOVER verification for candidate ${candidateId}, attempt ${attemptId}: follow "PHASE=recover" ` +
-            'in the mode=mega verify_engineer fragment.', {
-              VERIFY_DIR: `${outDir}/verify`, CANDIDATE_ID: candidateId,
-              CANDIDATE_SOURCE: source, CANDIDATE_TREE: tree,
-              EXPECTED_HEAD: expectedHead, ATTEMPT_ID: attemptId,
-              SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
-            }),
-          { phase: 'Verify', label: `mega:verify-recover:${candidateId}`, schema: MEGA_VERIFY_SCHEMA,
-            timeout_ms: Math.min(120, recoveryBudgetS) * 1000, max_retries: 1 });
-        if (recoveredVer && recoveredVer.claim_complete === true) {
-          ver = recoveredVer;
-          verifierTimedOut = false;
-        } else if (verifierTimedOut && safeVerifyTimeoutRecovery(recoveredVer)) {
-          const retryBudgetS = Math.max(300, Math.min(1800, MEGA_FINAL_RESERVE_S));
-          const retry = await agentT(
-            roleAgent('verify_engineer', 'verify',
-              'TIMEOUT RECOVERY: verify the same exact HEAD read-only. Run only the earliest unresolved ' +
-              'GPU stage (construction/JIT, then the smallest correctness smoke) and return its concrete ' +
-              'result; do not run the full score suite unless the smoke is already cached.', {
-                ...verifyInputs,
-                VERIFY_DIR: `${outDir}/verify_timeout_retry`,
-                VERIFY_TIER: 'timeout_recovery_smoke',
-                GPU_WAIT_TIMEOUT_S: Math.min(120, gpuWaitBudgetS),
-                GPU_RUN_TIMEOUT_S: Math.min(600, gpuRunBudgetS),
-                VERIFY_TIMEOUT_S: retryBudgetS,
-                REQUIRED_REPLAYS: 1,
-                REQUIRED_PAIRS: 1,
-                TIMEOUT_RECOVERY_ATTEMPT: '1',
+          EXPERT_SKILL_RUNTIME_FILE,
+          EXPERT_SKILL_ACCURACY_CASES,
+          EXPERT_SKILL_SOURCE_FILES,
+        } : {}),
+        GRAPH_CONTRACT_TOOL, ...RFI, ...GMI, ...MRI,
+        GRAPH_CONTRACT_REPLAYS: 30,
+        ACTIVATION: (eng && eng.activation) ? JSON.stringify(eng.activation) : 'UNDECLARED',
+      };
+      ver = await agentT(
+        roleAgent('verify_engineer', 'verify',
+          'Independently verify and score this whole-tree mega candidate against the frozen baseline.',
+          verifyInputs),
+        { phase: 'Verify', label: `mega:verify:${candidateId}`, schema: MEGA_VERIFY_SCHEMA,
+          timeout_ms: verifyBudgetS * 1000, timeout_marker: true, max_retries: 1 });
+      if (ver && ver.__agent_timed_out) {
+        verifierTimedOut = true;
+        log(`Mega round ${currentRound}: verify for ${ver.label || candidateId} exceeded its ` +
+          `deadline.`);
+        ver = null;
+      }
+      if (!ver || ver.claim_complete !== true) {
+        const recoveryBudgetS = MEGA_PRODUCTION
+          ? Math.max(0, Math.floor(turnBudgetS - (megaNowMs() - turnStartedMs) / 1000 - 60))
+          : 300;
+        if (recoveryBudgetS >= 30) {
+          const recoveredVer = await agentT(
+            roleAgent('verify_engineer', 'recover',
+              `RECOVER verification for candidate ${candidateId}, attempt ${attemptId}: follow "PHASE=recover" ` +
+              'in the mode=mega verify_engineer fragment.', {
+                VERIFY_DIR: `${outDir}/verify`, CANDIDATE_ID: candidateId,
+                CANDIDATE_SOURCE: source, CANDIDATE_TREE: tree,
+                EXPECTED_HEAD: expectedHead, ATTEMPT_ID: attemptId,
+                SKILL_DIR: WORKFLOW_DIR, COMMANDMENT,
               }),
-            { phase: 'Verify', label: `mega:verify-timeout-retry:${candidateId}`,
-              schema: MEGA_VERIFY_SCHEMA, timeout_ms: retryBudgetS * 1000,
-              timeout_marker: true, max_retries: 1 });
-          if (retry && retry.claim_complete === true) {
-            ver = retry;
+            { phase: 'Verify', label: `mega:verify-recover:${candidateId}`, schema: MEGA_VERIFY_SCHEMA,
+              timeout_ms: Math.min(120, recoveryBudgetS) * 1000, max_retries: 1 });
+          if (recoveredVer && recoveredVer.claim_complete === true) {
+            ver = recoveredVer;
             verifierTimedOut = false;
-          } else if (retry && !retry.__agent_timed_out) {
-            // Quiescence was confirmed twice and the bounded retry returned: nothing is left running, so the
-            // round ends unscored and the wave continues.
-            verifierTimedOut = false;
-            meta.next_blocker = `independent Verify of HEAD ${expectedHead} timed out before ` +
-              `sealing (retry: ${retry.status || 'unscored'}); route a fresh full Verify of this ` +
-              `HEAD before new edits`;
-            megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
-          } else {
-            megaUnsafeTimeout = retry || { label: `mega:verify-timeout-retry:${candidateId}` };
+          } else if (verifierTimedOut && safeVerifyTimeoutRecovery(recoveredVer)) {
+            const retryBudgetS = Math.max(300, Math.min(1800, MEGA_FINAL_RESERVE_S));
+            const retry = await agentT(
+              roleAgent('verify_engineer', 'verify',
+                'TIMEOUT RECOVERY: verify the same exact HEAD read-only. Run only the earliest unresolved ' +
+                'GPU stage (construction/JIT, then the smallest correctness smoke) and return its concrete ' +
+                'result; do not run the full score suite unless the smoke is already cached.', {
+                  ...verifyInputs,
+                  VERIFY_DIR: `${outDir}/verify_timeout_retry`,
+                  VERIFY_TIER: 'timeout_recovery_smoke',
+                  GPU_WAIT_TIMEOUT_S: Math.min(120, gpuWaitBudgetS),
+                  GPU_RUN_TIMEOUT_S: Math.min(600, gpuRunBudgetS),
+                  VERIFY_TIMEOUT_S: retryBudgetS,
+                  REQUIRED_REPLAYS: 1,
+                  REQUIRED_PAIRS: 1,
+                  TIMEOUT_RECOVERY_ATTEMPT: '1',
+                }),
+              { phase: 'Verify', label: `mega:verify-timeout-retry:${candidateId}`,
+                schema: MEGA_VERIFY_SCHEMA, timeout_ms: retryBudgetS * 1000,
+                timeout_marker: true, max_retries: 1 });
+            if (retry && retry.claim_complete === true) {
+              ver = retry;
+              verifierTimedOut = false;
+            } else if (retry && !retry.__agent_timed_out) {
+              // Quiescence was confirmed twice and the bounded retry returned: nothing is left running, so the
+              // round ends unscored and the wave continues.
+              verifierTimedOut = false;
+              meta.next_blocker = `independent Verify of HEAD ${expectedHead} timed out before ` +
+                `sealing (retry: ${retry.status || 'unscored'}); route a fresh full Verify of this ` +
+                `HEAD before new edits`;
+              megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, meta);
+            } else {
+              megaUnsafeTimeout = retry || { label: `mega:verify-timeout-retry:${candidateId}` };
+            }
+          } else if (verifierTimedOut) {
+            megaUnsafeTimeout = { label: `mega:verify:${candidateId}` };
           }
-        } else if (verifierTimedOut) {
-          megaUnsafeTimeout = { label: `mega:verify:${candidateId}` };
         }
       }
     }
-  }
-  if (shouldVerify) megaChargeMs(verifyBudgetS * 1000);
+    if (shouldVerify) megaChargeMs(verifyBudgetS * 1000);
 
-  let record = meta;
-  if (ver) {
-    record = megaCandidateFromVerification(meta, ver, {
-      targetGuards: TARGET_GUARDS, regressionGuards: [],
-      launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
-      accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
-      requiredAccuracyCases: REQUIRED_ACCURACY_CASES,
-      requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
-      allowPartialFusion: ALLOW_PARTIAL_FUSION, frozenBaseline: BASELINE_PER_CASE,
-    });
-    record.attempts = attempts;
-    record.tree = tree;
-    if (record.status === 'scored' && record.absolute_score <= 1.0) {
-      record.status = 'runnable';
-      record.next_blocker = record.next_blocker ||
-        `candidate is correct but ${record.absolute_score.toFixed(4)}x does not beat frozen ` +
-        `baseline; keep optimizing this lane, never promote it to a finalist`;
+    let record = meta;
+    if (ver) {
+      record = megaCandidateFromVerification(meta, ver, {
+        targetGuards: TARGET_GUARDS, regressionGuards: [],
+        launchTarget: LAUNCH_TARGET, promotionMetric: PROMOTION_METRIC,
+        accuracyMetric: ACCURACY_METRIC, accuracyThreshold: ACCURACY_THRESHOLD,
+        requiredAccuracyCases: REQUIRED_ACCURACY_CASES,
+        requiredReplays: 30, requiredPairs: REQUIRED_PAIRS,
+        allowPartialFusion: ALLOW_PARTIAL_FUSION, frozenBaseline: BASELINE_PER_CASE,
+      });
+      record.attempts = attempts;
+      record.tree = tree;
+      if (record.status === 'scored' && record.absolute_score <= 1.0) {
+        record.status = 'runnable';
+        record.next_blocker = record.next_blocker ||
+          `candidate is correct but ${record.absolute_score.toFixed(4)}x does not beat frozen ` +
+          `baseline; keep optimizing this lane, never promote it to a finalist`;
+      }
+      megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, record);
     }
-    megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, record);
-  }
-  if (verifierTimedOut) {
-    await persistMegaCandidateState(currentRound);
-    return {
-      stop: true,
-      reason: `candidate score verification timeout for ${candidateId}; invocation stopped before any ` +
-        `other EP8 work was dispatched`,
-    };
-  }
+    if (verifierTimedOut) {
+      await persistMegaCandidateState(currentRound);
+      return {
+        d, clock, stop: true,
+        reason: `candidate score verification timeout for ${candidateId}; invocation stopped before any ` +
+          `other EP8 work was dispatched`,
+      };
+    }
 
-  const hasEvidence = !!(ver && ver.claim_complete === true);
-  const reachedHardware = !!(ver &&
-    String(ver.activation_on_hardware || '').toLowerCase() === 'yes');
-  // Source-only checkpoints do not consume the hardware-failure budget; only a complete candidate that
-  // reached Verify counts.
-  const hardwareWasDue = !!shouldVerify;
-  const blockerKey = String(record.next_blocker || '').slice(0, 160);
-  // Analysis gets the identity-bound evidence of THIS candidate instead of scanning EVAL_DIR.
-  if (ANALYSIS_SKILL_ON && ver) profileSummary = { ...profileSummary,
-    analysis_result: await runProfileAnalysis({ ...profileSummary, candidate_evidence: {
-      candidate_id: candidateId, head: record.head, attempt_id: record.attempt_id,
-      target_guard: record.target_guard, frozen_per_case: BASELINE_PER_CASE,
-      per_case: record.per_case, paired_readings: record.paired_readings,
-      denominator_mismatch: record.denominator_mismatch,
-      component_breakdown: record.component_breakdown, hot_path_counters: record.hot_path_counters,
-      evidence_manifest: record.evidence_manifest } }, currentRound, 'mega:analyze') };
-  const verificationFaulted = !!(ver && ver.claim_complete === true &&
-    (String(ver.correctness || '').toLowerCase().startsWith('fail') ||
-      /fail|fault|crash|error/.test(String(ver.status || '').toLowerCase())));
-  const rungOutcome = ver && ver.claim_complete === true &&
-      Array.isArray(ver.per_case) && ver.per_case.length
-    ? 'measured'
-    : (verificationFaulted || eng && (eng.build === false ||
-      String(eng.correctness || '').toLowerCase().startsWith('fail')))
-      ? 'faulted' : 'unmeasured';
-  recordRungOutcome(d.roadmap_rung, rungOutcome);
-  if (rungOutcome === 'measured' && d.roadmap_rung) {
-    LADDER_MEASURED.add(String(d.roadmap_rung));
-  }
-  return { stop: false, direction: d, record, ver, hasEvidence, reachedHardware, hardwareWasDue,
-    blockerKey, gpuExecuted: !!(eng && eng.gpu_executed === true),
-    engStatus: eng ? eng.candidate_status : 'pending' };
+    const hasEvidence = !!(ver && ver.claim_complete === true);
+    const reachedHardware = !!(ver &&
+      String(ver.activation_on_hardware || '').toLowerCase() === 'yes');
+    // Source-only checkpoints do not consume the hardware-failure budget; only a complete candidate that
+    // reached Verify counts.
+    const hardwareWasDue = !!shouldVerify;
+    const blockerKey = String(record.next_blocker || '').slice(0, 160);
+    // Analysis gets the identity-bound evidence of THIS candidate instead of scanning EVAL_DIR.
+    if (ANALYSIS_SKILL_ON && ver) profileSummary = { ...profileSummary,
+      analysis_result: await runProfileAnalysis({ ...profileSummary, candidate_evidence: {
+        candidate_id: candidateId, head: record.head, attempt_id: record.attempt_id,
+        target_guard: record.target_guard, frozen_per_case: BASELINE_PER_CASE,
+        per_case: record.per_case, paired_readings: record.paired_readings,
+        denominator_mismatch: record.denominator_mismatch,
+        component_breakdown: record.component_breakdown, hot_path_counters: record.hot_path_counters,
+        evidence_manifest: record.evidence_manifest } }, currentRound, 'mega:analyze') };
+    const verificationFaulted = !!(ver && ver.claim_complete === true &&
+      (String(ver.correctness || '').toLowerCase().startsWith('fail') ||
+        /fail|fault|crash|error/.test(String(ver.status || '').toLowerCase())));
+    const rungOutcome = ver && ver.claim_complete === true &&
+        Array.isArray(ver.per_case) && ver.per_case.length
+      ? 'measured'
+      : (verificationFaulted || eng && (eng.build === false ||
+        String(eng.correctness || '').toLowerCase().startsWith('fail')))
+        ? 'faulted' : 'unmeasured';
+    recordRungOutcome(d.roadmap_rung, rungOutcome);
+    if (rungOutcome === 'measured' && d.roadmap_rung) {
+      LADDER_MEASURED.add(String(d.roadmap_rung));
+    }
+    return { d, clock, stop: false, direction: d, record, ver, hasEvidence, reachedHardware, hardwareWasDue,
+      blockerKey, gpuExecuted: !!(eng && eng.gpu_executed === true),
+      engStatus: eng ? eng.candidate_status : 'pending' };
+  };
+  return { d, clock, verifyStep };
 }
 
 // Round-level bookkeeping after every lane of the round has returned.
@@ -6733,26 +6740,27 @@ async function megaLoopInit() {
   }
 }
 
-// One candidate turn of the Optimize loop. {stop} ends the loop, {exit} ends the run.
-async function megaRound(remaining) {
+// mode=mega plan step of the Optimize loop: the modeled-clock deadline, then the plan and its direction
+// contract. Returns {directions}, {skip} for a refused plan (re-plan next round) or {stop}.
+async function megaPlanStep(currentRound, remaining) {
   const elapsedS = (megaNowMs() - WORKFLOW_STARTED_MS) / 1000;
   if (elapsedS >= MEGA_TIME_BUDGET_S - MEGA_FINAL_RESERVE_S) {
     stopReason = `${MEGA_PROFILE} dispatch deadline reached after ${Math.round(elapsedS / 60)} minutes; ` +
       `preserving ${Math.round(MEGA_FINAL_RESERVE_S / 60)} minutes for finalist validation.`;
     return { stop: true };
   }
-  const plan = await megaPlanRound(round, remaining);
+  const plan = await megaPlanRound(currentRound, remaining);
   if (plan.refused && !plan.stop) {
     const count = megaRefusal ? megaRefusal.count + 1 : 1;
     megaRefusal = { reason: plan.reason, count };
     dispatched += 1;
     megaStall += 1;
-    log(`Mega round ${round}: ${plan.reason} (refusal ${count}/3; re-planning).`);
+    log(`Mega round ${currentRound}: ${plan.reason} (refusal ${count}/3; re-planning).`);
     if (count >= 3) {
       stopReason = `${count} consecutive refused directions; last: ${plan.reason}`;
       return { stop: true };
     }
-    return {};
+    return { skip: true };
   }
   // A refused extra direction still reaches the next plan; it does not count toward the stop.
   megaRefusal = plan.refusal ? { reason: plan.refusal, count: 0 } : null;
@@ -6760,27 +6768,26 @@ async function megaRound(remaining) {
     stopReason = plan.reason;
     return { stop: true };
   }
-  // The round's lanes run concurrently; each charges its own copy of the modeled clock.
-  const roundClockMs = MEGA_CLOCK_MS;
-  const turns = await parallel(plan.directions.map((d) => async () => {
-    const clock = { ms: roundClockMs };
-    const t = await runMegaCandidateTurn(round, d, clock);
-    return { ...t, clockMs: clock.ms };
-  }));
-  MEGA_CLOCK_MS = Math.max(roundClockMs, ...turns.map((t) => t.clockMs));
+  megaRoundStartMs = MEGA_CLOCK_MS;
+  return { directions: plan.directions };
+}
+
+// mode=mega steps after Verify: select instead of merge, record the winner instead of applying it (the
+// candidate tree is the artifact), persist the candidate state, then the mega stop rules.
+async function megaAfterTurns(currentRound, turns) {
+  MEGA_CLOCK_MS = Math.max(megaRoundStartMs, ...turns.filter((t) => t && t.clock).map((t) => t.clock.ms));
   const done = turns.filter((t) => t && !t.stop);
   const stopped = turns.find((t) => !t || t.stop);
   if (stopped) {
-    if (done.length && !(await megaAfterRound(round, done)).stop) dispatched += done.length;
+    if (done.length) await megaAfterRound(currentRound, done);
     stopReason = stopped ? stopped.reason : 'a candidate lane returned nothing';
     return { stop: true };
   }
-  const turn = await megaAfterRound(round, done);
+  const turn = await megaAfterRound(currentRound, done);
   if (turn.stop) {
     stopReason = turn.reason;
     return { stop: true };
   }
-  dispatched += done.length;
   for (const t of done) {
     log(`Mega round ${round}: candidate=${t.record.id}[${t.record.source}:${t.record.status}], ` +
       `score=${Number.isFinite(t.record.absolute_score) ? t.record.absolute_score.toFixed(4) + 'x' : 'pending'}, ` +
@@ -7820,7 +7827,7 @@ if (EVO && !(await EVO.initialize())) {
 }
 
 let plannerStopReason = '';
-// mode=mega ends on the budget, its modeled clock or a stop rule in megaRound, not on no-improve rounds.
+// mode=mega ends on the budget, its modeled clock or a mega stop rule, not on no-improve rounds.
 while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE)) {
   // --- (0) HARD STOP: no new round may START past the deadline ---------- Checked BEFORE round++ so an
   // expired check does not inflate the round count.
@@ -7841,12 +7848,10 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   round++;
   const remaining = BUDGET - dispatched;
   phase('Optimize');
-  if (MEGA) {
-    const step = (await megaRound(remaining)) || {};
-    if (step.exit) return step.exit;
-    if (step.stop) break;
-    continue;
-  }
+  // mode=mega: the modeled-clock deadline and the mega plan with its direction contract.
+  const megaPlan = MEGA ? await megaPlanStep(round, remaining) : null;
+  if (megaPlan && megaPlan.stop) break;
+  if (megaPlan && megaPlan.skip) continue;
 
   // --- (a) Plan the round (TechLead) ------------------------------------
   const planInputs = (forbidStop) => ({
@@ -7888,14 +7893,14 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   // Eikos shadow: freeze the state the planning attempt sees, before that attempt.
   let eikosSnap = EIKOS_SHADOW_ON ? eikosSnapshot(round, left, 'pre_plan_clock') : null;
   const forcedBeforeRound = forcedReplans;
-  let plan = await agentT(
+  let plan = megaPlan || await agentT(
     roleAgent('tech_lead', 'plan_round', 'Decide this round\'s orthogonal directions (or stop).',
       planInputs(false)) + evoPlannerRole,
     { phase: 'Optimize', label: `tech_lead:plan r${round}`, schema: PLAN_SCHEMA });
   const eikosFirstChoice = EIKOS_SHADOW_ON ? eikosRawChoice(plan) : null;
 
   // NO EARLY STOP: keep refusing while the window is materially unspent.
-  while (DEADLINE_EPOCH && left > NO_STOP_S && forcedReplans < MAX_FORCED_REPLANS &&
+  while (!MEGA && DEADLINE_EPOCH && left > NO_STOP_S && forcedReplans < MAX_FORCED_REPLANS &&
          (!plan || plan.stop || !plan.directions || plan.directions.length === 0)) {
     forcedReplans++;
     log(`Round ${round}: stop=true with ${(left / 60).toFixed(0)} min left — refusing (#${forcedReplans}), re-planning.`);
@@ -7910,7 +7915,7 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
 
   // Eikos shadow: the model's own final choice, read before the harness filter below can change it.
   const eikosFinalRaw = EIKOS_SHADOW_ON ? eikosRawChoice(plan) : null;
-  if (plan && Array.isArray(plan.directions) && ROOFLINE_STATUS.startsWith('unknown')) {
+  if (!MEGA && plan && Array.isArray(plan.directions) && ROOFLINE_STATUS.startsWith('unknown')) {
     const before = plan.directions.length;
     plan.directions = plan.directions.filter((d) =>
       !/roofline|peak\s*(?:flops|bandwidth)|%\s*of\s*peak/i.test(
@@ -7936,7 +7941,8 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
     break;
   }
 
-  let directions = plan.directions.slice(0, remaining).map((d, i) => ({
+  // A mega direction is already bound to its candidate lane.
+  let directions = MEGA ? plan.directions : plan.directions.slice(0, remaining).map((d, i) => ({
     ...d,
     idx: i,
     id: d.id || `r${round}_d${i}`,
@@ -7946,7 +7952,7 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   // deep_explore is a DEDICATED-ROUND, heavyweight mandate: if the plan includes one, run ONLY it this
   // round (its broad ground-up rewrite touches many files and can't be merged with specialist patches),
   // and charge DEEP_COST against the budget. Otherwise each specialist direction costs 1.
-  const deepDir = directions.find(d => d.specialty === 'deep_explore');
+  const deepDir = !MEGA && directions.find(d => d.specialty === 'deep_explore');
   if (deepDir) directions = [deepDir];
   const roundCost = directions.reduce((s, d) => s + (d.specialty === 'deep_explore' ? DEEP_COST : 1), 0);
   dispatched += roundCost;
@@ -7957,6 +7963,7 @@ while (!skipLoop && dispatched < BUDGET && (MEGA || noImprove < MAX_NO_IMPROVE))
   const results = await pipeline(
     directions,
     async (d) => {
+      if (MEGA) return megaAuthorStep(round, d);
       if (EVO) {
         try {
           d.evo_prepared = await EVO.prepare(d);
@@ -8033,6 +8040,7 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
     },
 
     async (prev) => {
+      if (MEGA) return prev.verifyStep ? prev.verifyStep() : prev;
       const { d, eng, route } = prev;
       if (EVO && prev.evo_prepare_failed) return { d, eng, ver: null };
       let patch = `${d.out_dir}/best_patch.diff`;
@@ -8082,6 +8090,10 @@ Return ONLY the worker_result.json structure as StructuredOutput.` +
   );
 
   const clean = results.filter(Boolean);
+  if (MEGA) {
+    if ((await megaAfterTurns(round, results)).stop) break;
+    continue;
+  }
   if (EVO) await EVO.recordBatch(clean);
   const verified = clean.filter(r => r.ver && says(r.ver.status, 'verified') &&
     says(r.ver.correctness, 'pass') && primSpeedup(r.ver) > CANDIDATE_FLOOR);

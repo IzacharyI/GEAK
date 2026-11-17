@@ -192,7 +192,7 @@ ok(/const MEGA_PLAN_SCHEMA = \{[\s\S]*'candidate_id'[\s\S]*'candidate_source'[\s
 ok(/if \(!topologyVerdict\.pass\) \{[\s\S]{0,200}refusal = `Mega direction refused before authoring[\s\S]{0,40}continue;/.test(src) &&
    /if \(!directions\.length\) return \{ refused: true, reason: refusal \};/.test(src),
   'every Mega run rejects an invalid topology before Engineer dispatch');
-ok(/if \(plan\.refused && !plan\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{\};/.test(src),
+ok(/if \(plan\.refused && !plan\.stop\) \{[\s\S]{0,200}dispatched \+= 1;[\s\S]{0,200}if \(count >= 3\) \{[\s\S]{0,160}return \{ stop: true \};[\s\S]{0,40}return \{ skip: true \};/.test(src),
   'refusals are charged to the budget and three consecutive refusals still stop');
 ok(/megaRefusal = plan\.refusal \? \{ reason: plan\.refusal, count: 0 \} : null;\s*if \(plan\.stop\)/.test(src) &&
    /\.\.\.\(megaRefusal \? \{ PREVIOUS_PLAN_REFUSED: megaRefusal\.reason \} : \{\}\)/.test(src),
@@ -205,7 +205,7 @@ ok(/const drainS = laneWriterTimedOut \? 1500 : 0;/.test(src) &&
    /max_retries: 1 \} : \{\}\) \}\);\s*megaAdvanceMs\(drainS \* 1000\);/.test(src),
   'a timed-out author gets a bounded, charged drain on the lane lock, GPU leases and lane processes');
 ok(/if \(laneWriterTimedOut && recovered && !recovered\.__agent_timed_out &&\s*recovered\.writer_quiescent === true\) \{\s*laneWriterTimedOut = false;[\s\S]{0,120}if \(megaUnsafeTimeout === laneTimeoutMarker\) megaUnsafeTimeout = null;/.test(src) &&
-   /if \(laneWriterTimedOut\) \{\s*await persistMegaCandidateState\(currentRound\);\s*return \{\s*stop: true,/.test(src),
+   /if \(laneWriterTimedOut\) \{\s*await persistMegaCandidateState\(currentRound\);\s*return \{\s*d, clock, stop: true,/.test(src),
   'only a quiescent timed-out writer continues the wave; a live one still stops it');
 ok(/megaTopologyVerdict\(\s*d, analysis && analysis\.mega_plan_ir, ALLOW_PARTIAL_FUSION\)/.test(src),
   'the caller-owned exact-target policy reaches the pre-author topology gate');
@@ -241,6 +241,17 @@ ok(/const wip = raws\.length > 1 \? megaWipContinuationDirection\(currentRound\)
    /normalizePlannedMegaDirection\(currentRound, planned, i !== bindAt\)/.test(src),
   'with several directions the WIP lane takes the slot naming it, else the last, so the first choice runs');
 
+{
+  // One Optimize loop: mega runs the lane round's plan -> engineer -> verify steps, not a loop of its own.
+  const lane = require('./mega_source').full();
+  ok(!/function megaRound\(/.test(lane) &&
+     /const megaPlan = MEGA \? await megaPlanStep\(round, remaining\) : null;/.test(lane) &&
+     /let plan = megaPlan \|\| await agentT\(/.test(lane) &&
+     /if \(MEGA\) return megaAuthorStep\(round, d\);/.test(lane) &&
+     /if \(MEGA\) return prev\.verifyStep \? prev\.verifyStep\(\) : prev;/.test(lane) &&
+     /if \(\(await megaAfterTurns\(round, results\)\)\.stop\) break;/.test(lane),
+    'mode=mega runs inside the lane round: plan, engineer and verify steps, then select and record');
+}
 console.log(failures ? `\nFAILED: ${failures}` :
   '\nPASS: Mega topology is an operator-neutral typed plan contract.');
 process.exit(failures ? 1 : 0);

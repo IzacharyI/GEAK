@@ -27,7 +27,7 @@ ok(/requiredAccuracyCases: REQUIRED_ACCURACY_CASES/.test(src) &&
    /REQUIRED_ACCURACY_CASES,\s*\n\s*REQUIRE_OVERLAP/.test(src),
   'score-tier and finalist verification receive the run-owned accuracy cases');
 ok(/phase\('Analyze'\)/.test(require('./mega_source').full()) && /async function planMegaCandidateTurn/.test(src) &&
-   /async function runMegaCandidateTurn/.test(src) && /'director', 'select_mega'/.test(src),
+   /async function megaAuthorStep/.test(src) && /'director', 'select_mega'/.test(src),
   'generic Analyze, Plan, Author, Verify and final selection remain present');
 ok(verifier.includes('When `GRAPH_CONTRACT_TOOL` is empty') &&
    director.includes('When the optional\n     tool is empty') &&
