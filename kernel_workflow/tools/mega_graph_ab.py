@@ -25,7 +25,8 @@ Measurement contract:
   4. OUTPUT CHECK: every leg saves its per-rank output; non-base legs report
      relL2 and bit-exactness against the base arm's output from an earlier pass
      (same inputs: inputs are seeded by rank). This is a quick screen, not the
-     acceptance accuracy test.
+     acceptance accuracy test. The saved outputs are deleted when the run ends
+     (``--keep-outputs`` keeps them).
   5. ATTRIBUTION: ``[megamoe] path=...`` markers are counted per leg and
      reported; ``--expect-path ARM=PATH`` voids a leg whose markers differ.
   6. RETRY: a leg with rc!=0, no result line, or a marker violation is retried
@@ -257,7 +258,22 @@ def run(args):
     flush()
     for name, entry in doc["summary"].items():
         print(f"[mega_graph_ab] {name}: " + json.dumps(entry), flush=True)
+    if not args.keep_outputs:
+        drop_outputs(args.work_dir, names)
     return 1 if doc["dropped_legs"] else 0
+
+
+def drop_outputs(work_dir, names):
+    """Delete the per-rank output tensors once every relL2 is in the JSON (GBs per run)."""
+    for name in names:
+        out_dir = os.path.join(work_dir, name)
+        if not os.path.isdir(out_dir):
+            continue
+        for fn in os.listdir(out_dir):
+            if re.fullmatch(r"out_rank\d+\.pt", fn):
+                os.remove(os.path.join(out_dir, fn))
+        if not os.listdir(out_dir):
+            os.rmdir(out_dir)
 
 
 def main(argv=None):
@@ -284,6 +300,7 @@ def main(argv=None):
     ap.add_argument("--jit-root", default="")
     ap.add_argument("--json-output", default="")
     ap.add_argument("--fake-cmd", default="")
+    ap.add_argument("--keep-outputs", action="store_true", help="keep the per-rank out_rank*.pt files")
     args = ap.parse_args(argv)
     args.mtpr = args.mtpr or args.tokens
     if args.leg:

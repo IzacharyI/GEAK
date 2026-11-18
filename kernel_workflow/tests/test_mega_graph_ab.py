@@ -103,3 +103,29 @@ def test_jit_root_inside_tree_is_rejected(tmp_path):
                            "--jit-root", str(base / "jit"), "--fake-cmd", "true"],
                           capture_output=True, text=True)
     assert proc.returncode != 0 and "outside every tree" in proc.stderr
+
+
+def _fake_with_outputs(tmp_path):
+    return _fake(tmp_path, f"""
+        import json, os
+        d = os.path.join({str(tmp_path / "work")!r}, os.environ["ARM_NAME"])
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, "out_rank0.pt"), "w").write("x")
+        print("MEGA_AB_RESULT " + json.dumps({{"rounds_ms": [0.3], "median_ms": 0.3, "finite": True}}))
+    """)
+
+
+def test_outputs_dropped_after_run(tmp_path):
+    proc, doc = _run(tmp_path, _fake_with_outputs(tmp_path))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    work = tmp_path / "work"
+    assert not (work / "base").exists() and not (work / "cand").exists()
+    assert sorted(p.name for p in work.glob("*.log"))  # leg logs stay
+    assert doc["summary"]["cand"]["n_pairs"] == 3
+
+
+def test_keep_outputs(tmp_path):
+    proc, _ = _run(tmp_path, _fake_with_outputs(tmp_path), "--keep-outputs")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tmp_path / "work" / "base" / "out_rank0.pt").exists()
+    assert (tmp_path / "work" / "cand" / "out_rank0.pt").exists()
