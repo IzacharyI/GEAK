@@ -520,12 +520,14 @@ const ANALYSIS_SKILL_INPUTS = ANALYSIS_SKILL_ON ? {
   ANALYSIS_SKILL_DIR: `${MEGA_DIR}/knowledge/analysis_skills/${ANALYSIS_SKILL}`,
 } : {};
 if (ANALYSIS_SKILL_ON) log(`Profile-analysis skill: ${ANALYSIS_SKILL} (analysis only; Step-3 TechLead owns directions).`);
-// Generic mega (Expert Skills off) only; skill-on and non-mega runs get {}.
+// Generic mega (Expert Skills off) only; skill-on and non-mega runs get {}. mega_graph_ab.py builds
+// aiter's mega_moe operator, so other operators (attention, ...) do not get it.
 const GMI = MODE === 'mega' && !USE_EXPERT_SKILLS ? {
   MEGA_MEASUREMENT_GUIDE: `${MEGA_DIR}/knowledge/mega_measurement.md`,
   GENERIC_MEGA_NOTE: 'Read MEGA_MEASUREMENT_GUIDE\'s role table and MEGA_GENERIC_LESSONS before acting; they apply to your role here.',
   MEGA_GENERIC_LESSONS: `${MEGA_DIR}/knowledge/mega_generic_lessons.md`,
-  MEGA_AB_TOOL: `${MEGA_DIR}/tools/mega_graph_ab.py`,
+  ...(CANDIDATE_IMPORT_MODULES.includes('aiter.ops.flydsl.kernels.mega_moe')
+    ? { MEGA_AB_TOOL: `${MEGA_DIR}/tools/mega_graph_ab.py` } : {}),
 } : {};
 // MoE regime guide + paired graph A/B for runs pinning a megamoe Skill (it names Skill designs, so a
 // generic run never gets it by default); args.mega_regimes='true'|'false' overrides.

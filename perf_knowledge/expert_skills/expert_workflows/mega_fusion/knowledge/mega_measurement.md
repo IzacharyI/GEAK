@@ -328,6 +328,10 @@ constructor or call signature), your candidate broke the operator's interface; f
 rotated arm order, rank-max graph time, the paired delta against the first arm, an output relL2 /
 bit-exact screen against the first arm, and `[megamoe] path=` marker counts per leg.
 
+The tool builds aiter's MegaMoE operator, so you get `MEGA_AB_TOOL` only when the operator is that
+one. For any other operator there is no fast A/B tool: time arms with the COMMANDMENT harness (rank-max
+CUDA graph, interleaved base/cand runs) or the §4.3 self-check.
+
 ```
 python3 $MEGA_AB_TOOL --tokens <T> --mtpr <M> \
     --arm base=<frozen tree> --arm cand=<candidate tree>#<switch>=<value> \

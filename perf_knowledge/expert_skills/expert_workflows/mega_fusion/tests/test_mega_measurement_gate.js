@@ -18,10 +18,11 @@ const ok = (cond, msg) => {
 
 const def = src.match(/const GMI = ([\s\S]*?);\n/);
 ok(!!def, 'GMI is defined');
-const gmi = (MODE, USE_EXPERT_SKILLS, A = {}) =>
+const MOE_MODULES = ['aiter', 'aiter.ops.flydsl.kernels.mega_moe'];
+const gmi = (MODE, USE_EXPERT_SKILLS, A = {}, modules = MOE_MODULES) =>
   // eslint-disable-next-line no-new-func
-  new Function('MODE', 'USE_EXPERT_SKILLS', 'MEGA_DIR', 'A', `return ${def[1]};`)(
-    MODE, USE_EXPERT_SKILLS, '/wf', A);
+  new Function('MODE', 'USE_EXPERT_SKILLS', 'MEGA_DIR', 'A', 'CANDIDATE_IMPORT_MODULES',
+    `return ${def[1]};`)(MODE, USE_EXPERT_SKILLS, '/wf', A, modules);
 ok(Object.keys(gmi('mega', true)).length === 0, 'skill-on mega gets no measurement inputs');
 ok(Object.keys(gmi('optimize', false)).length === 0, 'non-mega gets no measurement inputs');
 ok(gmi('mega', false).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement.md',
@@ -30,7 +31,13 @@ ok(gmi('mega', false).MEGA_GENERIC_LESSONS === '/wf/knowledge/mega_generic_lesso
   'generic mega gets the lessons');
 ok(gmi('mega', false).MEGA_AB_TOOL === '/wf/tools/mega_graph_ab.py' &&
    !('MEGA_REGIMES_GUIDE' in gmi('mega', false)),
-  'generic mega gets the paired graph A/B tool, not the regime guide');
+  'generic MegaMoE mega gets the paired graph A/B tool, not the regime guide');
+ok(!('MEGA_AB_TOOL' in gmi('mega', false, {}, ['muse_attn'])) &&
+   gmi('mega', false, {}, ['muse_attn']).MEGA_MEASUREMENT_GUIDE === '/wf/knowledge/mega_measurement.md',
+  'generic mega on another operator gets the guide but not the MegaMoE-only A/B tool');
+ok(Object.keys(gmi('mega', false)).join() ===
+   'MEGA_MEASUREMENT_GUIDE,GENERIC_MEGA_NOTE,MEGA_GENERIC_LESSONS,MEGA_AB_TOOL',
+  'MegaMoE runs keep the same input order (byte-identical prompts)');
 ok(!('MEGA_KNOWLEDGE' in gmi('mega', false, { mega_knowledge: 'read /k.md' })),
   'no launch argument can hand the generic mega roles extra knowledge files');
 
