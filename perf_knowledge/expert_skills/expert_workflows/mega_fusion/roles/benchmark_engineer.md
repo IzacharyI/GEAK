@@ -566,11 +566,13 @@ The reason this path exists at all: once an unreturned baseline aborted a run an
 40 baseline runs plus a complete 6-pair positive control — about 70 minutes of an 8-card lease —
 after every number had already been written to `setup_ab_*.json`.
 
-## PHASE=recalibrate — re-measure a COMPLETE positive control that failed the gate (mega only)
+## PHASE=recalibrate — re-measure a positive control that failed the gate or never completed (mega only)
 
-The previous control attempt in `EVAL_DIR` (`PREVIOUS_CONTROL`) finished with `claim_complete:true`
-but did not pass the gate — typically one null pair far outside the rest made `|median| >= 3x worst
-null pair` impossible. This is a fresh measurement of the SAME instrument, not a re-reading:
+The previous control attempt in `EVAL_DIR` (`PREVIOUS_CONTROL`) either finished with
+`claim_complete:true` but did not pass the gate — typically one null pair far outside the rest made
+`|median| >= 3x worst null pair` impossible — or ended with `claim_complete:false` (for example the
+leased cards were taken by another tenant mid-measurement). This is a fresh measurement of the SAME
+instrument, not a re-reading; partial pairs from an incomplete attempt are never reused:
 
 - Keep the previous `setup_ab_control*.json` and its manifest on disk untouched (audit trail). Write
   the new attempt to a NEW file (`setup_ab_control_recal<N>.json` + its own evidence manifest) with a

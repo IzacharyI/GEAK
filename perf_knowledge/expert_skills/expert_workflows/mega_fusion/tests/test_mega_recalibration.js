@@ -25,8 +25,10 @@ const fnBody = (name) => {
 
 const remeasure = fnBody('remeasureMegaCalibration');
 ok(/megaPcRemeasured >= 2/.test(remeasure), 're-measurement is bounded to 2 attempts per wave');
-ok(/prior\.claim_complete !== true/.test(remeasure),
-  'only a COMPLETE failed control is re-measured (partial claims stay recover-only)');
+ok(/megaPcRemeasured >= 2 \|\| !prior\) return;/.test(remeasure) &&
+  /prior\.claim_complete === true\s*\? 'the last complete attempt failed the gate'/.test(remeasure),
+  'a failed or incomplete control is re-measured (an interrupted setup control used to leave ' +
+  'calibration pending for the whole wave)');
 ok(/megaCalibrationClaimPass\(pc, POSITIVE_CONTROL\)/.test(remeasure),
   'the re-measured control is judged by the unchanged calibration gate');
 ok(/'benchmark_engineer', 'recalibrate'/.test(remeasure), 'uses the recalibrate role phase');

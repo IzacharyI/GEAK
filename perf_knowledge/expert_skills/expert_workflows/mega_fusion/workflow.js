@@ -5328,16 +5328,19 @@ if (setup.resumed && setup.prior_state) {
   }
 }
 
-// A COMPLETE control that failed the gate is re-measured fresh (bounded); the gate never changes.
+// A control that failed the gate, or whose attempt ended incomplete (e.g. the cards were taken by
+// another tenant), is re-measured fresh (bounded); the gate never changes.
 async function remeasureMegaCalibration(label, prior) {
   if (MODE !== 'mega' || megaMeasurementCalibration.ready || !POSITIVE_CONTROL ||
-      MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY || megaPcRemeasured >= 2 ||
-      !prior || prior.claim_complete !== true) return;
+      MEGA_STRUCTURAL_ONLY || MEGA_ROUTE_ONLY || megaPcRemeasured >= 2 || !prior) return;
   megaPcRemeasured += 1;
+  const why = prior.claim_complete === true
+    ? 'the last complete attempt failed the gate'
+    : 'the last attempt ended without a complete claim';
   const r = await agentT(
     roleAgent('benchmark_engineer', 'recalibrate',
-      `RE-MEASURE the positive control fresh (attempt ${megaPcRemeasured}/2): the last complete ` +
-      `attempt failed the gate. Same gate; never re-gate, drop or reuse pairs.`, {
+      `RE-MEASURE the positive control fresh (attempt ${megaPcRemeasured}/2): ${why}. ` +
+      `Same gate; never re-gate, drop or reuse pairs.`, {
         WORKSPACE: CANONICAL, EVAL_DIR, SKILL_DIR: WORKFLOW_DIR, GPU_ID: GPU_RESOURCE.specForIndex(0),
         ANALYSIS: analysis, POSITIVE_CONTROL, PREVIOUS_CONTROL: prior,
         TARGET_GUARDS, REGRESSION_GUARDS, PROMOTION_METRIC,
