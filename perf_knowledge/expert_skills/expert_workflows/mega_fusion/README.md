@@ -2,10 +2,20 @@
 
 `mode="mega"` is for operators that run across several GPUs at once and are worth rewriting as one
 fused, persistent kernel — e.g. an EP MoE layer whose dispatch, GEMM1, GEMM2 and combine are
-separate launches today.
+separate launches today, or an attention-output block whose norms, o_proj, TP all-reduce and router
+GEMM are.
 
-**Scope:** validated on EP MoE layers (MegaMoE) only. Other multi-rank operators (attention, a GEMM
-fused with its all-reduce, ...) are not validated yet; use it for EP MoE until they are.
+**Scope:** validated on EP MoE layers (MegaMoE) and on a TP attention-output block. TP MoE layers
+(e.g. aiter `mega_moe_tp`) and other operators are not validated yet. Validated runs:
+
+| operator | GPUs | result |
+|---|---|---|
+| MegaMoE, EP8, 64 tokens/rank (Expert Skills off) | 8x MI355X | 1.093x, 4 → 2 launches |
+| MegaMoE, EP8, 8192 tokens/rank (Expert Skill on) | 8x MI355X | 1.136x, 4 → 2 launches |
+| attention output block (o_norm, gate, o_proj, all-reduce, norms, router), TP4, BF16 | 4x MI355X | 1.576x at 64 tokens, 1.65x at 8, 256 keeps the baseline path; 9 → 1 launch |
+
+For an operator other than MegaMoE, the task supplies its own UT (correctness + rank-max CUDA-graph
+performance) that prints a per-rank path marker; the MegaMoE-only fast A/B tool is not offered.
 
 This directory is self-contained: the entry point (`workflow.js`), its roles, knowledge, tools, scripts
 and tests. Nothing in `kernel_workflow/` or `e2e_workflow/` refers to it. Shared pieces it reads from

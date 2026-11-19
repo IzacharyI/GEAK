@@ -1,6 +1,6 @@
 export const meta = {
   name: 'kernel-mega',
-  description: 'mode=mega (expert workflow mega_fusion): optimizes a multi-rank operator (e.g. an EP MoE layer) as a portfolio of independent whole-kernel candidate lanes, each authored, verified on-card against the frozen baseline, and only a fully verified winner is delivered. Validated on EP MoE layers only.',
+  description: 'mode=mega (expert workflow mega_fusion): optimizes a multi-rank operator (e.g. an EP MoE layer or a TP attention-output block) as a portfolio of independent whole-kernel candidate lanes, each authored, verified on-card against the frozen baseline, and only a fully verified winner is delivered. Validated on EP MoE layers and a TP attention-output block (not yet on TP MoE).',
   whenToUse: 'Launch this script directly to optimize a multi-rank operator (mode defaults to mega). Pass args.kernel_path, args.workflow_dir (the kernel_workflow dir: shared GPU lease scripts and knowledge), args.gpu_ids, args.gpus_per_job and the guard / control args; optionally args.expert_workflow_dir (this package dir; default <perf_knowledge>/expert_skills/expert_workflows/mega_fusion). See this directory\'s README.md.',
   phases: [
     { title: 'Setup', detail: 'director builds the isolated eval dir + canonical workspace' },
