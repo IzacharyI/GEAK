@@ -1658,7 +1658,8 @@ const MEGA_SELECTION_SCHEMA = obj({
     }, []),
     correctness: { type: 'string' }, guards_pass: { type: 'boolean' },
     path_marker: { type: 'string', description: 'The path marker line the candidate printed.' },
-    path_marker_count: { type: 'number', description: 'Ranks that printed path_marker.' },
+    path_marker_count: { type: 'number',
+      description: 'Distinct ranks that printed path_marker (not marker lines; a UT may print it once per layer).' },
     world_size: { type: 'number' },
     launches: { type: 'number' }, launches_base: { type: 'number' },
     graph_safe: { type: 'string', enum: ['pass', 'fail'] },
@@ -3427,10 +3428,18 @@ function pairedGuardReadout(rows, guard, bimodalGuards = []) {
       }
     }
   }
+  const medianOf = (values) => {
+    const v = [...values].sort((a, b) => a - b);
+    return v.length
+      ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2)
+      : null;
+  };
   const ratios = pairs.map((r) => Number(r.base) / Number(r.cand)).sort((a, b) => a - b);
-  const median = ratios.length
-    ? (ratios.length % 2 ? ratios[(ratios.length - 1) / 2]
-      : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2)
+  const median = medianOf(ratios);
+  // The same pairs summarized as median(base) / median(cand), which a task-supplied A/B tool may report.
+  // It is only accepted as a consistency alias; it is never the gated score.
+  const ratioOfMedians = pairs.length
+    ? medianOf(pairs.map((r) => Number(r.base))) / medianOf(pairs.map((r) => Number(r.cand)))
     : null;
   const favorable = ratios.filter((v) => v > 1.0).length;
   const choose = (n, k) => {
@@ -3446,6 +3455,7 @@ function pairedGuardReadout(rows, guard, bimodalGuards = []) {
   }
   return {
     raw_count: rawPairs.length, count: ratios.length, score: median,
+    ratio_of_medians: ratioOfMedians,
     favorable, sign_p: signP, bimodal, split,
   };
 }
@@ -3481,6 +3491,13 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
     reasons.push('selection contains an evidence row outside the supplied finalists');
   }
   const allGuards = [...new Set([...(o.targetGuards || []), ...(o.regressionGuards || [])])];
+  const tol = Number(o.scoreTolerance || 0.002);
+  // A reported speedup must summarize the row's own paired readings. Both summaries of the same pairs
+  // are accepted (median of per-pair ratios, or median base / median cand): a task-supplied A/B tool
+  // reports the latter. Every pass/floor decision still uses the median of per-pair ratios.
+  const summarizesPairs = (reported, readout) => [readout.score, readout.ratio_of_medians]
+    .some((v) => v != null && Number.isFinite(Number(v)) &&
+      Math.abs(Number(reported) - Number(v)) <= tol);
   const rowFailures = (r) => {
     const fail = [];
     if (!r || r.claim_complete !== true) return ['incomplete evidence row'];
@@ -3513,8 +3530,7 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       }
       if (readout.bimodal && readout.raw_count < 16) fail.push(`bimodal guard ${guard} needs 16 pairs`);
       if (!(perCase.get(String(guard)) > 1.0) ||
-          Math.abs(Number(perCase.get(String(guard))) - Number(readout.score)) >
-            Number(o.scoreTolerance || 0.002)) fail.push(`target guard ${guard}`);
+          !summarizesPairs(perCase.get(String(guard)), readout)) fail.push(`target guard ${guard}`);
     }
     for (const guard of o.regressionGuards || []) {
       const readout = pairedGuardReadout(pairs, guard, BIMODAL_GUARDS);
@@ -3526,17 +3542,18 @@ function megaFinalSelectionVerdict(selection, finalists, opts) {
       }
       if (readout.bimodal && readout.raw_count < 16) fail.push(`bimodal guard ${guard} needs 16 pairs`);
       if (!(perCase.get(String(guard)) >= fl) ||
-          Math.abs(Number(perCase.get(String(guard))) - Number(readout.score)) >
-            Number(o.scoreTolerance || 0.002)) fail.push(`regression guard ${guard}`);
+          !summarizesPairs(perCase.get(String(guard)), readout)) fail.push(`regression guard ${guard}`);
     }
-    const targetScores = (o.targetGuards || []).map((guard) =>
-      pairedGuardReadout(pairs, guard, BIMODAL_GUARDS).score)
-      .filter((v) => Number.isFinite(Number(v)));
-    const recomputedScore = targetScores.length === (o.targetGuards || []).length
-      ? Math.exp(targetScores.reduce((sum, value) => sum + Math.log(Number(value)), 0) /
-        targetScores.length) : null;
-    if (recomputedScore == null || !Number.isFinite(Number(recomputedScore)) ||
-        Math.abs(Number(r.score) - Number(recomputedScore)) > Number(o.scoreTolerance || 0.002)) {
+    const targetReadouts = (o.targetGuards || []).map((guard) =>
+      pairedGuardReadout(pairs, guard, BIMODAL_GUARDS));
+    const geomeanOf = (key) => {
+      const v = targetReadouts.map((x) => Number(x[key]));
+      return v.length && v.every((x) => Number.isFinite(x) && x > 0)
+        ? Math.exp(v.reduce((sum, value) => sum + Math.log(value), 0) / v.length) : null;
+    };
+    const headlineOptions = [geomeanOf('score'), geomeanOf('ratio_of_medians')]
+      .filter((v) => v != null);
+    if (!headlineOptions.some((v) => Math.abs(Number(r.score) - v) <= tol)) {
       fail.push('headline score does not match paired target readings');
     }
     if (!Number.isFinite(nullArm)) fail.push('null arm');
@@ -7960,7 +7977,8 @@ if (MODE === 'mega') {
     selectedRecord.final_attempt_id = String(megaSelection.attempt_id || '');
     selectedRecord.final_evidence_manifest = String(megaSelection.evidence_manifest || '');
     megaCandidateRegistry = upsertMegaCandidate(megaCandidateRegistry, selectedRecord);
-    cumulative = Number(megaSelection.selected_score) || cumulative;
+    // The paired-ratio median is the canonical score; the reply's own summary only had to agree with it.
+    cumulative = Number(finalTargetReadout.score) || Number(megaSelection.selected_score) || cumulative;
     finalWinner = {
       id: megaSelection.selected_candidate_id,
       source: megaSelection.selected_source,

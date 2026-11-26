@@ -292,8 +292,10 @@ batch may contain all finalists for one exhaustive comparison.
    - Every registry candidate carries its activation manifest. Export that exact manifest for its
      candidate arm and use the caller-supplied `BASELINE_ACTIVATION`/COMMANDMENT for the frozen arm.
      Never infer switches or marker values from source comments or a prior run. Require the declared
-     candidate marker once per rank; a baseline without marker support is bound by its source identity
-     and explicit baseline command.
+     candidate marker on every rank; a baseline without marker support is bound by its source identity
+     and explicit baseline command. A UT that builds several operator instances (e.g. one full and one
+     sliding attention layer) prints the marker once per rank per instance: `path_marker_count` is the
+     number of distinct ranks that printed it, never the number of marker lines.
    - When `EXPERT_SKILL_SOURCE_FILES` is provided, diff the candidate root commit against the exact
      candidate HEAD and require every changed path to be in that list. Tests, benchmarks, scripts, logs,
      dumps, and evidence inside the source tree reject the finalist.
@@ -333,6 +335,11 @@ batch may contain all finalists for one exhaustive comparison.
 6. Write the evidence JSON atomically and set `claim_complete:true` only after every log, candidate
    row, selected workspace and patch is complete. A timeout/force-emit returns
    `claim_complete:false` and selects nothing.
+
+Scores are summaries of the row's own `paired_readings`: each guard's `per_case[].speedup` is the
+median of its per-pair `base/cand` ratios, and a row's `score` (and `selected_score`) is the geomean of
+the target guards' per-case speedups. A task-supplied A/B tool that reports `median(base)/median(cand)`
+is accepted for those fields as-is, but pass/floor decisions are made on the per-pair-ratio median.
 
 Return the `MEGA_SELECTION_SCHEMA` fields exactly, including every candidate's rejection reason and
 the selected tree/patch. Every candidate row must carry the exact registry `tree` and `head`, plus

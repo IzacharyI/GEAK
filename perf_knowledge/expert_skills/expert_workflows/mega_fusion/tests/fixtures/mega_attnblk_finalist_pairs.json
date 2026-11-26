@@ -1,0 +1,396 @@
+{
+ "_source": "GEAK mode=mega run team_attnblk_20261106 (Muse attention block, TP4, 4x MI355X), select_mega_1793983235/derived.json: the task A/B tool's per_case (median base / median cand) and its raw pairs",
+ "target_guards": [
+  "F56",
+  "S56"
+ ],
+ "regression_guards": [
+  "F16",
+  "F32",
+  "F64",
+  "S16",
+  "S32",
+  "S64"
+ ],
+ "score": 1.1516350984578405,
+ "per_case": [
+  {
+   "name": "F16",
+   "baseline_ms": 0.08645,
+   "optimized_ms": 0.0808,
+   "speedup": 1.0699,
+   "count": 8
+  },
+  {
+   "name": "F32",
+   "baseline_ms": 0.13345,
+   "optimized_ms": 0.1159,
+   "speedup": 1.1514,
+   "count": 8
+  },
+  {
+   "name": "F56",
+   "baseline_ms": 0.1923,
+   "optimized_ms": 0.1563,
+   "speedup": 1.2303,
+   "count": 8
+  },
+  {
+   "name": "F64",
+   "baseline_ms": 0.2097,
+   "optimized_ms": 0.1707,
+   "speedup": 1.2285,
+   "count": 8
+  },
+  {
+   "name": "S16",
+   "baseline_ms": 0.05875,
+   "optimized_ms": 0.05285,
+   "speedup": 1.1116,
+   "count": 8
+  },
+  {
+   "name": "S32",
+   "baseline_ms": 0.07645,
+   "optimized_ms": 0.0567,
+   "speedup": 1.3483,
+   "count": 8
+  },
+  {
+   "name": "S56",
+   "baseline_ms": 0.0705,
+   "optimized_ms": 0.0654,
+   "speedup": 1.078,
+   "count": 8
+  },
+  {
+   "name": "S64",
+   "baseline_ms": 0.07295,
+   "optimized_ms": 0.06775,
+   "speedup": 1.0768,
+   "count": 8
+  }
+ ],
+ "paired_readings": [
+  {
+   "guard": "F16",
+   "base": 0.0866,
+   "cand": 0.0809
+  },
+  {
+   "guard": "F16",
+   "base": 0.0869,
+   "cand": 0.0807
+  },
+  {
+   "guard": "F16",
+   "base": 0.0864,
+   "cand": 0.0808
+  },
+  {
+   "guard": "F16",
+   "base": 0.0869,
+   "cand": 0.0808
+  },
+  {
+   "guard": "F16",
+   "base": 0.0865,
+   "cand": 0.0809
+  },
+  {
+   "guard": "F16",
+   "base": 0.0859,
+   "cand": 0.0804
+  },
+  {
+   "guard": "F16",
+   "base": 0.0858,
+   "cand": 0.0808
+  },
+  {
+   "guard": "F16",
+   "base": 0.0861,
+   "cand": 0.081
+  },
+  {
+   "guard": "F32",
+   "base": 0.1334,
+   "cand": 0.1158
+  },
+  {
+   "guard": "F32",
+   "base": 0.1364,
+   "cand": 0.1159
+  },
+  {
+   "guard": "F32",
+   "base": 0.1347,
+   "cand": 0.1162
+  },
+  {
+   "guard": "F32",
+   "base": 0.1361,
+   "cand": 0.116
+  },
+  {
+   "guard": "F32",
+   "base": 0.1312,
+   "cand": 0.1159
+  },
+  {
+   "guard": "F32",
+   "base": 0.1299,
+   "cand": 0.1157
+  },
+  {
+   "guard": "F32",
+   "base": 0.1315,
+   "cand": 0.1159
+  },
+  {
+   "guard": "F32",
+   "base": 0.1335,
+   "cand": 0.1159
+  },
+  {
+   "guard": "F56",
+   "base": 0.1924,
+   "cand": 0.1564
+  },
+  {
+   "guard": "F56",
+   "base": 0.1921,
+   "cand": 0.1563
+  },
+  {
+   "guard": "F56",
+   "base": 0.1928,
+   "cand": 0.1559
+  },
+  {
+   "guard": "F56",
+   "base": 0.1934,
+   "cand": 0.1564
+  },
+  {
+   "guard": "F56",
+   "base": 0.1916,
+   "cand": 0.1563
+  },
+  {
+   "guard": "F56",
+   "base": 0.1926,
+   "cand": 0.156
+  },
+  {
+   "guard": "F56",
+   "base": 0.1922,
+   "cand": 0.1565
+  },
+  {
+   "guard": "F56",
+   "base": 0.1922,
+   "cand": 0.1563
+  },
+  {
+   "guard": "F64",
+   "base": 0.2103,
+   "cand": 0.1709
+  },
+  {
+   "guard": "F64",
+   "base": 0.2098,
+   "cand": 0.1704
+  },
+  {
+   "guard": "F64",
+   "base": 0.2107,
+   "cand": 0.1707
+  },
+  {
+   "guard": "F64",
+   "base": 0.2097,
+   "cand": 0.1707
+  },
+  {
+   "guard": "F64",
+   "base": 0.2097,
+   "cand": 0.1714
+  },
+  {
+   "guard": "F64",
+   "base": 0.2078,
+   "cand": 0.1701
+  },
+  {
+   "guard": "F64",
+   "base": 0.2093,
+   "cand": 0.1705
+  },
+  {
+   "guard": "F64",
+   "base": 0.2086,
+   "cand": 0.1707
+  },
+  {
+   "guard": "S16",
+   "base": 0.0589,
+   "cand": 0.0529
+  },
+  {
+   "guard": "S16",
+   "base": 0.0582,
+   "cand": 0.0528
+  },
+  {
+   "guard": "S16",
+   "base": 0.0582,
+   "cand": 0.0525
+  },
+  {
+   "guard": "S16",
+   "base": 0.0582,
+   "cand": 0.0529
+  },
+  {
+   "guard": "S16",
+   "base": 0.0587,
+   "cand": 0.0528
+  },
+  {
+   "guard": "S16",
+   "base": 0.0588,
+   "cand": 0.0528
+  },
+  {
+   "guard": "S16",
+   "base": 0.0589,
+   "cand": 0.0529
+  },
+  {
+   "guard": "S16",
+   "base": 0.059,
+   "cand": 0.0529
+  },
+  {
+   "guard": "S32",
+   "base": 0.0772,
+   "cand": 0.0566
+  },
+  {
+   "guard": "S32",
+   "base": 0.0768,
+   "cand": 0.0567
+  },
+  {
+   "guard": "S32",
+   "base": 0.0765,
+   "cand": 0.0564
+  },
+  {
+   "guard": "S32",
+   "base": 0.0768,
+   "cand": 0.0567
+  },
+  {
+   "guard": "S32",
+   "base": 0.0763,
+   "cand": 0.0568
+  },
+  {
+   "guard": "S32",
+   "base": 0.0764,
+   "cand": 0.0564
+  },
+  {
+   "guard": "S32",
+   "base": 0.0755,
+   "cand": 0.0567
+  },
+  {
+   "guard": "S32",
+   "base": 0.0749,
+   "cand": 0.0567
+  },
+  {
+   "guard": "S56",
+   "base": 0.0707,
+   "cand": 0.065
+  },
+  {
+   "guard": "S56",
+   "base": 0.0705,
+   "cand": 0.0653
+  },
+  {
+   "guard": "S56",
+   "base": 0.0705,
+   "cand": 0.065
+  },
+  {
+   "guard": "S56",
+   "base": 0.0701,
+   "cand": 0.0656
+  },
+  {
+   "guard": "S56",
+   "base": 0.0718,
+   "cand": 0.0659
+  },
+  {
+   "guard": "S56",
+   "base": 0.0712,
+   "cand": 0.0651
+  },
+  {
+   "guard": "S56",
+   "base": 0.0703,
+   "cand": 0.0655
+  },
+  {
+   "guard": "S56",
+   "base": 0.0705,
+   "cand": 0.0655
+  },
+  {
+   "guard": "S64",
+   "base": 0.0731,
+   "cand": 0.0676
+  },
+  {
+   "guard": "S64",
+   "base": 0.0729,
+   "cand": 0.068
+  },
+  {
+   "guard": "S64",
+   "base": 0.0725,
+   "cand": 0.0672
+  },
+  {
+   "guard": "S64",
+   "base": 0.0725,
+   "cand": 0.0686
+  },
+  {
+   "guard": "S64",
+   "base": 0.0736,
+   "cand": 0.068
+  },
+  {
+   "guard": "S64",
+   "base": 0.0738,
+   "cand": 0.067
+  },
+  {
+   "guard": "S64",
+   "base": 0.0729,
+   "cand": 0.0678
+  },
+  {
+   "guard": "S64",
+   "base": 0.073,
+   "cand": 0.0677
+  }
+ ]
+}
